@@ -15,14 +15,56 @@ const resultEl = $("result");
 
 const KEY_STORE = "gemini_api_key";
 
+const modelStatusEl = $("modelStatus");
+
 // 저장된 키 불러오기
 apiKeyEl.value = localStorage.getItem(KEY_STORE) || "";
-// 입력 시 자동 저장
+// 입력 시 자동 저장 + 모델 목록 자동 갱신(디바운스)
+let keyTimer = null;
 apiKeyEl.addEventListener("input", () => {
   const v = apiKeyEl.value.trim();
   if (v) localStorage.setItem(KEY_STORE, v);
   else localStorage.removeItem(KEY_STORE);
+  clearTimeout(keyTimer);
+  keyTimer = setTimeout(loadModels, 800);
 });
+
+// 이 키로 실제 사용 가능한 모델을 불러와 드롭다운을 채움 (모델 지원 중단 대비)
+async function loadModels() {
+  const apiKey = apiKeyEl.value.trim();
+  if (!apiKey) return;
+  modelStatusEl.textContent = "· 모델 목록 불러오는 중…";
+  try {
+    const res = await fetch("/api/models", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.models || !data.models.length) {
+      modelStatusEl.textContent = "";
+      return;
+    }
+    const saved = localStorage.getItem(MODEL_STORE);
+    modelEl.innerHTML = "";
+    for (const m of data.models) {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = `${m.label} (${m.id})`;
+      modelEl.appendChild(opt);
+    }
+    let pick = "";
+    if (saved && data.models.some((m) => m.id === saved)) pick = saved;
+    if (!pick) {
+      const flash = data.models.find((m) => /flash/i.test(m.id));
+      pick = flash ? flash.id : data.models[0].id;
+    }
+    modelEl.value = pick;
+    modelStatusEl.textContent = `· 사용 가능 ${data.models.length}개`;
+  } catch (_) {
+    modelStatusEl.textContent = "";
+  }
+}
 toggleKeyEl.addEventListener("click", () => {
   apiKeyEl.type = apiKeyEl.type === "password" ? "text" : "password";
 });
@@ -117,6 +159,7 @@ removeLogoEl.addEventListener("click", () => {
 });
 
 renderBrand();
+loadModels(); // 저장된 키가 있으면 시작 시 사용 가능한 모델을 불러옴
 
 analyzeBtn.addEventListener("click", analyze);
 printBtn.addEventListener("click", () => window.print());
