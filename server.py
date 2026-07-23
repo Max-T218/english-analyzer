@@ -93,8 +93,21 @@ passages (수능·모의고사·내신).
 You will receive one English passage. Analyze it and return ONLY the structured JSON
 described by the schema. Follow these rules exactly.
 
-## Sentence splitting
-- Split the passage into sentences and number them from 1 (the JSON `no` field).
+## Sentence splitting (STRICT RULES)
+- Number sentences with the JSON `no` field: 1, 2, 3, … with NO gaps and NO duplicates.
+  Every sentence of the passage appears EXACTLY ONCE, in original order.
+- Split ONLY at a sentence-ending `.` `?` or `!` that truly ends a sentence (followed by
+  a space + capital letter, a closing quote/paren then space+capital, or end of text).
+- Do NOT split at:
+  * abbreviations: Mr. Mrs. Ms. Dr. Prof. St. vs. etc. e.g. i.e. No. U.S. a.m. p.m.
+  * decimals / numbers: 3.14, 1,000, No. 5
+  * an ellipsis (…, ...) used mid-sentence
+  * `;` (semicolon) or `:` (colon) — these stay INSIDE one sentence, never start a new one
+- Keep closing quotation marks / parentheses and their punctuation WITH their sentence.
+- Do NOT merge two sentences into one card, and do NOT split one sentence into two cards.
+- If the passage already contains sentence markers (❶❷❸…, ①②③, or leading "1." "2.")
+  use them ONLY as a hint for boundaries. Renumber cleanly from 1 in `no`, and REMOVE those
+  marker characters from englishHtml/koreanHtml (do not display them).
 - `tag` = a very short Korean label for the sentence's role in the flow
   (e.g. "도입·주제 제시", "근거", "부연", "결론·대조"). Keep under ~10 chars.
 
@@ -203,6 +216,31 @@ def clean_korean(html):
         prev = html
         html = _ROLE_SPAN_RE.sub(r"\1", html)
     return html
+
+
+# ── AI가 만든 마크업 정화: 허용된 인라인 태그만 남겨 레이아웃 붕괴 방지 ──
+_ALLOWED_TAGS = {"ruby", "rt", "span", "sup", "code", "br"}
+_CLASS_ATTR_RE = re.compile(r'class\s*=\s*"([^"]*)"')
+_ANY_TAG_RE = re.compile(r"</?([a-zA-Z0-9]+)([^>]*)>")
+
+
+def sanitize_inline(html):
+    """<div>, <table>, <script> 등 구조/위험 태그를 제거하고
+    ruby·rt·span·sup·code·br 만 남긴다. 허용 태그는 class 속성만 유지."""
+    if not html:
+        return html
+
+    def repl(m):
+        tag = m.group(1).lower()
+        if tag not in _ALLOWED_TAGS:
+            return ""  # 허용 안 된 태그는 제거(안쪽 텍스트는 보존)
+        if m.group(0).startswith("</"):
+            return f"</{tag}>"
+        cm = _CLASS_ATTR_RE.search(m.group(2) or "")
+        cls = f' class="{cm.group(1)}"' if cm else ""
+        return f"<{tag}{cls}>"
+
+    return _ANY_TAG_RE.sub(repl, html)
 
 
 def build_user_prompt(passage, target_grammar, mode):
@@ -326,10 +364,16 @@ def call_gemini(passage, target_grammar, mode, api_key, model):
         result = json.loads(text)
     except json.JSONDecodeError:
         raise RuntimeError("모델 응답을 JSON으로 해석하지 못했습니다.")
-    # 한국어 줄에 잘못 들어간 루비/주석 제거 (안전장치)
+    # AI 마크업 정화 + 한국어 줄 루비 제거 (레이아웃 붕괴/오류 방어)
     for s in result.get("sentences", []):
-        if isinstance(s, dict) and s.get("koreanHtml"):
-            s["koreanHtml"] = clean_korean(s["koreanHtml"])
+        if not isinstance(s, dict):
+            continue
+        if s.get("englishHtml"):
+            s["englishHtml"] = sanitize_inline(s["englishHtml"])
+        if s.get("koreanHtml"):
+            s["koreanHtml"] = sanitize_inline(clean_korean(s["koreanHtml"]))
+        if s.get("note"):
+            s["note"] = sanitize_inline(s["note"])
     return result
 
 

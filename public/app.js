@@ -93,8 +93,8 @@ function renderBrand() {
   const logo = localStorage.getItem(LOGO_STORE) || "";
   const name = localStorage.getItem(NAME_STORE) || "";
 
-  // 상단 제목: 학원명이 있으면 학원명으로 대체
-  headTitleEl.textContent = name || DEFAULT_TITLE;
+  // 상단 제목 h1은 제거됨 — 존재할 때만 갱신 (호환용)
+  if (headTitleEl) headTitleEl.textContent = name || DEFAULT_TITLE;
   printBrandTopEl.textContent = name;
 
   // 우하단 마크: 로고 이미지

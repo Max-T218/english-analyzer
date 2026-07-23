@@ -25,7 +25,13 @@ body{
 
 /* ── 헤더 ── */
 .app-head{margin-bottom:20px;}
-.app-head .eyebrow{font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); font-weight:700;}
+.brand-lockup{display:flex; align-items:center; gap:14px; margin-bottom:6px;}
+.app-logo{height:60px; width:auto; flex:0 0 auto;}
+@media (prefers-color-scheme:dark){ .app-logo{ filter:invert(1) brightness(1.9); } }
+.app-head .eyebrow{
+  font-size:clamp(22px,6vw,30px); letter-spacing:.03em; text-transform:uppercase;
+  color:var(--accent); font-weight:800; line-height:1.2; margin-bottom:0; text-wrap:balance;
+}
 .app-head h1{font-family:Georgia,"Nanum Myeongjo",serif; font-size:24px; margin:6px 0 4px; text-wrap:balance;}
 .app-head p{color:var(--ink-soft); font-size:14px; margin:0;}
 
@@ -129,6 +135,10 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
 .eng{grid-area:eng;}
 .kor{grid-area:kor;}
 .note{grid-area:note;}
+/* 그리드 열이 긴 단어/루비에 밀려 깨지지 않도록 (min-width:0 필수) */
+.sent-head,.eng,.kor,.note{min-width:0;}
+.eng{overflow-wrap:break-word;}
+.kor,.note{overflow-wrap:break-word; word-break:keep-all;}
 .sent-no{
   background:var(--accent); color:#fff; font-weight:700; font-size:13px;
   min-width:24px; height:24px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center;
@@ -209,6 +219,13 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   /* '주제 & 흐름 요약'부터 새 페이지에서 시작 */
   .page-break{break-before:page; page-break-before:always;}
   h3.section{break-after:avoid; page-break-after:avoid;}
+  /* 문장 카드·표 행이 페이지 경계에서 쪼개지지 않도록 */
+  .sent{break-inside:avoid; page-break-inside:avoid;}
+  tr{break-inside:avoid; page-break-inside:avoid;}
+  /* 표가 페이지 폭을 넘겨 잘리지 않도록 (인쇄 시 스크롤 대신 줄바꿈) */
+  .table-wrap{overflow:visible;}
+  table{min-width:0;}
+  th,td{overflow-wrap:break-word; word-break:keep-all;}
   /* 학원 마크 — 모든 페이지 우하단 (fixed 요소는 페이지마다 반복 인쇄됨) */
   .brand-mark{
     display:flex; align-items:center; gap:8px;
