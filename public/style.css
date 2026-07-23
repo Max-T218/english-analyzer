@@ -68,11 +68,70 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 .btn.ghost{background:var(--card); color:var(--ink); border-color:var(--line);}
 .btn.ghost:hover{border-color:var(--accent);}
 .hint{font-size:12px; color:var(--ink-soft);}
+.chk{display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--ink); cursor:pointer; user-select:none;}
+.chk input{width:16px; height:16px; accent-color:var(--accent); cursor:pointer;}
+.chk .chk-sub{font-weight:500; font-size:11.5px; color:var(--ink-soft);}
 .error{
   margin-top:14px; padding:11px 14px; border-radius:9px; font-size:13px;
   background:rgba(207,46,46,.08); border:1px solid rgba(207,46,46,.35); color:var(--g);
 }
 .error:empty{display:none;}
+
+/* ── 모델별 오늘 사용량 패널 ── */
+.usage-panel{margin-top:14px; padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:var(--paper); font-size:12.5px;}
+.usage-panel[hidden]{display:none;}
+.u-title{font-weight:700; color:var(--accent); font-size:12px; margin-bottom:8px;}
+.u-title .u-sub{font-weight:500; color:var(--ink-soft); font-size:11px;}
+.u-row{display:flex; align-items:center; gap:8px; padding:3px 0; border-top:1px solid var(--line-soft);}
+.u-row:first-of-type{border-top:none;}
+.u-row.u-cur{font-weight:700;}
+.u-name{flex:1; min-width:0; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.u-bar{flex:0 0 88px; height:7px; border-radius:4px; background:var(--line); overflow:hidden;}
+.u-bar-fill{display:block; height:100%; border-radius:4px; transition:width .2s;}
+.u-pct{flex:0 0 40px; text-align:right; white-space:nowrap; font-weight:700; font-variant-numeric:tabular-nums;}
+.u-ex{color:var(--g); font-weight:700; white-space:nowrap;}
+.u-note{margin-top:9px; font-size:11px; color:var(--ink-soft); line-height:1.5;}
+/* 사용률 단계별 색 */
+.u-lv-lo{color:#1f9d57;}  .u-bar-fill.u-lv-lo{background:#1f9d57;}
+.u-lv-mid{color:#b8760a;} .u-bar-fill.u-lv-mid{background:#b8760a;}
+.u-lv-hi{color:var(--g);} .u-bar-fill.u-lv-hi{background:var(--g);}
+@media (prefers-color-scheme:dark){
+  .u-lv-lo{color:#3ec27f;}  .u-bar-fill.u-lv-lo{background:#3ec27f;}
+  .u-lv-mid{color:#e0a83a;} .u-bar-fill.u-lv-mid{background:#e0a83a;}
+}
+
+/* ── 여러 지문 입력 (지문 추가/삭제) ── */
+#passageCount{font-weight:600; font-size:12px; color:var(--ink-soft);}
+#passageList{display:flex; flex-direction:column; gap:12px;}
+.passage-item{border:1px solid var(--line); border-radius:10px; background:var(--paper); padding:10px 10px 12px;}
+.passage-item-head{display:flex; align-items:center; gap:10px; margin-bottom:8px;}
+.passage-item-no{font-size:12.5px; font-weight:700; color:var(--accent); letter-spacing:.02em;}
+.passage-count{margin-left:auto; font-size:11.5px; color:var(--ink-soft); white-space:nowrap;}
+.passage-count.warn{color:#b8760a; font-weight:600;}
+.passage-count.danger{color:var(--g); font-weight:700;}
+@media (prefers-color-scheme:dark){ .passage-count.warn{color:#e0a83a;} }
+.passage-del{padding:4px 10px; font-size:12px; line-height:1;}
+.passage-input{
+  width:100%; min-height:130px; resize:vertical; font:inherit; line-height:1.55;
+  color:var(--ink); background:var(--card); border:1px solid var(--line);
+  border-radius:8px; padding:10px 12px;
+}
+.passage-input:focus{outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent);}
+#addPassageBtn{margin-top:10px;}
+
+/* 지문 구분 배너 & 결과 블록 */
+.passage-banner{
+  display:inline-block; margin:6px 0 12px; padding:5px 14px;
+  background:var(--accent); color:#fff; font-weight:800; font-size:14px;
+  border-radius:8px; letter-spacing:.03em;
+}
+@media (prefers-color-scheme:dark){.passage-banner{color:#0f141a;}}
+.passage-block{margin-bottom:10px;}
+.passage-error{
+  border:1px solid rgba(207,46,46,.35); background:rgba(207,46,46,.08);
+  border-radius:12px; padding:14px 16px; margin-bottom:14px; color:var(--g); font-size:13.5px;
+}
+.passage-error b{display:block; margin-bottom:4px; font-size:14px;}
 
 /* ── 학원 마크 설정 ── */
 .brand-panel > summary{cursor:pointer; font-weight:700; color:var(--accent); font-size:13.5px; list-style:none;}
@@ -160,7 +219,10 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
 ruby{ruby-align:center;}
 ruby.over-tag{ruby-position:over;}
 ruby rt{font-size:10px; font-weight:700; line-height:1.15; color:var(--g);}
+/* 역할별 글자색 (본문·범례 공통) — 루비 보조 클래스가 없어도 색이 맞도록 */
 .g{color:var(--g); font-weight:600;}
+.v{color:var(--v); font-weight:600;}
+.gv{color:var(--gv); font-weight:600;}
 ruby.vocab-rt .v{color:var(--v); font-weight:600;}
 ruby.vocab-rt rt{color:var(--v);}
 ruby.theme-rt .gv{color:var(--gv); font-weight:600;}
@@ -221,6 +283,10 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   .app-head,.panel,.loading,.result-tools,footer{display:none !important;}
   .sent,.cover,.table-wrap,.legend{box-shadow:none; break-inside:avoid;}
   .wrap{max-width:none; padding:0;}
+  /* 지문마다 새 페이지에서 시작 (첫 지문은 그대로) */
+  .passage-block{break-before:page; page-break-before:always;}
+  .passage-block:first-child{break-before:auto; page-break-before:auto;}
+  .passage-banner{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
   /* '주제 & 흐름 요약'부터 새 페이지에서 시작 */
   .page-break{break-before:page; page-break-before:always;}
   h3.section{break-after:avoid; page-break-after:avoid;}

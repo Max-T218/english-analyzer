@@ -27,8 +27,9 @@
     </div>
     <div class="hint" id="keyStatus">키는 이 브라우저에만 저장되며 서버에 파일로 남지 않습니다.</div>
 
-    <label for="passage" style="margin-top:16px">영어 지문</label>
-    <textarea id="passage" placeholder="분석할 영어 지문을 여기에 붙여넣으세요."></textarea>
+    <label style="margin-top:16px">영어 지문 <span id="passageCount"></span></label>
+    <div id="passageList"></div>
+    <button type="button" class="btn ghost small" id="addPassageBtn">＋ 지문 추가</button>
 
     <div class="row">
       <div class="field">
@@ -50,9 +51,14 @@
       </div>
     </div>
 
+    <div class="usage-panel" id="usagePanel" hidden></div>
+
     <div class="actions">
       <button class="btn" id="analyzeBtn">분석하기</button>
       <button class="btn ghost" id="printBtn" style="display:none">🖨️ 인쇄 / PDF</button>
+      <label class="chk" title="1차 분석 후 AI가 한 번 더 검토해 빠진 어법·어휘를 보강합니다. 지문당 요청이 2배가 됩니다.">
+        <input type="checkbox" id="reviewChk"> 꼼꼼 검토 <span class="chk-sub">(2차 검토·사용량 2배)</span>
+      </label>
       <span class="hint">Ctrl+Enter 로도 실행됩니다.</span>
     </div>
     <div class="error" id="error"></div>
@@ -60,7 +66,7 @@
 
   <div class="loading" id="loading">
     <span class="spinner"></span>
-    <span>AI가 지문을 분석하고 있습니다… (지문 길이에 따라 20~60초 걸릴 수 있어요)</span>
+    <span id="loadingText">AI가 지문을 분석하고 있습니다… (지문 길이에 따라 20~60초 걸릴 수 있어요)</span>
   </div>
 
   <div id="result"></div>

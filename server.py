@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +33,30 @@ GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models?pageS
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 )
+
+# 전송 실패 자동 재시도 설정 — 시간이 걸려도 모든 지문을 끝까지 분석(사용자 요청).
+# 상한(포기) 없이 성공할 때까지 재시도하되, 한 번의 대기는 아래 값으로 잘라 반복한다.
+RETRY_MIN_WAIT = 3       # 최소 대기(초) — 과도한 반복 방지
+RETRY_MAX_WAIT = 60      # 한 번 대기의 상한(초)
+MAX_RETRY_TOTAL = 150    # 누적 대기가 이 시간(초)을 넘으면 포기하고 명확히 안내
+                         # (일시적 속도제한은 이 안에 풀림 / 하루 할당량 소진은 무한대기 방지)
+
+
+def _parse_retry_delay(detail):
+    """Gemini 429 오류 본문에서 권장 대기시간(초)을 뽑는다. 없으면 None.
+    형식 예: error.details[].retryDelay = "17s"."""
+    try:
+        info = json.loads(detail)
+    except Exception:
+        return None
+    for d in info.get("error", {}).get("details", []):
+        rd = d.get("retryDelay")
+        if isinstance(rd, str) and rd.endswith("s"):
+            try:
+                return float(rd[:-1])
+            except ValueError:
+                pass
+    return None
 
 # ── Gemini 구조화 출력 스키마 (파싱을 보장) ──
 GEMINI_SCHEMA = {
@@ -143,9 +168,14 @@ described by the schema. Follow these rules exactly.
         <ruby class="over-tag theme-rt"><span class="gv">regardless of</span><rt>전치사구</rt></ruby>
   * Emphasis / connective (yellow highlight) — rt = 연결어의 기능/역할 (역접·대조·첨가 등):
         <ruby class="over-tag hl-rt"><span class="hl">However</span><rt>역접(그러나)</rt></ruby>
-- Parallel structure joined by and/or: mark the conjunction as
-  <span class="conj-hl">and</span> and put a superscript number before each parallel
+- 등위·상관접속사 병렬구조 (MANDATORY — 절대 빠뜨리지 말 것): EVERY coordinating
+  conjunction (and / or / but / nor / yet) that joins two or more parallel elements
+  (words, phrases, or clauses) MUST be marked — and correlatives too (both…and,
+  not only…but also, either…or, neither…nor, not…but). Mark the conjunction with
+  <span class="conj-hl">and</span> and put a superscript number before EACH parallel
   element: <sup class="conj-num-top">1</sup>WORD ... <sup class="conj-num-top">2</sup>WORD
+  Apply this to EVERY such conjunction in the passage — do not skip any, not even a
+  simple "and" joining two nouns or verbs. This is the item most often forgotten.
 - CRITICAL — separate 어법 vs 어휘 in rt content, NEVER mix them:
   * RED grammar tag (`class="g"`): rt = ONLY the grammatical term/function
     (관계대명사, 분사구문, 동명사, 가주어-진주어, 목적격보어(원형부정사), 도치, 강조구문 등).
@@ -177,12 +207,20 @@ class="g">…</span><rt>설명</rt></ruby>`). Scan for and mark every occurrence
   - 목적격보어(원형부정사/현재분사/과거분사), 사역·지각동사 구문
 RULE: it is far better to mark a clear grammar point than to skip it. Do NOT leave an
 obvious grammar structure without a red ruby. Aim for full coverage in every sentence.
+RULE (등위접속사): treat every and/or/but/nor/yet that links parallel elements as a
+REQUIRED mark (conj-hl + numbered elements as above). Never leave one unmarked.
 
 ### FINAL SELF-CHECK (mandatory, before returning)
-Re-read each chunk's `eng` one more time. For every item in the coverage list that appears
-in that chunk, confirm it has a RED grammar ruby. If any is missing, ADD it now. Only return
-the JSON after this check — every sentence should have at least one red grammar annotation
-(a sentence with none almost always means you missed something).
+Re-read each chunk's `eng` one more time and run BOTH checks, fixing any miss:
+1. COVERAGE: for every item in the coverage list that appears in that chunk, confirm it has
+   a RED grammar ruby. If any is missing, ADD it now.
+2. 등위접속사 SWEEP: scan the ENTIRE passage for every "and", "or", "but", "nor", "yet"
+   (and correlatives both…and / either…or / not only…but also / neither…nor). For each one
+   that joins parallel elements, confirm it is wrapped in <span class="conj-hl">…</span> and
+   the parallel elements carry <sup class="conj-num-top">…</sup> numbers. This is the single
+   most frequently forgotten item — verify it explicitly and add every missing one.
+Only return the JSON after BOTH checks — every sentence should have at least one red grammar
+annotation (a sentence with none almost always means you missed something).
 
 ## note — per-sentence commentary
 - One or two sentences of objective, written-style Korean explaining the main grammar
@@ -265,6 +303,29 @@ def clean_note(html):
     return html
 
 
+# ── 루비 색상 정규화: 안쪽 span 역할에 맞춰 보조 클래스를 강제로 맞춘다 ──
+# (모델이 vocab-rt/theme-rt/hl-rt 를 빠뜨려도 범례 색상이 어긋나지 않도록)
+_RUBY_BLOCK_RE = re.compile(r"<ruby\b[^>]*>(.*?)</ruby>", re.S)
+_SPAN_ROLE_RE = re.compile(r'<span class="\s*(g|v|gv|hl)\b[^"]*"')
+_RUBY_MOD = {"g": "over-tag", "v": "over-tag vocab-rt",
+             "gv": "over-tag theme-rt", "hl": "over-tag hl-rt"}
+
+
+def normalize_ruby(html):
+    """각 <ruby>의 class를 안쪽 span 역할(g/v/gv/hl)에 맞는 값으로 다시 쓴다.
+    이렇게 하면 어휘=파랑, 어법+어휘=보라, 강조=노랑, 어법=빨강 이 범례와 항상 일치한다."""
+    if not html:
+        return html
+
+    def repl(m):
+        inner = m.group(1)
+        sm = _SPAN_ROLE_RE.search(inner)
+        role = sm.group(1) if sm else "g"   # 역할 span이 없으면 어법(빨강)으로 간주
+        return f'<ruby class="{_RUBY_MOD[role]}">{inner}</ruby>'
+
+    return _RUBY_BLOCK_RE.sub(repl, html)
+
+
 # ── AI가 만든 마크업 정화: 허용된 인라인 태그만 남겨 레이아웃 붕괴 방지 ──
 _ALLOWED_TAGS = {"ruby", "rt", "span", "sup", "code", "br"}
 _CLASS_ATTR_RE = re.compile(r'class\s*=\s*"([^"]*)"')
@@ -290,7 +351,7 @@ def sanitize_inline(html):
     return _ANY_TAG_RE.sub(repl, html)
 
 
-def build_user_prompt(passage, target_grammar, mode):
+def build_user_prompt(passage, target_grammar, mode, prior=None):
     lines = []
     if mode == "student":
         lines.append("대상: 학생 자기주도 학습용. 해설은 이해하기 쉽게 쓰되 정확하게.")
@@ -304,10 +365,24 @@ def build_user_prompt(passage, target_grammar, mode):
     lines.append("")
     lines.append("[지문]")
     lines.append(passage.strip())
+    if prior is not None:
+        # 2차 검토 패스: 1차 결과를 주고 빠진 어법·어휘·등위접속사를 보강시킨다.
+        lines.append("")
+        lines.append("[1차 분석 결과 — 아래를 검토·보강하라]")
+        lines.append(json.dumps(prior, ensure_ascii=False))
+        lines.append("")
+        lines.append(
+            "위 1차 결과를 지문과 대조하여, 빠지거나 틀린 표시를 모두 보강·수정하라. "
+            "특히 ① 등위·상관접속사(and/or/but/nor/yet, both…and 등)와 병렬구조, "
+            "② 준동사(to부정사·동명사·분사·분사구문), ③ 관계사, ④ 시제·상·태(수동/완료/진행), "
+            "⑤ 특수구문(가정법·도치·강조·가주어진주어 등), ⑥ 핵심 어휘를 한 문장씩 다시 훑어 "
+            "누락이 없는지 확인하라. 이미 올바른 부분은 그대로 두고, 누락은 추가, 오류는 수정하여 "
+            "동일한 스키마의 '완전한' JSON으로 다시 출력하라. 문장 수·순서·번호는 1차와 동일해야 한다."
+        )
     return "\n".join(lines)
 
 
-def call_gemini(passage, target_grammar, mode, api_key, model):
+def call_gemini(passage, target_grammar, mode, api_key, model, prior=None):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -316,24 +391,34 @@ def call_gemini(passage, target_grammar, mode, api_key, model):
         )
     model = model if (model and _MODEL_RE.match(model)) else MODEL
 
+    sys_text = SYSTEM_PROMPT
+    if prior is not None:
+        sys_text += (
+            "\n\n## REVIEW MODE (검토·보강 패스)\n"
+            "You are now REVISING an existing analysis for completeness. Keep every correct "
+            "mark, ADD every missed grammar/vocab/coordinating-conjunction mark, and FIX any "
+            "wrong ones. Do not change sentence count, order, or numbering. Return the full "
+            "corrected JSON in the same schema."
+        )
+
     payload = {
-        "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "systemInstruction": {"parts": [{"text": sys_text}]},
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": build_user_prompt(passage, target_grammar, mode)}],
+                "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior)}],
             }
         ],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 16384,
+            "maxOutputTokens": 65536,
             "responseMimeType": "application/json",
             "responseSchema": GEMINI_SCHEMA,
         },
     }
     data = json.dumps(payload).encode("utf-8")
 
-    def _generate(use_model):
+    def _post(use_model):
         req = urllib.request.Request(
             GEMINI_URL.format(model=use_model),
             data=data,
@@ -342,6 +427,50 @@ def call_gemini(passage, target_grammar, mode, api_key, model):
         )
         with urllib.request.urlopen(req, timeout=300) as resp:
             return json.loads(resp.read().decode("utf-8"))
+
+    def _generate(use_model):
+        """전송 실패를 넉넉히 자동 재시도하되, 누적 대기가 MAX_RETRY_TOTAL을 넘으면
+        무한 대기 대신 명확한 안내로 포기한다.
+        - flash 429(속도 제한), 5xx(서버 과부하), 네트워크 오류 → 대기 후 재시도
+        - 인증/모델/요청 오류(400/403/404), 비-flash 429 → 재시도 않고 바깥에서 처리
+        일시적 속도 제한은 대개 이 시간 안에 풀리고, 하루 할당량이 소진된 경우엔
+        영원히 매달리지 않고 사용자에게 원인을 알려준다."""
+        is_flash = "flash" in (use_model or "").lower()
+        attempt = 0
+        waited = 0.0
+        while True:
+            try:
+                return _post(use_model)
+            except urllib.error.HTTPError as e:
+                retryable = e.code in (500, 502, 503, 504) or (e.code == 429 and is_flash)
+                if not retryable:
+                    raise  # 비-flash 429·인증/모델 오류 등은 바깥에서 처리(본문 미소비)
+                is_quota = e.code == 429
+                wait = _parse_retry_delay(e.read().decode("utf-8", "replace")) if is_quota else None
+                if wait is None:
+                    wait = min(RETRY_MIN_WAIT * (2 ** attempt), RETRY_MAX_WAIT)  # 3,6,12,24,48,60…
+                else:
+                    wait = min(wait + 1, RETRY_MAX_WAIT)  # 권장시간 + 약간의 여유
+                wait = max(wait, RETRY_MIN_WAIT)
+                if waited + wait > MAX_RETRY_TOTAL:
+                    if is_quota:
+                        raise RuntimeError(
+                            "무료 등급 사용량 한도를 초과했습니다(재시도해도 풀리지 않음). "
+                            "① 정확도(모델)에서 다른 Flash 모델로 바꾸거나 ② 한도가 리셋된 뒤 "
+                            "다시 시도하거나 ③ 한 번에 처리하는 지문 수를 줄이세요. "
+                            "(Google 결제를 설정하면 한도가 크게 늘어납니다.)"
+                        )
+                    raise RuntimeError("서버가 계속 응답하지 않습니다(과부하). 잠시 뒤 다시 시도하세요.")
+                time.sleep(wait)
+                waited += wait
+                attempt += 1
+            except urllib.error.URLError:
+                wait = min(RETRY_MIN_WAIT * (2 ** attempt), RETRY_MAX_WAIT)
+                if waited + wait > MAX_RETRY_TOTAL:
+                    raise RuntimeError("네트워크가 계속 불안정합니다. 연결을 확인하고 다시 시도하세요.")
+                time.sleep(wait)
+                waited += wait
+                attempt += 1
 
     def _err_msg(e):
         detail = e.read().decode("utf-8", "replace")
@@ -404,21 +533,35 @@ def call_gemini(passage, target_grammar, mode, api_key, model):
         raise RuntimeError("모델이 응답을 생성하지 못했습니다. 지문을 확인하세요.")
 
     cand = candidates[0]
-    if cand.get("finishReason") in ("SAFETY", "RECITATION", "PROHIBITED_CONTENT"):
-        raise RuntimeError(f"응답이 필터링되었습니다: {cand.get('finishReason')}")
+    finish = cand.get("finishReason")
+    if finish in ("SAFETY", "RECITATION", "PROHIBITED_CONTENT"):
+        raise RuntimeError(f"응답이 필터링되었습니다: {finish}")
+
+    _TRUNC_MSG = (
+        "출력이 최대 길이에 도달해 분석이 잘렸습니다. 이 지문이 너무 길어서 그렇습니다. "
+        "지문을 두세 문단으로 나눠 각각 따로 분석하세요."
+    )
 
     text = ""
     for part in cand.get("content", {}).get("parts", []):
         if "text" in part:
             text += part["text"]
     if not text:
+        if finish == "MAX_TOKENS":
+            raise RuntimeError(_TRUNC_MSG)
         raise RuntimeError(
             "모델 응답이 비어 있습니다. 출력이 잘렸을 수 있으니 더 짧은 지문으로 시도하세요."
         )
     try:
         result = json.loads(text)
     except json.JSONDecodeError:
+        # 잘려서 JSON이 완성되지 못한 경우가 대부분 → 원인을 분명히 안내
+        if finish == "MAX_TOKENS":
+            raise RuntimeError(_TRUNC_MSG)
         raise RuntimeError("모델 응답을 JSON으로 해석하지 못했습니다.")
+    # 길이 제한에 걸렸는데도 우연히 JSON이 파싱된 경우(내용이 부족) 방어
+    if finish == "MAX_TOKENS":
+        raise RuntimeError(_TRUNC_MSG)
     # AI 마크업 정화 + 한국어 루비 제거 (레이아웃 붕괴/오류 방어)
     for s in result.get("sentences", []):
         if not isinstance(s, dict):
@@ -427,11 +570,15 @@ def call_gemini(passage, target_grammar, mode, api_key, model):
             if not isinstance(c, dict):
                 continue
             if c.get("eng"):
-                c["eng"] = sanitize_inline(c["eng"])
+                c["eng"] = normalize_ruby(sanitize_inline(c["eng"]))
             if c.get("kor"):
                 c["kor"] = sanitize_inline(clean_korean(c["kor"]))
         if s.get("note"):
             s["note"] = sanitize_inline(clean_note(s["note"]))
+    # 요약 content 도 정화 (표/구조 태그가 레이아웃을 깨는 것을 서버에서도 차단)
+    for item in result.get("summary", []):
+        if isinstance(item, dict) and item.get("content"):
+            item["content"] = sanitize_inline(item["content"])
     return result
 
 
@@ -471,6 +618,9 @@ def list_models(api_key):
             continue
         # Flash 모델만 노출 (Pro는 무료 등급에서 사용 불가 → 제외)
         if "flash" not in low:
+            continue
+        # Flash-Lite 제외 (분석 품질 우선 — 누락이 많아 사용 안 함)
+        if "lite" in low:
             continue
         models.append({"id": mid, "label": m.get("displayName", mid)})
     # 최신순 정렬 후 상위 5개만 반환 (-latest 별칭 우선, 그다음 버전 숫자 내림차순)
@@ -553,9 +703,15 @@ class Handler(BaseHTTPRequestHandler):
         mode = req.get("mode") or "teacher"
         api_key = req.get("apiKey") or ""
         model = req.get("model") or MODEL
+        review = bool(req.get("review"))
 
         try:
             result = call_gemini(passage, target_grammar, mode, api_key, model)
+            if review:
+                # 2차 검토 패스 — 1차 결과를 다시 보내 빠진 어법·어휘를 보강
+                result = call_gemini(
+                    passage, target_grammar, mode, api_key, model, prior=result
+                )
         except Exception as e:
             self._send_json({"error": str(e)}, 502)
             return
