@@ -314,8 +314,9 @@ def call_gemini(passage, target_grammar, mode, api_key, model):
             or "is not supported" in low
             or "not available" in low
         )
-        if model_gone:
-            # 지원 중단/없는 모델 → 이 키로 가능한 모델(Flash 우선)로 자동 대체 후 1회 재시도
+        # Pro 등 무료 등급 미지원(429 할당량 0/초과) → Flash로 자동 대체
+        quota_block = e.code == 429 and "flash" not in (model or "").lower()
+        if model_gone or quota_block:
             try:
                 avail = list_models(api_key)["models"]
             except Exception:
@@ -323,14 +324,21 @@ def call_gemini(passage, target_grammar, mode, api_key, model):
             alt = next(
                 (m["id"] for m in avail if "flash" in m["id"].lower() and m["id"] != model),
                 None,
-            ) or (avail[0]["id"] if avail else None)
+            )
+            if not alt and not quota_block:
+                alt = avail[0]["id"] if avail else None
             if not alt:
+                if quota_block:
+                    raise RuntimeError(
+                        "이 모델(Pro 등)은 무료 등급에서 사용할 수 없습니다(할당량 0). "
+                        "정확도(모델)에서 Flash 모델을 고르거나, Google 결제(billing)를 설정하세요."
+                    )
                 raise RuntimeError(
                     "선택한 모델을 사용할 수 없고, 대체할 모델도 찾지 못했습니다. "
                     "정확도(모델) 목록에서 다른 모델을 골라 다시 시도하세요."
                 )
             try:
-                body = _generate(alt)
+                body = _generate(alt)  # Flash로 재시도
             except urllib.error.HTTPError as e2:
                 raise RuntimeError(f"Gemini API 오류 {e2.code}: {_err_msg(e2)}")
         elif e.code in (400, 403) and "API" in msg.upper():
@@ -410,6 +418,9 @@ def list_models(api_key):
         low = mid.lower()
         # 임베딩/이미지생성 등 텍스트 분석에 부적합한 모델 제외
         if any(x in low for x in ("embedding", "image", "tts", "aqa", "vision")):
+            continue
+        # Flash 모델만 노출 (Pro는 무료 등급에서 사용 불가 → 제외)
+        if "flash" not in low:
             continue
         models.append({"id": mid, "label": m.get("displayName", mid)})
     # 최신순 정렬 후 상위 5개만 반환 (-latest 별칭 우선, 그다음 버전 숫자 내림차순)
