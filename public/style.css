@@ -129,16 +129,21 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
   background:var(--card); border:1px solid var(--line); border-radius:12px;
   margin-bottom:14px; box-shadow:var(--shadow); overflow:hidden;
   display:grid; grid-template-columns:1fr 34%;
-  grid-template-areas:"head note" "eng note" "kor note";
+  grid-template-areas:"head note" "body note";
 }
 .sent-head{grid-area:head; display:flex; align-items:center; gap:9px; padding:14px 18px 0;}
-.eng{grid-area:eng;}
-.kor{grid-area:kor;}
+.chunks{grid-area:body; padding:12px 18px 14px;}
 .note{grid-area:note;}
 /* 그리드 열이 긴 단어/루비에 밀려 깨지지 않도록 (min-width:0 필수) */
-.sent-head,.eng,.kor,.note{min-width:0;}
-.eng{overflow-wrap:break-word;}
-.kor,.note{overflow-wrap:break-word; word-break:keep-all;}
+.sent-head,.chunks,.note{min-width:0;}
+/* 청크: 영문 바로 아래 한글 (직독직해) */
+.chunk{margin-bottom:9px;}
+.chunk:last-child{margin-bottom:0;}
+.c-eng{font-size:16px; line-height:2.1; letter-spacing:.01em; overflow-wrap:break-word;}
+.c-kor{
+  font-size:13px; color:var(--ink-soft); line-height:1.55; padding-left:2px; margin-top:1px;
+  overflow-wrap:break-word; word-break:keep-all;
+}
 .sent-no{
   background:var(--accent); color:#fff; font-weight:700; font-size:13px;
   min-width:24px; height:24px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center;
@@ -197,7 +202,7 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
 #result:empty{display:none;}
 
 @media (max-width:620px){
-  .sent{grid-template-columns:1fr; grid-template-areas:"head" "eng" "kor" "note";}
+  .sent{grid-template-columns:1fr; grid-template-areas:"head" "body" "note";}
   .note{border-left:none; border-top:1px dashed var(--line);}
   .eng{font-size:15px; line-height:2.2;}
 }

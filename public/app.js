@@ -75,90 +75,6 @@ const savedModel = localStorage.getItem(MODEL_STORE);
 if (savedModel) modelEl.value = savedModel;
 modelEl.addEventListener("change", () => localStorage.setItem(MODEL_STORE, modelEl.value));
 
-// ── 학원 마크 ──
-const LOGO_STORE = "academy_logo";
-const NAME_STORE = "academy_name";
-const logoFileEl = $("logoFile");
-const academyNameEl = $("academyName");
-const brandPreviewEl = $("brandPreview");
-const removeLogoEl = $("removeLogo");
-const brandMarkEl = $("brandMark");
-const printBrandTopEl = $("printBrandTop");
-const headTitleEl = document.querySelector(".app-head h1");
-const DEFAULT_TITLE = "영어 지문 분석본 자동 생성기";
-
-academyNameEl.value = localStorage.getItem(NAME_STORE) || "";
-
-function renderBrand() {
-  const logo = localStorage.getItem(LOGO_STORE) || "";
-  const name = localStorage.getItem(NAME_STORE) || "";
-
-  // 상단 제목 h1은 제거됨 — 존재할 때만 갱신 (호환용)
-  if (headTitleEl) headTitleEl.textContent = name || DEFAULT_TITLE;
-  printBrandTopEl.textContent = name;
-
-  // 우하단 마크: 로고 이미지
-  brandMarkEl.innerHTML = logo ? `<img src="${logo}" alt="학원 로고">` : "";
-
-  // 설정 미리보기: 로고 + 학원명 함께 표시
-  let preview = "";
-  if (logo) preview += `<img src="${logo}" alt="학원 로고">`;
-  if (name) preview += `<span class="brand-name">${esc(name)}</span>`;
-  brandPreviewEl.innerHTML = preview || '<span class="muted">아직 등록된 마크가 없습니다.</span>';
-}
-
-// 이미지를 인쇄용으로 적당히 축소해 저장 용량을 줄임 (긴 변 max 360px)
-function downscaleImage(file, maxSize) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        let { width: w, height: h } = img;
-        const scale = Math.min(1, maxSize / Math.max(w, h));
-        w = Math.round(w * scale);
-        h = Math.round(h * scale);
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/png"));
-      };
-      img.onerror = () => reject(new Error("이미지를 읽을 수 없습니다."));
-      img.src = reader.result;
-    };
-    reader.onerror = () => reject(new Error("파일을 읽을 수 없습니다."));
-    reader.readAsDataURL(file);
-  });
-}
-
-logoFileEl.addEventListener("change", async () => {
-  const file = logoFileEl.files && logoFileEl.files[0];
-  if (!file) return;
-  try {
-    const dataUrl = await downscaleImage(file, 360);
-    localStorage.setItem(LOGO_STORE, dataUrl);
-    renderBrand();
-    if (!$("brandPanel").open) $("brandPanel").open = true;
-  } catch (e) {
-    alert(e.message || "이미지 처리 중 오류가 발생했습니다.");
-  }
-});
-
-academyNameEl.addEventListener("input", () => {
-  const v = academyNameEl.value.trim();
-  if (v) localStorage.setItem(NAME_STORE, v);
-  else localStorage.removeItem(NAME_STORE);
-  renderBrand();
-});
-
-removeLogoEl.addEventListener("click", () => {
-  localStorage.removeItem(LOGO_STORE);
-  logoFileEl.value = "";
-  renderBrand();
-});
-
-renderBrand();
 loadModels(); // 저장된 키가 있으면 시작 시 사용 가능한 모델을 불러옴
 
 analyzeBtn.addEventListener("click", analyze);
@@ -236,13 +152,21 @@ function render(d) {
     <div class="result-tools"></div>
   `);
 
-  // 문장 카드 — englishHtml/koreanHtml/note 는 서버(AI)가 생성한 마크업을 그대로 사용
+  // 문장 카드 — 청크(의미 단위)마다 영문+한글을 번갈아 표시
   (d.sentences || []).forEach((s) => {
+    const chunksHtml = (s.chunks || [])
+      .map(
+        (c) => `
+        <div class="chunk">
+          <div class="c-eng">${c.eng || ""}</div>
+          <div class="c-kor">${c.kor || ""}</div>
+        </div>`
+      )
+      .join("");
     parts.push(`
       <div class="sent">
         <div class="sent-head"><span class="sent-no">${esc(s.no)}</span><span class="tag">${esc(s.tag)}</span></div>
-        <div class="eng">${s.englishHtml || ""}</div>
-        <div class="kor">${s.koreanHtml || ""}</div>
+        <div class="chunks">${chunksHtml}</div>
         <div class="note"><span class="note-title">${esc(s.no)}번 해설</span>${s.note || ""}</div>
       </div>
     `);

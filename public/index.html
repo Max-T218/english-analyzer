@@ -9,8 +9,6 @@
 <body>
 <div class="wrap">
 
-  <div class="print-brand-top" id="printBrandTop"></div>
-
   <header class="app-head">
     <div class="brand-lockup">
       <img class="app-logo" src="/logo.png" alt="ARA DNA" onerror="this.style.display='none'">
@@ -60,30 +58,6 @@
     <div class="error" id="error"></div>
   </section>
 
-  <details class="panel brand-panel" id="brandPanel">
-    <summary>🏫 학원 마크 설정 <span class="sub">(PDF 우하단에 표시)</span></summary>
-    <div class="brand-body">
-      <div class="row">
-        <div class="field">
-          <label for="logoFile">로고 이미지 (PNG·JPG)</label>
-          <input type="file" id="logoFile" accept="image/*">
-        </div>
-        <div class="field">
-          <label for="academyName">학원 이름 (선택)</label>
-          <input type="text" id="academyName" placeholder="예: OO영어학원">
-        </div>
-      </div>
-      <label style="margin-top:14px">현재 마크 미리보기</label>
-      <div class="brand-preview" id="brandPreview">
-        <span class="muted">아직 등록된 마크가 없습니다.</span>
-      </div>
-      <div class="actions">
-        <button type="button" class="btn ghost small" id="removeLogo">마크 제거</button>
-        <span class="hint">이미지는 이 브라우저에 저장되어 다음에도 자동 적용됩니다.</span>
-      </div>
-    </div>
-  </details>
-
   <div class="loading" id="loading">
     <span class="spinner"></span>
     <span>AI가 지문을 분석하고 있습니다… (지문 길이에 따라 20~60초 걸릴 수 있어요)</span>
@@ -92,7 +66,7 @@
   <div id="result"></div>
 
 </div>
-<div class="brand-mark" id="brandMark" aria-hidden="true"></div>
+<div class="brand-mark" aria-hidden="true"><img src="/mark.png" alt="ARA" onerror="this.style.display='none'"></div>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -46,12 +46,22 @@ GEMINI_SCHEMA = {
                 "properties": {
                     "no": {"type": "INTEGER"},
                     "tag": {"type": "STRING"},
-                    "englishHtml": {"type": "STRING"},
-                    "koreanHtml": {"type": "STRING"},
+                    "chunks": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "eng": {"type": "STRING"},
+                                "kor": {"type": "STRING"},
+                            },
+                            "required": ["eng", "kor"],
+                            "propertyOrdering": ["eng", "kor"],
+                        },
+                    },
                     "note": {"type": "STRING"},
                 },
-                "required": ["no", "tag", "englishHtml", "koreanHtml", "note"],
-                "propertyOrdering": ["no", "tag", "englishHtml", "koreanHtml", "note"],
+                "required": ["no", "tag", "chunks", "note"],
+                "propertyOrdering": ["no", "tag", "chunks", "note"],
             },
         },
         "summary": {
@@ -107,15 +117,21 @@ described by the schema. Follow these rules exactly.
 - Do NOT merge two sentences into one card, and do NOT split one sentence into two cards.
 - If the passage already contains sentence markers (❶❷❸…, ①②③, or leading "1." "2.")
   use them ONLY as a hint for boundaries. Renumber cleanly from 1 in `no`, and REMOVE those
-  marker characters from englishHtml/koreanHtml (do not display them).
+  marker characters from the chunk text (do not display them).
 - `tag` = a very short Korean label for the sentence's role in the flow
   (e.g. "도입·주제 제시", "근거", "부연", "결론·대조"). Keep under ~10 chars.
 
-## englishHtml — chunked English line with ruby annotations
-- Break the sentence into meaning units (chunks: phrases/clauses) and join them with
-  a slash separator element: <span class="sep">/</span>
-- Wrap each chunk's words as plain text; DO NOT wrap whole chunks in extra spans.
-- Annotate key grammar and vocabulary with ruby tags placed OVER the word. The `rt`
+## chunks — 청크(의미 단위) 배열: 각 청크마다 {eng, kor}
+- Break the sentence into meaning units (chunks: phrases/clauses). Output them IN ORDER as
+  the `chunks` array. For EACH chunk provide an object {eng, kor}:
+  * `eng` = that English chunk's words (original order) with ruby annotations added per the
+    rules below. Do NOT wrap the whole chunk in an extra span; NO slash separators.
+  * `kor` = the PLAIN Korean translation of THAT chunk only (직독직해). Plain text only —
+    NEVER put <ruby>, <rt>, <code>, or grammar/vocab color spans in `kor`.
+- `eng` and `kor` of the same chunk must correspond one-to-one (same meaning unit).
+- Chunk size: a natural phrase/clause (주어부, 동사구, 전치사구, 관계절, 부사절 등). Not too
+  small (single articles) nor a whole long sentence.
+- Annotate key grammar and vocabulary in `eng` with ruby tags placed OVER the word. The `rt`
   text is an EXPLANATION, not a translation — see the strict rule below.
   * Grammar (red) — rt = 문법 용어/기능 (grammatical term or function), NOT the meaning:
         <ruby class="over-tag"><span class="g">that</span><rt>명사절 접속사</rt></ruby>
@@ -142,11 +158,11 @@ described by the schema. Follow these rules exactly.
   * PURPLE grammar+vocab tag (`class="gv"`): use ONLY for a fixed expression whose
     grammar function matters; rt = the grammar function (기능 위주). Prefer red or blue
     over purple whenever possible.
-  * rt is NEVER a phrase/sentence translation — the full Korean translation lives ONLY in
-    koreanHtml. Keep every rt very short.
+  * rt is NEVER a phrase/sentence translation — the Korean translation lives ONLY in the
+    chunk's `kor` field. Keep every rt very short.
 - FINAL rt CHECK: before returning, re-scan every RED grammar rt and confirm it contains
   no word 뜻 (only a grammar label). Fix any that mix meaning in.
-- Keep the original English words and order intact; only add ruby/sep markup around them.
+- Keep the original English words and order intact; only add ruby markup around them.
 - Escape any literal < > & in the source text as &lt; &gt; &amp; (there usually are none).
 
 ### GRAMMAR COVERAGE (RED) — do NOT omit
@@ -163,23 +179,16 @@ RULE: it is far better to mark a clear grammar point than to skip it. Do NOT lea
 obvious grammar structure without a red ruby. Aim for full coverage in every sentence.
 
 ### FINAL SELF-CHECK (mandatory, before returning)
-Re-read each sentence's englishHtml one more time. For every item in the coverage list
-that appears in that sentence, confirm it has a RED grammar ruby. If any is missing, ADD
-it now. Only return the JSON after this check — every sentence should have at least one
-red grammar annotation (a sentence with none almost always means you missed something).
-
-## koreanHtml — chunk-aligned Korean translation
-- Translate the sentence chunk-by-chunk, using the SAME chunk boundaries as englishHtml,
-  joined with <span class="sep">/</span>. Natural but faithful (직독직해) Korean.
-- IMPORTANT: koreanHtml must be PLAIN Korean text with ONLY <span class="sep">/</span>
-  separators. NEVER put <ruby>, <rt>, <code>, or any grammar/vocab color spans
-  (class g/v/gv/hl/conj-hl) in koreanHtml. All annotations belong ONLY in englishHtml.
+Re-read each chunk's `eng` one more time. For every item in the coverage list that appears
+in that chunk, confirm it has a RED grammar ruby. If any is missing, ADD it now. Only return
+the JSON after this check — every sentence should have at least one red grammar annotation
+(a sentence with none almost always means you missed something).
 
 ## note — per-sentence commentary
 - One or two sentences of objective, written-style Korean explaining the main grammar
   point(s) and key vocabulary in this sentence.
 - Wrap every English word/expression in a <code> tag that is COLOR-CODED by role, so it
-  visually matches the same word's color in englishHtml (the reader connects them):
+  visually matches the same word's color in the chunk `eng` (the reader connects them):
   * grammar point:     <code class="g">that</code>          (red)
   * vocabulary:        <code class="v">derogatory</code>    (blue)
   * grammar + vocab:   <code class="gv">regardless of</code>(purple)
@@ -372,14 +381,17 @@ def call_gemini(passage, target_grammar, mode, api_key, model):
         result = json.loads(text)
     except json.JSONDecodeError:
         raise RuntimeError("모델 응답을 JSON으로 해석하지 못했습니다.")
-    # AI 마크업 정화 + 한국어 줄 루비 제거 (레이아웃 붕괴/오류 방어)
+    # AI 마크업 정화 + 한국어 루비 제거 (레이아웃 붕괴/오류 방어)
     for s in result.get("sentences", []):
         if not isinstance(s, dict):
             continue
-        if s.get("englishHtml"):
-            s["englishHtml"] = sanitize_inline(s["englishHtml"])
-        if s.get("koreanHtml"):
-            s["koreanHtml"] = sanitize_inline(clean_korean(s["koreanHtml"]))
+        for c in s.get("chunks", []):
+            if not isinstance(c, dict):
+                continue
+            if c.get("eng"):
+                c["eng"] = sanitize_inline(c["eng"])
+            if c.get("kor"):
+                c["kor"] = sanitize_inline(clean_korean(c["kor"]))
         if s.get("note"):
             s["note"] = sanitize_inline(s["note"])
     return result
