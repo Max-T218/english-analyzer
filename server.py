@@ -193,6 +193,9 @@ the JSON after this check — every sentence should have at least one red gramma
   * vocabulary:        <code class="v">derogatory</code>    (blue)
   * grammar + vocab:   <code class="gv">regardless of</code>(purple)
   Choose the class consistently with how you annotated that word on the left side.
+- NEVER put <ruby>, <rt>, or over-tag markup in `note`. Ruby annotations belong ONLY in
+  the chunk `eng` (left column). In the note (right explanation column) English words are
+  wrapped in <code> only — a stray <ruby> here breaks the right-column layout.
 
 ## summary (주제 & 흐름 요약)
 - First item: {label:"주제", content: an English topic sentence, then <br>, then the
@@ -224,6 +227,41 @@ def clean_korean(html):
     while prev != html:                  # 역할 색상 스팬은 텍스트만 남기고 벗김
         prev = html
         html = _ROLE_SPAN_RE.sub(r"\1", html)
+    return html
+
+
+# 우측 해설(note)로 잘못 딸려온 루비 태그를 잡아 <code>로 바꾼다.
+# 구조: <ruby ...><span class="g">word</span><rt>설명</rt></ruby>
+_NOTE_RUBY_RE = re.compile(
+    r'<ruby[^>]*>\s*<span class="(g|v|gv|hl|conj-hl)"[^>]*>(.*?)</span>\s*'
+    r"(?:<rt[^>]*>.*?</rt>\s*)?</ruby>",
+    re.S,
+)
+
+
+def clean_note(html):
+    """해설(우측 설명 열)에 잘못 들어간 <ruby> 태그를 제거한다.
+    루비는 좌측 본문 전용이므로, 해설에서는 rt(위 첨자 설명)를 떼어내고
+    같은 역할 색상을 유지한 <code>로 변환해 레이아웃이 깨지지 않게 한다."""
+    if not html:
+        return html
+
+    def repl(m):
+        cls = m.group(1)
+        inner = _RT_RE.sub("", m.group(2))       # 혹시 남은 rt 제거
+        inner = _RUBY_RE.sub("", inner)          # 중첩 ruby 래퍼 제거
+        prev = None
+        while prev != inner:                     # 안쪽 역할 색상 스팬은 텍스트만
+            prev = inner
+            inner = _ROLE_SPAN_RE.sub(r"\1", inner)
+        code_cls = cls if cls in ("g", "v", "gv") else ""
+        attr = f' class="{code_cls}"' if code_cls else ""
+        return f"<code{attr}>{inner}</code>"
+
+    html = _NOTE_RUBY_RE.sub(repl, html)
+    # 짝이 맞지 않아 남은 ruby/rt 잔재까지 방어적으로 제거
+    html = _RT_RE.sub("", html)
+    html = _RUBY_RE.sub("", html)
     return html
 
 
@@ -393,7 +431,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model):
             if c.get("kor"):
                 c["kor"] = sanitize_inline(clean_korean(c["kor"]))
         if s.get("note"):
-            s["note"] = sanitize_inline(s["note"])
+            s["note"] = sanitize_inline(clean_note(s["note"]))
     return result
 
 
