@@ -1,0 +1,15 @@
+# Render 배포 설정 (Blueprint). Render가 이 파일을 읽어 자동으로 웹 서비스를 만듭니다.
+services:
+  - type: web
+    name: eng-passage-analyzer
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python server.py"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.4"
+      # (선택) 모든 사용자 공용 키를 쓰려면 아래 주석을 풀고 값을 넣으세요.
+      # 지금은 '선생님마다 본인 키 입력' 방식이라 설정하지 않습니다.
+      # - key: GEMINI_API_KEY
+      #   sync: false

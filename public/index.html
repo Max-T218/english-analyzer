@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>영어 지문 분석본 자동 생성기</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <div class="print-brand-top" id="printBrandTop"></div>
+
+  <header class="app-head">
+    <div class="eyebrow">Chunk Reading · 직독직해 분석본</div>
+    <h1>영어 지문 분석본 자동 생성기</h1>
+    <p>영어 지문을 붙여넣으면 AI(Google Gemini)가 청크 단위 직독직해 분석본을 자동으로 만들어 줍니다.</p>
+  </header>
+
+  <section class="panel">
+    <label for="apiKey">Gemini API 키
+      <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="keylink">키 발급받기 ↗</a>
+    </label>
+    <div class="key-row">
+      <input type="password" id="apiKey" placeholder="AIza... (Google AI Studio에서 발급)" autocomplete="off">
+      <button type="button" class="btn ghost small" id="toggleKey" title="보이기/숨기기">👁</button>
+    </div>
+    <div class="hint" id="keyStatus">키는 이 브라우저에만 저장되며 서버에 파일로 남지 않습니다.</div>
+
+    <label for="passage" style="margin-top:16px">영어 지문</label>
+    <textarea id="passage" placeholder="분석할 영어 지문을 여기에 붙여넣으세요."></textarea>
+
+    <div class="row">
+      <div class="field">
+        <label for="targetGrammar">목표 어법 (선택)</label>
+        <input type="text" id="targetGrammar" placeholder="예: 분사구문, 관계대명사, 가정법">
+      </div>
+      <div class="field">
+        <label for="mode">용도</label>
+        <select id="mode">
+          <option value="teacher">교사용 (수업·인쇄)</option>
+          <option value="student">학생용 (자기주도 학습)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="model">정확도 (모델)</label>
+        <select id="model">
+          <option value="gemini-2.5-pro">정확 · 권장 (Gemini 2.5 Pro)</option>
+          <option value="gemini-2.5-flash">빠름 (Gemini 2.5 Flash)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn" id="analyzeBtn">분석하기</button>
+      <button class="btn ghost" id="printBtn" style="display:none">🖨️ 인쇄 / PDF</button>
+      <span class="hint">Ctrl+Enter 로도 실행됩니다.</span>
+    </div>
+    <div class="error" id="error"></div>
+  </section>
+
+  <details class="panel brand-panel" id="brandPanel">
+    <summary>🏫 학원 마크 설정 <span class="sub">(PDF 우하단에 표시)</span></summary>
+    <div class="brand-body">
+      <div class="row">
+        <div class="field">
+          <label for="logoFile">로고 이미지 (PNG·JPG)</label>
+          <input type="file" id="logoFile" accept="image/*">
+        </div>
+        <div class="field">
+          <label for="academyName">학원 이름 (선택)</label>
+          <input type="text" id="academyName" placeholder="예: OO영어학원">
+        </div>
+      </div>
+      <label style="margin-top:14px">현재 마크 미리보기</label>
+      <div class="brand-preview" id="brandPreview">
+        <span class="muted">아직 등록된 마크가 없습니다.</span>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn ghost small" id="removeLogo">마크 제거</button>
+        <span class="hint">이미지는 이 브라우저에 저장되어 다음에도 자동 적용됩니다.</span>
+      </div>
+    </div>
+  </details>
+
+  <div class="loading" id="loading">
+    <span class="spinner"></span>
+    <span>AI가 지문을 분석하고 있습니다… (지문 길이에 따라 20~60초 걸릴 수 있어요)</span>
+  </div>
+
+  <div id="result"></div>
+
+</div>
+<div class="brand-mark" id="brandMark" aria-hidden="true"></div>
+<script src="/app.js"></script>
+</body>
+</html>

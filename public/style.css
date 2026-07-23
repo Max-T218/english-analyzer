@@ -1,0 +1,227 @@
+:root{
+  --paper:#f6f7f9; --card:#ffffff; --ink:#1b2430; --ink-soft:#485463;
+  --line:#e3e7ec; --line-soft:#eef1f4; --accent:#1f4e6b; --accent-soft:#e8eef3;
+  --g:#cf2e2e; --v:#1f6fb2; --gv:#7a3fa0; --conj:#1f9dd0; --hl:#fff1a8; --conj-bg:#cdeefb;
+  --shadow:0 1px 2px rgba(20,30,45,.05),0 6px 20px rgba(20,30,45,.05);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --paper:#12161c; --card:#1a1f27; --ink:#e7ebf0; --ink-soft:#9aa6b4;
+    --line:#2a323d; --line-soft:#232a33; --accent:#7fb5d8; --accent-soft:#1e2c38;
+    --g:#ff6b6a; --v:#63b3e8; --gv:#c48fe0; --conj:#57c4ec; --hl:#5c5326; --conj-bg:rgba(87,196,236,.28);
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
+  }
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:"Segoe UI","Malgun Gothic",Pretendard,system-ui,-apple-system,sans-serif;
+  line-height:1.5; -webkit-font-smoothing:antialiased;
+  -webkit-print-color-adjust:exact; print-color-adjust:exact;
+}
+.wrap{max-width:900px; margin:0 auto; padding:28px 22px 90px;}
+
+/* ── 헤더 ── */
+.app-head{margin-bottom:20px;}
+.app-head .eyebrow{font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); font-weight:700;}
+.app-head h1{font-family:Georgia,"Nanum Myeongjo",serif; font-size:24px; margin:6px 0 4px; text-wrap:balance;}
+.app-head p{color:var(--ink-soft); font-size:14px; margin:0;}
+
+/* ── 입력 패널 ── */
+.panel{
+  background:var(--card); border:1px solid var(--line); border-radius:14px;
+  padding:18px; box-shadow:var(--shadow); margin-bottom:22px;
+}
+.panel label{display:block; font-size:12.5px; font-weight:700; color:var(--ink-soft); margin:0 0 6px; letter-spacing:.02em;}
+.panel label .keylink{float:right; font-weight:600; font-size:11.5px; color:var(--accent); text-decoration:none;}
+.panel label .keylink:hover{text-decoration:underline;}
+.key-row{display:flex; gap:8px; align-items:stretch;}
+.key-row input{flex:1; min-width:0;}
+.btn.small{padding:8px 12px; font-size:13px;}
+textarea, input[type=text], select{
+  width:100%; font:inherit; color:var(--ink); background:var(--paper);
+  border:1px solid var(--line); border-radius:9px; padding:10px 12px;
+}
+textarea{min-height:150px; resize:vertical; line-height:1.55;}
+textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent);}
+.row{display:flex; gap:14px; flex-wrap:wrap; margin-top:14px;}
+.row .field{flex:1 1 220px; min-width:0;}
+.actions{display:flex; align-items:center; gap:12px; margin-top:16px; flex-wrap:wrap;}
+.btn{
+  font:inherit; font-size:14px; font-weight:700; cursor:pointer;
+  border:1px solid var(--accent); background:var(--accent); color:#fff;
+  padding:10px 20px; border-radius:9px; display:inline-flex; gap:8px; align-items:center;
+  transition:transform .05s, opacity .15s;
+}
+@media (prefers-color-scheme:dark){.btn{color:#0f141a;}}
+.btn:hover{opacity:.92;}
+.btn:active{transform:translateY(1px);}
+.btn:disabled{opacity:.5; cursor:not-allowed;}
+.btn.ghost{background:var(--card); color:var(--ink); border-color:var(--line);}
+.btn.ghost:hover{border-color:var(--accent);}
+.hint{font-size:12px; color:var(--ink-soft);}
+.error{
+  margin-top:14px; padding:11px 14px; border-radius:9px; font-size:13px;
+  background:rgba(207,46,46,.08); border:1px solid rgba(207,46,46,.35); color:var(--g);
+}
+.error:empty{display:none;}
+
+/* ── 학원 마크 설정 ── */
+.brand-panel > summary{cursor:pointer; font-weight:700; color:var(--accent); font-size:13.5px; list-style:none;}
+.brand-panel > summary::-webkit-details-marker{display:none;}
+.brand-panel > summary::before{content:"▸ "; color:var(--accent);}
+.brand-panel[open] > summary::before{content:"▾ ";}
+.brand-panel > summary .sub{color:var(--ink-soft); font-weight:600; font-size:12px;}
+.brand-body{margin-top:14px;}
+input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); background:var(--paper); border:1px solid var(--line); border-radius:9px; padding:8px 10px;}
+.brand-preview{
+  margin-top:6px; padding:14px; border:1px dashed var(--line); border-radius:9px;
+  display:flex; align-items:center; gap:12px; min-height:56px; background:var(--paper);
+}
+.brand-preview .muted{color:var(--ink-soft); font-size:12.5px;}
+.brand-preview img, .brand-mark img{max-height:46px; max-width:160px; object-fit:contain;}
+.brand-name{font-weight:700; color:var(--ink); font-size:13.5px;}
+
+/* 화면에서는 숨기고, 인쇄에서만 우하단에 표시 */
+.brand-mark{display:none;}
+/* 인쇄 시트 최상단 학원명 (화면에서는 숨김 — 화면은 헤더 제목이 대신함) */
+.print-brand-top{display:none;}
+
+/* ── 로딩 ── */
+.loading{display:none; align-items:center; gap:12px; margin:26px 2px; color:var(--ink-soft); font-size:14px;}
+.loading.on{display:flex;}
+.spinner{
+  width:20px; height:20px; border-radius:50%;
+  border:3px solid var(--line); border-top-color:var(--accent); animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg);}}
+@media (prefers-reduced-motion:reduce){.spinner{animation:none;}}
+
+/* ── 결과 표지 ── */
+.cover{
+  border:1px solid var(--line); background:var(--card); border-radius:14px;
+  padding:22px 24px; box-shadow:var(--shadow); position:relative; overflow:hidden; margin-bottom:16px;
+}
+.cover::before{content:""; position:absolute; left:0; top:0; bottom:0; width:5px; background:var(--accent);}
+.cover h2{font-family:Georgia,"Nanum Myeongjo",serif; font-size:21px; line-height:1.3; margin:0 0 4px; text-wrap:balance;}
+.cover .ko-title{color:var(--ink-soft); font-size:14px; margin-bottom:14px;}
+.legend{
+  display:flex; flex-wrap:wrap; gap:8px 10px; font-size:11.5px; color:var(--ink-soft);
+  margin-top:14px; padding:11px 12px; border:1px solid var(--line); border-radius:9px;
+  background:var(--accent-soft);
+}
+.legend .legend-title{width:100%; font-weight:700; color:var(--accent); font-size:11px; letter-spacing:.04em; margin-bottom:2px;}
+.legend b{display:inline-flex; align-items:center; gap:5px; font-weight:700;}
+.dot{width:11px; height:11px; border-radius:3px; display:inline-block; border:1px solid rgba(0,0,0,.12);}
+
+.result-tools{display:flex; justify-content:flex-end; margin:8px 0 18px;}
+
+/* ── 문장 카드 (좌우 7:3) ── */
+.sent{
+  background:var(--card); border:1px solid var(--line); border-radius:12px;
+  margin-bottom:14px; box-shadow:var(--shadow); overflow:hidden;
+  display:grid; grid-template-columns:1fr 34%;
+  grid-template-areas:"head note" "eng note" "kor note";
+}
+.sent-head{grid-area:head; display:flex; align-items:center; gap:9px; padding:14px 18px 0;}
+.eng{grid-area:eng;}
+.kor{grid-area:kor;}
+.note{grid-area:note;}
+.sent-no{
+  background:var(--accent); color:#fff; font-weight:700; font-size:13px;
+  min-width:24px; height:24px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center;
+}
+@media (prefers-color-scheme:dark){.sent-no{color:#0f141a;}}
+.sent-head .tag{font-size:11px; color:var(--ink-soft); letter-spacing:.03em;}
+
+.eng{font-size:16.5px; line-height:2.35; letter-spacing:.01em; padding:12px 18px 2px;}
+.sep{color:var(--accent); opacity:.5; margin:0 5px; font-weight:400;}
+.kor{font-size:14px; color:var(--ink-soft); line-height:1.9; padding:0 18px 16px;}
+.kor .sep{opacity:.35;}
+
+/* 루비 태그 */
+ruby{ruby-align:center;}
+ruby.over-tag{ruby-position:over;}
+ruby rt{font-size:10px; font-weight:700; line-height:1.15; color:var(--g);}
+.g{color:var(--g); font-weight:600;}
+ruby.vocab-rt .v{color:var(--v); font-weight:600;}
+ruby.vocab-rt rt{color:var(--v);}
+ruby.theme-rt .gv{color:var(--gv); font-weight:600;}
+ruby.theme-rt rt{color:var(--gv);}
+.conj-hl{background:var(--conj-bg); border-radius:3px; padding:0 3px;}
+sup.conj-num-top{color:var(--conj); font-weight:700; font-size:9px; vertical-align:super;}
+ruby.hl-rt .hl{background:var(--hl); border-radius:3px; padding:0 2px; font-weight:600;}
+ruby.hl-rt rt{color:var(--ink-soft);}
+
+/* 해설 패널 */
+.note{
+  border-left:1px dashed var(--line); background:var(--accent-soft);
+  padding:14px 15px; font-size:12.5px; color:var(--ink-soft); line-height:1.7;
+}
+@media (prefers-color-scheme:dark){.note{background:rgba(127,181,216,.06);}}
+.note-title{display:block; font-weight:700; color:var(--accent); font-size:11px; letter-spacing:.03em; margin-bottom:6px;}
+.note code{font-family:"SFMono-Regular",Consolas,monospace; font-size:12px; background:var(--line-soft); color:var(--ink); padding:1px 5px; border-radius:4px; font-weight:600;}
+/* 해설 속 영어를 좌측 본문과 같은 역할별 색상으로 (가독성 연결) */
+.note code.g{color:var(--g);}
+.note code.v{color:var(--v);}
+.note code.gv{color:var(--gv);}
+
+/* 섹션 & 표 */
+h3.section{
+  font-family:Georgia,"Nanum Myeongjo",serif; font-size:18px; font-weight:700;
+  margin:34px 0 14px; padding-bottom:8px; border-bottom:2px solid var(--accent); display:flex; gap:9px; align-items:baseline;
+}
+h3.section .num{color:var(--accent); font-size:15px;}
+.table-wrap{overflow-x:auto; border:1px solid var(--line); border-radius:11px; box-shadow:var(--shadow);}
+table{width:100%; border-collapse:collapse; font-size:13px; background:var(--card); min-width:520px;}
+th,td{border-bottom:1px solid var(--line); padding:9px 12px; text-align:left; vertical-align:top;}
+thead th{background:var(--accent-soft); color:var(--accent); font-weight:700; font-size:12px; letter-spacing:.03em;}
+table.flow td:first-child{font-weight:700; color:var(--accent); white-space:nowrap; width:78px;}
+table.flow tr:last-child td, table.vocab tr:last-child td{border-bottom:none;}
+table.vocab td:first-child{font-weight:600; color:var(--ink);}
+table.vocab td.pos{color:var(--ink-soft); font-style:italic; white-space:nowrap;}
+
+footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-soft);}
+#result:empty{display:none;}
+
+@media (max-width:620px){
+  .sent{grid-template-columns:1fr; grid-template-areas:"head" "eng" "kor" "note";}
+  .note{border-left:none; border-top:1px dashed var(--line);}
+  .eng{font-size:15px; line-height:2.2;}
+}
+@media print{
+  /* 우하단 마크가 놓일 여백 확보 */
+  @page{ margin:14mm 12mm 18mm; }
+  /* OS가 다크모드여도 인쇄는 항상 라이트 색상으로 고정 (색 빠짐 방지) */
+  :root{
+    --paper:#ffffff; --card:#ffffff; --ink:#1b2430; --ink-soft:#42505f;
+    --line:#c9d0d8; --line-soft:#eef1f4; --accent:#1f4e6b; --accent-soft:#eaf0f5;
+    --g:#c62828; --v:#1565a8; --gv:#6d329a; --conj:#1487b8; --hl:#ffec99; --conj-bg:#cdeefb;
+  }
+  /* 모든 색/배경을 강제로 인쇄 (형광펜·범례 스와치·루비 색상 포함) */
+  *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
+  body{background:#fff;}
+  .app-head,.panel,.loading,.result-tools,footer{display:none !important;}
+  .sent,.cover,.table-wrap,.legend{box-shadow:none; break-inside:avoid;}
+  .wrap{max-width:none; padding:0;}
+  /* '주제 & 흐름 요약'부터 새 페이지에서 시작 */
+  .page-break{break-before:page; page-break-before:always;}
+  h3.section{break-after:avoid; page-break-after:avoid;}
+  /* 학원 마크 — 모든 페이지 우하단 (fixed 요소는 페이지마다 반복 인쇄됨) */
+  .brand-mark{
+    display:flex; align-items:center; gap:8px;
+    position:fixed; right:0; bottom:0;
+  }
+  .brand-mark:empty{display:none;}
+  .brand-mark img{max-height:14mm; max-width:42mm;}
+  .brand-mark .brand-name{font-size:10.5px; color:#1b2430; font-weight:700;}
+  /* 시트 최상단 학원명 */
+  .print-brand-top{
+    display:block; text-align:center; font-family:Georgia,"Nanum Myeongjo",serif;
+    font-weight:700; font-size:15px; color:#1f4e6b;
+    padding-bottom:6px; margin-bottom:10px; border-bottom:2px solid #1f4e6b;
+  }
+  .print-brand-top:empty{display:none;}
+}
