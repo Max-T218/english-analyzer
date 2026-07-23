@@ -236,28 +236,58 @@ def call_gemini(passage, target_grammar, mode, api_key, model):
         },
     }
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        GEMINI_URL.format(model=model),
-        data=data,
-        method="POST",
-        headers={
-            "content-type": "application/json",
-            "x-goog-api-key": api_key,
-        },
-    )
-    try:
+
+    def _generate(use_model):
+        req = urllib.request.Request(
+            GEMINI_URL.format(model=use_model),
+            data=data,
+            method="POST",
+            headers={"content-type": "application/json", "x-goog-api-key": api_key},
+        )
         with urllib.request.urlopen(req, timeout=300) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def _err_msg(e):
         detail = e.read().decode("utf-8", "replace")
-        msg = detail
         try:
-            msg = json.loads(detail).get("error", {}).get("message", detail)
+            return json.loads(detail).get("error", {}).get("message", detail)
         except Exception:
-            pass
-        if e.code in (400, 403) and "API" in msg.upper():
+            return detail
+
+    try:
+        body = _generate(model)
+    except urllib.error.HTTPError as e:
+        msg = _err_msg(e)
+        low = msg.lower()
+        model_gone = e.code in (400, 404) and (
+            "no longer available" in low
+            or "not found" in low
+            or "is not supported" in low
+            or "not available" in low
+        )
+        if model_gone:
+            # 지원 중단/없는 모델 → 이 키로 가능한 모델(Flash 우선)로 자동 대체 후 1회 재시도
+            try:
+                avail = list_models(api_key)["models"]
+            except Exception:
+                avail = []
+            alt = next(
+                (m["id"] for m in avail if "flash" in m["id"].lower() and m["id"] != model),
+                None,
+            ) or (avail[0]["id"] if avail else None)
+            if not alt:
+                raise RuntimeError(
+                    "선택한 모델을 사용할 수 없고, 대체할 모델도 찾지 못했습니다. "
+                    "정확도(모델) 목록에서 다른 모델을 골라 다시 시도하세요."
+                )
+            try:
+                body = _generate(alt)
+            except urllib.error.HTTPError as e2:
+                raise RuntimeError(f"Gemini API 오류 {e2.code}: {_err_msg(e2)}")
+        elif e.code in (400, 403) and "API" in msg.upper():
             raise RuntimeError(f"API 키 오류로 보입니다 ({e.code}): {msg}")
-        raise RuntimeError(f"Gemini API 오류 {e.code}: {msg}")
+        else:
+            raise RuntimeError(f"Gemini API 오류 {e.code}: {msg}")
     except urllib.error.URLError as e:
         raise RuntimeError(f"네트워크 오류: {e.reason}")
 
