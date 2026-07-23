@@ -110,18 +110,29 @@ described by the schema. Follow these rules exactly.
         <ruby class="over-tag"><span class="g">to grow</span><rt>부사적 용법(목적)</rt></ruby>
   * Vocabulary (blue) — rt = 그 단어/숙어의 짧은 어휘 뜻 (one-word dictionary gloss):
         <ruby class="over-tag vocab-rt"><span class="v">cultivate</span><rt>재배하다</rt></ruby>
-  * Grammar+vocab (purple) — rt = 문법 설명 (문법 기능 위주):
-        <ruby class="over-tag theme-rt"><span class="gv">regardless of</span><rt>전치사구(~와 상관없이)</rt></ruby>
+  * Grammar+vocab (purple) — rt = 문법 기능만 (뜻은 넣지 말 것):
+        <ruby class="over-tag theme-rt"><span class="gv">regardless of</span><rt>전치사구</rt></ruby>
   * Emphasis / connective (yellow highlight) — rt = 연결어의 기능/역할 (역접·대조·첨가 등):
         <ruby class="over-tag hl-rt"><span class="hl">However</span><rt>역접(그러나)</rt></ruby>
 - Parallel structure joined by and/or: mark the conjunction as
   <span class="conj-hl">and</span> and put a superscript number before each parallel
   element: <sup class="conj-num-top">1</sup>WORD ... <sup class="conj-num-top">2</sup>WORD
-- CRITICAL — rt content rule: the `rt` annotation must be a GRAMMAR term/function for
-  grammar tags (e.g. 관계대명사, 분사구문, 동명사, 가주어-진주어, 목적격보어(원형부정사),
-  분사구문, 도치, 강조구문). For vocabulary tags it is a SHORT single-word 어휘 뜻. It must
-  NEVER be a phrase- or sentence-level translation. The full Korean translation lives ONLY
-  in koreanHtml — do NOT duplicate that translation inside any rt. Keep each rt very short.
+- CRITICAL — separate 어법 vs 어휘 in rt content, NEVER mix them:
+  * RED grammar tag (`class="g"`): rt = ONLY the grammatical term/function
+    (관계대명사, 분사구문, 동명사, 가주어-진주어, 목적격보어(원형부정사), 도치, 강조구문 등).
+    It must contain ZERO word meaning (뜻). If you feel the urge to write what the word
+    means, that belongs on a BLUE vocab tag instead — not here.
+      - WRONG: <rt>재배하다(과거 수동태)</rt>   ← 뜻이 섞임, 금지
+      - RIGHT: <rt>과거 수동태</rt>
+  * BLUE vocab tag (`class="v"`): rt = ONLY a short 어휘 뜻 (재배하다, 경멸적인 …).
+    No grammar term here.
+  * PURPLE grammar+vocab tag (`class="gv"`): use ONLY for a fixed expression whose
+    grammar function matters; rt = the grammar function (기능 위주). Prefer red or blue
+    over purple whenever possible.
+  * rt is NEVER a phrase/sentence translation — the full Korean translation lives ONLY in
+    koreanHtml. Keep every rt very short.
+- FINAL rt CHECK: before returning, re-scan every RED grammar rt and confirm it contains
+  no word 뜻 (only a grammar label). Fix any that mix meaning in.
 - Keep the original English words and order intact; only add ruby/sep markup around them.
 - Escape any literal < > & in the source text as &lt; &gt; &amp; (there usually are none).
 
