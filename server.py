@@ -22,9 +22,12 @@ from pathlib import Path
 # 배포(Render 등)에서는 0.0.0.0 바인딩이 필요. 로컬에서도 localhost로 접속됨.
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8000"))
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-ALLOWED_MODELS = {"gemini-2.5-flash", "gemini-2.5-pro"}
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+# 모델명은 URL 경로에 들어가므로 안전한 형식만 허용 (하드코딩 목록 대신 형식 검증)
+_MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]+$")
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
+
+GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000"
 
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -215,7 +218,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model):
             "Gemini API 키가 없습니다. 화면 상단의 'API 키' 칸에 키를 입력하거나 "
             "환경변수 GEMINI_API_KEY 를 설정하세요."
         )
-    model = model if model in ALLOWED_MODELS else MODEL
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
 
     payload = {
         "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
@@ -289,6 +292,46 @@ def call_gemini(passage, target_grammar, mode, api_key, model):
     return result
 
 
+def list_models(api_key):
+    """해당 키로 generateContent가 가능한 gemini 모델 목록을 반환."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("Gemini API 키가 없습니다. 먼저 키를 입력하세요.")
+    req = urllib.request.Request(
+        GEMINI_LIST_URL,
+        method="GET",
+        headers={"x-goog-api-key": api_key},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")
+        try:
+            detail = json.loads(detail).get("error", {}).get("message", detail)
+        except Exception:
+            pass
+        raise RuntimeError(f"모델 목록을 불러오지 못했습니다 ({e.code}): {detail}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"네트워크 오류: {e.reason}")
+
+    models = []
+    for m in body.get("models", []):
+        mid = m.get("name", "").split("/", 1)[-1]
+        if not mid.startswith("gemini-"):
+            continue
+        if "generateContent" not in m.get("supportedGenerationMethods", []):
+            continue
+        low = mid.lower()
+        # 임베딩/이미지생성 등 텍스트 분석에 부적합한 모델 제외
+        if any(x in low for x in ("embedding", "image", "tts", "aqa", "vision")):
+            continue
+        models.append({"id": mid, "label": m.get("displayName", mid)})
+    # 최신·상위 모델이 위로 오도록 정렬 (버전 숫자 내림차순 근사)
+    models.sort(key=lambda x: x["id"], reverse=True)
+    return {"models": models}
+
+
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
@@ -330,7 +373,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path.split("?", 1)[0] != "/api/analyze":
+        path = self.path.split("?", 1)[0]
+        if path not in ("/api/analyze", "/api/models"):
             self.send_error(404, "Not found")
             return
         try:
@@ -339,6 +383,13 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(raw.decode("utf-8"))
         except (ValueError, json.JSONDecodeError):
             self._send_json({"error": "잘못된 요청입니다."}, 400)
+            return
+
+        if path == "/api/models":
+            try:
+                self._send_json(list_models(req.get("apiKey") or ""))
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
             return
 
         passage = (req.get("passage") or "").strip()
