@@ -368,9 +368,16 @@ def list_models(api_key):
         if any(x in low for x in ("embedding", "image", "tts", "aqa", "vision")):
             continue
         models.append({"id": mid, "label": m.get("displayName", mid)})
-    # 최신·상위 모델이 위로 오도록 정렬 (버전 숫자 내림차순 근사)
-    models.sort(key=lambda x: x["id"], reverse=True)
-    return {"models": models}
+    # 최신순 정렬 후 상위 5개만 반환 (-latest 별칭 우선, 그다음 버전 숫자 내림차순)
+    def rank(m):
+        mid = m["id"].lower()
+        is_latest = 1 if mid.endswith("-latest") else 0
+        vm = re.search(r"gemini-(\d+(?:\.\d+)?)", mid)
+        ver = float(vm.group(1)) if vm else 0.0
+        return (is_latest, ver, mid)
+
+    models.sort(key=rank, reverse=True)
+    return {"models": models[:5]}
 
 
 CONTENT_TYPES = {
