@@ -76,11 +76,25 @@ GEMINI_SCHEMA = {
                         "items": {
                             "type": "OBJECT",
                             "properties": {
-                                "eng": {"type": "STRING"},
+                                "text": {"type": "STRING"},
                                 "kor": {"type": "STRING"},
+                                "anns": {
+                                    "type": "ARRAY",
+                                    "items": {
+                                        "type": "OBJECT",
+                                        "properties": {
+                                            "t": {"type": "STRING"},
+                                            "role": {"type": "STRING"},
+                                            "rt": {"type": "STRING"},
+                                            "num": {"type": "INTEGER"},
+                                        },
+                                        "required": ["t", "role", "rt", "num"],
+                                        "propertyOrdering": ["t", "role", "rt", "num"],
+                                    },
+                                },
                             },
-                            "required": ["eng", "kor"],
-                            "propertyOrdering": ["eng", "kor"],
+                            "required": ["text", "kor", "anns"],
+                            "propertyOrdering": ["text", "kor", "anns"],
                         },
                     },
                     "note": {"type": "STRING"},
@@ -177,100 +191,79 @@ described by the schema. Follow these rules exactly.
   제시돼 빈칸으로 만들기 좋다". If the sentence has NO isTopic and NO examTags, set examNote
   to an empty string "".
 
-## chunks — 청크(의미 단위) 배열: 각 청크마다 {eng, kor}
-- Break the sentence into meaning units (chunks: phrases/clauses). Output them IN ORDER as
-  the `chunks` array. For EACH chunk provide an object {eng, kor}:
-  * `eng` = that English chunk's words (original order) with ruby annotations added per the
-    rules below. Do NOT wrap the whole chunk in an extra span; NO slash separators.
-  * `kor` = the PLAIN Korean translation of THAT chunk only (직독직해). Plain text only —
-    NEVER put <ruby>, <rt>, <code>, or grammar/vocab color spans in `kor`.
-- `eng` and `kor` of the same chunk must correspond one-to-one (same meaning unit).
-- Chunk size: a natural phrase/clause (주어부, 동사구, 전치사구, 관계절, 부사절 등). Not too
-  small (single articles) nor a whole long sentence.
-- Annotate key grammar and vocabulary in `eng` with ruby tags placed OVER the word. The `rt`
-  text is an EXPLANATION, not a translation — see the strict rule below.
-  * Grammar (red) — rt = 문법 용어/기능 (grammatical term or function), NOT the meaning:
-        <ruby class="over-tag"><span class="g">that</span><rt>명사절 접속사</rt></ruby>
-        <ruby class="over-tag"><span class="g">were cultivated</span><rt>과거 수동태</rt></ruby>
-        <ruby class="over-tag"><span class="g">to grow</span><rt>부사적 용법(목적)</rt></ruby>
-  * Vocabulary (blue) — rt = 그 단어/숙어의 짧은 어휘 뜻 (one-word dictionary gloss):
-        <ruby class="over-tag vocab-rt"><span class="v">cultivate</span><rt>재배하다</rt></ruby>
-  * Grammar+vocab (purple) — rt = 문법 기능만 (뜻은 넣지 말 것):
-        <ruby class="over-tag theme-rt"><span class="gv">regardless of</span><rt>전치사구</rt></ruby>
-  * Emphasis / connective (yellow highlight) — rt = 연결어의 기능/역할 (역접·대조·첨가 등):
-        <ruby class="over-tag hl-rt"><span class="hl">However</span><rt>역접(그러나)</rt></ruby>
-  * TARGET grammar (목표 어법 · 주황 형광펜) — USE ONLY when the user specified a 목표 어법:
-    mark EVERY occurrence of that specific grammar structure with the TARGET ruby (class
-    `tg`), so it clearly stands out from ordinary red 어법. rt = 문법 기능만(뜻 금지):
-        <ruby class="over-tag target-rt"><span class="tg">to find</span><rt>부사적 용법(목적)</rt></ruby>
-    Use `tg` ONLY for the user's 목표 어법 structures; all other grammar stays red (`g`).
-    In `note`, write the target-grammar English term as <code class="tg">…</code>.
-- 등위·상관접속사 병렬구조 (MANDATORY — 절대 빠뜨리지 말 것): EVERY coordinating
-  conjunction (and / or / but / nor / yet) that joins two or more parallel elements
-  (words, phrases, or clauses) MUST be marked — and correlatives too (both…and,
-  not only…but also, either…or, neither…nor, not…but). Mark the conjunction with
-  <span class="conj-hl">and</span> and put a superscript number before EACH parallel
-  element: <sup class="conj-num-top">1</sup>WORD ... <sup class="conj-num-top">2</sup>WORD
-  Apply this to EVERY such conjunction in the passage — do not skip any, not even a
-  simple "and" joining two nouns or verbs. This is the item most often forgotten.
-- CRITICAL — separate 어법 vs 어휘 in rt content, NEVER mix them:
-  * RED grammar tag (`class="g"`): rt = ONLY the grammatical term/function
-    (관계대명사, 분사구문, 동명사, 가주어-진주어, 목적격보어(원형부정사), 도치, 강조구문 등).
-    It must contain ZERO word meaning (뜻). If you feel the urge to write what the word
-    means, that belongs on a BLUE vocab tag instead — not here.
-      - WRONG: <rt>재배하다(과거 수동태)</rt>   ← 뜻이 섞임, 금지
-      - RIGHT: <rt>과거 수동태</rt>
-  * BLUE vocab tag (`class="v"`): rt = ONLY a short 어휘 뜻 (재배하다, 경멸적인 …).
-    No grammar term here.
-  * PURPLE grammar+vocab tag (`class="gv"`): use ONLY for a fixed expression whose
-    grammar function matters; rt = the grammar function (기능 위주). Prefer red or blue
-    over purple whenever possible.
-  * rt is NEVER a phrase/sentence translation — the Korean translation lives ONLY in the
-    chunk's `kor` field. Keep every rt very short.
-- FINAL rt CHECK: before returning, re-scan every RED grammar rt and confirm it contains
-  no word 뜻 (only a grammar label). Fix any that mix meaning in.
-- Keep the original English words and order intact; only add ruby markup around them.
-- Escape any literal < > & in the source text as &lt; &gt; &amp; (there usually are none).
+## chunks — 청크(의미 단위) 배열: 각 청크마다 {text, kor, anns}
+IMPORTANT: You do NOT write ANY HTML for the English. The server paints the colors from your
+plain English (`text`) + an annotation list (`anns`). This makes it IMPOSSIBLE to lose English
+words. So for English your only job is: give the plain text, then list what to mark.
 
-### GRAMMAR COVERAGE (RED) — do NOT omit
-Every sentence contains grammar points. For EACH sentence you must find and mark ALL
-notable grammar structures with the RED grammar ruby (`<ruby class="over-tag"><span
-class="g">…</span><rt>설명</rt></ruby>`). Scan for and mark every occurrence of:
-  - 동사의 시제·상·태: 수동태(be+p.p.), 완료(have+p.p.), 진행(be+~ing), 완료수동 등
-  - 준동사: to부정사(명사적/형용사적/부사적), 동명사, 현재분사, 과거분사, 분사구문
-  - 관계사: who/whom/whose/which/that(관계대명사), where/when/why/how(관계부사), 계속적 용법
-  - 접속사: that(명사절), whether/if(명사절), 부사절(although/because/while/if/unless/so that…), 등위·상관접속사(both…and, not only…but also, either…or)
-  - 특수구문: 가정법, 도치, it~that 강조구문, 가주어/진주어(it~to/that), 부분/전체 부정, 비교급·최상급, 생략, 삽입
-  - 목적격보어(원형부정사/현재분사/과거분사), 사역·지각동사 구문
-RULE: it is far better to mark a clear grammar point than to skip it. Do NOT leave an
-obvious grammar structure without a red ruby. Aim for full coverage in every sentence.
-RULE (등위접속사): treat every and/or/but/nor/yet that links parallel elements as a
-REQUIRED mark (conj-hl + numbered elements as above). Never leave one unmarked.
+- Break the sentence into meaning units (chunks: phrases/clauses), IN ORDER, in `chunks`.
+  Chunk size = a natural phrase/clause (주어부, 동사구, 전치사구, 관계절, 부사절 등); not a
+  single article, not a whole long sentence.
+- For EACH chunk provide {text, kor, anns}:
+  * `text` = the chunk's ORIGINAL ENGLISH words, PLAIN — verbatim, in order, NO markup at all.
+    Every English word of the passage MUST appear across the chunks' `text`. Drop nothing.
+  * `kor` = the PLAIN Korean 직독직해 of THAT chunk only (no markup).
+  * `anns` = list of things to mark INSIDE this chunk's `text`. Each item = {t, role, rt, num}:
+      · `t`    = the EXACT substring of `text` to mark (copy it verbatim, letter for letter).
+      · `role` = one of:
+            "g"    어법(빨강)          "v"  어휘(파랑)        "gv" 어법+어휘(보라)
+            "hl"   강조·연결어(노랑)    "tg" 목표 어법(주황, 목표 어법이 지정된 경우만)
+            "conj" 등위·상관접속사(하늘 형광)   "num" 색 없이 병렬 번호만
+      · `rt`   = short Korean explanation shown above the word (for "conj"/"num" use "").
+      · `num`  = 0 normally. For parallel numbering use 1,2,3… (adds a small superscript number).
+    If nothing to mark, `anns` = [].
+
+### COLOR DECISION RULE (role 고르기 — 기계적으로 적용, 가장 실수 잦은 곳)
+  ▸ SINGLE word 한 단어:
+      · 문법 포인트(관계사·접속사·조동사·전치사, 시제/태/준동사 형태: were cultivated, to grow) → "g".
+        rt = 문법 기능만. 예: that→"명사절 접속사".
+      · 내용어(명사·동사·형용사·부사)의 뜻이 포인트 → "v". rt = 짧은 뜻. 예: cultivate→"재배하다".
+      · 한 단어는 절대 "gv"(보라) 금지.
+  ▸ 2단어 이상 고정표현(숙어·구동사·전치사구 관용구·상관표현: regardless of, in order to,
+    be likely to, so ~ that …) → "gv". rt = 문법 기능만(뜻 금지). 예: regardless of→"전치사구".
+  ▸ 연결어(However, Therefore, In addition …) → "hl". rt = 역접/대조/첨가 등 기능.
+  ▸ 목표 어법이 지정되면 그 구조만 "tg"(주황), 나머지 어법은 "g".
+  HARD LIMITS: "g" rt=문법용어만(뜻 0%) / "v" rt=뜻만 / "gv"=2단어 이상만 / rt는 해석 아님·아주 짧게.
+  WRONG rt <재배하다(과거 수동태)>  →  RIGHT rt <과거 수동태>.
+
+### 등위·상관접속사 병렬 (MANDATORY — 절대 빠뜨리지 말 것)
+Scan every "and / or / but / nor / yet" (and correlatives both…and / either…or /
+not only…but also / neither…nor / not…but) that joins parallel elements. For EACH:
+  · add an ann for the conjunction: {t:"and", role:"conj", rt:"", num:0}
+  · add an ann for EACH parallel element with num = 1, 2, 3…: e.g.
+      {t:"influence", role:"num", rt:"", num:1}, {t:"invest", role:"num", rt:"", num:2}
+    (use role "g"/"v"/"gv" instead of "num" if that element also deserves color.)
+Never skip one, not even a simple "and" joining two nouns.
+
+### GRAMMAR COVERAGE (role "g") — do NOT omit
+Find and mark ALL notable grammar structures with a "g" ann. Scan for every occurrence of:
+  - 시제·상·태: 수동태(be+p.p.), 완료(have+p.p.), 진행(be+~ing) 등
+  - 준동사: to부정사(명사적/형용사적/부사적), 동명사, 분사, 분사구문
+  - 관계사: who/whom/whose/which/that, where/when/why/how(관계부사), 계속적 용법
+  - 접속사: that(명사절), whether/if(명사절), 부사절(although/because/while/if/unless/so that…)
+  - 특수구문: 가정법, 도치, it~that 강조, 가주어/진주어, 부분/전체 부정, 비교급·최상급, 생략
+  - 목적격보어(원형/현재분사/과거분사), 사역·지각동사
+분명한 문법 포인트는 빠뜨리지 말고 표시하라. 매칭할 `t`는 반드시 `text` 안의 실제 문자열이어야 한다.
 
 ### FINAL SELF-CHECK (mandatory, before returning)
-Re-read each chunk's `eng` one more time and run BOTH checks, fixing any miss:
-1. COVERAGE: for every item in the coverage list that appears in that chunk, confirm it has
-   a RED grammar ruby. If any is missing, ADD it now.
-2. 등위접속사 SWEEP: scan the ENTIRE passage for every "and", "or", "but", "nor", "yet"
-   (and correlatives both…and / either…or / not only…but also / neither…nor). For each one
-   that joins parallel elements, confirm it is wrapped in <span class="conj-hl">…</span> and
-   the parallel elements carry <sup class="conj-num-top">…</sup> numbers. This is the single
-   most frequently forgotten item — verify it explicitly and add every missing one.
-Only return the JSON after BOTH checks — every sentence should have at least one red grammar
-annotation (a sentence with none almost always means you missed something).
+1. ENGLISH: mentally read all chunks' `text` in order — they MUST reconstruct the WHOLE
+   passage with no words missing.
+2. `t` 정확성: every ann's `t` must be an exact substring of its chunk's `text` (아니면 무시됨).
+3. COVERAGE: every grammar point in the coverage list has a "g" ann.
+4. 등위접속사 SWEEP: every parallel and/or/but/nor/yet has a "conj" ann + numbered elements.
+Only return JSON after all four checks.
 
 ## note — per-sentence commentary
 - One or two sentences of objective, written-style Korean explaining the main grammar
   point(s) and key vocabulary in this sentence.
-- Wrap every English word/expression in a <code> tag that is COLOR-CODED by role, so it
-  visually matches the same word's color in the chunk `eng` (the reader connects them):
+- Wrap every English word/expression in a <code> tag COLOR-CODED by role, matching the same
+  word's color in the left column (the reader connects them):
   * grammar point:     <code class="g">that</code>          (red)
   * vocabulary:        <code class="v">derogatory</code>    (blue)
   * grammar + vocab:   <code class="gv">regardless of</code>(purple)
-  Choose the class consistently with how you annotated that word on the left side.
-- NEVER put <ruby>, <rt>, or over-tag markup in `note`. Ruby annotations belong ONLY in
-  the chunk `eng` (left column). In the note (right explanation column) English words are
-  wrapped in <code> only — a stray <ruby> here breaks the right-column layout.
+  * 목표 어법:         <code class="tg">to find</code>       (orange)
+  Choose the class consistently with the role you gave that word in `anns`.
+- The `note` may use <code> only. NEVER put <ruby>, <rt>, or over-tag markup in `note`.
 
 ## summary (주제 & 흐름 요약)
 - First item: {label:"주제", content: an English topic sentence, then <br>, then the
@@ -399,7 +392,102 @@ def rough_sentence_count(passage):
     return max(n, 1)
 
 
-def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=None):
+_RT_STRIP_RE = re.compile(r"<rt\b[^>]*>.*?</rt>", re.S)
+_TAG_STRIP_RE = re.compile(r"<[^>]+>")
+
+
+def _english_letters(html):
+    """chunk eng 에서 주석(rt)·태그를 걷어내고 남는 '영어 알파벳' 글자 수."""
+    t = _RT_STRIP_RE.sub("", html or "")   # 루비 주석(한글) 제거
+    t = _TAG_STRIP_RE.sub("", t)           # 나머지 태그 제거
+    return sum(1 for ch in t if ("a" <= ch <= "z") or ("A" <= ch <= "Z"))
+
+
+def _ascii_count(s):
+    return sum(1 for ch in (s or "") if ("a" <= ch <= "z") or ("A" <= ch <= "Z"))
+
+
+def _esc_html(s):
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+_ROLE_RUBY = {
+    "g": "over-tag", "v": "over-tag vocab-rt", "gv": "over-tag theme-rt",
+    "hl": "over-tag hl-rt", "tg": "over-tag target-rt",
+}
+
+
+def _wrap_ann(word, a):
+    """평문 영어 조각 word 에 역할(role)에 맞는 루비/색상/병렬번호를 입힌다."""
+    role = (a.get("role") or "g").strip()
+    rt = _esc_html((a.get("rt") or "").strip())
+    w = _esc_html(word)
+    num = a.get("num")
+    numhtml = ""
+    if isinstance(num, (int, float)) and int(num) > 0:
+        numhtml = f'<sup class="conj-num-top">{int(num)}</sup>'
+    if role == "conj":
+        return numhtml + f'<span class="conj-hl">{w}</span>'
+    if role in _ROLE_RUBY:
+        return (numhtml + f'<ruby class="{_ROLE_RUBY[role]}">'
+                f'<span class="{role}">{w}</span><rt>{rt}</rt></ruby>')
+    return numhtml + w  # role "num" 등: 번호만, 색 없음
+
+
+def assemble_eng(text, anns):
+    """모델이 준 평문 영어(text) 위에, 주석 목록(anns)의 대상 문자열을 찾아
+    색상/루비/병렬번호를 겹쳐 최종 영어 HTML을 만든다. 매칭 안 되는 주석은 무시하되
+    영어 원문은 항상 그대로 보존된다."""
+    text = text or ""
+    if not text:
+        return ""
+    used = [False] * len(text)
+    spans = []
+    for a in anns or []:
+        if not isinstance(a, dict):
+            continue
+        t = a.get("t") or ""
+        if not t:
+            continue
+        idx = text.find(t)
+        while idx != -1 and any(used[idx:idx + len(t)]):
+            idx = text.find(t, idx + 1)
+        if idx == -1:
+            continue
+        for i in range(idx, idx + len(t)):
+            used[i] = True
+        spans.append((idx, idx + len(t), a))
+    spans.sort()
+    out = []
+    pos = 0
+    for st, en, a in spans:
+        out.append(_esc_html(text[pos:st]))
+        out.append(_wrap_ann(text[st:en], a))
+        pos = en
+    out.append(_esc_html(text[pos:]))
+    return "".join(out)
+
+
+def english_incomplete(result, passage):
+    """영어 원문 누락 감지: 한글은 있는데 영어가 빈 chunk가 있거나,
+    전체 영어량이 원문의 60% 미만이면 True (재요청 필요)."""
+    src = sum(1 for ch in passage if ("a" <= ch <= "z") or ("A" <= ch <= "Z"))
+    if src < 30:
+        return False
+    got = 0
+    dropped = False
+    for s in result.get("sentences", []):
+        for c in s.get("chunks", []):
+            if not isinstance(c, dict):
+                continue
+            en = _english_letters(c.get("eng", ""))
+            got += en
+            if en == 0 and (c.get("kor", "") or "").strip():
+                dropped = True  # 한글은 있는데 영어가 사라진 chunk
+    return dropped or got < src * 0.6
+
+
+def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=None, english_fix=False):
     lines = []
     if mode == "student":
         lines.append("대상: 학생 자기주도 학습용. 해설은 이해하기 쉽게 쓰되 정확하게.")
@@ -416,6 +504,12 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
             f"⚠️ 이전 시도는 문장 분석을 {got}개만 만들었으나, 이 지문은 약 {expected}문장입니다. "
             f"이번에는 지문의 '모든' 문장을 1번부터 끝까지 `sentences` 배열에 반드시 포함하세요. "
             f"어떤 문장도 건너뛰지 말고, 요약에서 언급한 문장 수와 분석한 문장 수가 같아야 합니다."
+        )
+    if english_fix:
+        lines.append(
+            "⚠️ 이전 시도에서 일부 chunk의 평문 영어(`text`)가 비어 있거나 누락됐습니다. "
+            "모든 chunk의 `text`에 지문의 영어 단어가 그대로(원문대로·순서대로) 들어가야 하며, "
+            "전체를 이으면 지문 전체 영어가 빠짐없이 복원되어야 합니다. 빠짐없이 다시 출력하세요."
         )
     lines.append("")
     lines.append("[지문]")
@@ -437,7 +531,7 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
     return "\n".join(lines)
 
 
-def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, complete_hint=None):
+def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, complete_hint=None, english_fix=False):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -461,7 +555,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior, complete_hint)}],
+                "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior, complete_hint, english_fix)}],
             }
         ],
         "generationConfig": {
@@ -624,8 +718,12 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
         for c in s.get("chunks", []):
             if not isinstance(c, dict):
                 continue
-            if c.get("eng"):
-                c["eng"] = normalize_ruby(sanitize_inline(c["eng"]))
+            # 서버가 평문 영어(text) 위에 주석 목록(anns)을 겹쳐 최종 영어를 조립한다.
+            # → 영어 원문은 항상 보존되고, 매칭 안 되는 주석만 무시된다.
+            plain = _TAG_STRIP_RE.sub("", c.get("text", "") or "").strip()
+            c["eng"] = assemble_eng(plain, c.get("anns", []))
+            c.pop("text", None)
+            c.pop("anns", None)
             if c.get("kor"):
                 c["kor"] = sanitize_inline(clean_korean(c["kor"]))
         if s.get("note"):
@@ -771,6 +869,13 @@ class Handler(BaseHTTPRequestHandler):
                 result = call_gemini(
                     passage, target_grammar, mode, api_key, model,
                     complete_hint=(expected, got),
+                )
+            # 영어 원문 누락 방어 — 영어가 빠진 chunk가 있으면 자동으로 다시 요청
+            for _ in range(2):
+                if not english_incomplete(result, passage):
+                    break
+                result = call_gemini(
+                    passage, target_grammar, mode, api_key, model, english_fix=True
                 )
             if review:
                 # 2차 검토 패스 — 1차 결과를 다시 보내 빠진 어법·어휘를 보강
