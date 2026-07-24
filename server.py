@@ -84,9 +84,12 @@ GEMINI_SCHEMA = {
                         },
                     },
                     "note": {"type": "STRING"},
+                    "isTopic": {"type": "BOOLEAN"},
+                    "examTags": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "examNote": {"type": "STRING"},
                 },
-                "required": ["no", "tag", "chunks", "note"],
-                "propertyOrdering": ["no", "tag", "chunks", "note"],
+                "required": ["no", "tag", "chunks", "note", "isTopic", "examTags", "examNote"],
+                "propertyOrdering": ["no", "tag", "chunks", "note", "isTopic", "examTags", "examNote"],
             },
         },
         "summary": {
@@ -129,6 +132,11 @@ You will receive one English passage. Analyze it and return ONLY the structured 
 described by the schema. Follow these rules exactly.
 
 ## Sentence splitting (STRICT RULES)
+- ⚠️ COMPLETENESS IS MANDATORY: the `sentences` array MUST contain ONE entry for EVERY
+  sentence in the passage — from the first to the very last. Analyze the WHOLE passage,
+  never stop partway. The number of `sentences` entries MUST equal the number of sentences
+  you refer to in `summary` (e.g. if summary mentions ❶~❻, there must be 6 sentence entries).
+  Analyzing fewer sentences than you summarize is a serious error.
 - Number sentences with the JSON `no` field: 1, 2, 3, … with NO gaps and NO duplicates.
   Every sentence of the passage appears EXACTLY ONCE, in original order.
 - Split ONLY at a sentence-ending `.` `?` or `!` that truly ends a sentence (followed by
@@ -145,6 +153,29 @@ described by the schema. Follow these rules exactly.
   marker characters from the chunk text (do not display them).
 - `tag` = a very short Korean label for the sentence's role in the flow
   (e.g. "도입·주제 제시", "근거", "부연", "결론·대조"). Keep under ~10 chars.
+- `isTopic` (boolean): set true for EXACTLY ONE sentence — the passage's topic/thesis
+  sentence that best states the main idea (핵심 주장/요지). Set false for all others. If the
+  main idea is only implied and no single sentence states it, set false for every sentence
+  (do NOT force a topic). Never mark more than one sentence true.
+- `examTags` (array of short Korean strings): label this sentence with the Korean
+  high-school exam (내신·모의고사) question types it is a STRONG candidate for. Use ONLY the
+  labels below, 0~2 per sentence — most sentences should be an empty array []. Quality over
+  quantity; do NOT tag every sentence.
+    * "요지"     — 글의 요지가 압축된 문장
+    * "빈칸"     — 핵심 추상 개념이라 빈칸추론으로 낼 만한 문장
+    * "문장삽입" — 연결어·지시어·대명사로 앞뒤와 강하게 연결돼 문장삽입/순서 문제로 낼 만한 문장
+    * "순서"     — 글의 순서를 가르는 단서(지시어·연결어)가 뚜렷한 문장
+    * "함축"     — 비유·함축 표현이 있어 밑줄 함축의미로 낼 만한 문장
+    * "어법"     — 어법(문법) 문제로 자주 출제되는 포인트가 있는 문장
+    * "어휘"     — 문맥상 어휘 문제로 낼 만한 핵심 어휘가 있는 문장
+    * "제목단서" — 제목 추론의 핵심 단서 문장
+  Do NOT put "주제문" in examTags (that is the isTopic flag).
+- `examNote` (string): IF this sentence isTopic OR has any examTags, write a concise Korean
+  explanation (1문장, 문어체) of WHY it is a good candidate for those question type(s) —
+  e.g. "글 전체의 주장을 압축한 문장이라 요지·주제 문제의 정답 근거가 된다", "앞 문장의
+  결과를 지시어 'this'로 받아 순서·문장삽입 단서가 뚜렷하다", "핵심 개념이 추상적으로
+  제시돼 빈칸으로 만들기 좋다". If the sentence has NO isTopic and NO examTags, set examNote
+  to an empty string "".
 
 ## chunks — 청크(의미 단위) 배열: 각 청크마다 {eng, kor}
 - Break the sentence into meaning units (chunks: phrases/clauses). Output them IN ORDER as
@@ -168,6 +199,12 @@ described by the schema. Follow these rules exactly.
         <ruby class="over-tag theme-rt"><span class="gv">regardless of</span><rt>전치사구</rt></ruby>
   * Emphasis / connective (yellow highlight) — rt = 연결어의 기능/역할 (역접·대조·첨가 등):
         <ruby class="over-tag hl-rt"><span class="hl">However</span><rt>역접(그러나)</rt></ruby>
+  * TARGET grammar (목표 어법 · 주황 형광펜) — USE ONLY when the user specified a 목표 어법:
+    mark EVERY occurrence of that specific grammar structure with the TARGET ruby (class
+    `tg`), so it clearly stands out from ordinary red 어법. rt = 문법 기능만(뜻 금지):
+        <ruby class="over-tag target-rt"><span class="tg">to find</span><rt>부사적 용법(목적)</rt></ruby>
+    Use `tg` ONLY for the user's 목표 어법 structures; all other grammar stays red (`g`).
+    In `note`, write the target-grammar English term as <code class="tg">…</code>.
 - 등위·상관접속사 병렬구조 (MANDATORY — 절대 빠뜨리지 말 것): EVERY coordinating
   conjunction (and / or / but / nor / yet) that joins two or more parallel elements
   (words, phrases, or clauses) MUST be marked — and correlatives too (both…and,
@@ -292,7 +329,7 @@ def clean_note(html):
         while prev != inner:                     # 안쪽 역할 색상 스팬은 텍스트만
             prev = inner
             inner = _ROLE_SPAN_RE.sub(r"\1", inner)
-        code_cls = cls if cls in ("g", "v", "gv") else ""
+        code_cls = cls if cls in ("g", "v", "gv", "tg") else ""
         attr = f' class="{code_cls}"' if code_cls else ""
         return f"<code{attr}>{inner}</code>"
 
@@ -306,9 +343,10 @@ def clean_note(html):
 # ── 루비 색상 정규화: 안쪽 span 역할에 맞춰 보조 클래스를 강제로 맞춘다 ──
 # (모델이 vocab-rt/theme-rt/hl-rt 를 빠뜨려도 범례 색상이 어긋나지 않도록)
 _RUBY_BLOCK_RE = re.compile(r"<ruby\b[^>]*>(.*?)</ruby>", re.S)
-_SPAN_ROLE_RE = re.compile(r'<span class="\s*(g|v|gv|hl)\b[^"]*"')
+_SPAN_ROLE_RE = re.compile(r'<span class="\s*(gv|hl|tg|g|v)\b[^"]*"')
 _RUBY_MOD = {"g": "over-tag", "v": "over-tag vocab-rt",
-             "gv": "over-tag theme-rt", "hl": "over-tag hl-rt"}
+             "gv": "over-tag theme-rt", "hl": "over-tag hl-rt",
+             "tg": "over-tag target-rt"}
 
 
 def normalize_ruby(html):
@@ -351,7 +389,17 @@ def sanitize_inline(html):
     return _ANY_TAG_RE.sub(repl, html)
 
 
-def build_user_prompt(passage, target_grammar, mode, prior=None):
+_SENT_END_RE = re.compile(r'[.!?]+(?=\s+["\'(\[]?[A-Z]|\s*$)')
+
+
+def rough_sentence_count(passage):
+    """지문의 문장 수 대략 추정 (약어로 다소 부풀 수 있어 넉넉한 허용오차와 함께 사용)."""
+    text = re.sub(r"\d\.\d", "00", passage.strip())  # 소수점 보호
+    n = len(_SENT_END_RE.findall(text))
+    return max(n, 1)
+
+
+def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=None):
     lines = []
     if mode == "student":
         lines.append("대상: 학생 자기주도 학습용. 해설은 이해하기 쉽게 쓰되 정확하게.")
@@ -361,6 +409,13 @@ def build_user_prompt(passage, target_grammar, mode, prior=None):
         lines.append(
             "목표 어법(이 문법 포인트를 특히 꼼꼼히 표시·설명할 것): "
             + target_grammar.strip()
+        )
+    if complete_hint is not None:
+        expected, got = complete_hint
+        lines.append(
+            f"⚠️ 이전 시도는 문장 분석을 {got}개만 만들었으나, 이 지문은 약 {expected}문장입니다. "
+            f"이번에는 지문의 '모든' 문장을 1번부터 끝까지 `sentences` 배열에 반드시 포함하세요. "
+            f"어떤 문장도 건너뛰지 말고, 요약에서 언급한 문장 수와 분석한 문장 수가 같아야 합니다."
         )
     lines.append("")
     lines.append("[지문]")
@@ -382,7 +437,7 @@ def build_user_prompt(passage, target_grammar, mode, prior=None):
     return "\n".join(lines)
 
 
-def call_gemini(passage, target_grammar, mode, api_key, model, prior=None):
+def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, complete_hint=None):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -406,7 +461,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None):
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior)}],
+                "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior, complete_hint)}],
             }
         ],
         "generationConfig": {
@@ -707,6 +762,16 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             result = call_gemini(passage, target_grammar, mode, api_key, model)
+            # 문장 누락 방어 — 실제 문장 수보다 분석이 많이 부족하면 자동 보정 재요청
+            expected = rough_sentence_count(passage)
+            for _ in range(2):
+                got = len(result.get("sentences", []))
+                if got >= expected - 2:  # 약어로 인한 과다추정 대비 허용오차
+                    break
+                result = call_gemini(
+                    passage, target_grammar, mode, api_key, model,
+                    complete_hint=(expected, got),
+                )
             if review:
                 # 2차 검토 패스 — 1차 결과를 다시 보내 빠진 어법·어휘를 보강
                 result = call_gemini(

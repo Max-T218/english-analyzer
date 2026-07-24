@@ -7,10 +7,10 @@ const passageListEl = $("passageList");
 const addPassageBtn = $("addPassageBtn");
 const passageCountEl = $("passageCount");
 const grammarEl = $("targetGrammar");
-const modeEl = $("mode");
 const modelEl = $("model");
 const analyzeBtn = $("analyzeBtn");
 const printBtn = $("printBtn");
+const floatPrintBtn = $("floatPrintBtn");
 const reviewChk = $("reviewChk");
 const errorEl = $("error");
 const loadingEl = $("loading");
@@ -210,6 +210,7 @@ if (reviewChk) {
 
 analyzeBtn.addEventListener("click", analyze);
 printBtn.addEventListener("click", () => window.print());
+floatPrintBtn.addEventListener("click", () => window.print());
 
 async function analyze() {
   const apiKey = apiKeyEl.value.trim();
@@ -237,11 +238,13 @@ async function analyze() {
   loadingEl.classList.add("on");
   resultEl.innerHTML = "";
   printBtn.style.display = "none";
+  floatPrintBtn.hidden = true;
 
   const total = jobs.length;
   const usedModel = modelEl.value;
   const reviewOn = !!(reviewChk && reviewChk.checked);
   let okCount = 0;
+  const htmlParts = []; // 결과를 모아뒀다가 모두 끝난 뒤 한 번에 렌더
   for (let i = 0; i < total; i++) {
     const job = jobs[i];
     const stage = reviewOn ? "분석·검토 중" : "분석 중";
@@ -251,10 +254,7 @@ async function analyze() {
         : `AI가 지문을 ${stage}입니다… ${reviewOn ? "(꼼꼼 검토: 두 번 분석해 더 걸립니다)" : "(지문 길이에 따라 20~60초)"}`;
 
     if (job.text.length < 20) {
-      resultEl.insertAdjacentHTML(
-        "beforeend",
-        buildErrorHtml(job.no, total, "지문이 너무 짧습니다 (20자 이상 입력).")
-      );
+      htmlParts.push(buildErrorHtml(job.no, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
       continue;
     }
 
@@ -265,7 +265,6 @@ async function analyze() {
         body: JSON.stringify({
           passage: job.text,
           targetGrammar: grammarEl.value,
-          mode: modeEl.value,
           model: modelEl.value,
           review: reviewOn,
           apiKey,
@@ -273,23 +272,23 @@ async function analyze() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "분석에 실패했습니다.");
-      resultEl.insertAdjacentHTML("beforeend", buildAnalysisHtml(data, job.no, total));
+      htmlParts.push(buildAnalysisHtml(data, job.no, total));
       okCount++;
       bumpUsage(usedModel);
       if (reviewOn) bumpUsage(usedModel); // 검토 패스로 요청 1회 추가 소모
     } catch (err) {
       const msg = err.message || String(err);
       if (/한도|quota|exceeded|429/i.test(msg)) markExhausted(usedModel);
-      resultEl.insertAdjacentHTML("beforeend", buildErrorHtml(job.no, total, msg));
+      htmlParts.push(buildErrorHtml(job.no, total, msg));
     }
   }
 
+  if (okCount) htmlParts.push(`<footer>구문 단위 직독직해 분석본 · 자동 생성</footer>`);
+  // 모든 지문 분석이 끝난 뒤 한 번에 렌더 (중간에 화면이 바뀌지 않도록)
+  resultEl.innerHTML = htmlParts.join("");
   if (okCount) {
-    resultEl.insertAdjacentHTML(
-      "beforeend",
-      `<footer>청크 단위 직독직해 분석본 · 자동 생성</footer>`
-    );
     printBtn.style.display = "inline-flex";
+    floatPrintBtn.hidden = false;
   }
   loadingEl.classList.remove("on");
   analyzeBtn.disabled = false;
@@ -300,6 +299,15 @@ async function analyze() {
 function esc(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// 문제 유형 라벨 → CSS 클래스 접미사 (색상 구분용)
+function examCls(t) {
+  const map = {
+    "문장삽입": "insert", "빈칸": "blank", "요지": "gist", "순서": "order",
+    "함축": "imply", "어법": "grammar", "어휘": "vocab", "제목단서": "title",
+  };
+  return map[t] || "etc";
 }
 
 // 모델이 준 HTML(루비/색상 스팬 등)을 브라우저 파서로 정규화해 태그 균형을 복구한다.
@@ -335,6 +343,7 @@ function buildAnalysisHtml(d, no, total) {
         <b><span class="dot" style="background:var(--gv)"></span><span class="gv">어법+어휘</span></b>
         <b><span class="dot" style="background:var(--conj)"></span><span class="conj-hl">병렬구조</span></b>
         <b><span class="dot" style="background:var(--hl)"></span><span class="hl" style="padding:0 3px;border-radius:3px">강조·연결어</span></b>
+        ${grammarEl.value.trim() ? `<b><span class="dot" style="background:var(--target-hl)"></span><span class="tg" style="padding:0 3px;border-radius:3px">목표 어법</span></b>` : ""}
         <b><span class="sep">/</span> 의미 단위 끊어읽기</b>
       </div>
     </div>
@@ -351,11 +360,20 @@ function buildAnalysisHtml(d, no, total) {
         </div>`
       )
       .join("");
+    const topic = s.isTopic ? " is-topic" : "";
+    const topicBadge = s.isTopic ? `<span class="exam-tag et-topic">주제문</span>` : "";
+    const examBadges = (s.examTags || [])
+      .map((t) => `<span class="exam-tag et-${examCls(t)}">${esc(t)}</span>`)
+      .join("");
     parts.push(`
-      <div class="sent">
-        <div class="sent-head"><span class="sent-no">${esc(s.no)}</span><span class="tag">${esc(s.tag)}</span></div>
+      <div class="sent${topic}">
+        <div class="sent-head"><span class="sent-no">${esc(s.no)}</span><span class="tag">${esc(s.tag)}</span><span class="exam-tags">${topicBadge}${examBadges}</span></div>
         <div class="chunks">${chunksHtml}</div>
-        <div class="note"><span class="note-title">${esc(s.no)}번 해설</span>${safeHTML(s.note)}</div>
+        <div class="note"><span class="note-title">${esc(s.no)}번 해설</span>${safeHTML(s.note)}${
+          s.examNote
+            ? `<div class="exam-why"><span class="exam-why-title">🎯 출제 포인트</span>${safeHTML(s.examNote)}</div>`
+            : ""
+        }</div>
       </div>
     `);
   });
