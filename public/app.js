@@ -149,8 +149,7 @@ addPassageRow(false); // 시작 시 지문 입력칸 1개
 // 브라우저에 집계해 보여준다. 한도(429)에 걸린 모델은 '소진'으로 표시.
 const USAGE_STORE = "gemini_usage";
 const USAGE_LIMIT = 20; // 무료 등급 하루 요청 한도(추정치) — 모델·시기에 따라 다름
-// Google 무료 등급 하루 한도는 '태평양시(PT) 자정'에 초기화된다(전 세계 공통 정책).
-// 그래서 이 카운터도 태평양 날짜 기준으로 집계해야 실제 리셋과 일치한다.
+// 카운터는 미국 서부(PT) 날짜 기준으로 하루 단위 집계 (실제 한도 주기와 일치시키기 위함).
 const todayStr = () =>
   new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" }); // YYYY-MM-DD(PT)
 function getUsage() {
@@ -194,7 +193,7 @@ function renderUsage() {
       </div>`;
   }).join("");
   usagePanelEl.innerHTML = `
-    <div class="u-title">모델별 오늘 사용률 <span class="u-sub">· 태평양시 자정(≈한국 오후 4~5시)에 초기화</span></div>
+    <div class="u-title">모델별 오늘 사용률</div>
     ${rows}
     <div class="u-note">※ Google는 잔여 한도를 알려주지 않아, <b>하루 한도를 약 ${USAGE_LIMIT}회로 가정</b>해 이 브라우저의 오늘 사용 횟수를 %로 환산한 <b>추정치</b>입니다. ‘소진’은 그 모델이 오늘 실제 한도(429)에 걸린 표시이며, 모델마다 한도는 따로입니다.</div>`;
   usagePanelEl.hidden = false;
