@@ -103,6 +103,10 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
   .u-lv-mid{color:#e0a83a;} .u-bar-fill.u-lv-mid{background:#e0a83a;}
 }
 
+/* 모든 탭이 공유하는 지문 패널 */
+.passage-panel{border-color:var(--accent); border-width:1px;}
+.passage-panel .field-head .hint{font-size:11.5px;}
+
 /* ── 탭 내비게이션 ── */
 .tabs{display:flex; gap:4px; margin-bottom:18px; border-bottom:2px solid var(--line); flex-wrap:wrap;}
 .tab-btn{
@@ -122,6 +126,12 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 .field-head > label{margin:0;}
 .toggle-all{font-size:12px; color:var(--accent);}
 .toggle-all input{width:15px; height:15px;}
+
+/* 문항 수 안내 + '유형 수에 맞추기' */
+.count-hint{margin-top:6px; font-size:11.5px; color:var(--ink-soft); line-height:1.45;}
+.count-hint.warn{color:#b8760a; font-weight:600;}
+@media (prefers-color-scheme:dark) and (min-width:999999px){ .count-hint.warn{color:#e0a83a;} }
+.count-fit{margin-top:7px; padding:5px 10px; font-size:12px; width:100%; justify-content:center;}
 
 .quiz-type-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px;}
 .quiz-type-grid label{
@@ -160,6 +170,10 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 }
 .qz-writeline{border-bottom:1px solid var(--line); height:2em; margin-top:4px;}
 .qz-writeline + .qz-writeline{margin-top:10px;}
+/* 선택형 — 지문 속 [ A / B ] 강조 */
+.qz-passage .wb-choice{color:var(--v); font-weight:600; white-space:nowrap;}
+/* 오류 찾기 — 고쳐 쓰는 줄 */
+.qz-fixline{font-size:14px; margin-top:9px; color:var(--ink);}
 /* O/X 진위판단 */
 .qz-tf li{align-items:baseline;}
 .qz-tf .qz-num{color:var(--ink-soft); font-weight:700; flex:0 0 auto;}
@@ -182,6 +196,19 @@ table.answerkey td:nth-child(1),table.answerkey td:nth-child(3){font-weight:700;
   .qz-reveal-btn, .qz-answer-box{display:none !important;}
   .qz-card{box-shadow:none;}
 }
+
+/* ── 단어장 ── */
+.vocab-head{display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap;}
+.vocab-meta{font-size:12px; color:var(--ink-soft); white-space:nowrap;}
+table.vocab td.v-no{color:var(--ink-soft); font-weight:600; width:38px; text-align:right;}
+table.vocab td.v-word{font-weight:700; color:var(--ink);}
+table.vocab td.v-from{color:var(--ink-soft); font-size:12px; white-space:nowrap;}
+/* 시험지 — 답 쓰는 칸 (정답 표시를 켜야 정답이 보임) */
+table.vocab-test td.v-blank{border-bottom:1px solid var(--line); min-width:150px;}
+table.vocab-test td.v-blank .wb-ans{display:none; color:var(--g); font-weight:700;}
+table.vocab-test td.v-blank .wb-ans::before{content:none;}
+#vocabDoc.show-answers table.vocab-test td.v-blank .wb-ans{display:inline;}
+#vocabDoc:empty{display:none;}
 
 /* ── 워크북 (단계별 학습지) ── */
 .wb-cover{
@@ -256,6 +283,15 @@ table.answerkey td:nth-child(1),table.answerkey td:nth-child(3){font-weight:700;
 .passage-item{border:1px solid var(--line); border-radius:10px; background:var(--paper); padding:10px 10px 12px;}
 .passage-item-head{display:flex; align-items:center; gap:10px; margin-bottom:8px;}
 .passage-item-no{font-size:12.5px; font-weight:700; color:var(--accent); letter-spacing:.02em;}
+/* 지문 이름 — 비워두면 '지문 1', '지문 2' 가 자동으로 쓰인다 */
+.passage-name{
+  flex:0 1 260px; min-width:0; width:auto;
+  font:inherit; font-size:13px; font-weight:700; color:var(--accent);
+  background:transparent; border:none; border-bottom:1px dashed var(--line);
+  border-radius:0; padding:3px 2px;
+}
+.passage-name::placeholder{color:var(--accent); opacity:.55; font-weight:700;}
+.passage-name:focus{outline:none; border-bottom-color:var(--accent); background:var(--card);}
 .passage-count{margin-left:auto; font-size:11.5px; color:var(--ink-soft); white-space:nowrap;}
 .passage-count.warn{color:#b8760a; font-weight:600;}
 .passage-count.danger{color:var(--g); font-weight:700;}

@@ -189,7 +189,8 @@ function createPassageManager(listEl, addBtn, countEl, onEnter) {
   function renumber() {
     const items = [...listEl.querySelectorAll(".passage-item")];
     items.forEach((it, i) => {
-      it.querySelector(".passage-item-no").textContent = `지문 ${i + 1}`;
+      // 이름을 비워두면 '지문 1', '지문 2' … 가 자동으로 쓰인다(placeholder로 안내)
+      it.querySelector(".passage-name").placeholder = `지문 ${i + 1}`;
       it.querySelector(".passage-del").style.visibility =
         items.length > 1 ? "visible" : "hidden";
     });
@@ -201,14 +202,18 @@ function createPassageManager(listEl, addBtn, countEl, onEnter) {
     item.className = "passage-item";
     item.innerHTML = `
       <div class="passage-item-head">
-        <span class="passage-item-no"></span>
+        <input type="text" class="passage-name" placeholder="지문 1" title="지문 이름 (비워두면 지문 1, 지문 2 …)">
         <span class="passage-count" aria-live="polite"></span>
         <button type="button" class="btn ghost small passage-del" title="이 지문 삭제">✕ 삭제</button>
       </div>
       <textarea class="passage-input" placeholder="분석할 영어 지문을 여기에 붙여넣으세요."></textarea>`;
     listEl.appendChild(item);
     const ta = item.querySelector(".passage-input");
+    const nameEl = item.querySelector(".passage-name");
     ta.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && onEnter) onEnter();
+    });
+    nameEl.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && onEnter) onEnter();
     });
     ta.addEventListener("input", () => updatePassageCount(ta));
@@ -229,7 +234,14 @@ function createPassageManager(listEl, addBtn, countEl, onEnter) {
     const jobs = [];
     items.forEach((it, i) => {
       const text = it.querySelector(".passage-input").value.trim();
-      if (text) jobs.push({ no: i + 1, text });
+      if (!text) return;
+      const typed = it.querySelector(".passage-name").value.trim();
+      jobs.push({
+        no: i + 1,
+        text,
+        name: typed || `지문 ${i + 1}`, // 이름을 안 쓰면 기본 이름
+        named: !!typed,                  // 직접 지은 이름인지
+      });
     });
     return jobs;
   }
@@ -237,15 +249,69 @@ function createPassageManager(listEl, addBtn, countEl, onEnter) {
   return { addRow, getJobs, renumber };
 }
 
-const analyzeMgr = createPassageManager(passageListEl, addPassageBtn, passageCountEl, () => analyze());
-analyzeMgr.addRow(false); // 시작 시 지문 입력칸 1개
+// 모든 탭이 공유하는 지문 입력 (탭 밖 공통 패널) — 별도 저장소 없이 화면 하나로 공유
+const passageMgr = createPassageManager(passageListEl, addPassageBtn, passageCountEl, () =>
+  runActiveTab()
+);
+// Ctrl+Enter는 현재 열려 있는 탭의 실행 버튼을 누른다
+function runActiveTab() {
+  const active = document.querySelector(".tab-page.active");
+  const btn = active && active.querySelector("#analyzeBtn, #mcqBtn, #saqBtn, #wbBtn");
+  if (btn && !btn.disabled) btn.click();
+}
+
+// 입력한 지문을 이 브라우저에 보관해 새로고침해도 유지 (서버 저장 없음)
+const PASSAGE_STORE = "passages";
+let passageSaveTimer = null;
+function savePassages() {
+  const rows = [...passageListEl.querySelectorAll(".passage-item")].map((it) => ({
+    name: it.querySelector(".passage-name").value,
+    text: it.querySelector(".passage-input").value,
+  }));
+  if (rows.some((r) => r.text.trim() || r.name.trim())) {
+    localStorage.setItem(PASSAGE_STORE, JSON.stringify(rows));
+  } else {
+    localStorage.removeItem(PASSAGE_STORE);
+  }
+}
+passageListEl.addEventListener("input", () => {
+  clearTimeout(passageSaveTimer);
+  passageSaveTimer = setTimeout(savePassages, 500);
+});
+passageListEl.addEventListener("click", (e) => {
+  if (e.target.closest(".passage-del")) setTimeout(savePassages, 0);
+});
+(function restorePassages() {
+  let saved = [];
+  try {
+    saved = JSON.parse(localStorage.getItem(PASSAGE_STORE) || "[]");
+  } catch (_) {
+    saved = [];
+  }
+  if (Array.isArray(saved) && saved.length) {
+    saved.forEach((row) => {
+      // 예전 형식(문자열 배열)도 그대로 복원되도록 처리
+      const { name, text } = typeof row === "string" ? { name: "", text: row } : row || {};
+      const ta = passageMgr.addRow(false);
+      ta.value = text || "";
+      ta.closest(".passage-item").querySelector(".passage-name").value = name || "";
+      updatePassageCount(ta);
+    });
+  } else {
+    passageMgr.addRow(false); // 시작 시 지문 입력칸 1개
+  }
+})();
 
 // ── 탭 전환 ──
 const tabBtns = [...document.querySelectorAll(".tab-btn")];
 const tabPages = [...document.querySelectorAll(".tab-page")];
 function syncFloatPrint() {
   const active = document.querySelector(".tab-page.active");
-  const btn = active && active.querySelector("#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn");
+  const btn =
+    active &&
+    active.querySelector(
+      "#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn"
+    );
   floatPrintBtn.hidden = !(btn && btn.style.display !== "none");
 }
 tabBtns.forEach((btn) => {
@@ -334,13 +400,7 @@ async function analyze() {
     return;
   }
 
-  // 입력된 지문 수집 (빈 칸은 건너뜀). 번호는 화면에 보이는 순서를 유지.
-  const items = [...passageListEl.querySelectorAll(".passage-item")];
-  const jobs = [];
-  items.forEach((it, i) => {
-    const text = it.querySelector(".passage-input").value.trim();
-    if (text) jobs.push({ no: i + 1, text });
-  });
+  const jobs = passageMgr.getJobs();
   if (!jobs.length) {
     errorEl.textContent = "분석할 영어 지문을 입력하세요.";
     return;
@@ -358,16 +418,17 @@ async function analyze() {
   const reviewOn = !!(reviewChk && reviewChk.checked);
   let okCount = 0;
   const htmlParts = []; // 결과를 모아뒀다가 모두 끝난 뒤 한 번에 렌더
+  const vocabSets = []; // 단어장 탭이 쓸 지문별 핵심 어휘
   for (let i = 0; i < total; i++) {
     const job = jobs[i];
     const stage = reviewOn ? "분석·검토 중" : "분석 중";
     loadingTextEl.textContent =
       total > 1
-        ? `지문 ${job.no} ${stage}… (${i + 1}/${total})`
+        ? `${job.name} ${stage}… (${i + 1}/${total})`
         : `AI가 지문을 ${stage}입니다… ${reviewOn ? "(꼼꼼 검토: 두 번 분석해 더 걸립니다)" : "(지문 길이에 따라 20~60초)"}`;
 
     if (job.text.length < 20) {
-      htmlParts.push(buildErrorHtml(job.no, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
+      htmlParts.push(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
       continue;
     }
 
@@ -385,18 +446,22 @@ async function analyze() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "분석에 실패했습니다.");
-      htmlParts.push(buildAnalysisHtml(data, job.no, total));
+      htmlParts.push(buildAnalysisHtml(data, job, total));
+      if (Array.isArray(data.vocab) && data.vocab.length) {
+        vocabSets.push({ name: job.name, vocab: data.vocab });
+      }
       okCount++;
       bumpUsage(usedModel);
       if (reviewOn) bumpUsage(usedModel); // 검토 패스로 요청 1회 추가 소모
     } catch (err) {
       const msg = err.message || String(err);
       if (/한도|quota|exceeded|429/i.test(msg)) markExhausted(usedModel);
-      htmlParts.push(buildErrorHtml(job.no, total, msg));
+      htmlParts.push(buildErrorHtml(job, total, msg));
     }
   }
 
   if (okCount) htmlParts.push(`<footer>구문 단위 직독직해 분석본 · 자동 생성</footer>`);
+  if (vocabSets.length) saveVocabSets(vocabSets); // 단어장 탭에서 재사용
   // 모든 지문 분석이 끝난 뒤 한 번에 렌더 (중간에 화면이 바뀌지 않도록)
   resultEl.innerHTML = htmlParts.join("");
   if (okCount) printBtn.style.display = "inline-flex";
@@ -431,16 +496,23 @@ function safeHTML(s) {
 }
 
 // 한 지문의 분석 실패 카드
-function buildErrorHtml(no, total, msg) {
-  const label = total > 1 ? `지문 ${no} 분석 실패` : "분석 실패";
-  return `<section class="passage-block"><div class="passage-error"><b>${esc(label)}</b>${esc(msg)}</div></section>`;
+function buildErrorHtml(job, total, msg) {
+  const head = total > 1 || job.named ? `${job.name} 분석 실패` : "분석 실패";
+  return `<section class="passage-block"><div class="passage-error"><b>${esc(head)}</b>${esc(msg)}</div></section>`;
+}
+
+// 결과 상단에 지문 이름표를 붙일지 (여러 지문이거나, 직접 이름을 지었을 때)
+function passageBanner(job, total) {
+  return total > 1 || job.named
+    ? `<div class="passage-banner">${esc(job.name)}</div>`
+    : "";
 }
 
 // 한 지문의 전체 분석본 HTML을 문자열로 만든다 (여러 지문을 이어붙이기 위함)
-function buildAnalysisHtml(d, no, total) {
+function buildAnalysisHtml(d, job, total) {
   const parts = [];
   parts.push(`<section class="passage-block">`);
-  if (total > 1) parts.push(`<div class="passage-banner">지문 ${esc(no)}</div>`);
+  parts.push(passageBanner(job, total));
 
   // 표지
   parts.push(`
@@ -536,17 +608,17 @@ const MCQ_TYPES = [
 // 주관식(서술형·단답형) 유형
 const SAQ_TYPES = [
   { id: "서술형배열", def: true }, { id: "OX진위", def: true },
+  { id: "어휘 선택형", def: true }, { id: "어법 선택형", def: true },
+  { id: "틀린 어휘 찾기", def: false }, { id: "틀린 어법 찾기", def: false },
 ];
 
 // 문제 제작 탭 하나를 구성한다 (객관식·주관식이 같은 로직을 공유)
 function setupQuizTab({ prefix, types, footer }) {
   const gridEl = $(prefix + "TypeGrid");
   const allEl = $(prefix + "TypeAll");
-  const listEl = $(prefix + "PassageList");
-  const addBtn = $(prefix + "AddPassageBtn");
-  const passageCountEl = $(prefix + "PassageCount");
   const countEl = $(prefix + "Count");
-  const perTypeEl = $(prefix + "PerType");
+  const countHintEl = $(prefix + "CountHint");
+  const fitBtn = $(prefix + "FitBtn");
   const btn = $(prefix + "Btn");
   const printBtn = $(prefix + "PrintBtn");
   const errorEl = $(prefix + "Error");
@@ -568,17 +640,52 @@ function setupQuizTab({ prefix, types, footer }) {
     allEl.checked = on === boxes.length;
     allEl.indeterminate = on > 0 && on < boxes.length;
   }
-  // '유형당 1문항씩'이 켜져 있으면 문항 수를 선택한 유형 수에 자동으로 맞춘다
-  // (유형을 다 골랐는데 문항 수가 적어 일부 유형만 출제되던 문제 방지)
-  function syncCount() {
-    if (perTypeEl.checked) {
-      const n = gridEl.querySelectorAll("input:checked").length;
-      countEl.value = Math.max(1, n);
-      countEl.disabled = true;
+  // 문항 수 규칙: 선택한 유형은 최소 1문항씩 나와야 하므로
+  //   · 하한 = 체크한 유형 수 (그 아래로는 못 내려감)
+  //   · 유형을 체크하면 문항 수가 자동으로 따라 올라감
+  //   · 사용자가 더 늘리는 것은 자유 (최대 30) → 유형을 반복해 더 많이 출제
+  const MAX_COUNT = 30;
+  const typeCount = () => gridEl.querySelectorAll("input:checked").length;
+
+  function updateHint() {
+    const n = typeCount();
+    const c = parseInt(countEl.value, 10) || 0;
+    let msg, cls = "";
+    if (!n) {
+      msg = "유형을 선택하세요";
+      cls = "warn";
+    } else if (c < n) {
+      msg = `선택 유형 ${n}개 · 최소 ${n}문항`;
+      cls = "warn";
+    } else if (c === n) {
+      msg = `선택 유형 ${n}개 · 유형당 1문항`;
     } else {
-      countEl.disabled = false;
+      const per = (c / n).toFixed(1).replace(/\.0$/, "");
+      msg = `선택 유형 ${n}개 · 유형당 약 ${per}문항`;
     }
+    countHintEl.textContent = msg;
+    countHintEl.className = "count-hint" + (cls ? " " + cls : "");
   }
+
+  // 입력을 마쳤을 때(blur/Enter) 하한·상한으로 보정 — 타이핑 도중에는 건드리지 않는다
+  function clampCount() {
+    const n = Math.max(1, typeCount());
+    let c = parseInt(countEl.value, 10);
+    if (!Number.isFinite(c) || c < n) c = n;
+    if (c > MAX_COUNT) c = MAX_COUNT;
+    countEl.value = c;
+    updateHint();
+  }
+
+  // 유형 선택이 바뀌면 하한과 문항 수를 체크한 유형 수에 맞춘다.
+  // 체크하면 올라가고, 해제하면 같이 내려간다. (원하면 그 뒤에 직접 더 늘릴 수 있음)
+  function syncCount() {
+    const n = Math.max(1, typeCount());
+    countEl.min = n;
+    countEl.value = n;
+    updateHint();
+  }
+
   allEl.addEventListener("change", () => {
     const check = allEl.checked;
     gridEl.querySelectorAll("input").forEach((b) => (b.checked = check));
@@ -589,12 +696,14 @@ function setupQuizTab({ prefix, types, footer }) {
     syncAll();
     syncCount();
   });
-  perTypeEl.addEventListener("change", syncCount);
+  countEl.addEventListener("input", updateHint);   // 타이핑 중에는 안내만
+  countEl.addEventListener("change", clampCount);  // 확정되면 하한으로 보정
+  fitBtn.addEventListener("click", () => {
+    countEl.value = Math.max(1, typeCount());
+    updateHint();
+  });
   syncAll();
   syncCount();
-
-  const mgr = createPassageManager(listEl, addBtn, passageCountEl, () => generate());
-  mgr.addRow(false);
 
   async function generate() {
     const apiKey = apiKeyEl.value.trim();
@@ -604,7 +713,7 @@ function setupQuizTab({ prefix, types, footer }) {
       apiKeyEl.focus();
       return;
     }
-    const jobs = mgr.getJobs();
+    const jobs = passageMgr.getJobs();
     if (!jobs.length) {
       errorEl.textContent = "문제를 만들 영어 지문을 입력하세요.";
       return;
@@ -614,10 +723,15 @@ function setupQuizTab({ prefix, types, footer }) {
       errorEl.textContent = "출제 유형을 하나 이상 선택하세요.";
       return;
     }
-    const count = Math.max(1, Math.min(parseInt(countEl.value, 10) || 5, 30));
+    // 선택한 유형은 최소 1문항씩 보장 (하한 = 유형 수), 상한 30
+    clampCount();
+    const count = Math.min(
+      Math.max(parseInt(countEl.value, 10) || picked.length, picked.length),
+      MAX_COUNT
+    );
 
     btn.disabled = true;
-    addBtn.disabled = true;
+    addPassageBtn.disabled = true;
     loadingEl.classList.add("on");
     resultEl.innerHTML = "";
     printBtn.style.display = "none";
@@ -631,11 +745,11 @@ function setupQuizTab({ prefix, types, footer }) {
       const job = jobs[i];
       loadingTextEl.textContent =
         total > 1
-          ? `지문 ${job.no} 문제 만드는 중… (${i + 1}/${total})`
+          ? `${job.name} 문제 만드는 중… (${i + 1}/${total})`
           : "AI가 문제를 만들고 있습니다… (유형·문항 수에 따라 시간이 걸릴 수 있어요)";
 
       if (job.text.length < 20) {
-        htmlParts.push(buildErrorHtml(job.no, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
+        htmlParts.push(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
         continue;
       }
 
@@ -649,13 +763,13 @@ function setupQuizTab({ prefix, types, footer }) {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "문제 생성에 실패했습니다.");
-        htmlParts.push(buildQuizHtml(data, job.no, total));
+        htmlParts.push(buildQuizHtml(data, job, total));
         okCount++;
         bumpUsage(usedModel);
       } catch (err) {
         const msg = err.message || String(err);
         if (/한도|quota|exceeded|429/i.test(msg)) markExhausted(usedModel);
-        htmlParts.push(buildErrorHtml(job.no, total, msg));
+        htmlParts.push(buildErrorHtml(job, total, msg));
       }
     }
 
@@ -665,7 +779,7 @@ function setupQuizTab({ prefix, types, footer }) {
     syncFloatPrint();
     loadingEl.classList.remove("on");
     btn.disabled = false;
-    addBtn.disabled = false;
+    addPassageBtn.disabled = false;
     resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -676,7 +790,8 @@ function setupQuizTab({ prefix, types, footer }) {
 setupQuizTab({ prefix: "mcq", types: MCQ_TYPES, footer: "수능형 객관식 문제" });
 setupQuizTab({ prefix: "saq", types: SAQ_TYPES, footer: "서술형·단답형 문제" });
 
-// 한 문항의 '정답' 표기를 형식에 맞게 만든다 (객관식=①, 서술형=문장, OX=O/X 나열)
+// 한 문항의 '정답' 표기를 형식에 맞게 만든다
+// (객관식=①, 서술형=문장, OX=O/X 나열, 선택형=고른 낱말, 오류찾기=틀린말→바른말)
 function quizAnswerLabel(q) {
   const fmt = q.format || "mc";
   if (fmt === "write") return esc(q.answerText || "");
@@ -684,6 +799,16 @@ function quizAnswerLabel(q) {
     return (q.tfItems || [])
       .map((it, i) => `(${i + 1}) ${it.isTrue ? "O" : "X"}`)
       .join("  ");
+  }
+  if (fmt === "pick") {
+    // 지문의 [정답|오답] 마크업에서 정답만 순서대로 뽑는다
+    return renderChoices(q.passageHtml || "", q.no || 1).answers.join(" / ");
+  }
+  if (fmt === "fix") {
+    return (q.fixes || [])
+      .filter((f) => f && f.wrong)
+      .map((f, i) => `(${i + 1}) ${f.wrong} → ${f.right}`)
+      .join("　");
   }
   return CIRCLED[(q.answer || 1) - 1] || esc(q.answer);
 }
@@ -699,6 +824,32 @@ function quizBodyHtml(q) {
       <div class="qz-passage">${safeHTML(q.passageHtml)}</div>
       <div class="qz-scramble">( ${scrambled} )</div>
       <div class="qz-writeline"></div>`;
+  }
+
+  if (fmt === "pick") {
+    // 어휘·어법 선택형 — [정답|오답]을 [ A / B ]로 섞어 보여주고 고른 낱말을 쓰게 한다
+    const { html } = renderChoices(q.passageHtml || "", q.no || 1);
+    return `
+      <div class="qz-passage">${html}</div>
+      <div class="qz-writeline"></div>
+      <div class="qz-writeline"></div>`;
+  }
+
+  if (fmt === "fix") {
+    // 틀린 어휘·어법 찾기 — 심어둔 오답에 밑줄, 아래에 '틀린말 → 바른말' 줄
+    const fixes = (q.fixes || []).filter((f) => f && f.wrong);
+    let text = esc(q.passageHtml || "");
+    fixes.forEach((f) => {
+      const w = esc(f.wrong).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`(^|[^\\w<>])(${w})(?![\\w>])`);
+      text = text.replace(re, (m, pre, word) => `${pre}<u>${word}</u>`);
+    });
+    const lines = fixes
+      .map((_, i) => `<div class="qz-fixline">(${i + 1}) ${wbBlank(150)} → ${wbBlank(150)}</div>`)
+      .join("");
+    return `
+      <div class="qz-passage">${text}</div>
+      ${lines}`;
   }
 
   if (fmt === "tf") {
@@ -729,10 +880,10 @@ function quizBodyHtml(q) {
 }
 
 // 문제 카드 + 정답/해설(화면: 토글, 인쇄: 항상 별도 섹션) HTML 생성
-function buildQuizHtml(d, no, total) {
+function buildQuizHtml(d, job, total) {
   const parts = [];
   parts.push(`<section class="passage-block qz-block">`);
-  if (total > 1) parts.push(`<div class="passage-banner">지문 ${esc(no)}</div>`);
+  parts.push(passageBanner(job, total));
 
   (d.questions || []).forEach((q) => {
     parts.push(`
@@ -804,9 +955,6 @@ WB_STAGES.forEach((s) => {
   wbStageGridEl.appendChild(label);
 });
 
-const wbPassageListEl = $("wbPassageList");
-const wbAddPassageBtn = $("wbAddPassageBtn");
-const wbPassageCountEl = $("wbPassageCount");
 const wbBtn = $("wbBtn");
 const wbErrorEl = $("wbError");
 const wbLoadingEl = $("wbLoading");
@@ -816,8 +964,6 @@ const wbAnswerChk = $("wbAnswerChk");
 const workbookDocEl = $("workbookDoc");
 const workbookPrintBtn = $("workbookPrintBtn");
 
-const wbMgr = createPassageManager(wbPassageListEl, wbAddPassageBtn, wbPassageCountEl, () => generateWorkbook());
-wbMgr.addRow(false);
 
 // 정답 표시 토글 — 다시 그리지 않고 클래스만 바꿔서 (섞인 보기·순서가 유지되도록)
 const WB_ANSWER_STORE = "gemini_wb_answer";
@@ -841,7 +987,7 @@ async function generateWorkbook() {
     apiKeyEl.focus();
     return;
   }
-  const jobs = wbMgr.getJobs();
+  const jobs = passageMgr.getJobs();
   if (!jobs.length) {
     wbErrorEl.textContent = "워크북을 만들 영어 지문을 입력하세요.";
     return;
@@ -853,7 +999,7 @@ async function generateWorkbook() {
   }
 
   wbBtn.disabled = true;
-  wbAddPassageBtn.disabled = true;
+  addPassageBtn.disabled = true;
   wbLoadingEl.classList.add("on");
   workbookDocEl.innerHTML = "";
   workbookPrintBtn.style.display = "none";
@@ -876,11 +1022,11 @@ async function generateWorkbook() {
     const job = jobs[i];
     wbLoadingTextEl.textContent =
       total > 1
-        ? `지문 ${job.no} 워크북 만드는 중… (${i + 1}/${total})`
+        ? `${job.name} 워크북 만드는 중… (${i + 1}/${total})`
         : "AI가 워크북을 만들고 있습니다… (지문 길이에 따라 30~90초 걸릴 수 있어요)";
 
     if (job.text.length < 20) {
-      htmlParts.push(buildErrorHtml(job.no, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
+      htmlParts.push(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
       continue;
     }
 
@@ -892,13 +1038,13 @@ async function generateWorkbook() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "워크북 생성에 실패했습니다.");
-      htmlParts.push(buildWorkbookHtml(data, stages, job.no, total));
+      htmlParts.push(buildWorkbookHtml(data, stages, job, total));
       okCount++;
       bumpUsage(usedModel);
     } catch (err) {
       const msg = err.message || String(err);
       if (/한도|quota|exceeded|429/i.test(msg)) markExhausted(usedModel);
-      htmlParts.push(buildErrorHtml(job.no, total, msg));
+      htmlParts.push(buildErrorHtml(job, total, msg));
     }
   }
 
@@ -909,7 +1055,7 @@ async function generateWorkbook() {
   syncFloatPrint();
   wbLoadingEl.classList.remove("on");
   wbBtn.disabled = false;
-  wbAddPassageBtn.disabled = false;
+  addPassageBtn.disabled = false;
   workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -993,10 +1139,10 @@ function wbHeading(h) {
 
 /* ── 단계별 렌더 ── */
 
-function buildWorkbookHtml(d, stages, no, total) {
+function buildWorkbookHtml(d, stages, job, total) {
   const parts = [];
   parts.push(`<section class="wb-passage">`);
-  if (total > 1) parts.push(`<div class="passage-banner">지문 ${esc(no)}</div>`);
+  parts.push(passageBanner(job, total));
   if (d.englishTitle || d.koreanTitle) {
     parts.push(`
       <div class="wb-titlebar">
@@ -1114,4 +1260,158 @@ function renderStage7(paras) {
         </div>`;
     })
     .join("");
+}
+
+/* ══════════════════════════ 단어장 탭 ══════════════════════════ */
+// 지문 분석 결과의 '핵심 어휘'를 모아 단어장·단어시험지를 만든다.
+// 이미 받아둔 분석 데이터를 재사용하므로 AI 호출(사용량)이 전혀 없다.
+
+const VOCAB_STORE = "gemini_vocab_sets";
+const vocabSourceEl = $("vocabSource");
+const vocabFormatEl = $("vocabFormat");
+const vocabSortEl = $("vocabSort");
+const vocabTitleEl = $("vocabTitle");
+const vocabDedupEl = $("vocabDedup");
+const vocabAnswerChk = $("vocabAnswerChk");
+const vocabBtn = $("vocabBtn");
+const vocabPrintBtn = $("vocabPrintBtn");
+const vocabErrorEl = $("vocabError");
+const vocabDocEl = $("vocabDoc");
+
+function getVocabSets() {
+  try {
+    const v = JSON.parse(localStorage.getItem(VOCAB_STORE) || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch (_) {
+    return [];
+  }
+}
+function saveVocabSets(sets) {
+  localStorage.setItem(VOCAB_STORE, JSON.stringify(sets));
+  renderVocabSource();
+}
+
+// 현재 쓸 수 있는 어휘가 얼마나 되는지 안내
+function renderVocabSource() {
+  if (!vocabSourceEl) return;
+  const sets = getVocabSets();
+  const words = sets.reduce((n, s) => n + (s.vocab || []).length, 0);
+  vocabSourceEl.textContent = sets.length
+    ? `📖 지문 분석 결과 ${sets.length}개 지문 · 어휘 ${words}개를 사용합니다. (지문을 다시 분석하면 갱신됩니다)`
+    : "아직 분석 결과가 없습니다. 먼저 '지문 분석' 탭에서 분석을 실행하세요.";
+}
+renderVocabSource();
+
+// 정답 표시 토글 — 다시 그리지 않고 클래스만 바꾼다
+const VOCAB_ANSWER_STORE = "gemini_vocab_answer";
+vocabAnswerChk.checked = localStorage.getItem(VOCAB_ANSWER_STORE) === "1";
+function applyVocabAnswer() {
+  vocabDocEl.classList.toggle("show-answers", vocabAnswerChk.checked);
+}
+vocabAnswerChk.addEventListener("change", () => {
+  localStorage.setItem(VOCAB_ANSWER_STORE, vocabAnswerChk.checked ? "1" : "0");
+  applyVocabAnswer();
+});
+
+vocabBtn.addEventListener("click", buildVocab);
+vocabPrintBtn.addEventListener("click", () => window.print());
+
+function buildVocab() {
+  vocabErrorEl.textContent = "";
+  const sets = getVocabSets();
+  if (!sets.length) {
+    vocabErrorEl.textContent = "먼저 '지문 분석' 탭에서 지문을 분석하세요.";
+    return;
+  }
+
+  // 지문별 어휘를 한 줄로 펼치고, 필요하면 같은 단어를 합친다
+  let rows = [];
+  sets.forEach((s) => {
+    (s.vocab || []).forEach((v) => {
+      if (v && v.word) rows.push({ ...v, from: s.name });
+    });
+  });
+  if (vocabDedupEl.checked) {
+    const seen = new Map();
+    rows.forEach((r) => {
+      const key = String(r.word).trim().toLowerCase();
+      if (!key) return;
+      if (seen.has(key)) {
+        const prev = seen.get(key);
+        if (!prev.from.includes(r.from)) prev.from += `, ${r.from}`;
+      } else {
+        seen.set(key, { ...r });
+      }
+    });
+    rows = [...seen.values()];
+  }
+  if (vocabSortEl.value === "alpha") {
+    rows.sort((a, b) =>
+      String(a.word).toLowerCase().localeCompare(String(b.word).toLowerCase())
+    );
+  }
+  if (!rows.length) {
+    vocabErrorEl.textContent = "분석 결과에 어휘가 없습니다.";
+    return;
+  }
+
+  const fmt = vocabFormatEl.value;
+  const title = vocabTitleEl.value.trim();
+  const multi = sets.length > 1;
+  const parts = [];
+  parts.push(`
+    <div class="vocab-head">
+      <h3 class="section" style="margin-top:0">
+        <span class="num">📒</span> ${esc(title || "핵심 어휘 단어장")}
+      </h3>
+      <div class="vocab-meta">총 ${rows.length}단어 · ${esc(new Date().toLocaleDateString("ko-KR"))}</div>
+    </div>`);
+
+  const fromCol = multi ? `<th>출처</th>` : "";
+  const fromCell = (r) => (multi ? `<td class="v-from">${esc(r.from)}</td>` : "");
+
+  if (fmt === "list") {
+    // 단어장 — 뜻·유의어·반의어까지 보여주는 참고용
+    const body = rows
+      .map(
+        (r, i) => `<tr>
+          <td class="v-no">${i + 1}</td>
+          <td class="v-word">${esc(r.word)}</td>
+          <td class="pos">${esc(r.pos)}</td>
+          <td>${esc(r.meaning)}</td>
+          <td>${esc(r.synonym)}</td>
+          <td>${esc(r.antonym)}</td>${fromCell(r)}
+        </tr>`
+      )
+      .join("");
+    parts.push(`
+      <div class="table-wrap"><table class="vocab">
+        <thead><tr><th>#</th><th>단어 / 표현</th><th>품사</th><th>뜻</th><th>유의어</th><th>반의어</th>${fromCol}</tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>`);
+  } else {
+    // 시험지 — 한쪽을 비우고 쓰게 한다 (정답은 '정답 표시'를 켤 때만 인쇄)
+    const askEn = fmt === "ko"; // 영어 보고 뜻 쓰기
+    const body = rows
+      .map(
+        (r, i) => `<tr>
+          <td class="v-no">${i + 1}</td>
+          <td class="${askEn ? "v-word" : ""}">${esc(askEn ? r.word : r.meaning)}</td>
+          <td class="v-blank"><span class="wb-ans">${esc(askEn ? r.meaning : r.word)}</span></td>${fromCell(r)}
+        </tr>`
+      )
+      .join("");
+    parts.push(`
+      <div class="table-wrap"><table class="vocab vocab-test">
+        <thead><tr><th>#</th><th>${askEn ? "단어 / 표현" : "뜻"}</th><th>${askEn ? "뜻" : "영어"}</th>${fromCol}</tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>`);
+  }
+
+  parts.push(`<footer>핵심 어휘 단어장 · 지문 분석 결과로 자동 생성</footer>`);
+  vocabDocEl.innerHTML = parts.join("");
+  applyVocabAnswer();
+  vocabPrintBtn.style.display = "inline-flex";
+  syncFloatPrint();
+  vocabDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }

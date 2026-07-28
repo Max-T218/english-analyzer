@@ -167,12 +167,24 @@ QUIZ_SCHEMA = {
                             "propertyOrdering": ["text", "isTrue"],
                         },
                     },
+                    "fixes": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "wrong": {"type": "STRING"},
+                                "right": {"type": "STRING"},
+                            },
+                            "required": ["wrong", "right"],
+                            "propertyOrdering": ["wrong", "right"],
+                        },
+                    },
                     "explanation": {"type": "STRING"},
                 },
                 "required": ["no", "type", "format", "instruction", "passageHtml",
-                             "choices", "answer", "answerText", "tfItems", "explanation"],
+                             "choices", "answer", "answerText", "tfItems", "fixes", "explanation"],
                 "propertyOrdering": ["no", "type", "format", "instruction", "passageHtml",
-                                     "choices", "answer", "answerText", "tfItems", "explanation"],
+                                     "choices", "answer", "answerText", "tfItems", "fixes", "explanation"],
             },
         },
     },
@@ -184,6 +196,7 @@ QUIZ_TYPE_LABELS = [
     "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
     "서술형배열", "OX진위",
+    "어휘 선택형", "어법 선택형", "틀린 어휘 찾기", "틀린 어법 찾기",
 ]
 
 QUIZ_SYSTEM_PROMPT = r"""You are an expert Korean high-school English teacher who writes
@@ -198,8 +211,9 @@ the allowed list is smaller than the requested count).
 ## Output per question — fields
 - `no`: 1, 2, 3… in order.
 - `type`: one of the allowed type names, EXACTLY as given (e.g. "주제").
-- `format`: "mc" for 5-choice questions, "write" for 서술형배열, "tf" for OX진위.
-  Every type is "mc" EXCEPT 서술형배열 ("write") and OX진위 ("tf").
+- `format`: "mc" for 5-choice questions, "write" for 서술형배열, "tf" for OX진위,
+  "pick" for 어휘/어법 선택형, "fix" for 틀린 어휘/어법 찾기.
+  Every type is "mc" EXCEPT those five.
 - `instruction`: the exact Korean question line the student reads (수능 어투 그대로), e.g.
   "다음 글의 주제로 가장 적절한 것은?". For "문장삽입" also embed the sentence to insert,
   on its own line after the question line, like:
@@ -213,7 +227,8 @@ the allowed list is smaller than the requested count).
   For "write" and "tf", set `answer` to 0.
 - `answerText`: for "write", the correct English sentence (verbatim from the passage).
   For "mc" and "tf", set to "".
-- `tfItems`: for "tf", EXACTLY 5 items {text, isTrue}. For "mc" and "write", set to [].
+- `tfItems`: for "tf", EXACTLY 5 items {text, isTrue}. For every other format, set to [].
+- `fixes`: for "fix", one {wrong, right} per planted error. For every other format, set to [].
 - `explanation`: 2–4 Korean sentences (문어체) explaining why the answer is correct and why
   the others are wrong — specific, referencing the passage content.
 
@@ -264,6 +279,34 @@ the allowed list is smaller than the requested count).
     English from it). Do NOT include the whole passage and do NOT include the English words —
     the app scrambles `answerText` itself to show the word bank.
   · choices = [], answer = 0.
+- "어휘 선택형" (format "pick") — instruction
+  "다음 각 네모 안에서 문맥상 알맞은 낱말을 골라 쓰시오."
+  `passageHtml` = 3~6 sentences taken from the passage, PLAIN TEXT ONLY (no HTML tags at all),
+  containing 4~8 bracketed pairs written EXACTLY as [정답|오답]:
+    · left of `|` = the word that actually appears in the passage (the correct answer)
+    · right of `|` = a wrong word that is contextually confusable (반의어나 비슷하게 생긴 낱말)
+  The app shuffles the display order and collects the answers itself.
+  Test WORD MEANING (어휘), not grammar. choices = [], answer = 0, answerText = "", fixes = [].
+- "어법 선택형" (format "pick") — instruction
+  "다음 각 네모 안에서 어법상 알맞은 것을 골라 쓰시오."
+  Same [정답|오답] mechanics as 어휘 선택형, but each pair tests a GRAMMAR point
+  (수일치, 시제, 태, 준동사(to부정사/동명사/분사), 관계사, 대명사, 병렬구조 등).
+  The wrong option must be a genuinely ungrammatical alternative, not just an odd word choice.
+  choices = [], answer = 0, answerText = "", fixes = [].
+- "틀린 어휘 찾기" (format "fix") — instruction
+  "다음 글에서 문맥상 낱말의 쓰임이 적절하지 않은 것을 모두 찾아 바르게 고쳐 쓰시오."
+  `passageHtml` = one paragraph of the passage, PLAIN TEXT ONLY, identical to the original
+  EXCEPT that exactly 2~3 words are replaced by contextually WRONG words (주로 반의어).
+  `fixes` = one {wrong, right} per replaced word: `wrong` = the word you planted (must appear
+  VERBATIM in passageHtml), `right` = the original word from the passage.
+  The app underlines the planted words and prints the correction lines.
+  choices = [], answer = 0, answerText = "".
+- "틀린 어법 찾기" (format "fix") — instruction
+  "다음 글에서 어법상 틀린 부분을 모두 찾아 바르게 고쳐 쓰시오."
+  Same mechanics as 틀린 어휘 찾기, but plant 2~3 GRAMMAR errors instead
+  (주어-동사 수일치 오류, 시제/태 오류, to부정사↔동명사 오용, 관계사 오용, 병렬 파괴 등).
+  `fixes` = {wrong: the ungrammatical form you planted, right: the original correct form}.
+  choices = [], answer = 0, answerText = "".
 - "OX진위" (format "tf") — instruction
   "다음 글의 내용과 일치하면 O, 일치하지 않으면 X를 쓰시오."
   passageHtml = full passage, unmodified. `tfItems` = EXACTLY 5 objects {text, isTrue}:
@@ -287,8 +330,23 @@ def build_quiz_user_prompt(passage, types, count, short_hint=None):
         f"허용된 문제 유형: {', '.join(types)}",
         f"총 문항 수: {count}개 (정확히 이 개수만큼 생성)",
     ]
-    if len(types) == count:
+    n = len(types)
+    if n == count:
         lines.append("각 유형을 정확히 1문항씩, 위 목록의 모든 유형을 빠짐없이 출제하세요.")
+    elif count > n:
+        per, extra = divmod(count, n)
+        detail = f"각 유형을 최소 {per}문항씩"
+        if extra:
+            detail += f", 그중 {extra}개 유형은 {per + 1}문항씩"
+        lines.append(
+            detail + " 출제해 총 " + str(count) + "문항을 채우세요. "
+            "모든 유형이 최소 1문항은 나와야 하며, 같은 유형을 여러 번 낼 때는 "
+            "지문의 서로 다른 부분·다른 정답을 다루어 문항이 겹치지 않게 하세요."
+        )
+    else:
+        lines.append(
+            f"허용된 유형 중 {count}개를 골라 서로 다른 유형으로 1문항씩 출제하세요."
+        )
     if short_hint is not None:
         lines.append(
             f"⚠️ 이전 시도는 {short_hint}문항만 만들었습니다. 이번에는 반드시 {count}문항을 "
@@ -363,6 +421,14 @@ def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None):
             for it in items:
                 if isinstance(it, dict) and it.get("text"):
                     it["text"] = sanitize_quiz_html(it["text"])
+        fixes = q.get("fixes")
+        if isinstance(fixes, list):
+            for fx in fixes:
+                if not isinstance(fx, dict):
+                    continue
+                for k in ("wrong", "right"):
+                    if fx.get(k):
+                        fx[k] = sanitize_quiz_html(fx[k])
     return result
 
 
