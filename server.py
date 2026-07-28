@@ -23,7 +23,7 @@ from pathlib import Path
 # 배포(Render 등)에서는 0.0.0.0 바인딩이 필요. 로컬에서도 localhost로 접속됨.
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8000"))
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 # 모델명은 URL 경로에 들어가므로 안전한 형식만 허용 (하드코딩 목록 대신 형식 검증)
 _MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]+$")
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
@@ -137,6 +137,401 @@ GEMINI_SCHEMA = {
     "required": ["englishTitle", "koreanTitle", "sentences", "summary", "vocab"],
     "propertyOrdering": ["englishTitle", "koreanTitle", "sentences", "summary", "vocab"],
 }
+
+# ── 문제 제작(수능형 객관식 문제) 스키마 ──
+QUIZ_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "questions": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "no": {"type": "INTEGER"},
+                    "type": {"type": "STRING"},
+                    "format": {"type": "STRING"},
+                    "instruction": {"type": "STRING"},
+                    "passageHtml": {"type": "STRING"},
+                    "choices": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "answer": {"type": "INTEGER"},
+                    "answerText": {"type": "STRING"},
+                    "tfItems": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "text": {"type": "STRING"},
+                                "isTrue": {"type": "BOOLEAN"},
+                            },
+                            "required": ["text", "isTrue"],
+                            "propertyOrdering": ["text", "isTrue"],
+                        },
+                    },
+                    "explanation": {"type": "STRING"},
+                },
+                "required": ["no", "type", "format", "instruction", "passageHtml",
+                             "choices", "answer", "answerText", "tfItems", "explanation"],
+                "propertyOrdering": ["no", "type", "format", "instruction", "passageHtml",
+                                     "choices", "answer", "answerText", "tfItems", "explanation"],
+            },
+        },
+    },
+    "required": ["questions"],
+    "propertyOrdering": ["questions"],
+}
+
+QUIZ_TYPE_LABELS = [
+    "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입",
+    "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
+    "서술형배열", "OX진위",
+]
+
+QUIZ_SYSTEM_PROMPT = r"""You are an expert Korean high-school English teacher who writes
+수능·모의고사 style multiple-choice reading-comprehension questions from a given English
+passage. Return ONLY the structured JSON described by the schema — no markdown, no prose.
+
+You will receive: (1) one English passage, (2) a list of ALLOWED question types, (3) how
+many questions total to produce. Produce EXACTLY that many questions, choosing types ONLY
+from the allowed list (spread across different types when possible; only repeat a type if
+the allowed list is smaller than the requested count).
+
+## Output per question — fields
+- `no`: 1, 2, 3… in order.
+- `type`: one of the allowed type names, EXACTLY as given (e.g. "주제").
+- `format`: "mc" for 5-choice questions, "write" for 서술형배열, "tf" for OX진위.
+  Every type is "mc" EXCEPT 서술형배열 ("write") and OX진위 ("tf").
+- `instruction`: the exact Korean question line the student reads (수능 어투 그대로), e.g.
+  "다음 글의 주제로 가장 적절한 것은?". For "문장삽입" also embed the sentence to insert,
+  on its own line after the question line, like:
+  다음 글에서 전체 흐름으로 보아 주어진 문장이 들어가기에 가장 적절한 곳을 고르시오.<br><br>
+  <b>주어진 문장:</b> The sentence text.
+- `passageHtml`: the passage the student reads for THIS question, reformatted per the rules
+  below. Plain text plus ONLY <br>, <u>, <b> tags allowed — nothing else (no colors/ruby).
+- `choices`: for "mc", EXACTLY 5 short strings — do NOT prefix them with ①②③④⑤ (the app adds
+  those). For "write" and "tf", set `choices` to an empty array [].
+- `answer`: for "mc", integer 1–5 = the 1-based index of the correct choice.
+  For "write" and "tf", set `answer` to 0.
+- `answerText`: for "write", the correct English sentence (verbatim from the passage).
+  For "mc" and "tf", set to "".
+- `tfItems`: for "tf", EXACTLY 5 items {text, isTrue}. For "mc" and "write", set to [].
+- `explanation`: 2–4 Korean sentences (문어체) explaining why the answer is correct and why
+  the others are wrong — specific, referencing the passage content.
+
+## Type-specific rules (only use types present in the allowed list)
+- "주제" — instruction "다음 글의 주제로 가장 적절한 것은?". passageHtml = full passage,
+  unmodified. choices = 5 topic phrases (English or Korean), one clearly correct.
+- "제목" — instruction "다음 글의 제목으로 가장 적절한 것은?". passageHtml = full passage,
+  unmodified. choices = 5 short English title phrases.
+- "요지" — instruction "다음 글의 요지로 가장 적절한 것은?". passageHtml = full passage,
+  unmodified. choices = 5 Korean 요지 문장.
+- "빈칸" — instruction "다음 빈칸에 들어갈 말로 가장 적절한 것은?". passageHtml = the
+  passage with ONE key phrase replaced by "_______________". choices = 5 candidate English
+  phrases that fit the blank grammatically, one clearly the best fit.
+- "어휘" — instruction "다음 글의 밑줄 친 부분 중, 문맥상 낱말의 쓰임이 적절하지 않은
+  것은?". passageHtml = full passage with EXACTLY 5 words/short phrases each wrapped in <u>
+  and preceded by a circled number (①<u>word</u>, ②<u>word</u> … ⑤<u>word</u>), spread
+  across the passage. Exactly ONE of the 5 is WRONG in context (e.g. swap in a near-antonym);
+  that one is the answer. choices = ["①","②","③","④","⑤"] in that literal order.
+- "어법" — instruction "다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?". Same passageHtml/
+  choices mechanics as 어휘 (5 underlined circled-numbered spans), but each is a GRAMMAR
+  point and exactly one contains a genuine grammar error you introduce (e.g. wrong verb
+  form/agreement/relative pronoun/parallel structure).
+- "순서" — instruction "주어진 글 다음에 이어질 글의 순서로 가장 적절한 것은?".
+  passageHtml = the passage's first 1–2 sentences (the given opening) then <br><br>, then the
+  REST of the passage split into exactly 3 blocks labeled <b>(A)</b>, <b>(B)</b>, <b>(C)</b>
+  (each starting a new line via <br><br>) given in a SCRAMBLED (non-original) order. choices
+  = 5 plausible orderings like "(B)-(A)-(C)", only one matching the passage's true order.
+- "문장삽입" — instruction as described above (includes the sentence to insert). passageHtml
+  = the rest of the passage (after removing one sentence) with 5 candidate insertion points
+  marked as circled numbers ①~⑤ placed BETWEEN sentences. choices = ["①","②","③","④","⑤"]
+  in that literal order; answer = where the removed sentence truly belongs.
+- "내용일치(영)" — instruction "다음 글의 내용과 일치하는 것은?". passageHtml = full passage,
+  unmodified. choices = 5 ENGLISH statements about the passage; EXACTLY ONE is true to the
+  passage, the other 4 must CONTRADICT it (not merely be unmentioned). answer = the true one.
+- "내용일치(한)" — identical to "내용일치(영)" but every choice is written in KOREAN.
+- "내용불일치(영)" — instruction "다음 글의 내용과 일치하지 않는 것은?". passageHtml = full
+  passage, unmodified. choices = 5 ENGLISH statements; EXACTLY FOUR are true to the passage
+  and ONE contradicts it. answer = the FALSE one.
+- "내용불일치(한)" — identical to "내용불일치(영)" but every choice is written in KOREAN.
+  For all four 내용일치/불일치 types: base each statement on a DIFFERENT part of the passage,
+  keep them one clause long, and make wrong ones wrong by a concrete factual flip (숫자·주체·
+  인과·시점을 바꾸기) — never by vague wording.
+- "서술형배열" (format "write") — instruction
+  "다음 우리말과 같은 뜻이 되도록 주어진 단어를 모두 배열하여 문장을 완성하시오."
+  Pick ONE key sentence of the passage (주제문이나 핵심 문장, 8~20 words).
+  · `answerText` = that English sentence, VERBATIM from the passage.
+  · `passageHtml` = ONLY the Korean translation of that one sentence (the student writes the
+    English from it). Do NOT include the whole passage and do NOT include the English words —
+    the app scrambles `answerText` itself to show the word bank.
+  · choices = [], answer = 0.
+- "OX진위" (format "tf") — instruction
+  "다음 글의 내용과 일치하면 O, 일치하지 않으면 X를 쓰시오."
+  passageHtml = full passage, unmodified. `tfItems` = EXACTLY 5 objects {text, isTrue}:
+  · `text` = one short ENGLISH statement about the passage.
+  · `isTrue` = true if it matches the passage, false if it contradicts it.
+  Mix them up — roughly 2~3 true and 2~3 false, in a non-obvious order. Each statement must
+  come from a DIFFERENT part of the passage. choices = [], answer = 0.
+
+## Quality rules
+- Base everything on the ACTUAL passage content — never invent facts not in the passage.
+- Only ONE choice may be correct; the other 4 must be clearly wrong to a careful reader but
+  plausible enough to require real understanding (avoid silly/obviously-wrong options).
+- Vary which choice number is correct across questions (don't make the answer always ①).
+- Escape literal < > & in passage text as &lt; &gt; &amp; before adding your own <u>/<b>/<br>.
+
+Return valid JSON only."""
+
+
+def build_quiz_user_prompt(passage, types, count, short_hint=None):
+    lines = [
+        f"허용된 문제 유형: {', '.join(types)}",
+        f"총 문항 수: {count}개 (정확히 이 개수만큼 생성)",
+    ]
+    if len(types) == count:
+        lines.append("각 유형을 정확히 1문항씩, 위 목록의 모든 유형을 빠짐없이 출제하세요.")
+    if short_hint is not None:
+        lines.append(
+            f"⚠️ 이전 시도는 {short_hint}문항만 만들었습니다. 이번에는 반드시 {count}문항을 "
+            f"끝까지 모두 생성하세요. 중간에 멈추지 마세요."
+        )
+    lines += ["", "[지문]", passage.strip()]
+    return "\n".join(lines)
+
+
+_QUIZ_TRUNC_MSG = (
+    "출력이 최대 길이에 도달해 문제 생성이 잘렸습니다. 문항 수를 줄이거나 "
+    "지문을 더 짧게 나눠 다시 시도하세요."
+)
+
+_QUIZ_ALLOWED_TAGS = {"br", "u", "b"}
+_QUIZ_ANY_TAG_RE = re.compile(r"</?([a-zA-Z0-9]+)([^>]*)>")
+
+
+def sanitize_quiz_html(html):
+    """문제 지문 HTML에서 <br>/<u>/<b> 만 남기고 나머지 태그는 제거한다."""
+    if not html:
+        return html
+
+    def repl(m):
+        tag = m.group(1).lower()
+        if tag not in _QUIZ_ALLOWED_TAGS:
+            return ""
+        return m.group(0) if m.group(0).startswith("</") else f"<{tag}>"
+
+    return _QUIZ_ANY_TAG_RE.sub(repl, html)
+
+
+def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None):
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "Gemini API 키가 없습니다. 화면 상단의 'API 키' 칸에 키를 입력하거나 "
+            "환경변수 GEMINI_API_KEY 를 설정하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+    types = [t for t in (types or []) if t in QUIZ_TYPE_LABELS] or ["주제", "제목", "요지"]
+    count = max(1, min(int(count or 5), 30))
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": QUIZ_SYSTEM_PROMPT}]},
+        "contents": [
+            {"role": "user", "parts": [{"text": build_quiz_user_prompt(passage, types, count, short_hint)}]}
+        ],
+        "generationConfig": {
+            "temperature": 0.4,
+            # 문항마다 지문이 통째로 들어가므로 문항 수가 많으면 출력이 커진다 → 넉넉히
+            "maxOutputTokens": 65536,
+            "responseMimeType": "application/json",
+            "responseSchema": QUIZ_SCHEMA,
+        },
+    }
+    data = json.dumps(payload).encode("utf-8")
+    body = _gemini_call_with_retry(data, api_key, model)
+    result = _extract_gemini_json(body, _QUIZ_TRUNC_MSG)
+
+    for q in result.get("questions", []):
+        if not isinstance(q, dict):
+            continue
+        for f in ("passageHtml", "instruction", "explanation", "answerText"):
+            if q.get(f):
+                q[f] = sanitize_quiz_html(q[f])
+        choices = q.get("choices")
+        if isinstance(choices, list):
+            q["choices"] = [sanitize_quiz_html(c) if isinstance(c, str) else c for c in choices]
+        items = q.get("tfItems")
+        if isinstance(items, list):
+            for it in items:
+                if isinstance(it, dict) and it.get("text"):
+                    it["text"] = sanitize_quiz_html(it["text"])
+    return result
+
+
+# ── 워크북(10단계 통합 학습지) 스키마 ──
+# 한 번의 호출로 10단계 전부를 만들 수 있는 재료를 받아, 서버/클라이언트가 단계별로 조립한다.
+WORKBOOK_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "englishTitle": {"type": "STRING"},
+        "koreanTitle": {"type": "STRING"},
+        "sentences": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "no": {"type": "INTEGER"},
+                    "heading": {"type": "STRING"},
+                    "en": {"type": "STRING"},
+                    "ko": {"type": "STRING"},
+                    "enBlank": {"type": "STRING"},
+                    "verbForm": {"type": "STRING"},
+                    "grammarChoice": {"type": "STRING"},
+                    "writeKeys": {"type": "ARRAY", "items": {"type": "STRING"}},
+                },
+                "required": ["no", "heading", "en", "ko", "enBlank",
+                             "verbForm", "grammarChoice", "writeKeys"],
+                "propertyOrdering": ["no", "heading", "en", "ko", "enBlank",
+                                     "verbForm", "grammarChoice", "writeKeys"],
+            },
+        },
+        "oddParagraphs": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "no": {"type": "INTEGER"},
+                    "heading": {"type": "STRING"},
+                    "text": {"type": "STRING"},
+                    "fixes": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "wrong": {"type": "STRING"},
+                                "right": {"type": "STRING"},
+                            },
+                            "required": ["wrong", "right"],
+                            "propertyOrdering": ["wrong", "right"],
+                        },
+                    },
+                },
+                "required": ["no", "heading", "text", "fixes"],
+                "propertyOrdering": ["no", "heading", "text", "fixes"],
+            },
+        },
+    },
+    "required": ["englishTitle", "koreanTitle", "sentences", "oddParagraphs"],
+    "propertyOrdering": ["englishTitle", "koreanTitle", "sentences", "oddParagraphs"],
+}
+
+WORKBOOK_SYSTEM_PROMPT = r"""You are an expert Korean high-school English teacher who builds
+'10단계 워크북' (10-stage workbook) worksheets from a textbook passage — the kind Korean
+schools use for 내신 대비. Return ONLY the structured JSON described by the schema.
+
+You will receive ONE English passage. Split it into sentences and, for EACH sentence, provide
+the raw materials the workbook stages need. The app assembles the printable stages from your
+data, so accuracy of the MARKUP FORMAT below is critical.
+
+## sentences[] — one entry per sentence of the passage
+- `no`: 1, 2, 3 … with no gaps, in original order. EVERY sentence of the passage must appear
+  EXACTLY ONCE. Never stop partway — completeness is mandatory.
+- `heading`: if a section heading/subtitle appears in the passage immediately BEFORE this
+  sentence (e.g. "Discover Yourself"), put it here. Otherwise "".
+- `en`: the sentence's original English, verbatim, plain text (no markup at all).
+- `ko`: a natural, complete Korean translation of that sentence (존댓말 문어체, 교과서 지도서 톤).
+
+### `enBlank` — 워크북3 재료 (해석 보고 영어 빈칸 채우기)
+Copy `en` exactly, but wrap 1~4 KEY English words/phrases in {{ }}.
+Choose words worth memorizing (핵심 어휘·숙어), keeping the sentence solvable from `ko`.
+Example: "Many students are either {{unsure of}} what they know or {{confused}} about ..."
+
+### `verbForm` — 워크북5 재료 (동사형 고쳐 쓰기)
+Copy `en`, but replace each notable VERB (and only verbs/verbals) with (기본형|정답):
+  · left of `|` = the plain base form shown to the student in parentheses
+  · right of `|` = the correct inflected form that belongs there
+Cover tense/agreement/passive/to-infinitive/gerund/participle. 2~5 per sentence.
+Example: "It (be|is) hard (climb|to climb) a mountain, and (design|designing) a path (require|requires) it."
+
+### `grammarChoice` — 워크북6 재료 (어법 선택형)
+Copy `en`, but replace 2~4 grammar points with [정답|오답]:
+  · left of `|` = the CORRECT form (as it appears in the passage)
+  · right of `|` = a plausible WRONG alternative testing a real grammar point
+    (수일치, 태, 준동사, 관계사, 대명사, 병렬 등). The app shuffles the display order.
+Example: "Begin your map by [taking|take] a paper and [drawing|draw] some dots on [it|them]."
+
+### `writeKeys` — 워크북9 재료 (영작 키워드)
+3~8 short English keywords (base forms) that guide writing this sentence, in the order they
+appear. Example: ["either", "unsure", "what", "confuse", "how", "find", "career"]
+
+## oddParagraphs[] — 워크북7 재료 (문맥상 어색한 곳 찾기)
+Group the passage into 2~5 paragraphs (follow the passage's own paragraph/heading structure).
+For EACH paragraph:
+- `no`: 1, 2, 3 …
+- `heading`: the section heading if the paragraph starts one, else "".
+- `text`: the paragraph's full English text, BUT with exactly 2~3 words replaced by a
+  CONTEXTUALLY WRONG word (usually a near-antonym) so students must spot them.
+  Keep everything else identical to the passage.
+- `fixes`: one {wrong, right} per replaced word — `wrong` = the word you put in `text`,
+  `right` = the original correct word. `wrong` MUST appear verbatim in `text`.
+Example: original "are either unsure of" → text has "are either sure of",
+         fixes: [{"wrong": "sure", "right": "unsure"}]
+
+## HARD RULES (most common failures — check before returning)
+1. `en` must be the passage's sentence VERBATIM. Never paraphrase or drop words.
+2. `enBlank`/`verbForm`/`grammarChoice` must each equal `en` except for their own markup.
+   Do not rewrite or paraphrase the sentence.
+3. Use ONLY these markers: {{answer}}, (base|answer), [correct|wrong]. No other symbols,
+   no HTML, no numbering inside the text.
+4. `|` separates two parts — never use `|` for anything else.
+5. Every sentence of the passage appears exactly once, in order.
+
+Return valid JSON only. No markdown fences, no prose."""
+
+
+_WORKBOOK_TRUNC_MSG = (
+    "출력이 최대 길이에 도달해 워크북 생성이 잘렸습니다. 지문이 너무 깁니다. "
+    "지문을 두세 문단으로 나눠 각각 따로 만드세요."
+)
+
+
+def build_workbook_user_prompt(passage, complete_hint=None):
+    lines = []
+    if complete_hint is not None:
+        expected, got = complete_hint
+        lines.append(
+            f"⚠️ 이전 시도는 {got}문장만 만들었으나 이 지문은 약 {expected}문장입니다. "
+            f"이번에는 지문의 모든 문장을 1번부터 끝까지 빠짐없이 포함하세요."
+        )
+        lines.append("")
+    lines.append("[지문]")
+    lines.append(passage.strip())
+    return "\n".join(lines)
+
+
+def call_gemini_workbook(passage, api_key, model, complete_hint=None):
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "Gemini API 키가 없습니다. 화면 상단의 'API 키' 칸에 키를 입력하거나 "
+            "환경변수 GEMINI_API_KEY 를 설정하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": WORKBOOK_SYSTEM_PROMPT}]},
+        "contents": [
+            {"role": "user", "parts": [{"text": build_workbook_user_prompt(passage, complete_hint)}]}
+        ],
+        "generationConfig": {
+            "temperature": 0.25,
+            "maxOutputTokens": 65536,
+            "responseMimeType": "application/json",
+            "responseSchema": WORKBOOK_SCHEMA,
+        },
+    }
+    data = json.dumps(payload).encode("utf-8")
+    body = _gemini_call_with_retry(data, api_key, model)
+    return _extract_gemini_json(body, _WORKBOOK_TRUNC_MSG)
+
 
 SYSTEM_PROMPT = r"""You are an expert Korean high-school English teacher who produces
 '청크 단위 직독직해' (chunk-by-chunk literal translation) analysis sheets for exam
@@ -531,41 +926,13 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
     return "\n".join(lines)
 
 
-def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, complete_hint=None, english_fix=False):
-    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError(
-            "Gemini API 키가 없습니다. 화면 상단의 'API 키' 칸에 키를 입력하거나 "
-            "환경변수 GEMINI_API_KEY 를 설정하세요."
-        )
-    model = model if (model and _MODEL_RE.match(model)) else MODEL
-
-    sys_text = SYSTEM_PROMPT
-    if prior is not None:
-        sys_text += (
-            "\n\n## REVIEW MODE (검토·보강 패스)\n"
-            "You are now REVISING an existing analysis for completeness. Keep every correct "
-            "mark, ADD every missed grammar/vocab/coordinating-conjunction mark, and FIX any "
-            "wrong ones. Do not change sentence count, order, or numbering. Return the full "
-            "corrected JSON in the same schema."
-        )
-
-    payload = {
-        "systemInstruction": {"parts": [{"text": sys_text}]},
-        "contents": [
-            {
-                "role": "user",
-                "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior, complete_hint, english_fix)}],
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.2,
-            "maxOutputTokens": 65536,
-            "responseMimeType": "application/json",
-            "responseSchema": GEMINI_SCHEMA,
-        },
-    }
-    data = json.dumps(payload).encode("utf-8")
+def _gemini_call_with_retry(data, api_key, model):
+    """페이로드(JSON bytes)를 모델에 전송하고 재시도·모델 대체를 공통 처리한다
+    (지문분석·문제제작 등 모든 Gemini 호출이 공유).
+    - flash 429(속도 제한), 5xx(서버 과부하), 네트워크 오류 → 대기 후 자동 재시도
+      (누적 대기가 MAX_RETRY_TOTAL을 넘으면 포기하고 명확한 한국어 오류로 안내)
+    - 모델이 사라졌거나(400/404) 비-flash 429(할당량 0) → 사용 가능한 flash 모델로 자동 대체
+    성공 시 Gemini 응답 바디(dict)를 반환한다."""
 
     def _post(use_model):
         req = urllib.request.Request(
@@ -578,12 +945,6 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
             return json.loads(resp.read().decode("utf-8"))
 
     def _generate(use_model):
-        """전송 실패를 넉넉히 자동 재시도하되, 누적 대기가 MAX_RETRY_TOTAL을 넘으면
-        무한 대기 대신 명확한 안내로 포기한다.
-        - flash 429(속도 제한), 5xx(서버 과부하), 네트워크 오류 → 대기 후 재시도
-        - 인증/모델/요청 오류(400/403/404), 비-flash 429 → 재시도 않고 바깥에서 처리
-        일시적 속도 제한은 대개 이 시간 안에 풀리고, 하루 할당량이 소진된 경우엔
-        영원히 매달리지 않고 사용자에게 원인을 알려준다."""
         is_flash = "flash" in (use_model or "").lower()
         attempt = 0
         waited = 0.0
@@ -629,7 +990,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
             return detail
 
     try:
-        body = _generate(model)
+        return _generate(model)
     except urllib.error.HTTPError as e:
         msg = _err_msg(e)
         low = msg.lower()
@@ -663,7 +1024,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
                     "정확도(모델) 목록에서 다른 모델을 골라 다시 시도하세요."
                 )
             try:
-                body = _generate(alt)  # Flash로 재시도
+                return _generate(alt)  # Flash로 재시도
             except urllib.error.HTTPError as e2:
                 raise RuntimeError(f"Gemini API 오류 {e2.code}: {_err_msg(e2)}")
         elif e.code in (400, 403) and "API" in msg.upper():
@@ -673,7 +1034,10 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
     except urllib.error.URLError as e:
         raise RuntimeError(f"네트워크 오류: {e.reason}")
 
-    # 안전 필터 등으로 후보가 없을 때
+
+def _extract_gemini_json(body, trunc_msg):
+    """Gemini 응답 바디에서 텍스트를 뽑아 JSON으로 파싱한다.
+    안전필터·빈응답·MAX_TOKENS 잘림 등은 한국어 RuntimeError로 변환한다."""
     feedback = body.get("promptFeedback", {})
     if feedback.get("blockReason"):
         raise RuntimeError(f"요청이 차단되었습니다: {feedback.get('blockReason')}")
@@ -686,31 +1050,70 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
     if finish in ("SAFETY", "RECITATION", "PROHIBITED_CONTENT"):
         raise RuntimeError(f"응답이 필터링되었습니다: {finish}")
 
-    _TRUNC_MSG = (
-        "출력이 최대 길이에 도달해 분석이 잘렸습니다. 이 지문이 너무 길어서 그렇습니다. "
-        "지문을 두세 문단으로 나눠 각각 따로 분석하세요."
-    )
-
     text = ""
     for part in cand.get("content", {}).get("parts", []):
         if "text" in part:
             text += part["text"]
     if not text:
         if finish == "MAX_TOKENS":
-            raise RuntimeError(_TRUNC_MSG)
+            raise RuntimeError(trunc_msg)
         raise RuntimeError(
             "모델 응답이 비어 있습니다. 출력이 잘렸을 수 있으니 더 짧은 지문으로 시도하세요."
         )
     try:
         result = json.loads(text)
     except json.JSONDecodeError:
-        # 잘려서 JSON이 완성되지 못한 경우가 대부분 → 원인을 분명히 안내
         if finish == "MAX_TOKENS":
-            raise RuntimeError(_TRUNC_MSG)
+            raise RuntimeError(trunc_msg)
         raise RuntimeError("모델 응답을 JSON으로 해석하지 못했습니다.")
-    # 길이 제한에 걸렸는데도 우연히 JSON이 파싱된 경우(내용이 부족) 방어
     if finish == "MAX_TOKENS":
-        raise RuntimeError(_TRUNC_MSG)
+        raise RuntimeError(trunc_msg)
+    return result
+
+
+_ANALYZE_TRUNC_MSG = (
+    "출력이 최대 길이에 도달해 분석이 잘렸습니다. 이 지문이 너무 길어서 그렇습니다. "
+    "지문을 두세 문단으로 나눠 각각 따로 분석하세요."
+)
+
+
+def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, complete_hint=None, english_fix=False):
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "Gemini API 키가 없습니다. 화면 상단의 'API 키' 칸에 키를 입력하거나 "
+            "환경변수 GEMINI_API_KEY 를 설정하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+
+    sys_text = SYSTEM_PROMPT
+    if prior is not None:
+        sys_text += (
+            "\n\n## REVIEW MODE (검토·보강 패스)\n"
+            "You are now REVISING an existing analysis for completeness. Keep every correct "
+            "mark, ADD every missed grammar/vocab/coordinating-conjunction mark, and FIX any "
+            "wrong ones. Do not change sentence count, order, or numbering. Return the full "
+            "corrected JSON in the same schema."
+        )
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": sys_text}]},
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior, complete_hint, english_fix)}],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 65536,
+            "responseMimeType": "application/json",
+            "responseSchema": GEMINI_SCHEMA,
+        },
+    }
+    data = json.dumps(payload).encode("utf-8")
+    body = _gemini_call_with_retry(data, api_key, model)
+    result = _extract_gemini_json(body, _ANALYZE_TRUNC_MSG)
     # AI 마크업 정화 + 한국어 루비 제거 (레이아웃 붕괴/오류 방어)
     for s in result.get("sentences", []):
         if not isinstance(s, dict):
@@ -775,6 +1178,14 @@ def list_models(api_key):
         # Flash-Lite 제외 (분석 품질 우선 — 누락이 많아 사용 안 함)
         if "lite" in low:
             continue
+        # 별칭(-latest)·프리뷰·실험 버전 제외 — 별칭은 실제 모델과 할당량을 공유해
+        # 사용량 집계만 흐리고, 프리뷰/실험판은 품질이 들쭉날쭉하다.
+        if mid.endswith("-latest") or "preview" in low or "-exp" in low:
+            continue
+        # 구버전 제외 — 현재 주력인 3.5 이상만 노출 (새 버전이 나오면 자동 포함)
+        vm = re.search(r"gemini-(\d+(?:\.\d+)?)", low)
+        if not vm or float(vm.group(1)) < 3.5:
+            continue
         models.append({"id": mid, "label": m.get("displayName", mid)})
     # 최신순 정렬 후 상위 5개만 반환 (-latest 별칭 우선, 그다음 버전 숫자 내림차순)
     def rank(m):
@@ -830,7 +1241,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/analyze", "/api/models"):
+        if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook"):
             self.send_error(404, "Not found")
             return
         try:
@@ -846,6 +1257,59 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(list_models(req.get("apiKey") or ""))
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
+            return
+
+        if path == "/api/workbook":
+            passage = (req.get("passage") or "").strip()
+            if len(passage) < 20:
+                self._send_json({"error": "워크북을 만들 영어 지문을 입력하세요 (20자 이상)."}, 400)
+                return
+            api_key = req.get("apiKey") or ""
+            model = req.get("model") or MODEL
+            try:
+                result = call_gemini_workbook(passage, api_key, model)
+                # 문장 누락 방어 — 실제 문장 수보다 많이 부족하면 자동 보정 재요청
+                expected = rough_sentence_count(passage)
+                for _ in range(2):
+                    got = len(result.get("sentences", []))
+                    if got >= expected - 2:
+                        break
+                    result = call_gemini_workbook(
+                        passage, api_key, model, complete_hint=(expected, got)
+                    )
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+                return
+            self._send_json(result)
+            return
+
+        if path == "/api/quiz":
+            passage = (req.get("passage") or "").strip()
+            if len(passage) < 20:
+                self._send_json({"error": "문제를 만들 영어 지문을 입력하세요 (20자 이상)."}, 400)
+                return
+            types = req.get("types") or []
+            count = req.get("count") or 5
+            api_key = req.get("apiKey") or ""
+            model = req.get("model") or MODEL
+            try:
+                result = call_gemini_quiz(passage, types, count, api_key, model)
+                # 문항 누락 방어 — 요청한 개수보다 적게 오면 한 번 더 요청해 채운다
+                want = max(1, min(int(count or 5), 30))
+                for _ in range(2):
+                    got = len(result.get("questions", []))
+                    if got >= want:
+                        break
+                    retry = call_gemini_quiz(
+                        passage, types, count, api_key, model, short_hint=got
+                    )
+                    # 더 많이 만들어 온 결과만 채택 (재시도가 더 나쁘면 기존 유지)
+                    if len(retry.get("questions", [])) > got:
+                        result = retry
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+                return
+            self._send_json(result)
             return
 
         passage = (req.get("passage") or "").strip()

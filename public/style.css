@@ -17,6 +17,7 @@
 
 *{box-sizing:border-box;}
 html,body{margin:0;}
+html{background:var(--paper);}
 body{
   background:var(--paper); color:var(--ink);
   font-family:"Segoe UI","Malgun Gothic",Pretendard,system-ui,-apple-system,sans-serif;
@@ -100,6 +101,153 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 @media (prefers-color-scheme:dark) and (min-width:999999px){
   .u-lv-lo{color:#3ec27f;}  .u-bar-fill.u-lv-lo{background:#3ec27f;}
   .u-lv-mid{color:#e0a83a;} .u-bar-fill.u-lv-mid{background:#e0a83a;}
+}
+
+/* ── 탭 내비게이션 ── */
+.tabs{display:flex; gap:4px; margin-bottom:18px; border-bottom:2px solid var(--line); flex-wrap:wrap;}
+.tab-btn{
+  font:inherit; font-size:14px; font-weight:700; cursor:pointer; color:var(--ink-soft);
+  background:transparent; border:none; padding:10px 16px; border-bottom:3px solid transparent;
+  margin-bottom:-2px; transition:color .15s, border-color .15s;
+}
+.tab-btn:hover{color:var(--accent);}
+.tab-btn.active{color:var(--accent); border-bottom-color:var(--accent);}
+.tab-page{display:none;}
+.tab-page.active{display:block;}
+@media print{ .tabs{display:none !important;} }
+
+/* ── 문제 제작: 유형 체크박스 ── */
+/* 라벨 + 전체선택 토글을 한 줄에 */
+.field-head{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;}
+.field-head > label{margin:0;}
+.toggle-all{font-size:12px; color:var(--accent);}
+.toggle-all input{width:15px; height:15px;}
+
+.quiz-type-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px;}
+.quiz-type-grid label{
+  display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--ink);
+  background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:8px 10px; cursor:pointer;
+}
+.quiz-type-grid input{accent-color:var(--accent); cursor:pointer;}
+
+/* ── 문제 카드 ── */
+.qz-card{
+  background:var(--card); border:1px solid var(--line); border-radius:12px;
+  padding:18px 20px; margin-bottom:16px; box-shadow:var(--shadow);
+  break-inside:avoid; page-break-inside:avoid;
+}
+.qz-head{display:flex; align-items:center; gap:9px; margin-bottom:10px;}
+.qz-no{
+  background:var(--accent); color:#fff; font-weight:700; font-size:13px;
+  min-width:24px; height:24px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center;
+}
+@media (prefers-color-scheme:dark) and (min-width:999999px){.qz-no{color:#0f141a;}}
+.qz-type{font-size:11px; font-weight:700; color:#fff; background:var(--accent); padding:2px 9px; border-radius:20px;}
+.qz-instruction{font-weight:700; margin-bottom:12px; line-height:1.6;}
+.qz-passage{
+  background:var(--paper); border:1px dashed var(--line); border-radius:9px;
+  padding:12px 14px; margin-bottom:12px; line-height:1.9; font-size:14.5px;
+}
+.qz-passage u{text-decoration-color:var(--accent); text-decoration-thickness:2px;}
+.qz-choices{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px;}
+.qz-choices li{display:flex; gap:8px; font-size:14px; line-height:1.5;}
+.qz-choices .qz-num{font-weight:700; color:var(--accent); flex:0 0 auto;}
+.qz-choices li.qz-correct .qz-choice-text{font-weight:700; color:var(--g);}
+/* 서술형 배열 — 섞인 단어 + 답 쓰는 줄 */
+.qz-scramble{
+  font-size:14.5px; line-height:1.9; color:var(--ink); margin:4px 0 10px;
+  padding:10px 12px; background:var(--paper); border:1px dashed var(--line); border-radius:9px;
+}
+.qz-writeline{border-bottom:1px solid var(--line); height:2em; margin-top:4px;}
+.qz-writeline + .qz-writeline{margin-top:10px;}
+/* O/X 진위판단 */
+.qz-tf li{align-items:baseline;}
+.qz-tf .qz-num{color:var(--ink-soft); font-weight:700; flex:0 0 auto;}
+.qz-ox{
+  margin-left:auto; flex:0 0 auto; font-weight:700; color:var(--ink-soft);
+  border-bottom:1px solid var(--line); letter-spacing:.1em;
+}
+.qz-reveal-btn{
+  font:inherit; font-size:12.5px; font-weight:700; color:var(--accent); background:none;
+  border:1px dashed var(--accent); border-radius:8px; padding:6px 12px; cursor:pointer; margin-top:12px;
+}
+.qz-answer-box{
+  display:none; margin-top:10px; padding:10px 12px; border-radius:8px;
+  background:var(--accent-soft); font-size:13px; line-height:1.7;
+}
+.qz-answer-box.show{display:block;}
+.qz-answer-box b{color:var(--accent);}
+table.answerkey td:nth-child(1),table.answerkey td:nth-child(3){font-weight:700; color:var(--accent); white-space:nowrap;}
+@media print{
+  .qz-reveal-btn, .qz-answer-box{display:none !important;}
+  .qz-card{box-shadow:none;}
+}
+
+/* ── 워크북 (단계별 학습지) ── */
+.wb-cover{
+  text-align:center; padding:60px 20px; border:1px solid var(--line); border-radius:14px;
+  margin-bottom:16px; background:var(--card);
+}
+.wb-cover h1{font-family:Georgia,"Nanum Myeongjo",serif; font-size:28px; margin:0 0 10px;}
+.wb-cover .wb-date{color:var(--ink-soft); font-size:13px;}
+
+.wb-titlebar{
+  display:flex; flex-wrap:wrap; align-items:baseline; gap:10px;
+  padding:12px 16px; margin-bottom:14px; border-radius:10px;
+  background:var(--accent-soft); border:1px solid var(--line);
+}
+.wb-titlebar b{font-family:Georgia,"Nanum Myeongjo",serif; font-size:16px; color:var(--ink);}
+.wb-titlebar span{font-size:13px; color:var(--ink-soft);}
+
+.wb-stage-head{margin-top:26px;}
+.wb-stage-head .num{
+  background:var(--accent); color:#fff; font-size:12px; font-weight:700;
+  padding:3px 10px; border-radius:20px;
+}
+.wb-guide{
+  font-size:13px; font-weight:600; color:var(--accent);
+  margin:-4px 0 14px; padding-left:2px;
+}
+.wb-q{
+  border-bottom:1px dashed var(--line); padding:12px 0;
+  break-inside:avoid; page-break-inside:avoid;
+}
+.wb-q:last-child{border-bottom:none;}
+.wb-q-body{display:flex; gap:10px; align-items:flex-start;}
+.wb-q-main{flex:1; min-width:0;}
+.wb-no{
+  flex:0 0 auto; background:var(--accent-soft); color:var(--accent); font-weight:700;
+  font-size:12px; min-width:22px; height:22px; border-radius:6px;
+  display:inline-flex; align-items:center; justify-content:center; margin-top:2px;
+}
+.wb-heading{font-weight:700; color:var(--ink); font-size:14px; margin:6px 0 8px;}
+.wb-ko{font-size:13.5px; color:var(--ink-soft); line-height:1.7; margin-bottom:6px; word-break:keep-all;}
+.wb-en{font-size:15px; line-height:2.1; color:var(--ink);}
+.wb-para{font-size:14.5px; line-height:2; color:var(--ink); margin-bottom:12px;}
+.wb-para u{text-decoration-color:var(--accent); text-decoration-thickness:2px; text-underline-offset:3px;}
+.wb-scramble{font-size:14.5px; line-height:1.9; color:var(--ink); margin:4px 0;}
+.wb-keys{
+  display:inline-block; font-size:12.5px; font-weight:600; color:var(--gv);
+  background:rgba(122,63,160,.08); border-radius:6px; padding:3px 9px; margin:4px 0;
+}
+.wb-paren{color:var(--g); font-weight:700;}
+.wb-choice{color:var(--v); font-weight:600; white-space:nowrap;}
+.wb-blank{
+  display:inline-block; min-width:90px; border-bottom:1px solid var(--ink-soft);
+  margin:0 3px; vertical-align:baseline; height:1.15em;
+}
+.wb-writeline{
+  border-bottom:1px solid var(--line); height:1.9em; margin-top:6px;
+}
+.wb-fixline{font-size:14px; margin-top:8px; color:var(--ink);}
+/* 정답 — '정답 표시'가 켜졌을 때만 노출 (화면·인쇄 공통) */
+.wb-ans{display:none; margin-top:7px; font-size:13px; font-weight:700; color:var(--g);}
+.wb-ans::before{content:"정답  "; font-weight:700; color:var(--accent);}
+#workbookDoc.show-answers .wb-ans{display:block;}
+@media print{
+  .wb-stage{break-before:page; page-break-before:always;}
+  .wb-passage > .wb-stage:first-of-type{break-before:auto; page-break-before:auto;}
+  .wb-cover{break-after:page; page-break-after:always; box-shadow:none;}
 }
 
 /* ── 여러 지문 입력 (지문 추가/삭제) ── */
@@ -325,6 +473,7 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   @page{ margin:14mm 12mm 18mm; }
   /* OS가 다크모드여도 인쇄는 항상 라이트 색상으로 고정 (색 빠짐 방지) */
   :root{
+    color-scheme:light !important;
     --paper:#ffffff; --card:#ffffff; --ink:#1b2430; --ink-soft:#42505f;
     --line:#c9d0d8; --line-soft:#eef1f4; --accent:#1f4e6b; --accent-soft:#eaf0f5;
     --g:#c62828; --v:#1565a8; --gv:#6d329a; --conj:#1487b8; --hl:#ffec99; --conj-bg:#cdeefb;
@@ -332,7 +481,10 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   }
   /* 모든 색/배경을 강제로 인쇄 (형광펜·범례 스와치·루비 색상 포함) */
   *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
-  body{background:#fff;}
+  /* 내용이 페이지 하단까지 못 채우면 남는 여백이 채색 안 돼 검게 보일 수 있어
+     html·body 배경을 !important로 강제하고 최소 높이를 페이지 전체로 확보 */
+  html{background:#fff !important; min-height:100%;}
+  body{background:#fff !important; min-height:100%;}
   .app-head,.panel,.loading,.result-tools,footer{display:none !important;}
   .sent,.cover,.table-wrap,.legend{box-shadow:none; break-inside:avoid;}
   .wrap{max-width:none; padding:0;}

@@ -14,7 +14,7 @@
       <img class="app-logo" src="/logo.png" alt="ARA DNA" onerror="this.style.display='none'">
       <div class="eyebrow">One-Page Analysis for ARA</div>
     </div>
-    <p>영어 지문을 붙여 넣으면 자동으로 구문 단위 직독직해 분석본을 만들어 줍니다.</p>
+    <p>영어 지문을 붙여 넣으면 자동으로 구문 단위 직독직해 분석본·문제·워크북을 만들어 줍니다.</p>
   </header>
 
   <section class="panel">
@@ -27,46 +27,194 @@
     </div>
     <div class="hint" id="keyStatus">키는 이 브라우저에만 저장되며 서버에 파일로 남지 않습니다.</div>
 
-    <label style="margin-top:16px">영어 지문 <span id="passageCount"></span></label>
-    <div id="passageList"></div>
-    <button type="button" class="btn ghost small" id="addPassageBtn">＋ 지문 추가</button>
-
     <div class="row">
-      <div class="field">
-        <label for="targetGrammar">목표 어법 (선택)</label>
-        <input type="text" id="targetGrammar" placeholder="예: 분사구문, 관계대명사, 가정법">
-      </div>
       <div class="field">
         <label for="model">모델 (Flash) <span class="sub" id="modelStatus"></span></label>
         <select id="model">
-          <option value="gemini-flash-latest">최신 Flash (권장)</option>
+          <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
         </select>
       </div>
     </div>
 
-    <div class="usage-panel" id="usagePanel" hidden></div>
+    <details class="brand-panel">
+      <summary>학원 마크 설정 <span class="sub">(인쇄물 우측 하단에 표시, 이 브라우저에만 저장)</span></summary>
+      <div class="brand-body">
+        <label for="brandName">학원명 (선택)</label>
+        <input type="text" id="brandName" placeholder="예: ARA 어학원">
+        <label for="brandFile" style="margin-top:12px">로고 이미지 (선택, 5MB 이하)</label>
+        <input type="file" id="brandFile" accept="image/*">
+        <div class="brand-preview" id="brandPreview">
+          <span class="muted">업로드한 로고가 여기에 미리보기로 표시됩니다.</span>
+        </div>
+        <button type="button" class="btn ghost small" id="brandRemoveBtn" style="margin-top:8px">마크 삭제</button>
+      </div>
+    </details>
 
-    <div class="actions">
-      <button class="btn" id="analyzeBtn">분석하기</button>
-      <button class="btn ghost" id="printBtn" style="display:none">🖨️ 인쇄 / PDF</button>
-      <label class="chk" title="1차 분석 후 AI가 한 번 더 검토해 빠진 어법·어휘를 보강합니다. 지문당 요청이 2배가 됩니다.">
-        <input type="checkbox" id="reviewChk"> 꼼꼼 검토 <span class="chk-sub">(2차 검토·사용량 2배)</span>
-      </label>
-      <span class="hint">Ctrl+Enter 로도 실행됩니다.</span>
-    </div>
-    <div class="error" id="error"></div>
+    <div class="usage-panel" id="usagePanel" hidden></div>
   </section>
 
-  <div class="loading" id="loading">
-    <span class="spinner"></span>
-    <span id="loadingText">AI가 지문을 분석하고 있습니다… (지문 길이에 따라 20~60초 걸릴 수 있어요)</span>
-  </div>
+  <nav class="tabs" id="tabNav">
+    <button type="button" class="tab-btn active" data-tab="analyze">📖 지문 분석</button>
+    <button type="button" class="tab-btn" data-tab="mcq">📝 문제 제작 (객관식)</button>
+    <button type="button" class="tab-btn" data-tab="saq">✍️ 문제 제작 (주관식)</button>
+    <button type="button" class="tab-btn" data-tab="workbook">📚 워크북 제작</button>
+  </nav>
 
-  <div id="result"></div>
+  <!-- ══════════ 탭 1: 지문 분석 ══════════ -->
+  <section class="tab-page active" id="tab-analyze">
+    <section class="panel">
+      <label>영어 지문 <span id="passageCount"></span></label>
+      <div id="passageList"></div>
+      <button type="button" class="btn ghost small" id="addPassageBtn">＋ 지문 추가</button>
+
+      <div class="row">
+        <div class="field">
+          <label for="targetGrammar">목표 어법 (선택)</label>
+          <input type="text" id="targetGrammar" placeholder="예: 분사구문, 관계대명사, 가정법">
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="analyzeBtn">분석하기</button>
+        <button class="btn ghost" id="printBtn" style="display:none">🖨️ 인쇄 / PDF</button>
+        <label class="chk" title="1차 분석 후 AI가 한 번 더 검토해 빠진 어법·어휘를 보강합니다. 지문당 요청이 2배가 됩니다.">
+          <input type="checkbox" id="reviewChk"> 꼼꼼 검토 <span class="chk-sub">(2차 검토·사용량 2배)</span>
+        </label>
+        <span class="hint">Ctrl+Enter 로도 실행됩니다.</span>
+      </div>
+      <div class="error" id="error"></div>
+    </section>
+
+    <div class="loading" id="loading">
+      <span class="spinner"></span>
+      <span id="loadingText">AI가 지문을 분석하고 있습니다… (지문 길이에 따라 20~60초 걸릴 수 있어요)</span>
+    </div>
+
+    <div id="result"></div>
+  </section>
+
+  <!-- ══════════ 탭 2: 문제 제작 (객관식) ══════════ -->
+  <section class="tab-page" id="tab-mcq">
+    <section class="panel">
+      <label>영어 지문 <span id="mcqPassageCount"></span></label>
+      <div id="mcqPassageList"></div>
+      <button type="button" class="btn ghost small" id="mcqAddPassageBtn">＋ 지문 추가</button>
+
+      <div class="row">
+        <div class="field" style="flex:1 1 100%">
+          <div class="field-head">
+            <label>출제 유형 (5지선다)</label>
+            <label class="chk toggle-all"><input type="checkbox" id="mcqTypeAll"> 전체 선택 / 해제</label>
+          </div>
+          <div class="quiz-type-grid" id="mcqTypeGrid"></div>
+        </div>
+        <div class="field" style="flex:0 0 200px">
+          <label for="mcqCount">지문당 문항 수</label>
+          <input type="number" id="mcqCount" min="1" max="30" value="5">
+          <label class="chk" style="margin-top:8px; font-size:12.5px">
+            <input type="checkbox" id="mcqPerType" checked> 선택한 유형당 1문항씩
+          </label>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="mcqBtn">문제 만들기</button>
+        <button class="btn ghost" id="mcqPrintBtn" style="display:none">🖨️ 인쇄 / PDF</button>
+        <span class="hint">문항이 많거나 유형이 까다로우면(순서·문장삽입) 시간이 더 걸릴 수 있어요.</span>
+      </div>
+      <div class="error" id="mcqError"></div>
+    </section>
+
+    <div class="loading" id="mcqLoading">
+      <span class="spinner"></span>
+      <span id="mcqLoadingText">AI가 문제를 만들고 있습니다…</span>
+    </div>
+
+    <div id="mcqResult"></div>
+  </section>
+
+  <!-- ══════════ 탭 3: 문제 제작 (주관식) ══════════ -->
+  <section class="tab-page" id="tab-saq">
+    <section class="panel">
+      <label>영어 지문 <span id="saqPassageCount"></span></label>
+      <div id="saqPassageList"></div>
+      <button type="button" class="btn ghost small" id="saqAddPassageBtn">＋ 지문 추가</button>
+
+      <div class="row">
+        <div class="field" style="flex:1 1 100%">
+          <div class="field-head">
+            <label>출제 유형 (서술형·단답형)</label>
+            <label class="chk toggle-all"><input type="checkbox" id="saqTypeAll"> 전체 선택 / 해제</label>
+          </div>
+          <div class="quiz-type-grid" id="saqTypeGrid"></div>
+        </div>
+        <div class="field" style="flex:0 0 200px">
+          <label for="saqCount">지문당 문항 수</label>
+          <input type="number" id="saqCount" min="1" max="30" value="2">
+          <label class="chk" style="margin-top:8px; font-size:12.5px">
+            <input type="checkbox" id="saqPerType" checked> 선택한 유형당 1문항씩
+          </label>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="saqBtn">문제 만들기</button>
+        <button class="btn ghost" id="saqPrintBtn" style="display:none">🖨️ 인쇄 / PDF</button>
+        <span class="hint">학생이 직접 쓰는 서술형·단답형 문제를 만듭니다.</span>
+      </div>
+      <div class="error" id="saqError"></div>
+    </section>
+
+    <div class="loading" id="saqLoading">
+      <span class="spinner"></span>
+      <span id="saqLoadingText">AI가 문제를 만들고 있습니다…</span>
+    </div>
+
+    <div id="saqResult"></div>
+  </section>
+
+  <!-- ══════════ 탭 3: 워크북 제작 ══════════ -->
+  <section class="tab-page" id="tab-workbook">
+    <section class="panel">
+      <label>영어 지문 <span id="wbPassageCount"></span></label>
+      <div id="wbPassageList"></div>
+      <button type="button" class="btn ghost small" id="wbAddPassageBtn">＋ 지문 추가</button>
+
+      <div class="row">
+        <div class="field" style="flex:1 1 100%">
+          <label>포함할 단계</label>
+          <div class="quiz-type-grid" id="wbStageGrid"></div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="wbTitle">워크북 제목 (선택)</label>
+          <input type="text" id="wbTitle" placeholder="예: 공통영어2 1과 본문 워크북">
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="wbBtn">워크북 만들기</button>
+        <button class="btn ghost" id="workbookPrintBtn" style="display:none">🖨️ 인쇄 / PDF</button>
+        <label class="chk" title="켜면 정답이 지면에 함께 인쇄됩니다(교사용). 끄면 학생용 문제지가 됩니다.">
+          <input type="checkbox" id="wbAnswerChk"> 정답 표시 <span class="chk-sub">(교사용)</span>
+        </label>
+      </div>
+      <div class="error" id="wbError"></div>
+    </section>
+
+    <div class="loading" id="wbLoading">
+      <span class="spinner"></span>
+      <span id="wbLoadingText">AI가 워크북을 만들고 있습니다…</span>
+    </div>
+
+    <div id="workbookDoc"></div>
+  </section>
 
 </div>
 <button type="button" class="float-print" id="floatPrintBtn" hidden>🖨️ 인쇄 / PDF 저장</button>
-<div class="brand-mark" aria-hidden="true"><img src="/mark.png" alt="ARA" onerror="this.style.display='none'"></div>
+<div class="brand-mark" id="brandMark" aria-hidden="true"></div>
 <script src="/app.js"></script>
 </body>
 </html>

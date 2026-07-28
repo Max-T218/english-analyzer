@@ -87,18 +87,88 @@ modelEl.addEventListener("change", () => {
 
 loadModels(); // 저장된 키가 있으면 시작 시 사용 가능한 모델을 불러옴 (내부에서 renderUsage 호출)
 
-// ── 여러 지문 입력 관리 (지문 추가/삭제) ──
-function renumberPassages() {
-  const items = [...passageListEl.querySelectorAll(".passage-item")];
-  items.forEach((it, i) => {
-    it.querySelector(".passage-item-no").textContent = `지문 ${i + 1}`;
-    // 지문이 하나뿐일 때는 삭제 버튼을 숨김
-    it.querySelector(".passage-del").style.visibility =
-      items.length > 1 ? "visible" : "hidden";
-  });
-  passageCountEl.textContent = items.length > 1 ? `· 총 ${items.length}개` : "";
+// ── 학원 마크(로고) — 고정 파일 대신 사용자가 업로드해 이 브라우저에 저장 ──
+const BRAND_IMG_STORE = "brand_mark_img";   // data URL
+const BRAND_NAME_STORE = "brand_mark_name"; // 학원명 텍스트
+const BRAND_MAX_BYTES = 5 * 1024 * 1024;    // 5MB — localStorage 용량 보호
+const brandNameEl = $("brandName");
+const brandFileEl = $("brandFile");
+const brandPreviewEl = $("brandPreview");
+const brandRemoveBtn = $("brandRemoveBtn");
+const brandMarkEl = $("brandMark");
+
+function renderBrand() {
+  const img = localStorage.getItem(BRAND_IMG_STORE) || "";
+  const name = (localStorage.getItem(BRAND_NAME_STORE) || "").trim();
+
+  // 인쇄용 우하단 마크 (비어 있으면 CSS가 자동으로 숨김)
+  if (brandMarkEl) {
+    brandMarkEl.innerHTML =
+      (img ? `<img src="${esc(img)}" alt="">` : "") +
+      (name ? `<span class="brand-name">${esc(name)}</span>` : "");
+  }
+
+  // 설정 패널 미리보기
+  if (brandPreviewEl) {
+    if (!img && !name) {
+      brandPreviewEl.innerHTML = `<span class="muted">업로드한 로고가 여기에 미리보기로 표시됩니다.</span>`;
+    } else {
+      brandPreviewEl.innerHTML =
+        (img ? `<img src="${esc(img)}" alt="">` : "") +
+        (name ? `<span class="brand-name">${esc(name)}</span>` : "");
+    }
+  }
 }
 
+if (brandNameEl) {
+  brandNameEl.value = localStorage.getItem(BRAND_NAME_STORE) || "";
+  brandNameEl.addEventListener("input", () => {
+    const v = brandNameEl.value.trim();
+    if (v) localStorage.setItem(BRAND_NAME_STORE, v);
+    else localStorage.removeItem(BRAND_NAME_STORE);
+    renderBrand();
+  });
+}
+
+if (brandFileEl) {
+  brandFileEl.addEventListener("change", () => {
+    const file = brandFileEl.files && brandFileEl.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      errorEl.textContent = "이미지 파일만 업로드할 수 있습니다.";
+      brandFileEl.value = "";
+      return;
+    }
+    if (file.size > BRAND_MAX_BYTES) {
+      errorEl.textContent = "로고 파일이 너무 큽니다 (5MB 이하로 올려주세요).";
+      brandFileEl.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      localStorage.setItem(BRAND_IMG_STORE, reader.result);
+      renderBrand();
+    };
+    reader.onerror = () => {
+      errorEl.textContent = "로고 파일을 읽는 데 실패했습니다.";
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+if (brandRemoveBtn) {
+  brandRemoveBtn.addEventListener("click", () => {
+    localStorage.removeItem(BRAND_IMG_STORE);
+    localStorage.removeItem(BRAND_NAME_STORE);
+    if (brandFileEl) brandFileEl.value = "";
+    if (brandNameEl) brandNameEl.value = "";
+    renderBrand();
+  });
+}
+
+renderBrand(); // 저장된 마크가 있으면 시작 시 바로 표시
+
+// ── 여러 지문 입력 관리 (지문 추가/삭제) — 지문분석·문제제작 탭이 공유하는 컴포넌트 ──
 // 지문 글자수 표시 + 길이에 따른 경고(잘림 위험 안내)
 function updatePassageCount(ta) {
   const el = ta.closest(".passage-item").querySelector(".passage-count");
@@ -115,34 +185,76 @@ function updatePassageCount(ta) {
   el.textContent = msg;
 }
 
-function addPassageRow(focus) {
-  const item = document.createElement("div");
-  item.className = "passage-item";
-  item.innerHTML = `
-    <div class="passage-item-head">
-      <span class="passage-item-no"></span>
-      <span class="passage-count" aria-live="polite"></span>
-      <button type="button" class="btn ghost small passage-del" title="이 지문 삭제">✕ 삭제</button>
-    </div>
-    <textarea class="passage-input" placeholder="분석할 영어 지문을 여기에 붙여넣으세요."></textarea>`;
-  passageListEl.appendChild(item);
-  const ta = item.querySelector(".passage-input");
-  ta.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") analyze();
-  });
-  ta.addEventListener("input", () => updatePassageCount(ta));
-  updatePassageCount(ta); // 초기 표시
-  item.querySelector(".passage-del").addEventListener("click", () => {
-    item.remove();
-    renumberPassages();
-  });
-  renumberPassages();
-  if (focus) ta.focus();
-  return ta;
+function createPassageManager(listEl, addBtn, countEl, onEnter) {
+  function renumber() {
+    const items = [...listEl.querySelectorAll(".passage-item")];
+    items.forEach((it, i) => {
+      it.querySelector(".passage-item-no").textContent = `지문 ${i + 1}`;
+      it.querySelector(".passage-del").style.visibility =
+        items.length > 1 ? "visible" : "hidden";
+    });
+    if (countEl) countEl.textContent = items.length > 1 ? `· 총 ${items.length}개` : "";
+  }
+
+  function addRow(focus) {
+    const item = document.createElement("div");
+    item.className = "passage-item";
+    item.innerHTML = `
+      <div class="passage-item-head">
+        <span class="passage-item-no"></span>
+        <span class="passage-count" aria-live="polite"></span>
+        <button type="button" class="btn ghost small passage-del" title="이 지문 삭제">✕ 삭제</button>
+      </div>
+      <textarea class="passage-input" placeholder="분석할 영어 지문을 여기에 붙여넣으세요."></textarea>`;
+    listEl.appendChild(item);
+    const ta = item.querySelector(".passage-input");
+    ta.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && onEnter) onEnter();
+    });
+    ta.addEventListener("input", () => updatePassageCount(ta));
+    updatePassageCount(ta);
+    item.querySelector(".passage-del").addEventListener("click", () => {
+      item.remove();
+      renumber();
+    });
+    renumber();
+    if (focus) ta.focus();
+    return ta;
+  }
+
+  addBtn.addEventListener("click", () => addRow(true));
+
+  function getJobs() {
+    const items = [...listEl.querySelectorAll(".passage-item")];
+    const jobs = [];
+    items.forEach((it, i) => {
+      const text = it.querySelector(".passage-input").value.trim();
+      if (text) jobs.push({ no: i + 1, text });
+    });
+    return jobs;
+  }
+
+  return { addRow, getJobs, renumber };
 }
 
-addPassageBtn.addEventListener("click", () => addPassageRow(true));
-addPassageRow(false); // 시작 시 지문 입력칸 1개
+const analyzeMgr = createPassageManager(passageListEl, addPassageBtn, passageCountEl, () => analyze());
+analyzeMgr.addRow(false); // 시작 시 지문 입력칸 1개
+
+// ── 탭 전환 ──
+const tabBtns = [...document.querySelectorAll(".tab-btn")];
+const tabPages = [...document.querySelectorAll(".tab-page")];
+function syncFloatPrint() {
+  const active = document.querySelector(".tab-page.active");
+  const btn = active && active.querySelector("#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn");
+  floatPrintBtn.hidden = !(btn && btn.style.display !== "none");
+}
+tabBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
+    tabPages.forEach((p) => p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
+    syncFloatPrint();
+  });
+});
 
 // ── 모델별 "오늘 사용량" 추적 ──
 // Google API는 잔여 한도를 조회하는 기능이 없어서, 이 앱에서 오늘 보낸 횟수를
@@ -211,6 +323,7 @@ if (reviewChk) {
 analyzeBtn.addEventListener("click", analyze);
 printBtn.addEventListener("click", () => window.print());
 floatPrintBtn.addEventListener("click", () => window.print());
+syncFloatPrint(); // 초기 탭(지문 분석) 기준으로 상태 맞춤
 
 async function analyze() {
   const apiKey = apiKeyEl.value.trim();
@@ -238,7 +351,7 @@ async function analyze() {
   loadingEl.classList.add("on");
   resultEl.innerHTML = "";
   printBtn.style.display = "none";
-  floatPrintBtn.hidden = true;
+  syncFloatPrint();
 
   const total = jobs.length;
   const usedModel = modelEl.value;
@@ -286,10 +399,8 @@ async function analyze() {
   if (okCount) htmlParts.push(`<footer>구문 단위 직독직해 분석본 · 자동 생성</footer>`);
   // 모든 지문 분석이 끝난 뒤 한 번에 렌더 (중간에 화면이 바뀌지 않도록)
   resultEl.innerHTML = htmlParts.join("");
-  if (okCount) {
-    printBtn.style.display = "inline-flex";
-    floatPrintBtn.hidden = false;
-  }
+  if (okCount) printBtn.style.display = "inline-flex";
+  syncFloatPrint();
   loadingEl.classList.remove("on");
   analyzeBtn.disabled = false;
   addPassageBtn.disabled = false;
@@ -408,4 +519,599 @@ function buildAnalysisHtml(d, no, total) {
 
   parts.push(`</section>`);
   return parts.join("");
+}
+
+/* ══════════════════════════ 문제 제작 탭 (객관식 / 주관식) ══════════════════════════ */
+
+const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫"];
+
+// 객관식(5지선다) 유형
+const MCQ_TYPES = [
+  { id: "주제", def: true }, { id: "제목", def: true }, { id: "요지", def: true },
+  { id: "빈칸", def: true }, { id: "어휘", def: false }, { id: "어법", def: false },
+  { id: "순서", def: false }, { id: "문장삽입", def: false },
+  { id: "내용일치(영)", def: false }, { id: "내용일치(한)", def: false },
+  { id: "내용불일치(영)", def: false }, { id: "내용불일치(한)", def: false },
+];
+// 주관식(서술형·단답형) 유형
+const SAQ_TYPES = [
+  { id: "서술형배열", def: true }, { id: "OX진위", def: true },
+];
+
+// 문제 제작 탭 하나를 구성한다 (객관식·주관식이 같은 로직을 공유)
+function setupQuizTab({ prefix, types, footer }) {
+  const gridEl = $(prefix + "TypeGrid");
+  const allEl = $(prefix + "TypeAll");
+  const listEl = $(prefix + "PassageList");
+  const addBtn = $(prefix + "AddPassageBtn");
+  const passageCountEl = $(prefix + "PassageCount");
+  const countEl = $(prefix + "Count");
+  const perTypeEl = $(prefix + "PerType");
+  const btn = $(prefix + "Btn");
+  const printBtn = $(prefix + "PrintBtn");
+  const errorEl = $(prefix + "Error");
+  const loadingEl = $(prefix + "Loading");
+  const loadingTextEl = $(prefix + "LoadingText");
+  const resultEl = $(prefix + "Result");
+
+  // 유형 체크박스 생성
+  types.forEach((t) => {
+    const label = document.createElement("label");
+    label.innerHTML = `<input type="checkbox" value="${esc(t.id)}" ${t.def ? "checked" : ""}> ${esc(t.id)}`;
+    gridEl.appendChild(label);
+  });
+
+  // 전체 선택 / 전체 해제 (일부만 선택된 상태는 '중간' 표시)
+  function syncAll() {
+    const boxes = [...gridEl.querySelectorAll("input")];
+    const on = boxes.filter((b) => b.checked).length;
+    allEl.checked = on === boxes.length;
+    allEl.indeterminate = on > 0 && on < boxes.length;
+  }
+  // '유형당 1문항씩'이 켜져 있으면 문항 수를 선택한 유형 수에 자동으로 맞춘다
+  // (유형을 다 골랐는데 문항 수가 적어 일부 유형만 출제되던 문제 방지)
+  function syncCount() {
+    if (perTypeEl.checked) {
+      const n = gridEl.querySelectorAll("input:checked").length;
+      countEl.value = Math.max(1, n);
+      countEl.disabled = true;
+    } else {
+      countEl.disabled = false;
+    }
+  }
+  allEl.addEventListener("change", () => {
+    const check = allEl.checked;
+    gridEl.querySelectorAll("input").forEach((b) => (b.checked = check));
+    syncAll();
+    syncCount();
+  });
+  gridEl.addEventListener("change", () => {
+    syncAll();
+    syncCount();
+  });
+  perTypeEl.addEventListener("change", syncCount);
+  syncAll();
+  syncCount();
+
+  const mgr = createPassageManager(listEl, addBtn, passageCountEl, () => generate());
+  mgr.addRow(false);
+
+  async function generate() {
+    const apiKey = apiKeyEl.value.trim();
+    errorEl.textContent = "";
+    if (!apiKey) {
+      errorEl.textContent = "먼저 Gemini API 키를 입력하세요.";
+      apiKeyEl.focus();
+      return;
+    }
+    const jobs = mgr.getJobs();
+    if (!jobs.length) {
+      errorEl.textContent = "문제를 만들 영어 지문을 입력하세요.";
+      return;
+    }
+    const picked = [...gridEl.querySelectorAll("input:checked")].map((i) => i.value);
+    if (!picked.length) {
+      errorEl.textContent = "출제 유형을 하나 이상 선택하세요.";
+      return;
+    }
+    const count = Math.max(1, Math.min(parseInt(countEl.value, 10) || 5, 30));
+
+    btn.disabled = true;
+    addBtn.disabled = true;
+    loadingEl.classList.add("on");
+    resultEl.innerHTML = "";
+    printBtn.style.display = "none";
+    syncFloatPrint();
+
+    const total = jobs.length;
+    const usedModel = modelEl.value;
+    let okCount = 0;
+    const htmlParts = [];
+    for (let i = 0; i < total; i++) {
+      const job = jobs[i];
+      loadingTextEl.textContent =
+        total > 1
+          ? `지문 ${job.no} 문제 만드는 중… (${i + 1}/${total})`
+          : "AI가 문제를 만들고 있습니다… (유형·문항 수에 따라 시간이 걸릴 수 있어요)";
+
+      if (job.text.length < 20) {
+        htmlParts.push(buildErrorHtml(job.no, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
+        continue;
+      }
+
+      try {
+        const res = await fetch("/api/quiz", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            passage: job.text, types: picked, count, model: modelEl.value, apiKey,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "문제 생성에 실패했습니다.");
+        htmlParts.push(buildQuizHtml(data, job.no, total));
+        okCount++;
+        bumpUsage(usedModel);
+      } catch (err) {
+        const msg = err.message || String(err);
+        if (/한도|quota|exceeded|429/i.test(msg)) markExhausted(usedModel);
+        htmlParts.push(buildErrorHtml(job.no, total, msg));
+      }
+    }
+
+    if (okCount) htmlParts.push(`<footer>${esc(footer)} · 자동 생성</footer>`);
+    resultEl.innerHTML = htmlParts.join("");
+    if (okCount) printBtn.style.display = "inline-flex";
+    syncFloatPrint();
+    loadingEl.classList.remove("on");
+    btn.disabled = false;
+    addBtn.disabled = false;
+    resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  btn.addEventListener("click", generate);
+  printBtn.addEventListener("click", () => window.print());
+}
+
+setupQuizTab({ prefix: "mcq", types: MCQ_TYPES, footer: "수능형 객관식 문제" });
+setupQuizTab({ prefix: "saq", types: SAQ_TYPES, footer: "서술형·단답형 문제" });
+
+// 한 문항의 '정답' 표기를 형식에 맞게 만든다 (객관식=①, 서술형=문장, OX=O/X 나열)
+function quizAnswerLabel(q) {
+  const fmt = q.format || "mc";
+  if (fmt === "write") return esc(q.answerText || "");
+  if (fmt === "tf") {
+    return (q.tfItems || [])
+      .map((it, i) => `(${i + 1}) ${it.isTrue ? "O" : "X"}`)
+      .join("  ");
+  }
+  return CIRCLED[(q.answer || 1) - 1] || esc(q.answer);
+}
+
+// 문항 본체(지문·선택지·답란)를 형식별로 렌더
+function quizBodyHtml(q) {
+  const fmt = q.format || "mc";
+
+  if (fmt === "write") {
+    // 서술형 배열 — 우리말을 보고, 섞인 단어로 문장 완성
+    const scrambled = scrambleSentence(q.answerText || "", q.no || 1);
+    return `
+      <div class="qz-passage">${safeHTML(q.passageHtml)}</div>
+      <div class="qz-scramble">( ${scrambled} )</div>
+      <div class="qz-writeline"></div>`;
+  }
+
+  if (fmt === "tf") {
+    // O/X 진위판단 — 진술마다 괄호에 O/X 기입
+    const items = (q.tfItems || [])
+      .map(
+        (it, i) => `
+        <li><span class="qz-num">(${i + 1})</span>
+            <span class="qz-choice-text">${safeHTML(it.text)}</span>
+            <span class="qz-ox">(　　)</span></li>`
+      )
+      .join("");
+    return `
+      <div class="qz-passage">${safeHTML(q.passageHtml)}</div>
+      <ul class="qz-choices qz-tf">${items}</ul>`;
+  }
+
+  // 객관식 5지선다
+  const choicesHtml = (q.choices || [])
+    .map(
+      (c, i) => `
+      <li><span class="qz-num">${CIRCLED[i] || i + 1}</span><span class="qz-choice-text">${safeHTML(c)}</span></li>`
+    )
+    .join("");
+  return `
+    <div class="qz-passage">${safeHTML(q.passageHtml)}</div>
+    <ul class="qz-choices">${choicesHtml}</ul>`;
+}
+
+// 문제 카드 + 정답/해설(화면: 토글, 인쇄: 항상 별도 섹션) HTML 생성
+function buildQuizHtml(d, no, total) {
+  const parts = [];
+  parts.push(`<section class="passage-block qz-block">`);
+  if (total > 1) parts.push(`<div class="passage-banner">지문 ${esc(no)}</div>`);
+
+  (d.questions || []).forEach((q) => {
+    parts.push(`
+      <div class="qz-card">
+        <div class="qz-head"><span class="qz-no">${esc(q.no)}</span><span class="qz-type">${esc(q.type)}</span></div>
+        <div class="qz-instruction">${safeHTML(q.instruction)}</div>
+        ${quizBodyHtml(q)}
+        <button type="button" class="qz-reveal-btn">정답·해설 보기</button>
+        <div class="qz-answer-box">
+          <b>정답 ${quizAnswerLabel(q)}</b><br>${safeHTML(q.explanation)}
+        </div>
+      </div>
+    `);
+  });
+
+  // 정답 및 해설 — 화면 토글과 별개로 인쇄물에는 항상 별도 페이지로 포함
+  if (d.questions && d.questions.length) {
+    const rows = d.questions
+      .map(
+        (q) => `
+      <tr>
+        <td>${esc(q.no)}</td>
+        <td>${esc(q.type)}</td>
+        <td>${quizAnswerLabel(q)}</td>
+        <td>${safeHTML(q.explanation)}</td>
+      </tr>`
+      )
+      .join("");
+    parts.push(`
+      <h3 class="section page-break"><span class="num">📌</span> 정답 및 해설</h3>
+      <div class="table-wrap"><table class="answerkey">
+        <thead><tr><th>번호</th><th>유형</th><th>정답</th><th>해설</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    `);
+  }
+
+  parts.push(`</section>`);
+  return parts.join("");
+}
+
+// 정답/해설 토글 — 문제 탭·워크북 탭 어디에 렌더되든 동작하도록 document에 위임
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".qz-reveal-btn");
+  if (!btn) return;
+  const box = btn.nextElementSibling;
+  if (!box) return;
+  const showing = box.classList.toggle("show");
+  btn.textContent = showing ? "정답·해설 숨기기" : "정답·해설 보기";
+});
+
+/* ══════════════════════════ 워크북 제작 탭 (단계별 학습지) ══════════════════════════ */
+
+// 지원 단계 — 참고 자료(10단계 워크북)의 번호·명칭을 그대로 사용
+const WB_STAGES = [
+  { id: 3, name: "빈칸 연습 (영문)", guide: "우리말 해석을 보고 영문을 완성하시오.", def: true },
+  { id: 4, name: "해석 연습", guide: "영어 문장을 읽고 우리말 해석을 쓰시오.", def: true },
+  { id: 5, name: "동사형 연습", guide: "괄호 안에 주어진 단어를 알맞게 고쳐 쓰시오.", def: true },
+  { id: 6, name: "어법 선택형 연습", guide: "괄호 안에서 어법상 알맞은 것을 고르시오.", def: true },
+  { id: 7, name: "어색한 곳 찾기 연습", guide: "밑줄 친 부분 중 문맥상 어색한 것을 찾아 바르게 고쳐 쓰시오.", def: true },
+  { id: 8, name: "순서배열 연습 (문장)", guide: "우리말과 같은 뜻이 되도록 주어진 단어를 알맞게 배열하시오.", def: true },
+  { id: 9, name: "영작 연습", guide: "우리말과 같은 뜻이 되도록 주어진 단어를 사용하여 영작하시오.", def: true },
+];
+
+const wbStageGridEl = $("wbStageGrid");
+WB_STAGES.forEach((s) => {
+  const label = document.createElement("label");
+  label.innerHTML = `<input type="checkbox" value="${s.id}" ${s.def ? "checked" : ""}> ${s.id}. ${esc(s.name)}`;
+  wbStageGridEl.appendChild(label);
+});
+
+const wbPassageListEl = $("wbPassageList");
+const wbAddPassageBtn = $("wbAddPassageBtn");
+const wbPassageCountEl = $("wbPassageCount");
+const wbBtn = $("wbBtn");
+const wbErrorEl = $("wbError");
+const wbLoadingEl = $("wbLoading");
+const wbLoadingTextEl = $("wbLoadingText");
+const wbTitleEl = $("wbTitle");
+const wbAnswerChk = $("wbAnswerChk");
+const workbookDocEl = $("workbookDoc");
+const workbookPrintBtn = $("workbookPrintBtn");
+
+const wbMgr = createPassageManager(wbPassageListEl, wbAddPassageBtn, wbPassageCountEl, () => generateWorkbook());
+wbMgr.addRow(false);
+
+// 정답 표시 토글 — 다시 그리지 않고 클래스만 바꿔서 (섞인 보기·순서가 유지되도록)
+const WB_ANSWER_STORE = "gemini_wb_answer";
+wbAnswerChk.checked = localStorage.getItem(WB_ANSWER_STORE) === "1";
+function applyAnswerVisibility() {
+  workbookDocEl.classList.toggle("show-answers", wbAnswerChk.checked);
+}
+wbAnswerChk.addEventListener("change", () => {
+  localStorage.setItem(WB_ANSWER_STORE, wbAnswerChk.checked ? "1" : "0");
+  applyAnswerVisibility();
+});
+
+wbBtn.addEventListener("click", generateWorkbook);
+workbookPrintBtn.addEventListener("click", () => window.print());
+
+async function generateWorkbook() {
+  const apiKey = apiKeyEl.value.trim();
+  wbErrorEl.textContent = "";
+  if (!apiKey) {
+    wbErrorEl.textContent = "먼저 Gemini API 키를 입력하세요.";
+    apiKeyEl.focus();
+    return;
+  }
+  const jobs = wbMgr.getJobs();
+  if (!jobs.length) {
+    wbErrorEl.textContent = "워크북을 만들 영어 지문을 입력하세요.";
+    return;
+  }
+  const stages = [...wbStageGridEl.querySelectorAll("input:checked")].map((i) => parseInt(i.value, 10));
+  if (!stages.length) {
+    wbErrorEl.textContent = "포함할 단계를 하나 이상 선택하세요.";
+    return;
+  }
+
+  wbBtn.disabled = true;
+  wbAddPassageBtn.disabled = true;
+  wbLoadingEl.classList.add("on");
+  workbookDocEl.innerHTML = "";
+  workbookPrintBtn.style.display = "none";
+  syncFloatPrint();
+
+  const total = jobs.length;
+  const usedModel = modelEl.value;
+  let okCount = 0;
+  const htmlParts = [];
+  const title = wbTitleEl.value.trim();
+  if (title) {
+    htmlParts.push(`
+      <div class="wb-cover">
+        <h1>${esc(title)}</h1>
+        <div class="wb-date">${esc(new Date().toLocaleDateString("ko-KR"))}</div>
+      </div>`);
+  }
+
+  for (let i = 0; i < total; i++) {
+    const job = jobs[i];
+    wbLoadingTextEl.textContent =
+      total > 1
+        ? `지문 ${job.no} 워크북 만드는 중… (${i + 1}/${total})`
+        : "AI가 워크북을 만들고 있습니다… (지문 길이에 따라 30~90초 걸릴 수 있어요)";
+
+    if (job.text.length < 20) {
+      htmlParts.push(buildErrorHtml(job.no, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
+      continue;
+    }
+
+    try {
+      const res = await fetch("/api/workbook", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ passage: job.text, model: modelEl.value, apiKey }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "워크북 생성에 실패했습니다.");
+      htmlParts.push(buildWorkbookHtml(data, stages, job.no, total));
+      okCount++;
+      bumpUsage(usedModel);
+    } catch (err) {
+      const msg = err.message || String(err);
+      if (/한도|quota|exceeded|429/i.test(msg)) markExhausted(usedModel);
+      htmlParts.push(buildErrorHtml(job.no, total, msg));
+    }
+  }
+
+  if (okCount) htmlParts.push(`<footer>단계별 워크북 · 자동 생성</footer>`);
+  workbookDocEl.innerHTML = htmlParts.join("");
+  applyAnswerVisibility();
+  if (okCount) workbookPrintBtn.style.display = "inline-flex";
+  syncFloatPrint();
+  wbLoadingEl.classList.remove("on");
+  wbBtn.disabled = false;
+  wbAddPassageBtn.disabled = false;
+  workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/* ── 워크북 마크업 파서 & 렌더 도우미 ── */
+
+// 시드 기반 난수 — 같은 문장은 항상 같은 순서로 섞이도록(재렌더 시 흔들림 방지)
+function seededRand(seed) {
+  let t = seed + 0x6d2b79f5;
+  return function () {
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function seededShuffle(arr, seed) {
+  const a = arr.slice();
+  const rnd = seededRand(seed);
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+const wbBlank = (w) => `<span class="wb-blank" style="min-width:${w || 90}px"></span>`;
+const wbAns = (t) => `<span class="wb-ans">${esc(t)}</span>`;
+
+// {{정답}} → 빈칸 + 정답 목록
+function renderBraceBlanks(text) {
+  const answers = [];
+  const html = esc(text).replace(/\{\{([^{}]*)\}\}/g, (_, a) => {
+    answers.push(a.trim());
+    return wbBlank(Math.max(70, a.trim().length * 9));
+  });
+  return { html, answers };
+}
+
+// (기본형|정답) → (기본형) 표시 + 정답 목록
+function renderVerbForms(text) {
+  const answers = [];
+  const html = esc(text).replace(/\(([^()|]*)\|([^()|]*)\)/g, (_, base, ans) => {
+    answers.push(ans.trim());
+    return `<b class="wb-paren">(${esc(base.trim())})</b>`;
+  });
+  return { html, answers };
+}
+
+// [정답|오답] → [A / B] (시드로 섞음) + 정답 목록
+function renderChoices(text, seed) {
+  const answers = [];
+  let idx = 0;
+  const html = esc(text).replace(/\[([^\[\]|]*)\|([^\[\]|]*)\]/g, (_, right, wrong) => {
+    const r = right.trim();
+    const w = wrong.trim();
+    answers.push(r);
+    const pair = seededShuffle([r, w], seed * 100 + idx++);
+    return `<b class="wb-choice">[ ${esc(pair[0])} / ${esc(pair[1])} ]</b>`;
+  });
+  return { html, answers };
+}
+
+// 영어 문장을 단어 단위로 섞어 순서배열 문제로 만든다.
+// 참고 자료처럼 ① 끝 마침표는 떼고 ② 첫 단어는 소문자로 바꿔
+// 문장의 시작·끝이 드러나지 않게 한다(고유명사처럼 보이는 말은 그대로 둔다).
+function scrambleSentence(en, seed) {
+  let text = String(en || "").trim();
+  if (!text) return "";
+  text = text.replace(/\s*\.\s*$/, ""); // 끝 마침표 제거 (?, ! 는 단서라 유지)
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return esc(text);
+  // 첫 단어가 'Parents' 처럼 일반 단어면 소문자로 (ARA, I 같은 건 유지)
+  const first = words[0];
+  if (/^[A-Z][a-z]+$/.test(first)) words[0] = first[0].toLowerCase() + first.slice(1);
+  const shuffled = seededShuffle(words, seed);
+  return esc(shuffled.join(" / "));
+}
+
+function wbHeading(h) {
+  return h && h.trim() ? `<div class="wb-heading">${esc(h.trim())}</div>` : "";
+}
+
+/* ── 단계별 렌더 ── */
+
+function buildWorkbookHtml(d, stages, no, total) {
+  const parts = [];
+  parts.push(`<section class="wb-passage">`);
+  if (total > 1) parts.push(`<div class="passage-banner">지문 ${esc(no)}</div>`);
+  if (d.englishTitle || d.koreanTitle) {
+    parts.push(`
+      <div class="wb-titlebar">
+        <b>${esc(d.englishTitle || "")}</b>
+        ${d.koreanTitle ? `<span>${esc(d.koreanTitle)}</span>` : ""}
+      </div>`);
+  }
+
+  const sentences = (d.sentences || []).filter((s) => s && s.en);
+  stages.forEach((stageId) => {
+    const meta = WB_STAGES.find((s) => s.id === stageId);
+    if (!meta) return;
+    let inner = "";
+    if (stageId === 7) inner = renderStage7(d.oddParagraphs || []);
+    else inner = sentences.map((s) => renderStageSentence(stageId, s)).join("");
+    if (!inner.trim()) return;
+    parts.push(`
+      <section class="wb-stage">
+        <h3 class="section wb-stage-head"><span class="num">워크북${meta.id}</span> ${esc(meta.name)}</h3>
+        <div class="wb-guide">◗ ${esc(meta.guide)}</div>
+        ${inner}
+      </section>`);
+  });
+
+  parts.push(`</section>`);
+  return parts.join("");
+}
+
+function renderStageSentence(stageId, s) {
+  const noBadge = `<span class="wb-no">${esc(s.no)}</span>`;
+  const head = wbHeading(s.heading);
+  let body = "";
+
+  if (stageId === 3) {
+    // 빈칸 연습(영문) — 해석을 보고 영어 빈칸 채우기
+    const { html, answers } = renderBraceBlanks(s.enBlank || s.en);
+    if (!answers.length) return "";
+    body = `
+      <div class="wb-ko">${esc(s.ko)}</div>
+      <div class="wb-en">${html}</div>
+      ${wbAns(answers.join(" / "))}`;
+  } else if (stageId === 4) {
+    // 해석 연습 — 영문 보고 해석 쓰기
+    body = `
+      <div class="wb-en">${esc(s.en)}</div>
+      <div class="wb-writeline"></div>
+      ${wbAns(s.ko || "")}`;
+  } else if (stageId === 5) {
+    // 동사형 연습
+    const { html, answers } = renderVerbForms(s.verbForm || "");
+    if (!answers.length) return "";
+    body = `
+      <div class="wb-ko">${esc(s.ko)}</div>
+      <div class="wb-en">${html}</div>
+      ${wbAns(answers.join(" / "))}`;
+  } else if (stageId === 6) {
+    // 어법 선택형
+    const { html, answers } = renderChoices(s.grammarChoice || "", s.no || 1);
+    if (!answers.length) return "";
+    body = `
+      <div class="wb-ko">${esc(s.ko)}</div>
+      <div class="wb-en">${html}</div>
+      ${wbAns(answers.join(" / "))}`;
+  } else if (stageId === 8) {
+    // 순서배열
+    body = `
+      <div class="wb-ko">${esc(s.ko)}</div>
+      <div class="wb-scramble">( ${scrambleSentence(s.en, s.no || 1)} )</div>
+      <div class="wb-writeline"></div>
+      ${wbAns(s.en || "")}`;
+  } else if (stageId === 9) {
+    // 영작 연습
+    const keys = (s.writeKeys || []).filter(Boolean);
+    body = `
+      <div class="wb-ko">${esc(s.ko)}</div>
+      ${keys.length ? `<div class="wb-keys">${esc(keys.join(", "))}</div>` : ""}
+      <div class="wb-writeline"></div>
+      ${wbAns(s.en || "")}`;
+  }
+
+  if (!body) return "";
+  return `<div class="wb-q">${head}<div class="wb-q-body">${noBadge}<div class="wb-q-main">${body}</div></div></div>`;
+}
+
+function renderStage7(paras) {
+  return (paras || [])
+    .filter((p) => p && p.text)
+    .map((p) => {
+      const fixes = (p.fixes || []).filter((f) => f && f.wrong);
+      // 어색한 단어에 밑줄 표시 (본문에서 해당 단어를 찾아 <u>로 감싼다)
+      let text = esc(p.text);
+      fixes.forEach((f) => {
+        const w = esc(f.wrong);
+        const re = new RegExp(`(^|[^\\w<>])(${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})(?![\\w>])`);
+        text = text.replace(re, (m, pre, word) => `${pre}<u>${word}</u>`);
+      });
+      const lines = fixes
+        .map(
+          (_, i) =>
+            `<div class="wb-fixline">(${i + 1}) ${wbBlank(150)} → ${wbBlank(150)}</div>`
+        )
+        .join("");
+      const ansText = fixes.map((f, i) => `(${i + 1}) ${f.wrong} → ${f.right}`).join("   ");
+      return `
+        <div class="wb-q">
+          ${wbHeading(p.heading)}
+          <div class="wb-q-body">
+            <span class="wb-no">${esc(p.no)}</span>
+            <div class="wb-q-main">
+              <div class="wb-para">${text}</div>
+              ${lines}
+              ${wbAns(ansText)}
+            </div>
+          </div>
+        </div>`;
+    })
+    .join("");
 }
