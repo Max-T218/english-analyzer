@@ -38,8 +38,24 @@ GEMINI_URL = (
 # 상한(포기) 없이 성공할 때까지 재시도하되, 한 번의 대기는 아래 값으로 잘라 반복한다.
 RETRY_MIN_WAIT = 3       # 최소 대기(초) — 과도한 반복 방지
 RETRY_MAX_WAIT = 60      # 한 번 대기의 상한(초)
-MAX_RETRY_TOTAL = 150    # 누적 대기가 이 시간(초)을 넘으면 포기하고 명확히 안내
-                         # (일시적 속도제한은 이 안에 풀림 / 하루 할당량 소진은 무한대기 방지)
+
+# --- 배포 환경의 요청 시간 제한 대응 -------------------------------------
+# Render 등 PaaS의 프록시는 응답 바이트가 나가지 않는 요청을 100초 안팎에서 끊고
+# JSON 대신 HTML 에러 페이지를 반환한다. 그러면 아래의 친절한 한국어 오류 메시지가
+# 사용자에게 도달하지 못하므로, 한 요청이 그 안에서 끝나도록 예산을 둔다.
+# 로컬에서 긴 지문을 여유 있게 돌리려면 환경변수로 늘리면 된다.
+MAX_RETRY_TOTAL = float(os.environ.get("MAX_RETRY_TOTAL", "25"))
+                         # 누적 재시도 대기가 이 시간(초)을 넘으면 포기하고 명확히 안내
+GEMINI_TIMEOUT = float(os.environ.get("GEMINI_TIMEOUT", "90"))
+                         # Gemini 호출 1회의 소켓 타임아웃(초)
+REFINE_BUDGET = float(os.environ.get("REFINE_BUDGET", "40"))
+                         # 이 시간(초)을 이미 쓴 뒤에는 보정 재요청을 시작하지 않는다
+
+
+def _over_budget(t0):
+    """이번 요청에 이미 REFINE_BUDGET 이상을 썼으면 True.
+    (품질 보정 재요청을 한 번 더 시작할 여유가 없다는 뜻)"""
+    return (time.monotonic() - t0) >= REFINE_BUDGET
 
 
 def _parse_retry_delay(detail):
@@ -1007,7 +1023,7 @@ def _gemini_call_with_retry(data, api_key, model):
             method="POST",
             headers={"content-type": "application/json", "x-goog-api-key": api_key},
         )
-        with urllib.request.urlopen(req, timeout=300) as resp:
+        with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def _generate(use_model):
@@ -1332,6 +1348,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             api_key = req.get("apiKey") or ""
             model = req.get("model") or MODEL
+            t0 = time.monotonic()
             try:
                 result = call_gemini_workbook(passage, api_key, model)
                 # 문장 누락 방어 — 실제 문장 수보다 많이 부족하면 자동 보정 재요청
@@ -1339,6 +1356,8 @@ class Handler(BaseHTTPRequestHandler):
                 for _ in range(2):
                     got = len(result.get("sentences", []))
                     if got >= expected - 2:
+                        break
+                    if _over_budget(t0):  # 프록시가 끊기 전에 현재 결과라도 돌려준다
                         break
                     result = call_gemini_workbook(
                         passage, api_key, model, complete_hint=(expected, got)
@@ -1358,6 +1377,7 @@ class Handler(BaseHTTPRequestHandler):
             count = req.get("count") or 5
             api_key = req.get("apiKey") or ""
             model = req.get("model") or MODEL
+            t0 = time.monotonic()
             try:
                 result = call_gemini_quiz(passage, types, count, api_key, model)
                 # 문항 누락 방어 — 요청한 개수보다 적게 오면 한 번 더 요청해 채운다
@@ -1365,6 +1385,8 @@ class Handler(BaseHTTPRequestHandler):
                 for _ in range(2):
                     got = len(result.get("questions", []))
                     if got >= want:
+                        break
+                    if _over_budget(t0):  # 프록시가 끊기 전에 현재 결과라도 돌려준다
                         break
                     retry = call_gemini_quiz(
                         passage, types, count, api_key, model, short_hint=got
@@ -1388,6 +1410,7 @@ class Handler(BaseHTTPRequestHandler):
         model = req.get("model") or MODEL
         review = bool(req.get("review"))
 
+        t0 = time.monotonic()
         try:
             result = call_gemini(passage, target_grammar, mode, api_key, model)
             # 문장 누락 방어 — 실제 문장 수보다 분석이 많이 부족하면 자동 보정 재요청
@@ -1396,6 +1419,8 @@ class Handler(BaseHTTPRequestHandler):
                 got = len(result.get("sentences", []))
                 if got >= expected - 2:  # 약어로 인한 과다추정 대비 허용오차
                     break
+                if _over_budget(t0):  # 프록시가 끊기 전에 현재 결과라도 돌려준다
+                    break
                 result = call_gemini(
                     passage, target_grammar, mode, api_key, model,
                     complete_hint=(expected, got),
@@ -1403,6 +1428,8 @@ class Handler(BaseHTTPRequestHandler):
             # 영어 원문 누락 방어 — 영어가 빠진 chunk가 있으면 자동으로 다시 요청
             for _ in range(2):
                 if not english_incomplete(result, passage):
+                    break
+                if _over_budget(t0):
                     break
                 result = call_gemini(
                     passage, target_grammar, mode, api_key, model, english_fix=True

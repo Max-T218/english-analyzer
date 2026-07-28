@@ -47,8 +47,16 @@ python server.py
 |---|---|---|
 | `GEMINI_API_KEY` | (선택) | Gemini API 키. 화면에서 입력하면 없어도 됨 |
 | `PORT` | `8000` | 서버 포트 |
-| `HOST` | `127.0.0.1` | 바인딩 주소 |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | 사용할 모델 (예: `gemini-2.5-pro`) |
+| `HOST` | `0.0.0.0` | 바인딩 주소 |
+| `GEMINI_MODEL` | `gemini-3.6-flash` | 사용할 모델 |
+| `GEMINI_TIMEOUT` | `90` | Gemini 호출 1회의 소켓 타임아웃(초) |
+| `MAX_RETRY_TOTAL` | `25` | 누적 재시도 대기 상한(초). 넘으면 한국어 오류로 안내 |
+| `REFINE_BUDGET` | `40` | 이 시간(초)을 쓴 뒤에는 품질 보정 재요청을 시작하지 않음 |
+
+> 아래 세 값은 **배포 환경(Render 등)의 요청 시간 제한** 때문에 둔 안전장치입니다.
+> 프록시가 요청을 끊으면 JSON 대신 HTML 에러 페이지가 와서 오류 메시지가 깨집니다.
+> 로컬에서 아주 긴 지문을 여유 있게 돌리려면 `GEMINI_TIMEOUT=300 REFINE_BUDGET=9999`
+> 처럼 늘려서 실행하세요.
 
 ## 구조
 

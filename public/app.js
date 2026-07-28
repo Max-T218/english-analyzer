@@ -22,6 +22,33 @@ const KEY_STORE = "gemini_api_key";
 
 const modelStatusEl = $("modelStatus");
 
+// 서버 API 호출 공통 헬퍼.
+// 배포 환경(Render 등)의 프록시는 요청이 길어지면 JSON이 아니라 HTML 에러 페이지를
+// 돌려준다. 그대로 res.json()을 부르면 'Unexpected token <' 같은 메시지가 떠서
+// 진짜 원인(상태코드)이 가려지므로, 텍스트로 먼저 받아 파싱을 시도한다.
+async function postJson(url, payload, fallbackMsg) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  let data = null;
+  try {
+    data = JSON.parse(text);
+  } catch {}
+  if (!data) {
+    const hint = /^\s*</.test(text)
+      ? res.status === 502 || res.status === 504
+        ? "서버 응답이 너무 오래 걸려 중간에서 끊겼습니다. 지문을 짧게 나눠 다시 시도해 보세요."
+        : "서버가 JSON 대신 HTML을 반환했습니다."
+      : text.slice(0, 120).trim() || "응답이 비어 있습니다.";
+    throw new Error(`서버 오류 (HTTP ${res.status}) — ${hint}`);
+  }
+  if (!res.ok) throw new Error(data.error || fallbackMsg);
+  return data;
+}
+
 // 저장된 키 불러오기
 apiKeyEl.value = localStorage.getItem(KEY_STORE) || "";
 // 입력 시 자동 저장 + 모델 목록 자동 갱신(디바운스)
@@ -41,13 +68,10 @@ async function loadModels() {
   if (!apiKey) return;
   modelStatusEl.textContent = "· 모델 목록 불러오는 중…";
   try {
-    const res = await fetch("/api/models", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ apiKey }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.models || !data.models.length) {
+    const data = await postJson(
+      "/api/models", { apiKey }, "모델 목록을 불러오지 못했습니다."
+    );
+    if (!data.models || !data.models.length) {
       modelStatusEl.textContent = "";
       return;
     }
@@ -433,19 +457,17 @@ async function analyze() {
     }
 
     try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+      const data = await postJson(
+        "/api/analyze",
+        {
           passage: job.text,
           targetGrammar: grammarEl.value,
           model: modelEl.value,
           review: reviewOn,
           apiKey,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "분석에 실패했습니다.");
+        },
+        "분석에 실패했습니다."
+      );
       htmlParts.push(buildAnalysisHtml(data, job, total));
       if (Array.isArray(data.vocab) && data.vocab.length) {
         vocabSets.push({ name: job.name, vocab: data.vocab });
@@ -754,15 +776,11 @@ function setupQuizTab({ prefix, types, footer }) {
       }
 
       try {
-        const res = await fetch("/api/quiz", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            passage: job.text, types: picked, count, model: modelEl.value, apiKey,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "문제 생성에 실패했습니다.");
+        const data = await postJson(
+          "/api/quiz",
+          { passage: job.text, types: picked, count, model: modelEl.value, apiKey },
+          "문제 생성에 실패했습니다."
+        );
         htmlParts.push(buildQuizHtml(data, job, total));
         okCount++;
         bumpUsage(usedModel);
@@ -1031,13 +1049,11 @@ async function generateWorkbook() {
     }
 
     try {
-      const res = await fetch("/api/workbook", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ passage: job.text, model: modelEl.value, apiKey }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "워크북 생성에 실패했습니다.");
+      const data = await postJson(
+        "/api/workbook",
+        { passage: job.text, model: modelEl.value, apiKey },
+        "워크북 생성에 실패했습니다."
+      );
       htmlParts.push(buildWorkbookHtml(data, stages, job, total));
       okCount++;
       bumpUsage(usedModel);
