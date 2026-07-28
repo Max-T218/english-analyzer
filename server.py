@@ -39,17 +39,21 @@ GEMINI_URL = (
 RETRY_MIN_WAIT = 3       # 최소 대기(초) — 과도한 반복 방지
 RETRY_MAX_WAIT = 60      # 한 번 대기의 상한(초)
 
-# --- 배포 환경의 요청 시간 제한 대응 -------------------------------------
-# Render 등 PaaS의 프록시는 응답 바이트가 나가지 않는 요청을 100초 안팎에서 끊고
-# JSON 대신 HTML 에러 페이지를 반환한다. 그러면 아래의 친절한 한국어 오류 메시지가
-# 사용자에게 도달하지 못하므로, 한 요청이 그 안에서 끝나도록 예산을 둔다.
-# 로컬에서 긴 지문을 여유 있게 돌리려면 환경변수로 늘리면 된다.
-MAX_RETRY_TOTAL = float(os.environ.get("MAX_RETRY_TOTAL", "25"))
+# --- 요청 시간 예산 -------------------------------------------------------
+# 아래 기본값은 '로컬 실행' 기준으로, 끊는 프록시가 없으므로 넉넉하게 둔다.
+# (Gemini가 503 과부하를 내도 오래 기다려 결국 성공시키는 쪽이 유리하다)
+#
+# 반면 Render 등 PaaS의 프록시는 응답 바이트가 나가지 않는 요청을 100초 안팎에서
+# 끊고 JSON 대신 HTML 에러 페이지를 반환한다. 그러면 아래의 친절한 한국어 오류
+# 메시지조차 사용자에게 도달하지 못한다. 그래서 배포 환경에서만 값을 줄이며,
+# 그 설정은 render.yaml의 envVars에 들어 있다.
+MAX_RETRY_TOTAL = float(os.environ.get("MAX_RETRY_TOTAL", "150"))
                          # 누적 재시도 대기가 이 시간(초)을 넘으면 포기하고 명확히 안내
-GEMINI_TIMEOUT = float(os.environ.get("GEMINI_TIMEOUT", "90"))
+GEMINI_TIMEOUT = float(os.environ.get("GEMINI_TIMEOUT", "300"))
                          # Gemini 호출 1회의 소켓 타임아웃(초)
-REFINE_BUDGET = float(os.environ.get("REFINE_BUDGET", "40"))
+REFINE_BUDGET = float(os.environ.get("REFINE_BUDGET", "86400"))
                          # 이 시간(초)을 이미 쓴 뒤에는 보정 재요청을 시작하지 않는다
+                         # (로컬 기본값은 사실상 무제한 = 원래 동작 그대로)
 
 
 def _over_budget(t0):

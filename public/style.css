@@ -271,10 +271,39 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
 .wb-ans{display:none; margin-top:7px; font-size:13px; font-weight:700; color:var(--g);}
 .wb-ans::before{content:"정답  "; font-weight:700; color:var(--accent);}
 #workbookDoc.show-answers .wb-ans{display:block;}
+
+/* ── 답지만 인쇄 ──
+   문제 내용을 감추고 '번호 + 정답'만 남긴다. '정답 표시' 체크와 무관하게 항상 노출.
+   인쇄 직전에만 .answers-only가 붙었다가 인쇄가 끝나면 떨어진다. */
+#workbookDoc.answers-only::before{
+  content:"답지 (정답)"; display:block; margin:0 0 14px; padding-bottom:6px;
+  font-weight:800; font-size:15px; color:var(--accent);
+  border-bottom:2px solid var(--accent);
+}
+#workbookDoc.answers-only .wb-guide,
+#workbookDoc.answers-only .wb-heading,
+#workbookDoc.answers-only .wb-ko,
+#workbookDoc.answers-only .wb-en,
+#workbookDoc.answers-only .wb-para,
+#workbookDoc.answers-only .wb-scramble,
+#workbookDoc.answers-only .wb-keys,
+#workbookDoc.answers-only .wb-fixline,
+#workbookDoc.answers-only .wb-writeline{display:none !important;}
+#workbookDoc.answers-only .wb-ans{display:block; margin-top:0;}
+#workbookDoc.answers-only .wb-ans::before{content:none;}
+#workbookDoc.answers-only .wb-q{padding:5px 0; border-bottom:none;}
+/* 정답이 비어 있는 문항(예: 해석이 없는 문장)은 답지에서 뺀다 */
+#workbookDoc.answers-only .wb-q:not(:has(.wb-ans:not(:empty))){display:none;}
+
 @media print{
   .wb-stage{break-before:page; page-break-before:always;}
   .wb-passage > .wb-stage:first-of-type{break-before:auto; page-break-before:auto;}
   .wb-cover{break-after:page; page-break-after:always; box-shadow:none;}
+  /* 답지는 단계마다 쪽을 넘기지 않고 이어서 촘촘하게 (몇 장 안 나오도록) */
+  #workbookDoc.answers-only .wb-stage{
+    break-before:auto; page-break-before:auto; margin-top:16px;
+  }
+  #workbookDoc.answers-only .wb-stage-head{margin-top:12px;}
 }
 
 /* ── 여러 지문 입력 (지문 추가/삭제) ── */

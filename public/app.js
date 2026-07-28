@@ -981,6 +981,7 @@ const wbTitleEl = $("wbTitle");
 const wbAnswerChk = $("wbAnswerChk");
 const workbookDocEl = $("workbookDoc");
 const workbookPrintBtn = $("workbookPrintBtn");
+const wbAnswerPrintBtn = $("wbAnswerPrintBtn");
 
 
 // 정답 표시 토글 — 다시 그리지 않고 클래스만 바꿔서 (섞인 보기·순서가 유지되도록)
@@ -996,6 +997,24 @@ wbAnswerChk.addEventListener("change", () => {
 
 wbBtn.addEventListener("click", generateWorkbook);
 workbookPrintBtn.addEventListener("click", () => window.print());
+
+// 답지만 인쇄 — 문제 내용을 감추고 번호와 정답만 지면에 올린다.
+// 다시 그리지 않고 클래스만 바꾸므로, 섞인 보기·순서가 학생용 문제지와 정확히 일치한다.
+// '정답 표시' 체크와 무관하게 항상 정답이 나오고, 인쇄가 끝나면 원래 화면으로 돌아온다.
+function printWorkbookAnswers() {
+  workbookDocEl.classList.add("answers-only");
+  let done = false;
+  const restore = () => {
+    if (done) return;
+    done = true;
+    workbookDocEl.classList.remove("answers-only");
+    window.removeEventListener("afterprint", restore);
+  };
+  window.addEventListener("afterprint", restore);
+  setTimeout(restore, 60000); // afterprint를 안 보내는 브라우저 대비 안전장치
+  window.print();
+}
+wbAnswerPrintBtn.addEventListener("click", printWorkbookAnswers);
 
 async function generateWorkbook() {
   const apiKey = apiKeyEl.value.trim();
@@ -1021,6 +1040,7 @@ async function generateWorkbook() {
   wbLoadingEl.classList.add("on");
   workbookDocEl.innerHTML = "";
   workbookPrintBtn.style.display = "none";
+  wbAnswerPrintBtn.style.display = "none";
   syncFloatPrint();
 
   const total = jobs.length;
@@ -1067,7 +1087,10 @@ async function generateWorkbook() {
   if (okCount) htmlParts.push(`<footer>단계별 워크북 · 자동 생성</footer>`);
   workbookDocEl.innerHTML = htmlParts.join("");
   applyAnswerVisibility();
-  if (okCount) workbookPrintBtn.style.display = "inline-flex";
+  if (okCount) {
+    workbookPrintBtn.style.display = "inline-flex";
+    wbAnswerPrintBtn.style.display = "inline-flex";
+  }
   syncFloatPrint();
   wbLoadingEl.classList.remove("on");
   wbBtn.disabled = false;
@@ -1373,7 +1396,6 @@ function buildVocab() {
 
   const fmt = vocabFormatEl.value;
   const title = vocabTitleEl.value.trim();
-  const multi = sets.length > 1;
   const parts = [];
   parts.push(`
     <div class="vocab-head">
@@ -1382,9 +1404,6 @@ function buildVocab() {
       </h3>
       <div class="vocab-meta">총 ${rows.length}단어 · ${esc(new Date().toLocaleDateString("ko-KR"))}</div>
     </div>`);
-
-  const fromCol = multi ? `<th>출처</th>` : "";
-  const fromCell = (r) => (multi ? `<td class="v-from">${esc(r.from)}</td>` : "");
 
   if (fmt === "list") {
     // 단어장 — 뜻·유의어·반의어까지 보여주는 참고용
@@ -1396,13 +1415,13 @@ function buildVocab() {
           <td class="pos">${esc(r.pos)}</td>
           <td>${esc(r.meaning)}</td>
           <td>${esc(r.synonym)}</td>
-          <td>${esc(r.antonym)}</td>${fromCell(r)}
+          <td>${esc(r.antonym)}</td>
         </tr>`
       )
       .join("");
     parts.push(`
       <div class="table-wrap"><table class="vocab">
-        <thead><tr><th>#</th><th>단어 / 표현</th><th>품사</th><th>뜻</th><th>유의어</th><th>반의어</th>${fromCol}</tr></thead>
+        <thead><tr><th>#</th><th>단어 / 표현</th><th>품사</th><th>뜻</th><th>유의어</th><th>반의어</th></tr></thead>
         <tbody>${body}</tbody>
       </table></div>`);
   } else {
@@ -1413,13 +1432,13 @@ function buildVocab() {
         (r, i) => `<tr>
           <td class="v-no">${i + 1}</td>
           <td class="${askEn ? "v-word" : ""}">${esc(askEn ? r.word : r.meaning)}</td>
-          <td class="v-blank"><span class="wb-ans">${esc(askEn ? r.meaning : r.word)}</span></td>${fromCell(r)}
+          <td class="v-blank"><span class="wb-ans">${esc(askEn ? r.meaning : r.word)}</span></td>
         </tr>`
       )
       .join("");
     parts.push(`
       <div class="table-wrap"><table class="vocab vocab-test">
-        <thead><tr><th>#</th><th>${askEn ? "단어 / 표현" : "뜻"}</th><th>${askEn ? "뜻" : "영어"}</th>${fromCol}</tr></thead>
+        <thead><tr><th>#</th><th>${askEn ? "단어 / 표현" : "뜻"}</th><th>${askEn ? "뜻" : "영어"}</th></tr></thead>
         <tbody>${body}</tbody>
       </table></div>`);
   }
