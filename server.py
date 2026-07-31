@@ -267,6 +267,10 @@ the allowed list is smaller than the requested count).
   and preceded by a circled number (①<u>word</u>, ②<u>word</u> … ⑤<u>word</u>), spread
   across the passage. Exactly ONE of the 5 is WRONG in context (e.g. swap in a near-antonym);
   that one is the answer. choices = ["①","②","③","④","⑤"] in that literal order.
+  UNDERLINE BOUNDARIES ARE CRITICAL — a student must see exactly where the underline starts
+  and ends. <u> must wrap the COMPLETE word(s), never a fragment: write ⑤<u>learning</u>,
+  NEVER ⑤<u>learnin</u>g. The circled number goes immediately BEFORE <u>, outside it, and
+  the closing </u> must come right after the word's last letter (before any space/comma/period).
 - "어법" — instruction "다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?". Same passageHtml/
   choices mechanics as 어휘 (5 underlined circled-numbered spans), but each is a GRAMMAR
   point and exactly one contains a genuine grammar error you introduce (e.g. wrong verb
@@ -349,6 +353,10 @@ def build_quiz_user_prompt(passage, types, count, short_hint=None):
     lines = [
         f"허용된 문제 유형: {', '.join(types)}",
         f"총 문항 수: {count}개 (정확히 이 개수만큼 생성)",
+        # 화면의 유형 선택 칸에 '출제 순서' 번호를 보여 주므로, 그 순서와 실제
+        # 출제 순서가 반드시 일치해야 한다.
+        "⚠️ 문항 순서: 위 '허용된 문제 유형'에 나열된 순서 그대로 questions 배열에 담으세요. "
+        "같은 유형을 여러 문항 낼 때는 그 유형의 문항들을 연달아 배치하세요.",
     ]
     n = len(types)
     if n == count:
@@ -399,6 +407,24 @@ def sanitize_quiz_html(html):
     return _QUIZ_ANY_TAG_RE.sub(repl, html)
 
 
+# 어법·어휘 문항의 밑줄이 단어 중간에서 끊기는 것을 바로잡는다.
+# 모델이 <u>learnin</u>g 처럼 마지막 글자를 밑줄 밖에 남기는 일이 실제로 발생했고,
+# 그러면 학생이 "밑줄 친 부분"이 어디까지인지 헷갈린다. 문자 단위로 단어 경계까지
+# 밑줄을 넓혀 항상 낱말 전체에 그어지도록 보정한다.
+_WORD_CH = r"[A-Za-z0-9’'\-]"
+_U_TAIL_RE = re.compile(r"</u>(" + _WORD_CH + r"+)")
+_U_HEAD_RE = re.compile(r"(" + _WORD_CH + r"+)<u>")
+
+
+def fix_underline_bounds(html):
+    """<u>…</u>가 낱말을 잘라 먹었으면 낱말 전체를 감싸도록 넓힌다."""
+    if not html or "<u>" not in html:
+        return html
+    html = _U_TAIL_RE.sub(r"\1</u>", html)  # </u> 뒤에 붙은 글자를 안으로
+    html = _U_HEAD_RE.sub(r"<u>\1", html)   # <u> 앞에 붙은 글자를 안으로
+    return html
+
+
 def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -433,6 +459,9 @@ def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None):
         for f in ("passageHtml", "instruction", "explanation", "answerText"):
             if q.get(f):
                 q[f] = sanitize_quiz_html(q[f])
+        # 어법·어휘의 밑줄이 낱말을 자르고 끝나면 낱말 전체로 넓힌다
+        if q.get("passageHtml"):
+            q["passageHtml"] = fix_underline_bounds(q["passageHtml"])
         choices = q.get("choices")
         if isinstance(choices, list):
             q["choices"] = [sanitize_quiz_html(c) if isinstance(c, str) else c for c in choices]

@@ -120,16 +120,19 @@ const brandFileEl = $("brandFile");
 const brandPreviewEl = $("brandPreview");
 const brandRemoveBtn = $("brandRemoveBtn");
 const brandMarkEl = $("brandMark");
+const brandTopEl = $("printBrandTop");
 
 function renderBrand() {
   const img = localStorage.getItem(BRAND_IMG_STORE) || "";
   const name = (localStorage.getItem(BRAND_NAME_STORE) || "").trim();
 
-  // 인쇄용 우하단 마크 (비어 있으면 CSS가 자동으로 숨김)
+  // 학원명 — 모든 인쇄 페이지 상단 중앙
+  if (brandTopEl) brandTopEl.textContent = name;
+
+  // 로고 — 모든 인쇄 페이지 우하단 (학원명은 위로 갔으므로 여기선 로고만)
+  // 비어 있으면 CSS가 자동으로 숨긴다
   if (brandMarkEl) {
-    brandMarkEl.innerHTML =
-      (img ? `<img src="${esc(img)}" alt="">` : "") +
-      (name ? `<span class="brand-name">${esc(name)}</span>` : "");
+    brandMarkEl.innerHTML = img ? `<img src="${esc(img)}" alt="">` : "";
   }
 
   // 설정 패널 미리보기
@@ -284,47 +287,11 @@ function runActiveTab() {
   if (btn && !btn.disabled) btn.click();
 }
 
-// 입력한 지문을 이 브라우저에 보관해 새로고침해도 유지 (서버 저장 없음)
+// 지문은 브라우저에 보관하지 않는다 — 창을 새로 열면 항상 빈 칸에서 시작한다.
+// (공용 PC에서 앞사람 지문이 남아 보이지 않도록. API 키·학원 마크 설정은 계속 유지됨)
 const PASSAGE_STORE = "passages";
-let passageSaveTimer = null;
-function savePassages() {
-  const rows = [...passageListEl.querySelectorAll(".passage-item")].map((it) => ({
-    name: it.querySelector(".passage-name").value,
-    text: it.querySelector(".passage-input").value,
-  }));
-  if (rows.some((r) => r.text.trim() || r.name.trim())) {
-    localStorage.setItem(PASSAGE_STORE, JSON.stringify(rows));
-  } else {
-    localStorage.removeItem(PASSAGE_STORE);
-  }
-}
-passageListEl.addEventListener("input", () => {
-  clearTimeout(passageSaveTimer);
-  passageSaveTimer = setTimeout(savePassages, 500);
-});
-passageListEl.addEventListener("click", (e) => {
-  if (e.target.closest(".passage-del")) setTimeout(savePassages, 0);
-});
-(function restorePassages() {
-  let saved = [];
-  try {
-    saved = JSON.parse(localStorage.getItem(PASSAGE_STORE) || "[]");
-  } catch (_) {
-    saved = [];
-  }
-  if (Array.isArray(saved) && saved.length) {
-    saved.forEach((row) => {
-      // 예전 형식(문자열 배열)도 그대로 복원되도록 처리
-      const { name, text } = typeof row === "string" ? { name: "", text: row } : row || {};
-      const ta = passageMgr.addRow(false);
-      ta.value = text || "";
-      ta.closest(".passage-item").querySelector(".passage-name").value = name || "";
-      updatePassageCount(ta);
-    });
-  } else {
-    passageMgr.addRow(false); // 시작 시 지문 입력칸 1개
-  }
-})();
+localStorage.removeItem(PASSAGE_STORE); // 예전 버전이 저장해 둔 지문 정리
+passageMgr.addRow(false); // 시작 시 지문 입력칸 1개
 
 // ── 탭 전환 ──
 const tabBtns = [...document.querySelectorAll(".tab-btn")];
@@ -647,13 +614,49 @@ function setupQuizTab({ prefix, types, footer }) {
   const loadingEl = $(prefix + "Loading");
   const loadingTextEl = $(prefix + "LoadingText");
   const resultEl = $(prefix + "Result");
+  const orderEl = $(prefix + "Order");
+  const orderHintEl = $(prefix + "OrderHint");
+  const ORDER_STORE = "gemini_" + prefix + "_order";
 
   // 유형 체크박스 생성
   types.forEach((t) => {
     const label = document.createElement("label");
-    label.innerHTML = `<input type="checkbox" value="${esc(t.id)}" ${t.def ? "checked" : ""}> ${esc(t.id)}`;
+    label.innerHTML =
+      `<input type="checkbox" value="${esc(t.id)}" ${t.def ? "checked" : ""}>` +
+      `<span class="type-no"></span><span>${esc(t.id)}</span>`;
     gridEl.appendChild(label);
   });
+
+  // 출제 순서 — "type"(유형 순서대로) / "random"(무작위로 섞기)
+  const isRandom = () => orderEl.value === "random";
+
+  // 체크한 유형에 출제 순서 번호를 매긴다.
+  // 문항을 서버에 보낼 때도 이 순서(DOM 순서)로 보내고, 서버가 같은 순서로 출제하도록
+  // 프롬프트에 명시했으므로 여기 번호 = 문제지에 나오는 순서.
+  // 무작위 모드에서는 번호가 실제 순서와 달라지므로 아예 붙이지 않는다.
+  function renumberTypes() {
+    const rnd = isRandom();
+    let n = 0;
+    gridEl.querySelectorAll("label").forEach((label) => {
+      const on = label.querySelector("input").checked;
+      label.querySelector(".type-no").textContent = on && !rnd ? `${++n}.` : "";
+      label.classList.toggle("picked", on);
+    });
+  }
+
+  function updateOrderHint() {
+    orderHintEl.innerHTML = isRandom()
+      ? "유형과 상관없이 문항이 <b>무작위로 섞여</b> 출제됩니다. 문제지 번호는 섞인 순서대로 1번부터 매겨집니다."
+      : "체크한 유형 앞의 <b>번호가 출제 순서</b>입니다. 문제지도 이 순서대로 만들어집니다.";
+  }
+
+  orderEl.value = localStorage.getItem(ORDER_STORE) === "random" ? "random" : "type";
+  orderEl.addEventListener("change", () => {
+    localStorage.setItem(ORDER_STORE, orderEl.value);
+    renumberTypes();
+    updateOrderHint();
+  });
+  updateOrderHint();
 
   // 전체 선택 / 전체 해제 (일부만 선택된 상태는 '중간' 표시)
   function syncAll() {
@@ -713,10 +716,12 @@ function setupQuizTab({ prefix, types, footer }) {
     gridEl.querySelectorAll("input").forEach((b) => (b.checked = check));
     syncAll();
     syncCount();
+    renumberTypes();
   });
   gridEl.addEventListener("change", () => {
     syncAll();
     syncCount();
+    renumberTypes();
   });
   countEl.addEventListener("input", updateHint);   // 타이핑 중에는 안내만
   countEl.addEventListener("change", clampCount);  // 확정되면 하한으로 보정
@@ -726,6 +731,7 @@ function setupQuizTab({ prefix, types, footer }) {
   });
   syncAll();
   syncCount();
+  renumberTypes();
 
   async function generate() {
     const apiKey = apiKeyEl.value.trim();
@@ -781,6 +787,11 @@ function setupQuizTab({ prefix, types, footer }) {
           { passage: job.text, types: picked, count, model: modelEl.value, apiKey },
           "문제 생성에 실패했습니다."
         );
+        // 무작위 모드 — 받아온 문항을 섞는다. 지문마다 다시 섞이고, 문제지 번호와
+        // 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매기므로 어긋나지 않는다.
+        if (isRandom() && Array.isArray(data.questions)) {
+          data.questions = seededShuffle(data.questions, Math.floor(Math.random() * 1e9));
+        }
         htmlParts.push(buildQuizHtml(data, job, total));
         okCount++;
         bumpUsage(usedModel);
@@ -885,6 +896,16 @@ function quizBodyHtml(q) {
       <ul class="qz-choices qz-tf">${items}</ul>`;
   }
 
+  // 어법·어휘는 보기가 ["①"…"⑤"] 뿐이다 — 지문의 밑줄 친 부분이 곧 보기이므로,
+  // 아래에 같은 기호를 한 번 더 나열하면 지면만 먹고 무엇을 고르는지 헷갈린다.
+  const rawChoices = q.choices || [];
+  const markerOnly =
+    rawChoices.length > 0 &&
+    rawChoices.every((c) => CIRCLED.includes(String(c == null ? "" : c).trim()));
+  if (markerOnly) {
+    return `<div class="qz-passage">${safeHTML(q.passageHtml)}</div>`;
+  }
+
   // 객관식 5지선다
   const choicesHtml = (q.choices || [])
     .map(
@@ -903,10 +924,16 @@ function buildQuizHtml(d, job, total) {
   parts.push(`<section class="passage-block qz-block">`);
   parts.push(passageBanner(job, total));
 
-  (d.questions || []).forEach((q) => {
+  // 문항 카드는 별도 래퍼에 담는다 — 인쇄할 때 이 래퍼에만 2단 조판을 적용하고
+  // '정답 및 해설' 표는 단 나눔 없이 전체 폭을 쓰게 하기 위해서다.
+  parts.push(`<div class="qz-cards">`);
+
+  // 번호는 AI가 준 q.no 대신 '실제 출제(출력) 순서'로 다시 매긴다.
+  // 문항이 유형별로 묶여 나오므로, 지면에 찍히는 순서와 번호가 어긋나지 않게 한다.
+  (d.questions || []).forEach((q, i) => {
     parts.push(`
       <div class="qz-card">
-        <div class="qz-head"><span class="qz-no">${esc(q.no)}</span><span class="qz-type">${esc(q.type)}</span></div>
+        <div class="qz-head"><span class="qz-no">${i + 1}</span><span class="qz-type">${esc(q.type)}</span></div>
         <div class="qz-instruction">${safeHTML(q.instruction)}</div>
         ${quizBodyHtml(q)}
         <button type="button" class="qz-reveal-btn">정답·해설 보기</button>
@@ -917,13 +944,15 @@ function buildQuizHtml(d, job, total) {
     `);
   });
 
+  parts.push(`</div>`); // .qz-cards
+
   // 정답 및 해설 — 화면 토글과 별개로 인쇄물에는 항상 별도 페이지로 포함
   if (d.questions && d.questions.length) {
     const rows = d.questions
       .map(
-        (q) => `
+        (q, i) => `
       <tr>
-        <td>${esc(q.no)}</td>
+        <td>${i + 1}</td>
         <td>${esc(q.type)}</td>
         <td>${quizAnswerLabel(q)}</td>
         <td>${safeHTML(q.explanation)}</td>
@@ -1450,3 +1479,36 @@ function buildVocab() {
   syncFloatPrint();
   vocabDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
+
+/* ══════════════════════════ 전체 초기화 ══════════════════════════ */
+// 이 브라우저에 저장된 앱 데이터를 한 번에 지운다 (공용 PC에서 자리를 뜰 때).
+// 지문은 애초에 저장하지 않지만, 예전 버전이 남겨 둔 값까지 함께 정리한다.
+$("resetAllBtn").addEventListener("click", () => {
+  const keys = [
+    KEY_STORE,          // API 키
+    MODEL_STORE,        // 선택한 모델
+    BRAND_IMG_STORE,    // 학원 로고
+    BRAND_NAME_STORE,   // 학원명
+    PASSAGE_STORE,      // (구버전) 저장된 지문
+    USAGE_STORE,        // 오늘 사용량
+    REVIEW_STORE,       // 꼼꼼 검토 체크
+    WB_ANSWER_STORE,    // 워크북 정답 표시 체크
+    VOCAB_STORE,        // 단어장 어휘 데이터
+    VOCAB_ANSWER_STORE, // 단어장 정답 표시 체크
+    "gemini_mcq_order", // 객관식 출제 순서 (유형순 / 무작위)
+    "gemini_saq_order", // 주관식 출제 순서
+  ];
+  const saved = keys.filter((k) => localStorage.getItem(k) !== null).length;
+  if (!saved) {
+    alert("이 브라우저에 저장된 데이터가 없습니다.");
+    return;
+  }
+  const ok = confirm(
+    `이 브라우저에 저장된 데이터 ${saved}건을 모두 지웁니다.\n\n` +
+      "· Gemini API 키\n· 학원명 / 로고\n· 모델 설정\n· 단어장 어휘 데이터\n\n" +
+      "되돌릴 수 없습니다. 계속할까요?"
+  );
+  if (!ok) return;
+  keys.forEach((k) => localStorage.removeItem(k));
+  location.reload();
+});

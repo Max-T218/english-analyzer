@@ -139,6 +139,18 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
   background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:8px 10px; cursor:pointer;
 }
 .quiz-type-grid input{accent-color:var(--accent); cursor:pointer;}
+/* 출제 순서 번호 — 체크한 유형에만 붙고, 체크를 바꾸면 즉시 다시 매겨진다 */
+.quiz-type-grid .type-no{
+  font-size:12px; font-weight:800; color:var(--accent);
+  min-width:15px; text-align:right; font-variant-numeric:tabular-nums;
+}
+.quiz-type-grid .type-no:empty{display:none;}
+.quiz-type-grid label.picked{border-color:var(--accent); background:var(--accent-soft);}
+.type-order-hint{margin-top:6px;}
+/* 출제 순서 선택 (유형순 / 무작위) */
+.order-row{display:flex; align-items:center; gap:9px; margin-top:10px; flex-wrap:wrap;}
+.order-row > label{margin:0; font-size:13px; font-weight:700; white-space:nowrap;}
+.order-row select{width:auto; min-width:160px;}
 
 /* ── 문제 카드 ── */
 .qz-card{
@@ -194,7 +206,36 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 table.answerkey td:nth-child(1),table.answerkey td:nth-child(3){font-weight:700; color:var(--accent); white-space:nowrap;}
 @media print{
   .qz-reveal-btn, .qz-answer-box{display:none !important;}
-  .qz-card{box-shadow:none;}
+
+  /* ── 실제 시험지처럼 A4 2단 조판 ──
+     문항마다 지문이 통째로 들어가 한 문항이 한 쪽을 다 먹던 것을 두 단으로 흘려
+     지면 소모를 줄인다. 단 나눔은 문항 카드에만 적용하고, '정답 및 해설' 표는
+     .qz-cards 바깥이라 전체 폭을 그대로 쓴다. */
+  .qz-cards{
+    column-count:2; column-gap:7mm; column-fill:auto;
+    /* 두 단 사이 세로 구분선 — 시험지 느낌 */
+    column-rule:1px solid var(--line-soft);
+  }
+  .qz-card{
+    box-shadow:none; border-radius:7px;
+    padding:9px 11px; margin:0 0 7px;
+    break-inside:avoid; page-break-inside:avoid;
+  }
+  /* 2단 폭에 맞춰 조판을 촘촘하게 */
+  .qz-head{gap:6px; margin-bottom:6px;}
+  .qz-no{min-width:20px; height:20px; font-size:12px;}
+  .qz-type{font-size:10px; padding:1px 7px;}
+  .qz-instruction{font-size:12px; margin-bottom:7px; line-height:1.5;}
+  .qz-passage{
+    font-size:11.5px; line-height:1.75; padding:8px 9px;
+    margin-bottom:8px; border-radius:7px;
+  }
+  .qz-choices{gap:4px;}
+  .qz-choices li{font-size:11.5px; line-height:1.45;}
+  .qz-scramble{font-size:11.5px; line-height:1.7; padding:7px 9px; margin:3px 0 7px;}
+  .qz-fixline{font-size:11.5px; margin-top:6px;}
+  .qz-writeline{height:1.7em;}
+  .qz-writeline + .qz-writeline{margin-top:7px;}
 }
 
 /* ── 단어장 ── */
@@ -209,6 +250,14 @@ table.vocab-test td.v-blank .wb-ans{display:none; color:var(--g); font-weight:70
 table.vocab-test td.v-blank .wb-ans::before{content:none;}
 #vocabDoc.show-answers table.vocab-test td.v-blank .wb-ans{display:inline;}
 #vocabDoc:empty{display:none;}
+
+/* ── 전체 초기화 ── */
+.reset-row{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--line-soft);
+}
+.reset-row .hint{margin:0;}
+@media print{ .reset-row{display:none !important;} }
 
 /* ── 워크북 (단계별 학습지) ── */
 .wb-cover{
@@ -348,12 +397,15 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
 }
 .passage-error b{display:block; margin-bottom:4px; font-size:14px;}
 
-/* ── 학원 마크 설정 ── */
-.brand-panel > summary{cursor:pointer; font-weight:700; color:var(--accent); font-size:13.5px; list-style:none;}
-.brand-panel > summary::-webkit-details-marker{display:none;}
-.brand-panel > summary::before{content:"▸ "; color:var(--accent);}
-.brand-panel[open] > summary::before{content:"▾ ";}
-.brand-panel > summary .sub{color:var(--ink-soft); font-weight:600; font-size:12px;}
+/* ── 학원 마크 설정 ──
+   예전에는 접히는 <details>였는데 접힌 상태가 눈에 띄지 않아 "사라졌다"고 오해하기 쉬웠다.
+   모든 탭의 인쇄물에 공통으로 쓰이는 설정이라 항상 펼쳐 둔다. */
+.brand-panel{
+  margin-top:16px; padding:14px 16px;
+  border:1px solid var(--line); border-radius:10px; background:var(--paper);
+}
+.brand-title{font-weight:700; color:var(--accent); font-size:13.5px;}
+.brand-title .sub{color:var(--ink-soft); font-weight:600; font-size:12px;}
 .brand-body{margin-top:14px;}
 input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); background:var(--paper); border:1px solid var(--line); border-radius:9px; padding:8px 10px;}
 .brand-preview{
@@ -379,6 +431,16 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
 .float-print[hidden]{display:none;}
 @media (max-width:560px){ .float-print{right:14px; bottom:14px; padding:12px 16px; font-size:13px;} }
 @media print{ .float-print{display:none !important;} }
+
+/* ── 밑줄 ──
+   브라우저 기본값 text-decoration-skip-ink:auto 는 g·p·y 같은 디센더와 겹치는
+   구간의 밑줄을 지운다. 그러면 어법·어휘 문항에서 ⑤learning 의 밑줄이 'learnin'
+   까지만 그어진 것처럼 보여 학생이 밑줄 범위를 오해한다. 낱말 전체에 끊김 없이
+   긋고, 선을 조금 내려 디센더를 관통하지 않게 한다. (화면·인쇄 공통) */
+u{
+  text-decoration-skip-ink:none;
+  text-underline-offset:.16em;
+}
 
 /* 화면에서는 숨기고, 인쇄에서만 우하단에 표시 */
 .brand-mark{display:none;}
@@ -575,11 +637,11 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   .brand-mark:empty{display:none;}
   .brand-mark img{max-height:14mm; max-width:42mm;}
   .brand-mark .brand-name{font-size:10.5px; color:#1b2430; font-weight:700;}
-  /* 시트 최상단 학원명 */
+  /* 학원명 — 모든 페이지 상단 중앙 (fixed 요소는 페이지마다 반복 인쇄됨) */
   .print-brand-top{
-    display:block; text-align:center; font-family:Georgia,"Nanum Myeongjo",serif;
-    font-weight:700; font-size:15px; color:#1f4e6b;
-    padding-bottom:6px; margin-bottom:10px; border-bottom:2px solid #1f4e6b;
+    display:block; position:fixed; top:0; left:0; right:0;
+    text-align:center; font-family:Georgia,"Nanum Myeongjo",serif;
+    font-weight:700; font-size:12px; color:#1f4e6b; letter-spacing:.03em;
   }
   .print-brand-top:empty{display:none;}
 }
