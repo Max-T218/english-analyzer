@@ -346,10 +346,35 @@ the allowed list is smaller than the requested count).
 - Vary which choice number is correct across questions (don't make the answer always ①).
 - Escape literal < > & in passage text as &lt; &gt; &amp; before adding your own <u>/<b>/<br>.
 
+## explanation — MANDATORY FOR EVERY SINGLE QUESTION (no exceptions)
+This is the most frequently violated rule. Read it twice.
+- EVERY object in `questions` MUST carry a non-empty Korean `explanation`. There is no
+  question type that is exempt — 객관식 and 주관식 (서술형배열 / OX진위 / 어휘 선택형 /
+  어법 선택형 / 틀린 어휘 찾기 / 틀린 어법 찾기) all require one.
+- NEVER output "", " ", "-", "없음", "해설 없음", or a copy of the answer. An empty string
+  is a FAILED response even though the schema accepts it.
+- Minimum 25 Korean characters. State WHY the answer is right — the grammar point, the
+  contextual clue, or the sentence in the passage it rests on. For multi-part answers
+  (OX진위, 틀린 어법/어휘 찾기, 선택형) cover EVERY part, e.g. "(1)…, (2)…".
+- Before returning, count your questions and count your non-empty explanations. The two
+  numbers MUST be equal. If they are not, write the missing explanations and only then return.
+
 Return valid JSON only."""
 
 
-def build_quiz_user_prompt(passage, types, count, short_hint=None):
+def blank_explanations(result):
+    """해설이 비어 있는(또는 사실상 비어 있는) 문항의 1-based 번호 목록."""
+    out = []
+    for i, q in enumerate(result.get("questions", []) or []):
+        if not isinstance(q, dict):
+            continue
+        exp = re.sub(r"<[^>]*>", "", str(q.get("explanation") or "")).strip()
+        if len(exp) < 8 or exp in {"-", "없음", "해설 없음", "N/A"}:
+            out.append(i + 1)
+    return out
+
+
+def build_quiz_user_prompt(passage, types, count, short_hint=None, explain_hint=None):
     lines = [
         f"허용된 문제 유형: {', '.join(types)}",
         f"총 문항 수: {count}개 (정확히 이 개수만큼 생성)",
@@ -379,6 +404,12 @@ def build_quiz_user_prompt(passage, types, count, short_hint=None):
         lines.append(
             f"⚠️ 이전 시도는 {short_hint}문항만 만들었습니다. 이번에는 반드시 {count}문항을 "
             f"끝까지 모두 생성하세요. 중간에 멈추지 마세요."
+        )
+    if explain_hint:
+        lines.append(
+            f"⚠️ 이전 시도는 {len(explain_hint)}개 문항({', '.join(map(str, explain_hint))}번)의 "
+            "explanation을 비워서 보냈습니다. 이번에는 모든 문항에 25자 이상의 한국어 해설을 "
+            "반드시 채우세요. 해설이 빈 문항이 하나라도 있으면 실패입니다."
         )
     lines += ["", "[지문]", passage.strip()]
     return "\n".join(lines)
@@ -425,7 +456,7 @@ def fix_underline_bounds(html):
     return html
 
 
-def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None):
+def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None, explain_hint=None):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -439,7 +470,9 @@ def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None):
     payload = {
         "systemInstruction": {"parts": [{"text": QUIZ_SYSTEM_PROMPT}]},
         "contents": [
-            {"role": "user", "parts": [{"text": build_quiz_user_prompt(passage, types, count, short_hint)}]}
+            {"role": "user", "parts": [
+                {"text": build_quiz_user_prompt(passage, types, count, short_hint, explain_hint)}
+            ]}
         ],
         "generationConfig": {
             "temperature": 0.4,
@@ -1426,6 +1459,24 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     # 더 많이 만들어 온 결과만 채택 (재시도가 더 나쁘면 기존 유지)
                     if len(retry.get("questions", [])) > got:
+                        result = retry
+
+                # 해설 누락 방어 — 지문마다 해설이 있다 없다 하면 안 되므로,
+                # 빈 해설이 하나라도 있으면 어느 문항이 비었는지 알려 주고 다시 요청한다.
+                for _ in range(2):
+                    missing = blank_explanations(result)
+                    if not missing:
+                        break
+                    if _over_budget(t0):
+                        break
+                    retry = call_gemini_quiz(
+                        passage, types, count, api_key, model, explain_hint=missing
+                    )
+                    # 문항 수가 줄지 않고 해설이 더 잘 채워진 결과만 채택
+                    if (
+                        len(retry.get("questions", [])) >= len(result.get("questions", []))
+                        and len(blank_explanations(retry)) < len(missing)
+                    ):
                         result = retry
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)

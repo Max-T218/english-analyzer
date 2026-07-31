@@ -212,7 +212,15 @@ function updatePassageCount(ta) {
   el.textContent = msg;
 }
 
-function createPassageManager(listEl, addBtn, countEl, onEnter) {
+// 한 번에 넣을 수 있는 지문 수 상한.
+// API 사용량 한도 때문이 아니라(하루 한도는 훨씬 넉넉하다) 지문을 하나씩 순차로
+// 처리해서 개수만큼 시간이 늘고, 오래 돌수록 중간에 모델 과부하를 만날 확률이
+// 올라가기 때문이다. 지문 10개면 분석에 대략 3~10분(꼼꼼 검토 시 2배).
+const MAX_PASSAGES = 10;
+
+function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
+  const rowCount = () => listEl.querySelectorAll(".passage-item").length;
+
   function renumber() {
     const items = [...listEl.querySelectorAll(".passage-item")];
     items.forEach((it, i) => {
@@ -221,10 +229,24 @@ function createPassageManager(listEl, addBtn, countEl, onEnter) {
       it.querySelector(".passage-del").style.visibility =
         items.length > 1 ? "visible" : "hidden";
     });
-    if (countEl) countEl.textContent = items.length > 1 ? `· 총 ${items.length}개` : "";
+    const full = items.length >= MAX_PASSAGES;
+    if (countEl) {
+      countEl.textContent = full
+        ? `· 총 ${items.length}개 (최대)`
+        : items.length > 1
+        ? `· 총 ${items.length}개`
+        : "";
+    }
+    // 상한에 닿으면 '지문 추가' 버튼을 잠그고 이유를 화면에 띄운다 (삭제하면 다시 풀린다)
+    addBtn.disabled = full;
+    addBtn.title = full ? `1회 분석 최대 지문은 ${MAX_PASSAGES}개입니다.` : "";
+    if (maxNoteEl) {
+      maxNoteEl.textContent = full ? `1회 분석 최대 지문은 ${MAX_PASSAGES}개입니다.` : "";
+    }
   }
 
   function addRow(focus) {
+    if (rowCount() >= MAX_PASSAGES) return null;
     const item = document.createElement("div");
     item.className = "passage-item";
     item.innerHTML = `
@@ -277,8 +299,12 @@ function createPassageManager(listEl, addBtn, countEl, onEnter) {
 }
 
 // 모든 탭이 공유하는 지문 입력 (탭 밖 공통 패널) — 별도 저장소 없이 화면 하나로 공유
-const passageMgr = createPassageManager(passageListEl, addPassageBtn, passageCountEl, () =>
-  runActiveTab()
+const passageMgr = createPassageManager(
+  passageListEl,
+  addPassageBtn,
+  passageCountEl,
+  () => runActiveTab(),
+  $("passageMaxNote")
 );
 // Ctrl+Enter는 현재 열려 있는 탭의 실행 버튼을 누른다
 function runActiveTab() {
@@ -948,21 +974,30 @@ function buildQuizHtml(d, job, total) {
 
   // 정답 및 해설 — 화면 토글과 별개로 인쇄물에는 항상 별도 페이지로 포함
   if (d.questions && d.questions.length) {
+    // 해설이 하나도 없으면 '해설' 열 자체를 만들지 않는다 — 머리글만 있고 내용은
+    // 텅 빈 열이 지면을 먹고, 지문마다 표 모양이 달라 보이는 것을 막는다.
+    // 일부만 빠진 경우에는 열을 유지하되 빈 칸을 '—'로 표시해 누락이 드러나게 한다.
+    const hasExp = (q) =>
+      String(q.explanation || "").replace(/<[^>]*>/g, "").trim().length > 0;
+    const anyExp = d.questions.some(hasExp);
+    const expHead = anyExp ? `<th>해설</th>` : "";
+    const expCell = (q) =>
+      anyExp ? `<td>${hasExp(q) ? safeHTML(q.explanation) : "—"}</td>` : "";
+
     const rows = d.questions
       .map(
         (q, i) => `
       <tr>
         <td>${i + 1}</td>
         <td>${esc(q.type)}</td>
-        <td>${quizAnswerLabel(q)}</td>
-        <td>${safeHTML(q.explanation)}</td>
+        <td>${quizAnswerLabel(q)}</td>${expCell(q)}
       </tr>`
       )
       .join("");
     parts.push(`
       <h3 class="section page-break"><span class="num">📌</span> 정답 및 해설</h3>
       <div class="table-wrap"><table class="answerkey">
-        <thead><tr><th>번호</th><th>유형</th><th>정답</th><th>해설</th></tr></thead>
+        <thead><tr><th>번호</th><th>유형</th><th>정답</th>${expHead}</tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
     `);

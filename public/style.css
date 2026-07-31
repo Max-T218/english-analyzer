@@ -381,7 +381,9 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
   border-radius:8px; padding:10px 12px;
 }
 .passage-input:focus{outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent);}
-#addPassageBtn{margin-top:10px;}
+.passage-add-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px;}
+.passage-max-note{font-size:12px; font-weight:600; color:#b8760a;}
+.passage-max-note:empty{display:none;}
 
 /* 지문 구분 배너 & 결과 블록 */
 .passage-banner{
