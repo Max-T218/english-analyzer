@@ -945,14 +945,27 @@ def sanitize_inline(html):
     return _ANY_TAG_RE.sub(repl, html)
 
 
-_SENT_END_RE = re.compile(r'[.!?]+(?=\s+["\'(\[]?[A-Z]|\s*$)')
+# 종결부호 뒤에 닫는 따옴표·괄호가 붙는 경우까지 문장 끝으로 인정한다.
+#   예: He said, "Go home." Then he left.
+_SENT_END_RE = re.compile(
+    r'[.!?]+["\'”’)\]]?(?=\s+["\'“‘(\[]?[A-Z]|\s*$)'
+)
+# 마침표가 문장 끝이 아닌 약어들 — 이걸 걸러내지 않으면 'Dr. Smith'가 한 문장으로 잘려
+# 문장 수가 부풀고, 서버가 "AI가 문장을 빠뜨렸다"고 오판해 불필요한 재요청을 건다.
+_ABBR_RE = re.compile(
+    r"\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Mt|Ave|Rd|No|Fig|Inc|Ltd|Co|vs|etc|approx)\.",
+    re.IGNORECASE,
+)
+_INITIAL_RE = re.compile(r"\b([A-Z])\.")   # J. K. Rowling, U.S., e.g. 의 낱글자
 
 
 def rough_sentence_count(passage):
-    """지문의 문장 수 대략 추정 (약어로 다소 부풀 수 있어 넉넉한 허용오차와 함께 사용)."""
-    text = re.sub(r"\d\.\d", "00", passage.strip())  # 소수점 보호
-    n = len(_SENT_END_RE.findall(text))
-    return max(n, 1)
+    """지문의 문장 수를 센다. 소수점·약어·이니셜의 마침표는 문장 끝으로 세지 않는다."""
+    text = passage.strip()
+    text = re.sub(r"\d\.\d", "00", text)      # 3.14 같은 소수점
+    text = _ABBR_RE.sub(r"\1@", text)         # Mr. Dr. etc.
+    text = _INITIAL_RE.sub(r"\1@", text)      # U.S. / J. K.
+    return max(len(_SENT_END_RE.findall(text)), 1)
 
 
 _RT_STRIP_RE = re.compile(r"<rt\b[^>]*>.*?</rt>", re.S)
