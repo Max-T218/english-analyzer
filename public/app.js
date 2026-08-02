@@ -456,6 +456,44 @@ if (reviewChk) {
   );
 }
 
+/* ── 분석본 직접 수정 ──
+   결과는 이미 화면에 HTML로 그려져 있으므로, 그 영역을 편집 가능 상태로 바꾸기만 하면
+   해석·해설·어휘표를 그 자리에서 고칠 수 있다. 되돌리기(Ctrl+Z)는 브라우저가 처리하고,
+   인쇄도 고친 내용 그대로 나간다. 편집 표시(점선 테두리)는 인쇄에서 제외된다. */
+const editBtn = $("editBtn");
+const editHintEl = $("editHint");
+
+// 고칠 수 있는 구역만 연다 — 루비(영어 위 한글), 한글 해석, 우측 해설.
+// 영어 원문·제목·범례·번호·태그는 잠가 둔다(잘못 건드리면 분석본이 망가진다).
+const EDITABLE_SEL = "rt, .c-kor, .note";
+// 자동으로 붙는 라벨은 해설 안에 있더라도 잠근다
+const LOCKED_SEL = ".note-title, .exam-why-title";
+
+function setEditMode(on) {
+  resultEl.spellcheck = false;               // 영어·한국어가 섞여 빨간 밑줄이 지저분해진다
+  resultEl.classList.toggle("editing", on);
+  resultEl.querySelectorAll(EDITABLE_SEL).forEach((el) => {
+    el.contentEditable = on ? "true" : "false";
+  });
+  resultEl.querySelectorAll(LOCKED_SEL).forEach((el) => {
+    el.contentEditable = "false";
+  });
+  editBtn.textContent = on ? "✅ 수정 끝내기" : "✏️ 직접 수정";
+  editHintEl.textContent = on
+    ? "색칠된 곳(한글 해석 · 루비 · 해설)만 고칠 수 있습니다. 되돌리기는 Ctrl+Z."
+    : "";
+  if (on) {
+    const first = resultEl.querySelector('[contenteditable="true"]');
+    if (first) first.focus();
+  }
+}
+
+editBtn.addEventListener("click", () => {
+  // 상태는 .editing 클래스로 판단한다. #result 자체는 더 이상 편집 대상이 아니라
+  // contentEditable 값이 늘 "inherit"이어서 판단 근거가 될 수 없다.
+  setEditMode(!resultEl.classList.contains("editing"));
+});
+
 analyzeBtn.addEventListener("click", analyze);
 printBtn.addEventListener("click", () => window.print());
 floatPrintBtn.addEventListener("click", () => window.print());
@@ -479,8 +517,10 @@ async function analyze() {
   analyzeBtn.disabled = true;
   addPassageBtn.disabled = true;
   loadingEl.classList.add("on");
+  setEditMode(false); // 새로 분석하면 이전 수정 상태를 끈다 (내용도 새로 덮어써진다)
   resultEl.innerHTML = "";
   printBtn.style.display = "none";
+  editBtn.style.display = "none";
   syncFloatPrint();
 
   const total = jobs.length;
@@ -535,7 +575,10 @@ async function analyze() {
   if (vocabSets.length) saveVocabSets(vocabSets); // 단어장 탭에서 재사용
   // 모든 지문 분석이 끝난 뒤 한 번에 렌더 (중간에 화면이 바뀌지 않도록)
   resultEl.innerHTML = htmlParts.join("");
-  if (okCount) printBtn.style.display = "inline-flex";
+  if (okCount) {
+    printBtn.style.display = "inline-flex";
+    editBtn.style.display = "inline-flex";
+  }
   syncFloatPrint();
   loadingEl.classList.remove("on");
   analyzeBtn.disabled = false;
