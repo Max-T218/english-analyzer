@@ -1,5 +1,17 @@
 "use strict";
 
+// ── 열 때마다 완전 초기화 ──────────────────────────────────────────────
+// 창을 새로 열면 API 키·지문·학원 마크·모델 설정·단어장 데이터까지 전부 비운다.
+// 공용 PC에서 앞사람 흔적이 남지 않게 하려는 것으로, 아래의 모든 초기화 코드보다
+// 먼저 실행되어야 하므로 파일 맨 위에 둔다.
+// (한 세션 안에서의 저장은 그대로 동작한다 — 예: 지문 분석 결과의 어휘를 단어장
+//  탭이 이어받는 흐름. 다만 새로고침하면 함께 사라진다.)
+try {
+  localStorage.clear();
+} catch (_) {
+  /* 사생활 보호 모드 등에서 접근이 막혀도 앱은 그대로 동작 */
+}
+
 const $ = (id) => document.getElementById(id);
 const apiKeyEl = $("apiKey");
 const toggleKeyEl = $("toggleKey");
@@ -16,7 +28,6 @@ const errorEl = $("error");
 const loadingEl = $("loading");
 const loadingTextEl = $("loadingText");
 const resultEl = $("result");
-const usagePanelEl = $("usagePanel");
 
 const KEY_STORE = "gemini_api_key";
 
@@ -45,8 +56,30 @@ async function postJson(url, payload, fallbackMsg) {
       : text.slice(0, 120).trim() || "응답이 비어 있습니다.";
     throw new Error(`서버 오류 (HTTP ${res.status}) — ${hint}`);
   }
-  if (!res.ok) throw new Error(data.error || fallbackMsg);
+  if (!res.ok) {
+    const err = new Error(data.error || fallbackMsg);
+    err.code = data.code || "";   // 서버가 붙인 식별자 ("quota" 등)
+    err.status = res.status;
+    throw err;
+  }
   return data;
+}
+
+// 할당량 소진인가? — 서버가 code를 붙여 주면 그것으로 판정하고,
+// 예전 응답이나 예외 상황을 대비해 메시지 문구로도 한 번 더 확인한다.
+function isQuotaError(err) {
+  if (err && err.code === "quota") return true;
+  const msg = (err && err.message) || String(err || "");
+  return /한도|quota|exceeded|429/i.test(msg);
+}
+
+// 한도로 중단했을 때 남은 지문을 알려 주는 안내 카드
+function quotaStopHtml(left) {
+  return `<section class="passage-block"><div class="passage-error">
+    <b>한도 초과로 중단했습니다</b>
+    남은 지문 ${left}개는 시도하지 않았습니다. 지금은 다시 시도해도 같은 결과라
+    시간만 걸리기 때문입니다. 한도가 리셋된 뒤 이어서 진행하세요.
+  </div></section>`;
 }
 
 // 저장된 키 불러오기
@@ -59,7 +92,6 @@ apiKeyEl.addEventListener("input", () => {
   else localStorage.removeItem(KEY_STORE);
   clearTimeout(keyTimer);
   keyTimer = setTimeout(loadModels, 800);
-  renderUsage();
 });
 
 // 이 키로 실제 사용 가능한 모델을 불러와 드롭다운을 채움 (모델 지원 중단 대비)
@@ -91,7 +123,6 @@ async function loadModels() {
     }
     modelEl.value = pick;
     modelStatusEl.textContent = `· 사용 가능 ${data.models.length}개`;
-    renderUsage();
   } catch (_) {
     modelStatusEl.textContent = "";
   }
@@ -106,10 +137,74 @@ const savedModel = localStorage.getItem(MODEL_STORE);
 if (savedModel) modelEl.value = savedModel;
 modelEl.addEventListener("change", () => {
   localStorage.setItem(MODEL_STORE, modelEl.value);
-  renderUsage();
 });
 
-loadModels(); // 저장된 키가 있으면 시작 시 사용 가능한 모델을 불러옴 (내부에서 renderUsage 호출)
+loadModels(); // 저장된 키가 있으면 시작 시 사용 가능한 모델을 불러옴
+
+/* ══════════════════════════ 시작 화면(소개 + 키 입력) ══════════════════════════ */
+// 처음 들어온 사람이 무슨 사이트인지 알 수 있도록 소개를 먼저 보여주고,
+// 키를 확인한 뒤에야 작업 화면으로 넘어간다.
+const gateEl = $("gate");
+const workspaceEl = $("workspace");
+const gateStartBtn = $("gateStartBtn");
+const gateStatusEl = $("gateStatus");
+const gateErrorEl = $("gateError");
+const changeKeyBtn = $("changeKeyBtn");
+
+function showGate() {
+  gateEl.hidden = false;
+  workspaceEl.hidden = true;
+  gateErrorEl.textContent = "";
+  gateStatusEl.textContent = "";
+  window.scrollTo({ top: 0 });
+  apiKeyEl.focus();
+}
+
+function enterWorkspace() {
+  gateEl.hidden = true;
+  workspaceEl.hidden = false;
+  window.scrollTo({ top: 0 });
+}
+
+async function startWithKey() {
+  const key = apiKeyEl.value.trim();
+  gateErrorEl.textContent = "";
+  if (!key) {
+    gateErrorEl.textContent = "API 키를 입력하세요.";
+    apiKeyEl.focus();
+    return;
+  }
+  gateStartBtn.disabled = true;
+  gateStatusEl.textContent = "키 확인 중…";
+  try {
+    // 실제로 쓸 수 있는 키인지 모델 목록으로 확인한다(문항 생성과 달리 사용량이 거의 없다)
+    const data = await postJson("/api/models", { apiKey: key }, "키를 확인하지 못했습니다.");
+    if (!data.models || !data.models.length) throw new Error("이 키로 쓸 수 있는 모델이 없습니다.");
+    await loadModels();
+    enterWorkspace();
+  } catch (err) {
+    // 확인에 실패하면 들여보내지 않는다. 틀린 키로 들어가 봐야 이후 작업이 모두
+    // 실패할 뿐이고, 그때는 원인이 훨씬 알기 어려워진다.
+    // (키 확인에 쓰는 모델 목록 조회는 생성과 별개 경로라, 생성 한도가 소진된
+    //  상태에서도 정상 동작한다 — 한도 때문에 못 들어가는 일은 없다.)
+    const msg = err.message || String(err);
+    gateErrorEl.textContent =
+      /Failed to fetch|NetworkError|HTTP 5\d\d/i.test(msg)
+        ? `서버에 연결하지 못했습니다. 잠시 뒤 다시 시도하세요. (${msg})`
+        : `${msg} 키를 다시 확인해 주세요.`;
+    apiKeyEl.focus();
+    apiKeyEl.select();
+  } finally {
+    gateStartBtn.disabled = false;
+    gateStatusEl.textContent = "";
+  }
+}
+
+gateStartBtn.addEventListener("click", startWithKey);
+apiKeyEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !gateEl.hidden) startWithKey();
+});
+changeKeyBtn.addEventListener("click", showGate);
 
 // ── 학원 마크(로고) — 고정 파일 대신 사용자가 업로드해 이 브라우저에 저장 ──
 const BRAND_IMG_STORE = "brand_mark_img";   // data URL
@@ -197,17 +292,31 @@ renderBrand(); // 저장된 마크가 있으면 시작 시 바로 표시
 
 // ── 여러 지문 입력 관리 (지문 추가/삭제) — 지문분석·문제제작 탭이 공유하는 컴포넌트 ──
 // 지문 글자수 표시 + 길이에 따른 경고(잘림 위험 안내)
+// 권장 길이는 수능·모의고사 지문 한 개(700~900자) 기준.
+// 상한을 정하는 건 출력 토큰이 아니라 ① 문장이 많을수록 잦아지는 보정 재요청(=한도 소모)
+// ② 인쇄 분량이다. 특히 워크북은 문장마다 6단계를 만들어 1,000자면 벌써 40문항이 넘는다.
+const PASSAGE_WARN = 1000;   // 이 이상이면 나누는 걸 권함
+const PASSAGE_DANGER = 1800; // 이 이상이면 강하게 권함
+// 서버의 문장 수 추정(_SENT_END_RE)과 같은 규칙 — 다음이 대문자이거나 문장 끝일 때만 종결로 본다
+const SENT_END_RE = /[.!?]+(?=\s+["'(\[]?[A-Z]|\s*$)/g;
+
 function updatePassageCount(ta) {
   const el = ta.closest(".passage-item").querySelector(".passage-count");
-  const n = ta.value.trim().length;
+  const text = ta.value.trim();
+  const n = text.length;
   el.classList.remove("warn", "danger");
-  let msg = n.toLocaleString() + "자";
-  if (n > 3500) {
+  if (!n) {
+    el.textContent = "0자";
+    return;
+  }
+  const sents = Math.max((text.replace(/\d\.\d/g, "00").match(SENT_END_RE) || []).length, 1);
+  let msg = `${n.toLocaleString()}자 · 약 ${sents}문장`;
+  if (n > PASSAGE_DANGER) {
     el.classList.add("danger");
-    msg += " · 나눠서 권장";
-  } else if (n > 2000) {
+    msg += " · 나눠 넣으세요";
+  } else if (n > PASSAGE_WARN) {
     el.classList.add("warn");
-    msg += " · 길어지는 중";
+    msg += " · 워크북은 나누는 게 좋아요";
   }
   el.textContent = msg;
 }
@@ -313,10 +422,7 @@ function runActiveTab() {
   if (btn && !btn.disabled) btn.click();
 }
 
-// 지문은 브라우저에 보관하지 않는다 — 창을 새로 열면 항상 빈 칸에서 시작한다.
-// (공용 PC에서 앞사람 지문이 남아 보이지 않도록. API 키·학원 마크 설정은 계속 유지됨)
-const PASSAGE_STORE = "passages";
-localStorage.removeItem(PASSAGE_STORE); // 예전 버전이 저장해 둔 지문 정리
+// 지문은 저장하지 않는다 (파일 맨 위 localStorage.clear()와 같은 취지)
 passageMgr.addRow(false); // 시작 시 지문 입력칸 1개
 
 // ── 탭 전환 ──
@@ -340,59 +446,6 @@ tabBtns.forEach((btn) => {
 });
 
 // ── 모델별 "오늘 사용량" 추적 ──
-// Google API는 잔여 한도를 조회하는 기능이 없어서, 이 앱에서 오늘 보낸 횟수를
-// 브라우저에 집계해 보여준다. 한도(429)에 걸린 모델은 '소진'으로 표시.
-const USAGE_STORE = "gemini_usage";
-const USAGE_LIMIT = 20; // 무료 등급 하루 요청 한도(추정치) — 모델·시기에 따라 다름
-// 카운터는 미국 서부(PT) 날짜 기준으로 하루 단위 집계 (실제 한도 주기와 일치시키기 위함).
-const todayStr = () =>
-  new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" }); // YYYY-MM-DD(PT)
-function getUsage() {
-  let u;
-  try { u = JSON.parse(localStorage.getItem(USAGE_STORE) || "{}"); } catch (_) { u = {}; }
-  if (u.date !== todayStr()) u = { date: todayStr(), counts: {}, exhausted: {} };
-  return u;
-}
-function saveUsage(u) { localStorage.setItem(USAGE_STORE, JSON.stringify(u)); }
-function bumpUsage(model) {
-  const u = getUsage();
-  u.counts[model] = (u.counts[model] || 0) + 1;
-  delete u.exhausted[model]; // 성공했으면 '소진' 표시 해제
-  saveUsage(u);
-  renderUsage();
-}
-function markExhausted(model) {
-  const u = getUsage();
-  u.exhausted[model] = true;
-  saveUsage(u);
-  renderUsage();
-}
-function renderUsage() {
-  if (!usagePanelEl) return;
-  const opts = [...modelEl.options];
-  if (!apiKeyEl.value.trim() || !opts.length) { usagePanelEl.hidden = true; return; }
-  const u = getUsage();
-  const cur = modelEl.value;
-  const rows = opts.map((o) => {
-    const n = u.counts[o.value] || 0;
-    const ex = !!u.exhausted[o.value];
-    const pct = ex ? 100 : Math.min(100, Math.round((n / USAGE_LIMIT) * 100));
-    const lvl = (ex || pct >= 100) ? "u-lv-hi" : (pct >= 70 ? "u-lv-mid" : "u-lv-lo");
-    const name = esc(o.textContent.replace(/\s*\(.*\)\s*$/, "")); // 라벨의 (id) 제거
-    const isCur = o.value === cur;
-    const badge = ex ? `<span class="u-ex">⚠️ 소진</span>` : "";
-    return `<div class="u-row${isCur ? " u-cur" : ""}">
-        <span class="u-name">${isCur ? "▶ " : ""}${name}</span>
-        <span class="u-bar"><i class="u-bar-fill ${lvl}" style="width:${pct}%"></i></span>
-        <span class="u-pct ${lvl}">${pct}%</span>${badge}
-      </div>`;
-  }).join("");
-  usagePanelEl.innerHTML = `
-    <div class="u-title">모델별 오늘 사용률</div>
-    ${rows}
-    <div class="u-note">※ Google는 잔여 한도를 알려주지 않아, <b>하루 한도를 약 ${USAGE_LIMIT}회로 가정</b>해 이 브라우저의 오늘 사용 횟수를 %로 환산한 <b>추정치</b>입니다. ‘소진’은 그 모델이 오늘 실제 한도(429)에 걸린 표시이며, 모델마다 한도는 따로입니다.</div>`;
-  usagePanelEl.hidden = false;
-}
 
 // '꼼꼼 검토' 체크 상태 기억
 const REVIEW_STORE = "gemini_review";
@@ -466,12 +519,15 @@ async function analyze() {
         vocabSets.push({ name: job.name, vocab: data.vocab });
       }
       okCount++;
-      bumpUsage(usedModel);
-      if (reviewOn) bumpUsage(usedModel); // 검토 패스로 요청 1회 추가 소모
     } catch (err) {
       const msg = err.message || String(err);
-      if (/한도|quota|exceeded|429/i.test(msg)) markExhausted(usedModel);
       htmlParts.push(buildErrorHtml(job, total, msg));
+      // 한도 소진은 기다려도 안 풀린다 — 남은 지문을 시도하지 않고 즉시 멈춘다
+      if (isQuotaError(err)) {
+        const left = total - (i + 1);
+        if (left > 0) htmlParts.push(quotaStopHtml(left));
+        break;
+      }
     }
   }
 
@@ -820,11 +876,15 @@ function setupQuizTab({ prefix, types, footer }) {
         }
         htmlParts.push(buildQuizHtml(data, job, total));
         okCount++;
-        bumpUsage(usedModel);
       } catch (err) {
         const msg = err.message || String(err);
-        if (/한도|quota|exceeded|429/i.test(msg)) markExhausted(usedModel);
         htmlParts.push(buildErrorHtml(job, total, msg));
+        // 한도 소진은 기다려도 안 풀린다 — 남은 지문을 시도하지 않고 즉시 멈춘다
+        if (isQuotaError(err)) {
+            const left = total - (i + 1);
+          if (left > 0) htmlParts.push(quotaStopHtml(left));
+          break;
+        }
       }
     }
 
@@ -1140,11 +1200,15 @@ async function generateWorkbook() {
       );
       htmlParts.push(buildWorkbookHtml(data, stages, job, total));
       okCount++;
-      bumpUsage(usedModel);
     } catch (err) {
       const msg = err.message || String(err);
-      if (/한도|quota|exceeded|429/i.test(msg)) markExhausted(usedModel);
       htmlParts.push(buildErrorHtml(job, total, msg));
+      // 한도 소진은 기다려도 안 풀린다 — 남은 지문을 시도하지 않고 즉시 멈춘다
+      if (isQuotaError(err)) {
+        const left = total - (i + 1);
+        if (left > 0) htmlParts.push(quotaStopHtml(left));
+        break;
+      }
     }
   }
 
@@ -1514,36 +1578,3 @@ function buildVocab() {
   syncFloatPrint();
   vocabDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
-
-/* ══════════════════════════ 전체 초기화 ══════════════════════════ */
-// 이 브라우저에 저장된 앱 데이터를 한 번에 지운다 (공용 PC에서 자리를 뜰 때).
-// 지문은 애초에 저장하지 않지만, 예전 버전이 남겨 둔 값까지 함께 정리한다.
-$("resetAllBtn").addEventListener("click", () => {
-  const keys = [
-    KEY_STORE,          // API 키
-    MODEL_STORE,        // 선택한 모델
-    BRAND_IMG_STORE,    // 학원 로고
-    BRAND_NAME_STORE,   // 학원명
-    PASSAGE_STORE,      // (구버전) 저장된 지문
-    USAGE_STORE,        // 오늘 사용량
-    REVIEW_STORE,       // 꼼꼼 검토 체크
-    WB_ANSWER_STORE,    // 워크북 정답 표시 체크
-    VOCAB_STORE,        // 단어장 어휘 데이터
-    VOCAB_ANSWER_STORE, // 단어장 정답 표시 체크
-    "gemini_mcq_order", // 객관식 출제 순서 (유형순 / 무작위)
-    "gemini_saq_order", // 주관식 출제 순서
-  ];
-  const saved = keys.filter((k) => localStorage.getItem(k) !== null).length;
-  if (!saved) {
-    alert("이 브라우저에 저장된 데이터가 없습니다.");
-    return;
-  }
-  const ok = confirm(
-    `이 브라우저에 저장된 데이터 ${saved}건을 모두 지웁니다.\n\n` +
-      "· Gemini API 키\n· 학원명 / 로고\n· 모델 설정\n· 단어장 어휘 데이터\n\n" +
-      "되돌릴 수 없습니다. 계속할까요?"
-  );
-  if (!ok) return;
-  keys.forEach((k) => localStorage.removeItem(k));
-  location.reload();
-});

@@ -3,29 +3,70 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>영어 지문 분석본 자동 생성기</title>
+<title>English Lab</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <div class="wrap">
 
   <header class="app-head">
-    <div class="brand-lockup">
-      <img class="app-logo" src="/logo.png" alt="ARA DNA" onerror="this.style.display='none'">
-      <div class="eyebrow">One-Page Analysis for ARA</div>
-    </div>
-    <p>영어 지문을 붙여 넣으면 자동으로 구문 단위 직독직해 분석본·문제·워크북을 만들어 줍니다.</p>
+    <h1 class="eyebrow">English Lab</h1>
+    <p>분석본 · 객관식 · 주관식 · 워크북 · 단어장</p>
   </header>
 
-  <section class="panel">
-    <label for="apiKey">Gemini API 키
-      <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="keylink">키 발급받기 ↗</a>
-    </label>
-    <div class="key-row">
-      <input type="password" id="apiKey" placeholder="AIza... (Google AI Studio에서 발급)" autocomplete="off">
-      <button type="button" class="btn ghost small" id="toggleKey" title="보이기/숨기기">👁</button>
+  <!-- ══════════ 시작 화면 (소개 + 키 입력) ══════════ -->
+  <section class="gate" id="gate">
+    <div class="gate-intro">
+      <h2>영어 지문 하나로, 수업 자료 다섯 가지를 만듭니다</h2>
+      <p class="gate-lead">
+        교과서·모의고사 지문을 붙여 넣으면 AI가 <b>구문 단위 직독직해 분석본</b>부터
+        <b>수능형 문제</b>, <b>단계별 워크북</b>, <b>단어장</b>까지 자동으로 만들어 줍니다.
+        만들어진 자료는 그대로 <b>인쇄하거나 PDF로 저장</b>해 수업에 쓰실 수 있습니다.
+      </p>
+
+      <div class="gate-feats">
+        <div class="gate-feat"><b>📖 지문 분석</b>문장별 직독직해와 구문·어법·어휘 해설, 주제 흐름 요약표</div>
+        <div class="gate-feat"><b>📝 객관식 문제</b>주제·제목·요지·빈칸·어법·어휘 등 12개 수능 유형</div>
+        <div class="gate-feat"><b>✍️ 주관식 문제</b>서술형 배열·OX 진위·선택형·틀린 곳 찾기</div>
+        <div class="gate-feat"><b>📚 워크북</b>빈칸·해석·동사형·순서배열·영작까지 7단계 학습지</div>
+        <div class="gate-feat"><b>📒 단어장</b>핵심 어휘를 단어장·단어시험지로</div>
+      </div>
+
+      <ol class="gate-steps">
+        <li>아래에 <b>Google Gemini API 키</b>를 입력합니다 <span>(무료 발급)</span></li>
+        <li>영어 지문을 붙여 넣습니다 <span>(한 번에 최대 10개)</span></li>
+        <li>원하는 탭에서 자료를 만들고 인쇄합니다</li>
+      </ol>
     </div>
-    <div class="hint" id="keyStatus">키는 이 브라우저에만 저장되며 서버에 파일로 남지 않습니다.</div>
+
+    <div class="gate-key">
+      <label for="apiKey">Gemini API 키
+        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="keylink">키 발급받기 ↗</a>
+      </label>
+      <div class="key-row">
+        <input type="password" id="apiKey" placeholder="API 키 발급하여 작성하세요" autocomplete="off">
+        <button type="button" class="btn ghost small" id="toggleKey" title="보이기/숨기기">👁</button>
+      </div>
+      <div class="hint" id="keyStatus">
+        키는 서버에 저장되지 않습니다. 이 창을 닫으면 입력하신 내용과 함께 모두 지워집니다.
+        Google AI Studio에서 <b>카드 등록 없이 무료로</b> 발급받을 수 있습니다.
+      </div>
+      <div class="gate-actions">
+        <button class="btn" id="gateStartBtn">확인하고 시작하기</button>
+        <span class="gate-status" id="gateStatus"></span>
+      </div>
+      <div class="error" id="gateError"></div>
+    </div>
+  </section>
+
+  <!-- ══════════ 작업 화면 ══════════ -->
+  <div id="workspace" hidden>
+
+  <section class="panel">
+    <div class="key-bar">
+      <span class="key-bar-ok">✅ API 키가 입력되었습니다</span>
+      <button type="button" class="btn ghost small" id="changeKeyBtn">키 변경</button>
+    </div>
 
     <div class="row">
       <div class="field">
@@ -37,7 +78,7 @@
     </div>
 
     <div class="brand-panel">
-      <div class="brand-title">🏫 학원 마크 <span class="sub">(모든 인쇄물 우측 하단에 표시, 이 브라우저에만 저장)</span></div>
+      <div class="brand-title">🏫 학원 마크 <span class="sub">(학원명은 인쇄물 상단 중앙, 로고는 우측 하단 · 창을 닫으면 지워집니다)</span></div>
       <div class="brand-body">
         <label for="brandName">학원명 (선택)</label>
         <input type="text" id="brandName" placeholder="예: ARA 어학원">
@@ -50,15 +91,7 @@
       </div>
     </div>
 
-    <div class="usage-panel" id="usagePanel" hidden></div>
 
-    <div class="reset-row">
-      <button type="button" class="btn ghost small" id="resetAllBtn"
-              title="이 브라우저에 저장된 API 키·학원 마크·모델 설정·단어장 데이터를 모두 지웁니다. 공용 PC에서 자리를 뜰 때 사용하세요.">
-        🧹 전체 초기화
-      </button>
-      <span class="hint">공용 PC에서 자리를 뜰 때 누르면 저장된 키와 설정이 모두 지워집니다.</span>
-    </div>
   </section>
 
   <section class="panel passage-panel">
@@ -276,6 +309,8 @@
 
     <div id="vocabDoc"></div>
   </section>
+
+  </div><!-- /#workspace -->
 
 </div>
 <button type="button" class="float-print" id="floatPrintBtn" hidden>🖨️ 인쇄 / PDF 저장</button>

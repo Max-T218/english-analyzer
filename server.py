@@ -55,6 +55,26 @@ REFINE_BUDGET = float(os.environ.get("REFINE_BUDGET", "86400"))
                          # 이 시간(초)을 이미 쓴 뒤에는 보정 재요청을 시작하지 않는다
                          # (로컬 기본값은 사실상 무제한 = 원래 동작 그대로)
 
+# 429(할당량) 빠른 실패 기준.
+# 분당 한도라면 구글이 응답에 짧은 retryDelay를 실어 보내므로 그만큼만 기다렸다
+# 다시 시도할 값어치가 있다. 반면 '일일 한도 소진'은 기다려도 리셋 전까지 안 풀리는데,
+# 예전에는 이 경우에도 150초를 헛되이 기다린 뒤에야 오류를 띄웠다(게다가 재시도가
+# 남은 할당량을 더 태웠다). 권장 대기가 이 값을 넘거나 아예 없으면 즉시 포기한다.
+QUOTA_RETRY_MAX_WAIT = float(os.environ.get("QUOTA_RETRY_MAX_WAIT", "20"))
+QUOTA_MAX_RETRIES = int(os.environ.get("QUOTA_MAX_RETRIES", "2"))
+                         # 분당 한도로 보이더라도 이 횟수까지만 재시도한다
+
+QUOTA_MESSAGE = (
+    "무료 등급 사용량 한도를 초과했습니다. 오늘 한도가 리셋되기 전까지는 "
+    "다시 시도해도 풀리지 않습니다. ① 정확도(모델)에서 다른 Flash 모델로 바꾸거나 "
+    "② 한도가 리셋된 뒤 다시 시도하세요. "
+    "(Google 결제를 설정하면 한도가 크게 늘어납니다.)"
+)
+
+
+class QuotaExceeded(RuntimeError):
+    """무료 등급 할당량 소진 — 재시도해도 풀리지 않으므로 즉시 중단해야 한다."""
+
 
 def _over_budget(t0):
     """이번 요청에 이미 REFINE_BUDGET 이상을 썼으면 True.
@@ -1096,6 +1116,7 @@ def _gemini_call_with_retry(data, api_key, model):
         is_flash = "flash" in (use_model or "").lower()
         attempt = 0
         waited = 0.0
+        quota_tries = 0   # 429 재시도는 따로 세어 짧게 끊는다
         while True:
             try:
                 return _post(use_model)
@@ -1104,21 +1125,28 @@ def _gemini_call_with_retry(data, api_key, model):
                 if not retryable:
                     raise  # 비-flash 429·인증/모델 오류 등은 바깥에서 처리(본문 미소비)
                 is_quota = e.code == 429
-                wait = _parse_retry_delay(e.read().decode("utf-8", "replace")) if is_quota else None
-                if wait is None:
-                    wait = min(RETRY_MIN_WAIT * (2 ** attempt), RETRY_MAX_WAIT)  # 3,6,12,24,48,60…
+                if is_quota:
+                    # 구글이 알려준 권장 대기시간으로 '분당 한도'와 '일일 한도 소진'을 가른다.
+                    # 짧으면 잠깐 뒤 풀리므로 기다릴 값어치가 있고, 길거나 없으면 오늘은
+                    # 안 풀리므로 즉시 포기한다(기다려 봐야 할당량만 더 태운다).
+                    hint = _parse_retry_delay(e.read().decode("utf-8", "replace"))
+                    quota_tries += 1
+                    if (
+                        hint is None
+                        or hint > QUOTA_RETRY_MAX_WAIT
+                        or quota_tries > QUOTA_MAX_RETRIES
+                    ):
+                        raise QuotaExceeded(QUOTA_MESSAGE)
+                    wait = max(min(hint + 1, RETRY_MAX_WAIT), RETRY_MIN_WAIT)
+                    if waited + wait > MAX_RETRY_TOTAL:
+                        raise QuotaExceeded(QUOTA_MESSAGE)
                 else:
-                    wait = min(wait + 1, RETRY_MAX_WAIT)  # 권장시간 + 약간의 여유
-                wait = max(wait, RETRY_MIN_WAIT)
-                if waited + wait > MAX_RETRY_TOTAL:
-                    if is_quota:
+                    wait = min(RETRY_MIN_WAIT * (2 ** attempt), RETRY_MAX_WAIT)  # 3,6,12,24,48,60…
+                    wait = max(wait, RETRY_MIN_WAIT)
+                    if waited + wait > MAX_RETRY_TOTAL:
                         raise RuntimeError(
-                            "무료 등급 사용량 한도를 초과했습니다(재시도해도 풀리지 않음). "
-                            "① 정확도(모델)에서 다른 Flash 모델로 바꾸거나 ② 한도가 리셋된 뒤 "
-                            "다시 시도하거나 ③ 한 번에 처리하는 지문 수를 줄이세요. "
-                            "(Google 결제를 설정하면 한도가 크게 늘어납니다.)"
+                            "서버가 계속 응답하지 않습니다(과부하). 잠시 뒤 다시 시도하세요."
                         )
-                    raise RuntimeError("서버가 계속 응답하지 않습니다(과부하). 잠시 뒤 다시 시도하세요.")
                 time.sleep(wait)
                 waited += wait
                 attempt += 1
@@ -1403,6 +1431,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/models":
             try:
                 self._send_json(list_models(req.get("apiKey") or ""))
+            except QuotaExceeded as e:
+                # 재시도해도 안 풀리는 한도 소진 — 화면이 남은 지문을 즉시 중단하도록
+                # 기계가 알아볼 수 있는 code를 함께 내려준다
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+                return
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
             return
@@ -1428,6 +1461,11 @@ class Handler(BaseHTTPRequestHandler):
                     result = call_gemini_workbook(
                         passage, api_key, model, complete_hint=(expected, got)
                     )
+            except QuotaExceeded as e:
+                # 재시도해도 안 풀리는 한도 소진 — 화면이 남은 지문을 즉시 중단하도록
+                # 기계가 알아볼 수 있는 code를 함께 내려준다
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+                return
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
@@ -1478,6 +1516,11 @@ class Handler(BaseHTTPRequestHandler):
                         and len(blank_explanations(retry)) < len(missing)
                     ):
                         result = retry
+            except QuotaExceeded as e:
+                # 재시도해도 안 풀리는 한도 소진 — 화면이 남은 지문을 즉시 중단하도록
+                # 기계가 알아볼 수 있는 code를 함께 내려준다
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+                return
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
@@ -1523,6 +1566,9 @@ class Handler(BaseHTTPRequestHandler):
                 result = call_gemini(
                     passage, target_grammar, mode, api_key, model, prior=result
                 )
+        except QuotaExceeded as e:
+            self._send_json({"error": str(e), "code": "quota"}, 429)
+            return
         except Exception as e:
             self._send_json({"error": str(e)}, 502)
             return
