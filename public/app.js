@@ -1125,7 +1125,6 @@ document.addEventListener("click", (e) => {
 // 지원 단계 — 참고 자료(10단계 워크북)의 번호·명칭을 그대로 사용
 const WB_STAGES = [
   { id: 3, name: "빈칸 연습 (영문)", guide: "우리말 해석을 보고 영문을 완성하시오.", def: true },
-  { id: 4, name: "해석 연습", guide: "영어 문장을 읽고 우리말 해석을 쓰시오.", def: true },
   { id: 5, name: "동사형 연습", guide: "괄호 안에 주어진 단어를 알맞게 고쳐 쓰시오.", def: true },
   { id: 6, name: "어법 선택형 연습", guide: "괄호 안에서 어법상 알맞은 것을 고르시오.", def: true },
   { id: 7, name: "어색한 곳 찾기 연습", guide: "밑줄 친 부분 중 문맥상 어색한 것을 찾아 바르게 고쳐 쓰시오.", def: true },
@@ -1136,9 +1135,42 @@ const WB_STAGES = [
 const wbStageGridEl = $("wbStageGrid");
 WB_STAGES.forEach((s) => {
   const label = document.createElement("label");
-  label.innerHTML = `<input type="checkbox" value="${s.id}" ${s.def ? "checked" : ""}> ${s.id}. ${esc(s.name)}`;
+  label.innerHTML =
+    `<input type="checkbox" value="${s.id}" ${s.def ? "checked" : ""}>` +
+    `<span class="type-no"></span><span>${esc(s.name)}</span>`;
   wbStageGridEl.appendChild(label);
 });
+
+// 체크한 단계에만 1번부터 번호를 붙인다. WB_STAGES의 id(3·5·6…)는 렌더 분기를 고르는
+// 내부 키일 뿐이고, 화면·인쇄물에 찍히는 번호는 여기서 매기는 '선택 순서'다.
+function renumberWbStages() {
+  let n = 0;
+  wbStageGridEl.querySelectorAll("label").forEach((label) => {
+    const on = label.querySelector("input").checked;
+    label.querySelector(".type-no").textContent = on ? `${++n}.` : "";
+    label.classList.toggle("picked", on);
+  });
+}
+// 전체 선택 / 해제 — 일부만 선택된 상태는 '중간' 표시 (문제 제작 탭과 동일)
+const wbStageAllEl = $("wbStageAll");
+function syncWbAll() {
+  const boxes = [...wbStageGridEl.querySelectorAll("input")];
+  const on = boxes.filter((b) => b.checked).length;
+  wbStageAllEl.checked = on === boxes.length;
+  wbStageAllEl.indeterminate = on > 0 && on < boxes.length;
+}
+wbStageAllEl.addEventListener("change", () => {
+  const check = wbStageAllEl.checked;
+  wbStageGridEl.querySelectorAll("input").forEach((b) => (b.checked = check));
+  syncWbAll();
+  renumberWbStages();
+});
+wbStageGridEl.addEventListener("change", () => {
+  syncWbAll();
+  renumberWbStages();
+});
+syncWbAll();
+renumberWbStages();
 
 const wbBtn = $("wbBtn");
 const wbErrorEl = $("wbError");
@@ -1362,6 +1394,9 @@ function buildWorkbookHtml(d, stages, job, total) {
   }
 
   const sentences = (d.sentences || []).filter((s) => s && s.en);
+  // 지면에 찍히는 번호는 1부터 연속. 내용이 없어 건너뛴 단계는 번호를 쓰지 않으므로
+  // '워크북1, 워크북2 …' 사이에 빈 번호가 생기지 않는다.
+  let stageNo = 0;
   stages.forEach((stageId) => {
     const meta = WB_STAGES.find((s) => s.id === stageId);
     if (!meta) return;
@@ -1369,9 +1404,10 @@ function buildWorkbookHtml(d, stages, job, total) {
     if (stageId === 7) inner = renderStage7(d.oddParagraphs || []);
     else inner = sentences.map((s) => renderStageSentence(stageId, s)).join("");
     if (!inner.trim()) return;
+    stageNo++;
     parts.push(`
       <section class="wb-stage">
-        <h3 class="section wb-stage-head"><span class="num">워크북${meta.id}</span> ${esc(meta.name)}</h3>
+        <h3 class="section wb-stage-head"><span class="num">워크북${stageNo}</span> ${esc(meta.name)}</h3>
         <div class="wb-guide">◗ ${esc(meta.guide)}</div>
         ${inner}
       </section>`);
@@ -1394,12 +1430,6 @@ function renderStageSentence(stageId, s) {
       <div class="wb-ko">${esc(s.ko)}</div>
       <div class="wb-en">${html}</div>
       ${wbAns(answers.join(" / "))}`;
-  } else if (stageId === 4) {
-    // 해석 연습 — 영문 보고 해석 쓰기
-    body = `
-      <div class="wb-en">${esc(s.en)}</div>
-      <div class="wb-writeline"></div>
-      ${wbAns(s.ko || "")}`;
   } else if (stageId === 5) {
     // 동사형 연습
     const { html, answers } = renderVerbForms(s.verbForm || "");
