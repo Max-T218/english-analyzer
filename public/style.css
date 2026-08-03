@@ -457,10 +457,12 @@ u{
   text-underline-offset:.16em;
 }
 
-/* 화면에서는 숨기고, 인쇄에서만 우하단에 표시 */
-.brand-mark{display:none;}
-/* 인쇄물 좌하단 학원명 (화면에서는 숨김 — 화면은 헤더 제목이 대신함) */
-.print-brand-name{display:none;}
+/* 인쇄 틀(table/tfoot) — 화면에서는 표 구조를 무력화해 기존 레이아웃 그대로 둔다 */
+.print-frame,
+.print-frame > tbody,
+.print-frame > tbody > tr,
+.print-frame > tbody > tr > td{ display:block; width:auto; padding:0; border:0; }
+.print-frame > tfoot{ display:none; }   /* 학원명·로고는 인쇄에서만 */
 
 /* ── 로딩 ── */
 .loading{display:none; align-items:center; gap:12px; margin:26px 2px; color:var(--ink-soft); font-size:14px;}
@@ -633,7 +635,8 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
 }
 @media print{
   /* 우하단 마크가 놓일 여백 확보 */
-  @page{ margin:14mm 12mm 18mm; }
+  /* 하단은 tfoot(학원명·로고)이 매 페이지 자리를 잡으므로 여백은 작게 */
+  @page{ margin:14mm 12mm 10mm; }
   /* OS가 다크모드여도 인쇄는 항상 라이트 색상으로 고정 (색 빠짐 방지) */
   :root{
     color-scheme:light !important;
@@ -665,19 +668,23 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   .table-wrap{overflow:visible;}
   table{min-width:0;}
   th,td{overflow-wrap:break-word; word-break:keep-all;}
-  /* 학원 마크 — 모든 페이지 우하단 (fixed 요소는 페이지마다 반복 인쇄됨) */
-  .brand-mark{
-    display:flex; align-items:center; gap:8px;
-    position:fixed; right:0; bottom:0;
+  /* 인쇄 틀 — <tfoot>은 매 페이지 하단에 '자리를 차지하며' 반복되므로,
+     position:fixed 와 달리 본문 마지막 줄과 절대 겹치지 않는다. */
+  .print-frame{ display:table; width:100%; border-collapse:collapse; }
+  .print-frame > tbody{ display:table-row-group; }
+  .print-frame > tfoot{ display:table-footer-group; }
+  .print-frame > tbody > tr,
+  .print-frame > tfoot > tr{ display:table-row; }
+  .print-frame > tbody > tr > td,
+  .print-frame > tfoot > tr > td{ display:table-cell; padding:0; border:0; }
+  /* 학원명 = 좌하단, 로고 = 우하단 */
+  .print-foot{
+    display:flex; justify-content:space-between; align-items:flex-end;
+    height:12mm; padding-top:3mm;
   }
-  .brand-mark:empty{display:none;}
-  .brand-mark img{max-height:14mm; max-width:42mm;}
-  .brand-mark .brand-name{font-size:10.5px; color:#1b2430; font-weight:700;}
-  /* 학원명 — 모든 페이지 좌하단 (로고는 우하단). 본문과 겹치지 않도록 아래 여백에 둔다 */
-  .print-brand-name{
-    display:flex; align-items:center; position:fixed; left:0; bottom:0;
-    height:14mm; font-family:var(--font);
-    font-weight:700; font-size:11px; color:#1b2430; letter-spacing:.02em;
+  .print-foot .print-brand-name{
+    font-family:var(--font); font-weight:700; font-size:11px;
+    color:#1b2430; letter-spacing:.02em;
   }
-  .print-brand-name:empty{display:none;}
+  .print-foot .brand-mark img{ max-height:10mm; max-width:38mm; }
 }

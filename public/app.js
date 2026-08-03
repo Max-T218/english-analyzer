@@ -310,23 +310,10 @@ renderBrand(); // 저장된 마크가 있으면 시작 시 바로 표시
 // 상한을 정하는 건 출력 토큰이 아니라 ① 문장이 많을수록 잦아지는 보정 재요청(=한도 소모)
 // ② 인쇄 분량이다. 특히 워크북은 문장마다 6단계를 만들어 1,000자면 벌써 40문항이 넘는다.
 // 3.6 Flash 기준 실측·추정으로 잡은 값 — 1,200자가 기본 권장, 1,500자가 상한.
-// 1,500자(약 15문장)를 넘으면 문장 누락 보정 재요청이 잦아지고 한 요청이 5분을 넘겨
+// 1,500자를 넘으면 문장 누락 보정 재요청이 잦아지고 한 요청이 5분을 넘겨
 // 중간에 과부하·한도를 만날 위험이 커진다.
 const PASSAGE_WARN = 1200;
 const PASSAGE_DANGER = 1500;
-// 서버의 rough_sentence_count와 같은 규칙으로 센다. 여기 숫자가 서버가 '문장 누락'을
-// 판단하는 기준이라, 두 곳이 어긋나면 화면 표시와 실제 동작이 달라진다.
-const SENT_END_RE = /[.!?]+["'”’)\]]?(?=\s+["'“‘(\[]?[A-Z]|\s*$)/g;
-const ABBR_RE = /\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Mt|Ave|Rd|No|Fig|Inc|Ltd|Co|vs|etc|approx)\./gi;
-const INITIAL_RE = /\b([A-Z])\./g;
-
-function countSentences(text) {
-  const t = String(text || "")
-    .replace(/\d\.\d/g, "00")      // 소수점
-    .replace(ABBR_RE, "$1@")       // Mr. Dr. etc.
-    .replace(INITIAL_RE, "$1@");   // U.S. / J. K.
-  return Math.max((t.match(SENT_END_RE) || []).length, 1);
-}
 
 function updatePassageCount(ta) {
   const el = ta.closest(".passage-item").querySelector(".passage-count");
@@ -337,7 +324,7 @@ function updatePassageCount(ta) {
     el.textContent = "0자";
     return;
   }
-  let msg = `${n.toLocaleString()}자 · ${countSentences(text)}문장`;
+  let msg = `${n.toLocaleString()}자`;
   if (n > PASSAGE_DANGER) {
     el.classList.add("danger");
     msg += " · 나눠 넣으세요";

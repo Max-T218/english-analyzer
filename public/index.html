@@ -7,6 +7,16 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<!-- 인쇄 틀: <tfoot>은 매 페이지 하단에 '자리를 차지하며' 반복되므로
+     학원명·로고가 본문과 겹치지 않는다. 화면에서는 CSS로 표 구조를 무력화한다. -->
+<table class="print-frame">
+<tfoot><tr><td>
+  <div class="print-foot">
+    <span class="print-brand-name" id="printBrandName"></span>
+    <span class="brand-mark" id="brandMark"></span>
+  </div>
+</td></tr></tfoot>
+<tbody><tr><td>
 <div class="wrap">
 
   <header class="app-head">
@@ -322,9 +332,9 @@
   </div><!-- /#workspace -->
 
 </div>
+</td></tr></tbody>
+</table>
 <button type="button" class="float-print" id="floatPrintBtn" hidden>🖨️ 인쇄 / PDF 저장</button>
-<div class="print-brand-name" id="printBrandName" aria-hidden="true"></div>
-<div class="brand-mark" id="brandMark" aria-hidden="true"></div>
 <script src="/app.js"></script>
 </body>
 </html>
