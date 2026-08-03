@@ -76,6 +76,10 @@ class QuotaExceeded(RuntimeError):
     """무료 등급 할당량 소진 — 재시도해도 풀리지 않으므로 즉시 중단해야 한다."""
 
 
+class ProUnavailable(RuntimeError):
+    """결제되지 않은 키로 Pro 모델을 고른 경우 — Flash로 바꿔야 하므로 즉시 중단한다."""
+
+
 def _over_budget(t0):
     """이번 요청에 이미 REFINE_BUDGET 이상을 썼으면 True.
     (품질 보정 재요청을 한 번 더 시작할 여유가 없다는 뜻)"""
@@ -1189,9 +1193,22 @@ def _gemini_call_with_retry(data, api_key, model):
             or "is not supported" in low
             or "not available" in low
         )
-        # Pro 등 무료 등급 미지원(429 할당량 0/초과) → Flash로 자동 대체
-        quota_block = e.code == 429 and "flash" not in (model or "").lower()
-        if model_gone or quota_block:
+        # Pro 등 비-Flash 모델이 429 → 조용히 바꾸지 않고, 사용자에게 분명히 알린다.
+        # (무료 등급 키는 Pro 할당량이 0이라 즉시 거부된다)
+        if e.code == 429 and "flash" not in (model or "").lower():
+            free_tier = "free_tier" in low or "limit: 0" in low
+            if free_tier:
+                raise ProUnavailable(
+                    f"이 API 키로는 Pro 모델({model})을 사용할 수 없습니다. "
+                    "Pro는 결제(billing)가 설정된 키에서만 동작합니다. "
+                    "위 '모델' 목록에서 Flash 모델을 선택한 뒤 다시 실행해 주세요."
+                )
+            raise ProUnavailable(
+                f"Pro 모델({model})의 사용 한도를 초과했습니다. "
+                "잠시 후 다시 시도하거나, 위 '모델' 목록에서 Flash 모델을 선택해 주세요."
+            )
+        # 모델 자체가 없어졌거나 지원 종료된 경우에만 사용 가능한 모델로 자동 대체
+        if model_gone:
             try:
                 avail = list_models(api_key)["models"]
             except Exception:
@@ -1199,27 +1216,19 @@ def _gemini_call_with_retry(data, api_key, model):
             alt = next(
                 (m["id"] for m in avail if "flash" in m["id"].lower() and m["id"] != model),
                 None,
-            )
-            if not alt and not quota_block:
-                alt = avail[0]["id"] if avail else None
+            ) or (avail[0]["id"] if avail else None)
             if not alt:
-                if quota_block:
-                    raise RuntimeError(
-                        "이 모델(Pro 등)은 무료 등급에서 사용할 수 없습니다(할당량 0). "
-                        "정확도(모델)에서 Flash 모델을 고르거나, Google 결제(billing)를 설정하세요."
-                    )
                 raise RuntimeError(
                     "선택한 모델을 사용할 수 없고, 대체할 모델도 찾지 못했습니다. "
-                    "정확도(모델) 목록에서 다른 모델을 골라 다시 시도하세요."
+                    "모델 목록에서 다른 모델을 골라 다시 시도하세요."
                 )
             try:
-                return _generate(alt)  # Flash로 재시도
+                return _generate(alt)
             except urllib.error.HTTPError as e2:
                 raise RuntimeError(f"Gemini API 오류 {e2.code}: {_err_msg(e2)}")
-        elif e.code in (400, 403) and "API" in msg.upper():
+        if e.code in (400, 403) and "API" in msg.upper():
             raise RuntimeError(f"API 키 오류로 보입니다 ({e.code}): {msg}")
-        else:
-            raise RuntimeError(f"Gemini API 오류 {e.code}: {msg}")
+        raise RuntimeError(f"Gemini API 오류 {e.code}: {msg}")
     except urllib.error.URLError as e:
         raise RuntimeError(f"네트워크 오류: {e.reason}")
 
@@ -1361,8 +1370,9 @@ def list_models(api_key):
         # 임베딩/이미지생성 등 텍스트 분석에 부적합한 모델 제외
         if any(x in low for x in ("embedding", "image", "tts", "aqa", "vision")):
             continue
-        # Flash 모델만 노출 (Pro는 무료 등급에서 사용 불가 → 제외)
-        if "flash" not in low:
+        # Flash·Pro 모두 노출한다. (Pro는 결제된 키에서만 동작하며, 무료 키로 고르면
+        #  분석 시 "이 키로는 Pro를 쓸 수 없다"는 안내가 뜨도록 처리한다.)
+        if "flash" not in low and "pro" not in low:
             continue
         # Flash-Lite 제외 (분석 품질 우선 — 누락이 많아 사용 안 함)
         if "lite" in low:
@@ -1444,6 +1454,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/models":
             try:
                 self._send_json(list_models(req.get("apiKey") or ""))
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+                return
             except QuotaExceeded as e:
                 # 재시도해도 안 풀리는 한도 소진 — 화면이 남은 지문을 즉시 중단하도록
                 # 기계가 알아볼 수 있는 code를 함께 내려준다
@@ -1474,6 +1487,9 @@ class Handler(BaseHTTPRequestHandler):
                     result = call_gemini_workbook(
                         passage, api_key, model, complete_hint=(expected, got)
                     )
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+                return
             except QuotaExceeded as e:
                 # 재시도해도 안 풀리는 한도 소진 — 화면이 남은 지문을 즉시 중단하도록
                 # 기계가 알아볼 수 있는 code를 함께 내려준다
@@ -1529,6 +1545,9 @@ class Handler(BaseHTTPRequestHandler):
                         and len(blank_explanations(retry)) < len(missing)
                     ):
                         result = retry
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+                return
             except QuotaExceeded as e:
                 # 재시도해도 안 풀리는 한도 소진 — 화면이 남은 지문을 즉시 중단하도록
                 # 기계가 알아볼 수 있는 code를 함께 내려준다
@@ -1579,6 +1598,9 @@ class Handler(BaseHTTPRequestHandler):
                 result = call_gemini(
                     passage, target_grammar, mode, api_key, model, prior=result
                 )
+        except ProUnavailable as e:
+            self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            return
         except QuotaExceeded as e:
             self._send_json({"error": str(e), "code": "quota"}, 429)
             return

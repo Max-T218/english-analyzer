@@ -67,14 +67,28 @@ async function postJson(url, payload, fallbackMsg) {
 
 // 할당량 소진인가? — 서버가 code를 붙여 주면 그것으로 판정하고,
 // 예전 응답이나 예외 상황을 대비해 메시지 문구로도 한 번 더 확인한다.
+// 이 키로 Pro를 쓸 수 없는 경우 — 모델만 바꾸면 되므로 한도 소진과 구분해 안내한다
+function isProUnavailableError(err) {
+  return !!(err && err.code === "pro_unavailable");
+}
+
 function isQuotaError(err) {
   if (err && err.code === "quota") return true;
+  if (isProUnavailableError(err)) return true; // 남은 지문을 즉시 중단시키기 위해
   const msg = (err && err.message) || String(err || "");
   return /한도|quota|exceeded|429/i.test(msg);
 }
 
-// 한도로 중단했을 때 남은 지문을 알려 주는 안내 카드
-function quotaStopHtml(left) {
+// 중단 안내 카드 — Pro 사용 불가와 한도 소진을 구분해서 보여 준다
+function quotaStopHtml(left, err) {
+  if (isProUnavailableError(err)) {
+    return `<section class="passage-block"><div class="passage-error">
+      <b>Pro 모델을 사용할 수 없어 중단했습니다</b>
+      이 API 키는 Pro 모델을 쓸 수 없습니다(결제된 키에서만 동작).
+      위 <b>모델</b> 목록에서 <b>Flash</b> 모델을 선택한 뒤 다시 실행해 주세요.
+      남은 지문 ${left}개는 시도하지 않았습니다.
+    </div></section>`;
+  }
   return `<section class="passage-block"><div class="passage-error">
     <b>한도 초과로 중단했습니다</b>
     남은 지문 ${left}개는 시도하지 않았습니다. 지금은 다시 시도해도 같은 결과라
@@ -215,16 +229,16 @@ const brandFileEl = $("brandFile");
 const brandPreviewEl = $("brandPreview");
 const brandRemoveBtn = $("brandRemoveBtn");
 const brandMarkEl = $("brandMark");
-const brandTopEl = $("printBrandTop");
+const brandNameOutEl = $("printBrandName");
 
 function renderBrand() {
   const img = localStorage.getItem(BRAND_IMG_STORE) || "";
   const name = (localStorage.getItem(BRAND_NAME_STORE) || "").trim();
 
-  // 학원명 — 모든 인쇄 페이지 상단 중앙
-  if (brandTopEl) brandTopEl.textContent = name;
+  // 학원명 — 모든 인쇄 페이지 좌하단
+  if (brandNameOutEl) brandNameOutEl.textContent = name;
 
-  // 로고 — 모든 인쇄 페이지 우하단 (학원명은 위로 갔으므로 여기선 로고만)
+  // 로고 — 모든 인쇄 페이지 우하단
   // 비어 있으면 CSS가 자동으로 숨긴다
   if (brandMarkEl) {
     brandMarkEl.innerHTML = img ? `<img src="${esc(img)}" alt="">` : "";
@@ -578,7 +592,7 @@ async function analyze() {
       // 한도 소진은 기다려도 안 풀린다 — 남은 지문을 시도하지 않고 즉시 멈춘다
       if (isQuotaError(err)) {
         const left = total - (i + 1);
-        if (left > 0) htmlParts.push(quotaStopHtml(left));
+        if (left > 0) htmlParts.push(quotaStopHtml(left, err));
         break;
       }
     }
@@ -938,7 +952,7 @@ function setupQuizTab({ prefix, types, footer }) {
         // 한도 소진은 기다려도 안 풀린다 — 남은 지문을 시도하지 않고 즉시 멈춘다
         if (isQuotaError(err)) {
             const left = total - (i + 1);
-          if (left > 0) htmlParts.push(quotaStopHtml(left));
+          if (left > 0) htmlParts.push(quotaStopHtml(left, err));
           break;
         }
       }
@@ -1296,7 +1310,7 @@ async function generateWorkbook() {
       // 한도 소진은 기다려도 안 풀린다 — 남은 지문을 시도하지 않고 즉시 멈춘다
       if (isQuotaError(err)) {
         const left = total - (i + 1);
-        if (left > 0) htmlParts.push(quotaStopHtml(left));
+        if (left > 0) htmlParts.push(quotaStopHtml(left, err));
         break;
       }
     }
