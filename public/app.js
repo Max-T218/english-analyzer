@@ -930,7 +930,7 @@ function setupQuizTab({ prefix, types, footer }) {
         if (isRandom() && Array.isArray(data.questions)) {
           data.questions = seededShuffle(data.questions, Math.floor(Math.random() * 1e9));
         }
-        htmlParts.push(buildQuizHtml(data, job, total));
+        htmlParts.push(buildQuizHtml(data, job, total, prefix));
         okCount++;
       } catch (err) {
         const msg = err.message || String(err);
@@ -1061,7 +1061,8 @@ function quizBodyHtml(q) {
 }
 
 // 문제 카드 + 정답/해설(화면: 토글, 인쇄: 항상 별도 섹션) HTML 생성
-function buildQuizHtml(d, job, total) {
+// kind: "mcq" | "saq" — 주관식 해설지에는 해설 열을 넣지 않는다(정답만).
+function buildQuizHtml(d, job, total, kind) {
   const parts = [];
   parts.push(`<section class="passage-block qz-block">`);
   parts.push(passageBanner(job, total));
@@ -1095,7 +1096,8 @@ function buildQuizHtml(d, job, total) {
     // 일부만 빠진 경우에는 열을 유지하되 빈 칸을 '—'로 표시해 누락이 드러나게 한다.
     const hasExp = (q) =>
       String(q.explanation || "").replace(/<[^>]*>/g, "").trim().length > 0;
-    const anyExp = d.questions.some(hasExp);
+    // 주관식 해설지는 '정답'만 싣는다 (해설 열 제외)
+    const anyExp = kind !== "saq" && d.questions.some(hasExp);
     const expHead = anyExp ? `<th>해설</th>` : "";
     const expCell = (q) =>
       anyExp ? `<td>${hasExp(q) ? safeHTML(q.explanation) : "—"}</td>` : "";
@@ -1111,7 +1113,7 @@ function buildQuizHtml(d, job, total) {
       )
       .join("");
     parts.push(`
-      <h3 class="section page-break"><span class="num">📌</span> 정답 및 해설</h3>
+      <h3 class="section page-break"><span class="num">📌</span> ${anyExp ? "정답 및 해설" : "정답"}</h3>
       <div class="table-wrap"><table class="answerkey">
         <thead><tr><th>번호</th><th>유형</th><th>정답</th>${expHead}</tr></thead>
         <tbody>${rows}</tbody>
