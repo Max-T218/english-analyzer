@@ -121,6 +121,27 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 /* 작업 화면 상단 — 키가 들어와 있음을 알리고 다시 바꿀 수 있게 */
 #workspace[hidden]{display:none;}
 .key-bar{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
+
+/* 토큰 사용량 패널 — Gemini 응답의 실측 usageMetadata 를 누적해 보여 준다 */
+.token-panel{
+  margin-top:14px; padding:12px 14px; border:1px solid var(--line);
+  border-radius:10px; background:var(--accent-soft);
+}
+.token-panel[hidden]{display:none;}
+.token-title{
+  display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;
+  font-weight:700; font-size:12.5px; color:var(--accent); margin-bottom:8px;
+}
+.token-title .keylink{margin-left:auto;}
+.token-title .sub{font-weight:600; color:var(--ink-soft); font-size:11px;}
+.token-panel .hint{margin:8px 0 10px;}
+.token-rows{display:flex; flex-direction:column; gap:5px; margin-bottom:10px;}
+.token-row{display:flex; align-items:baseline; gap:8px; font-size:12.5px; flex-wrap:wrap;}
+.token-row .tk-name{min-width:64px; font-weight:700; color:var(--ink);}
+.token-row .tk-num{font-variant-numeric:tabular-nums; color:var(--ink);}
+.token-row .tk-sub{color:var(--ink-soft); font-size:11.5px;}
+.token-row.tk-total{border-top:1px dashed var(--line); padding-top:6px; margin-top:2px;}
+.token-row.tk-total .tk-name, .token-row.tk-total .tk-num{color:var(--accent);}
 .key-bar-ok{font-size:13px; font-weight:600; color:var(--ink-soft);}
 @media print{ .gate, .key-bar{display:none !important;} }
 

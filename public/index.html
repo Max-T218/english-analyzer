@@ -87,6 +87,21 @@
       </div>
     </div>
 
+    <!-- 오늘 사용량(Gemini 응답의 usageMetadata 실측 누적).
+         남은 한도는 API가 알려주지 않으므로, 공식 한도 페이지 링크를 함께 둔다. -->
+    <div class="token-panel" id="tokenPanel">
+      <div class="token-title">
+        📊 오늘 사용량
+        <a href="https://aistudio.google.com/rate-limit" target="_blank" rel="noopener" class="keylink">내 한도 확인 ↗</a>
+      </div>
+      <div class="token-rows" id="tokenRows"></div>
+      <div class="hint" id="tokenHint">
+        남은 한도는 Google이 API로 알려주지 않아, 이 앱이 실제로 쓴 양만 표시합니다.
+        한도 자체는 위 <b>내 한도 확인</b>에서 볼 수 있습니다.
+      </div>
+      <button type="button" class="btn ghost small" id="tokenResetBtn">기록 지우기</button>
+    </div>
+
     <div class="brand-panel">
       <div class="brand-title">🏫 학원 마크 <span class="sub">(학원명은 인쇄물 좌측 하단, 로고는 우측 하단 · 창을 닫으면 지워집니다)</span></div>
       <div class="brand-body">

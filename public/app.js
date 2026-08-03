@@ -6,8 +6,16 @@
 // 먼저 실행되어야 하므로 파일 맨 위에 둔다.
 // (한 세션 안에서의 저장은 그대로 동작한다 — 예: 지문 분석 결과의 어휘를 단어장
 //  탭이 이어받는 흐름. 다만 새로고침하면 함께 사라진다.)
+// 예외: 사용량 기록만 살려 둔다. 한도는 '하루' 단위라 창을 닫았다 열어도 이어져야
+// 남은 여유를 가늠할 수 있다. 개인 흔적(키·지문·학원 마크)은 그대로 지운다.
+const USAGE_STORE = "token_usage_daily";
+let keptUsage = null;
+try {
+  keptUsage = localStorage.getItem(USAGE_STORE);
+} catch (_) {}
 try {
   localStorage.clear();
+  if (keptUsage) localStorage.setItem(USAGE_STORE, keptUsage);
 } catch (_) {
   /* 사생활 보호 모드 등에서 접근이 막혀도 앱은 그대로 동작 */
 }
@@ -459,6 +467,91 @@ tabBtns.forEach((btn) => {
   });
 });
 
+/* ── 토큰 사용량(실측) ──
+   Gemini 응답의 usageMetadata 를 서버가 요청 단위로 합산해 `_usage` 로 실어 준다.
+   추정이 아니라 실제 소모량이며, 보정 재요청분까지 포함된다.
+   AI Studio 대시보드가 요청별로 보여 주지 않아 여기서 직접 보여 준다. */
+const tokenPanelEl = $("tokenPanel");
+const tokenRowsEl = $("tokenRows");
+const tokenResetBtn = $("tokenResetBtn");
+const TOKEN_LABELS = { analyze: "분석본", quiz: "문제", workbook: "워크북" };
+
+// 한도는 미국 서부(PT) 자정에 초기화되므로, 집계도 그 날짜를 기준으로 끊는다.
+// 그래야 한도가 리셋됐는데 화면엔 어제 숫자가 남아 있는 일이 없다.
+const ptToday = () =>
+  new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+
+function blankUse() {
+  return { calls: 0, input: 0, output: 0, thinking: 0, total: 0 };
+}
+
+function loadTokenUse() {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(USAGE_STORE) || "null");
+  } catch (_) {}
+  if (!saved || saved.date !== ptToday()) return { date: ptToday(), kinds: {} };
+  return saved;
+}
+
+function saveTokenUse(u) {
+  try {
+    localStorage.setItem(USAGE_STORE, JSON.stringify(u));
+  } catch (_) {}
+}
+
+let tokenUse = loadTokenUse();
+
+// 한 번의 API 응답에서 실제 사용량을 꺼내 해당 기능에 누적
+function addTokenUse(kind, data) {
+  const u = data && data._usage;
+  if (!u) return;
+  if (tokenUse.date !== ptToday()) tokenUse = { date: ptToday(), kinds: {} };
+  const acc = (tokenUse.kinds[kind] = tokenUse.kinds[kind] || blankUse());
+  for (const k of ["calls", "input", "output", "thinking", "total"]) {
+    acc[k] += Number(u[k] || 0);
+  }
+  saveTokenUse(tokenUse);
+  renderTokenPanel();
+}
+
+function renderTokenPanel() {
+  if (!tokenPanelEl) return;
+  const kinds = Object.keys(tokenUse.kinds || {});
+  if (!kinds.length) {
+    tokenRowsEl.innerHTML = `<div class="token-row"><span class="tk-sub">아직 사용한 내역이 없습니다.</span></div>`;
+    tokenResetBtn.hidden = true;
+    return;
+  }
+  const sum = blankUse();
+  const rows = kinds.map((k) => {
+    const u = tokenUse.kinds[k];
+    for (const f of ["calls", "input", "output", "thinking", "total"]) sum[f] += u[f];
+    const think = u.thinking ? ` · 사고 ${u.thinking.toLocaleString()}` : "";
+    return `<div class="token-row">
+      <span class="tk-name">${TOKEN_LABELS[k] || k}</span>
+      <span class="tk-num">${u.total.toLocaleString()} 토큰</span>
+      <span class="tk-sub">요청 ${u.calls}회 · 입력 ${u.input.toLocaleString()} · 출력 ${u.output.toLocaleString()}${think}</span>
+    </div>`;
+  });
+  rows.push(`<div class="token-row tk-total">
+    <span class="tk-name">합계</span>
+    <span class="tk-num">${sum.total.toLocaleString()} 토큰</span>
+    <span class="tk-sub">요청 ${sum.calls}회</span>
+  </div>`);
+  tokenRowsEl.innerHTML = rows.join("");
+  tokenResetBtn.hidden = false;
+}
+
+if (tokenResetBtn) {
+  tokenResetBtn.addEventListener("click", () => {
+    tokenUse = { date: ptToday(), kinds: {} };
+    saveTokenUse(tokenUse);
+    renderTokenPanel();
+  });
+}
+renderTokenPanel();
+
 // ── 모델별 "오늘 사용량" 추적 ──
 
 // '꼼꼼 검토' 체크 상태 기억
@@ -568,6 +661,7 @@ async function analyze() {
         },
         "분석에 실패했습니다."
       );
+      addTokenUse("analyze", data);
       htmlParts.push(buildAnalysisHtml(data, job, total));
       if (Array.isArray(data.vocab) && data.vocab.length) {
         vocabSets.push({ name: job.name, vocab: data.vocab });
@@ -926,6 +1020,7 @@ function setupQuizTab({ prefix, types, footer }) {
           { passage: job.text, types: picked, count, model: modelEl.value, apiKey },
           "문제 생성에 실패했습니다."
         );
+        addTokenUse("quiz", data);
         // 무작위 모드 — 받아온 문항을 섞는다. 지문마다 다시 섞이고, 문제지 번호와
         // 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매기므로 어긋나지 않는다.
         if (isRandom() && Array.isArray(data.questions)) {
@@ -1289,6 +1384,7 @@ async function generateWorkbook() {
         { passage: job.text, model: modelEl.value, apiKey },
         "워크북 생성에 실패했습니다."
       );
+      addTokenUse("workbook", data);
       htmlParts.push(buildWorkbookHtml(data, stages, job, total));
       okCount++;
     } catch (err) {

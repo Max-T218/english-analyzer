@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -1111,6 +1112,34 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
     return "\n".join(lines)
 
 
+# ── 실제 토큰 사용량 집계 ──────────────────────────────────────────────
+# Gemini 응답의 usageMetadata 가 유일하게 정확한 수치다(AI Studio 대시보드는
+# 요청별로 보여주지 않는다). 한 번의 화면 요청이 보정 재요청으로 여러 번 호출될 수
+# 있으므로, 요청 단위로 합산해 결과에 실어 보낸다.
+# 서버가 스레드로 동시 처리하므로 요청별 격리를 위해 thread-local 을 쓴다.
+_usage_local = threading.local()
+
+
+def usage_reset():
+    _usage_local.acc = {"calls": 0, "input": 0, "output": 0, "thinking": 0, "total": 0}
+
+
+def usage_add(body):
+    acc = getattr(_usage_local, "acc", None)
+    if acc is None:
+        return
+    u = (body or {}).get("usageMetadata") or {}
+    acc["calls"] += 1
+    acc["input"] += u.get("promptTokenCount", 0) or 0
+    acc["output"] += u.get("candidatesTokenCount", 0) or 0
+    acc["thinking"] += u.get("thoughtsTokenCount", 0) or 0
+    acc["total"] += u.get("totalTokenCount", 0) or 0
+
+
+def usage_get():
+    return getattr(_usage_local, "acc", None)
+
+
 def _gemini_call_with_retry(data, api_key, model):
     """페이로드(JSON bytes)를 모델에 전송하고 재시도·모델 대체를 공통 처리한다
     (지문분석·문제제작 등 모든 Gemini 호출이 공유).
@@ -1127,7 +1156,9 @@ def _gemini_call_with_retry(data, api_key, model):
             headers={"content-type": "application/json", "x-goog-api-key": api_key},
         )
         with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            body = json.loads(resp.read().decode("utf-8"))
+        usage_add(body)   # 실제 소모 토큰 집계 (보정 재요청분까지 합산)
+        return body
 
     def _generate(use_model):
         is_flash = "flash" in (use_model or "").lower()
@@ -1474,6 +1505,7 @@ class Handler(BaseHTTPRequestHandler):
             api_key = req.get("apiKey") or ""
             model = req.get("model") or MODEL
             t0 = time.monotonic()
+            usage_reset()
             try:
                 result = call_gemini_workbook(passage, api_key, model)
                 # 문장 누락 방어 — 실제 문장 수보다 많이 부족하면 자동 보정 재요청
@@ -1498,6 +1530,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
+            u = usage_get()
+            if isinstance(result, dict) and u:
+                result["_usage"] = u
             self._send_json(result)
             return
 
@@ -1511,6 +1546,7 @@ class Handler(BaseHTTPRequestHandler):
             api_key = req.get("apiKey") or ""
             model = req.get("model") or MODEL
             t0 = time.monotonic()
+            usage_reset()
             try:
                 result = call_gemini_quiz(passage, types, count, api_key, model)
                 # 문항 누락 방어 — 요청한 개수보다 적게 오면 한 번 더 요청해 채운다
@@ -1556,6 +1592,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
+            u = usage_get()
+            if isinstance(result, dict) and u: result["_usage"] = u
             self._send_json(result)
             return
 
@@ -1570,6 +1608,7 @@ class Handler(BaseHTTPRequestHandler):
         review = bool(req.get("review"))
 
         t0 = time.monotonic()
+        usage_reset()
         try:
             result = call_gemini(passage, target_grammar, mode, api_key, model)
             # 문장 누락 방어 — 실제 문장 수보다 분석이 많이 부족하면 자동 보정 재요청
@@ -1607,6 +1646,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e)}, 502)
             return
+        u = usage_get()
+        if isinstance(result, dict) and u:
+            result["_usage"] = u
         self._send_json(result)
 
 
