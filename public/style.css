@@ -6,6 +6,8 @@
      병렬구조는 원래 하늘색(#1f9dd0)이라 어휘의 파랑과 구분이 잘 안 돼 초록으로 바꿨다. */
   --g:#cf2e2e; --v:#1f6fb2; --gv:#7a3fa0; --conj:#15803d; --hl:#fff1a8; --conj-bg:#d7f0de;
   --target-hl:#ffd8a8; --target-ink:#c2410c;
+  /* 학원 마크 패널 전용 강조색 — 위쪽 설정 항목들과 뚜렷이 구분되도록 따뜻한 색으로 */
+  --brand:#b45309; --brand-soft:#fdf1e0;
   --shadow:0 1px 2px rgba(20,30,45,.05),0 6px 20px rgba(20,30,45,.05);
 }
 @media (prefers-color-scheme:dark) and (min-width:999999px){
@@ -13,6 +15,7 @@
     --paper:#12161c; --card:#1a1f27; --ink:#e7ebf0; --ink-soft:#9aa6b4;
     --line:#2a323d; --line-soft:#232a33; --accent:#7fb5d8; --accent-soft:#1e2c38;
     --g:#ff6b6a; --v:#63b3e8; --gv:#c48fe0; --conj:#5fce8c; --hl:#5c5326; --conj-bg:rgba(95,206,140,.28);
+    --brand:#f0b429; --brand-soft:#33270f;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
   }
 }
@@ -122,26 +125,6 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 #workspace[hidden]{display:none;}
 .key-bar{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
 
-/* 토큰 사용량 패널 — Gemini 응답의 실측 usageMetadata 를 누적해 보여 준다 */
-.token-panel{
-  margin-top:14px; padding:12px 14px; border:1px solid var(--line);
-  border-radius:10px; background:var(--accent-soft);
-}
-.token-panel[hidden]{display:none;}
-.token-title{
-  display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;
-  font-weight:700; font-size:12.5px; color:var(--accent); margin-bottom:8px;
-}
-.token-title .keylink{margin-left:auto;}
-.token-title .sub{font-weight:600; color:var(--ink-soft); font-size:11px;}
-.token-panel .hint{margin:8px 0 10px;}
-.token-rows{display:flex; flex-direction:column; gap:5px; margin-bottom:10px;}
-.token-row{display:flex; align-items:baseline; gap:8px; font-size:12.5px; flex-wrap:wrap;}
-.token-row .tk-name{min-width:64px; font-weight:700; color:var(--ink);}
-.token-row .tk-num{font-variant-numeric:tabular-nums; color:var(--ink);}
-.token-row .tk-sub{color:var(--ink-soft); font-size:11.5px;}
-.token-row.tk-total{border-top:1px dashed var(--line); padding-top:6px; margin-top:2px;}
-.token-row.tk-total .tk-name, .token-row.tk-total .tk-num{color:var(--accent);}
 .key-bar-ok{font-size:13px; font-weight:600; color:var(--ink-soft);}
 @media print{ .gate, .key-bar{display:none !important;} }
 
@@ -188,11 +171,16 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 }
 .quiz-type-grid .type-no:empty{display:none;}
 .quiz-type-grid label.picked{border-color:var(--accent); background:var(--accent-soft);}
+/* Pro 전용 옵션(예: '5개 이상 변형')이 잠겼을 때 — 흐리게 표시하고 클릭을 막는다 */
+.quiz-type-grid label.disabled{opacity:.45; cursor:not-allowed;}
+.quiz-type-grid label.disabled input{cursor:not-allowed;}
 .type-order-hint{margin-top:6px;}
-/* 출제 순서 선택 (유형순 / 무작위) */
-.order-row{display:flex; align-items:center; gap:9px; margin-top:10px; flex-wrap:wrap;}
-.order-row > label{margin:0; font-size:13px; font-weight:700; white-space:nowrap;}
-.order-row select{width:auto; min-width:160px;}
+/* 출제 순서·지문 변형·단어장 형식/정렬처럼 select였던 단일 선택 항목을 유형 선택 칸과
+   같은 모양(체크박스처럼 보이는 라디오 그리드)으로 통일한 것. 옵션 글자가 길어
+   140px 칸에서는 잘 접혀서, 이 항목들만 칸을 더 넓게 잡는다. */
+.radio-grid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); margin-top:8px;}
+/* 라디오 그리드 위에 붙는 소제목 — 그 위 유형 선택 칸과 시각적으로 구분되도록 여백만 더 준다 */
+.group-label{margin-top:14px !important;}
 
 /* ── 문제 카드 ── */
 .qz-card{
@@ -435,21 +423,31 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
 
 /* ── 학원 마크 설정 ──
    예전에는 접히는 <details>였는데 접힌 상태가 눈에 띄지 않아 "사라졌다"고 오해하기 쉬웠다.
-   모든 탭의 인쇄물에 공통으로 쓰이는 설정이라 항상 펼쳐 둔다. */
+   모든 탭의 인쇄물에 공통으로 쓰이는 설정이라 항상 펼쳐 두되, 다른 설정 항목(모델 선택 등)과
+   섞여 지나치기 쉬웠으므로 별도 강조색(--brand)과 왼쪽 띠로 눈에 띄게 하고,
+   입력칸 2개를 한 줄로 붙여 차지하는 세로 공간은 줄였다. */
 .brand-panel{
-  margin-top:16px; padding:14px 16px;
-  border:1px solid var(--line); border-radius:10px; background:var(--paper);
+  position:relative; overflow:hidden;
+  margin-top:14px; padding:10px 14px 10px 18px;
+  border:1px solid var(--brand); border-radius:10px; background:var(--brand-soft);
 }
-.brand-title{font-weight:700; color:var(--accent); font-size:13.5px;}
-.brand-title .sub{color:var(--ink-soft); font-weight:600; font-size:12px;}
-.brand-body{margin-top:14px;}
-input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); background:var(--paper); border:1px solid var(--line); border-radius:9px; padding:8px 10px;}
+.brand-panel::before{
+  content:""; position:absolute; left:0; top:0; bottom:0; width:5px; background:var(--brand);
+}
+.brand-title{font-weight:700; color:var(--brand); font-size:13px;}
+.brand-title .sub{color:var(--ink-soft); font-weight:600; font-size:11px;}
+.brand-body{margin-top:8px;}
+.brand-body .row{margin-top:0;}
+.brand-body label{font-size:12px; margin-bottom:4px;}
+input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:9px; padding:7px 9px;}
+.brand-preview-row{display:flex; align-items:center; gap:8px; margin-top:8px;}
+.brand-preview-row #brandRemoveBtn{flex:0 0 auto;}
 .brand-preview{
-  margin-top:6px; padding:14px; border:1px dashed var(--line); border-radius:9px;
-  display:flex; align-items:center; gap:12px; min-height:56px; background:var(--paper);
+  flex:1; min-width:0; padding:8px 10px; border:1px dashed var(--brand); border-radius:8px;
+  display:flex; align-items:center; gap:10px; min-height:40px; background:var(--card);
 }
-.brand-preview .muted{color:var(--ink-soft); font-size:12.5px;}
-.brand-preview img, .brand-mark img{max-height:46px; max-width:160px; object-fit:contain;}
+.brand-preview .muted{color:var(--ink-soft); font-size:12px;}
+.brand-preview img, .brand-mark img{max-height:36px; max-width:140px; object-fit:contain;}
 .brand-name{font-weight:700; color:var(--ink); font-size:13.5px;}
 
 /* 화면 어디서든 누를 수 있는 고정 인쇄 버튼 */

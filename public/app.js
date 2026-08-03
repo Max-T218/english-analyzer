@@ -6,16 +6,8 @@
 // 먼저 실행되어야 하므로 파일 맨 위에 둔다.
 // (한 세션 안에서의 저장은 그대로 동작한다 — 예: 지문 분석 결과의 어휘를 단어장
 //  탭이 이어받는 흐름. 다만 새로고침하면 함께 사라진다.)
-// 예외: 사용량 기록만 살려 둔다. 한도는 '하루' 단위라 창을 닫았다 열어도 이어져야
-// 남은 여유를 가늠할 수 있다. 개인 흔적(키·지문·학원 마크)은 그대로 지운다.
-const USAGE_STORE = "token_usage_daily";
-let keptUsage = null;
-try {
-  keptUsage = localStorage.getItem(USAGE_STORE);
-} catch (_) {}
 try {
   localStorage.clear();
-  if (keptUsage) localStorage.setItem(USAGE_STORE, keptUsage);
 } catch (_) {
   /* 사생활 보호 모드 등에서 접근이 막혀도 앱은 그대로 동작 */
 }
@@ -145,8 +137,50 @@ async function loadModels() {
     }
     modelEl.value = pick;
     modelStatusEl.textContent = `· 사용 가능 ${data.models.length}개`;
+    syncModelAvailability();
   } catch (_) {
     modelStatusEl.textContent = "";
+  }
+}
+
+/* ── Pro 모델은 문제 제작(객관식·주관식) 탭에서만 선택 가능 ──
+   오답 선지 설계·어법 오류 심기처럼 실제 추론이 필요한 작업에만 Pro가 값어치를 하고,
+   분석·워크북은 서술·기계적 변환이라 이득이 작다(+비용은 더 든다). 그래서 그 두 탭에
+   있을 때만 Pro 옵션을 고를 수 있게 열어 두고, 다른 탭으로 가면 잠그고 Flash로 되돌린다. */
+const modelProHintEl = $("modelProHint");
+const isProModelId = (id) => /pro/i.test(id || "");
+const QUIZ_TABS = new Set(["mcq", "saq"]);
+const activeTabName = () =>
+  (tabBtns.find((b) => b.classList.contains("active")) || {}).dataset?.tab || "";
+
+function syncModelAvailability() {
+  const allowPro = QUIZ_TABS.has(activeTabName());
+  let switchedAway = false;
+  [...modelEl.options].forEach((opt) => {
+    if (isProModelId(opt.value)) opt.disabled = !allowPro;
+  });
+  if (!allowPro && isProModelId(modelEl.value)) {
+    const flash = [...modelEl.options].find((o) => !isProModelId(o.value));
+    if (flash) {
+      modelEl.value = flash.value;
+      localStorage.setItem(MODEL_STORE, flash.value);
+      switchedAway = true;
+      // 속성만 바꾸면 'change' 이벤트가 안 나가 다른 리스너(예: '5개 이상 변형' 잠금)가
+      // 이 전환을 못 보고 지나친다. 실제 change로 알려서 다 같이 다시 맞추게 한다.
+      modelEl.dispatchEvent(new Event("change"));
+    }
+  }
+  if (!modelProHintEl) return;
+  const hasPro = [...modelEl.options].some((o) => isProModelId(o.value));
+  if (!hasPro) {
+    modelProHintEl.textContent = "";
+  } else if (allowPro) {
+    modelProHintEl.textContent =
+      "이 탭에서는 Pro를 선택할 수 있습니다. Pro는 결제(billing)가 설정된 키에서만 동작합니다.";
+  } else {
+    modelProHintEl.textContent =
+      "Pro는 문제 제작(객관식·주관식) 탭에서만 선택할 수 있습니다." +
+      (switchedAway ? " 지금은 Flash로 전환했습니다." : "");
   }
 }
 toggleKeyEl.addEventListener("click", () => {
@@ -464,95 +498,10 @@ tabBtns.forEach((btn) => {
     tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
     tabPages.forEach((p) => p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
     syncFloatPrint();
+    syncModelAvailability();
   });
 });
-
-/* ── 토큰 사용량(실측) ──
-   Gemini 응답의 usageMetadata 를 서버가 요청 단위로 합산해 `_usage` 로 실어 준다.
-   추정이 아니라 실제 소모량이며, 보정 재요청분까지 포함된다.
-   AI Studio 대시보드가 요청별로 보여 주지 않아 여기서 직접 보여 준다. */
-const tokenPanelEl = $("tokenPanel");
-const tokenRowsEl = $("tokenRows");
-const tokenResetBtn = $("tokenResetBtn");
-const TOKEN_LABELS = { analyze: "분석본", quiz: "문제", workbook: "워크북" };
-
-// 한도는 미국 서부(PT) 자정에 초기화되므로, 집계도 그 날짜를 기준으로 끊는다.
-// 그래야 한도가 리셋됐는데 화면엔 어제 숫자가 남아 있는 일이 없다.
-const ptToday = () =>
-  new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
-
-function blankUse() {
-  return { calls: 0, input: 0, output: 0, thinking: 0, total: 0 };
-}
-
-function loadTokenUse() {
-  let saved = null;
-  try {
-    saved = JSON.parse(localStorage.getItem(USAGE_STORE) || "null");
-  } catch (_) {}
-  if (!saved || saved.date !== ptToday()) return { date: ptToday(), kinds: {} };
-  return saved;
-}
-
-function saveTokenUse(u) {
-  try {
-    localStorage.setItem(USAGE_STORE, JSON.stringify(u));
-  } catch (_) {}
-}
-
-let tokenUse = loadTokenUse();
-
-// 한 번의 API 응답에서 실제 사용량을 꺼내 해당 기능에 누적
-function addTokenUse(kind, data) {
-  const u = data && data._usage;
-  if (!u) return;
-  if (tokenUse.date !== ptToday()) tokenUse = { date: ptToday(), kinds: {} };
-  const acc = (tokenUse.kinds[kind] = tokenUse.kinds[kind] || blankUse());
-  for (const k of ["calls", "input", "output", "thinking", "total"]) {
-    acc[k] += Number(u[k] || 0);
-  }
-  saveTokenUse(tokenUse);
-  renderTokenPanel();
-}
-
-function renderTokenPanel() {
-  if (!tokenPanelEl) return;
-  const kinds = Object.keys(tokenUse.kinds || {});
-  if (!kinds.length) {
-    tokenRowsEl.innerHTML = `<div class="token-row"><span class="tk-sub">아직 사용한 내역이 없습니다.</span></div>`;
-    tokenResetBtn.hidden = true;
-    return;
-  }
-  const sum = blankUse();
-  const rows = kinds.map((k) => {
-    const u = tokenUse.kinds[k];
-    for (const f of ["calls", "input", "output", "thinking", "total"]) sum[f] += u[f];
-    const think = u.thinking ? ` · 사고 ${u.thinking.toLocaleString()}` : "";
-    return `<div class="token-row">
-      <span class="tk-name">${TOKEN_LABELS[k] || k}</span>
-      <span class="tk-num">${u.total.toLocaleString()} 토큰</span>
-      <span class="tk-sub">요청 ${u.calls}회 · 입력 ${u.input.toLocaleString()} · 출력 ${u.output.toLocaleString()}${think}</span>
-    </div>`;
-  });
-  rows.push(`<div class="token-row tk-total">
-    <span class="tk-name">합계</span>
-    <span class="tk-num">${sum.total.toLocaleString()} 토큰</span>
-    <span class="tk-sub">요청 ${sum.calls}회</span>
-  </div>`);
-  tokenRowsEl.innerHTML = rows.join("");
-  tokenResetBtn.hidden = false;
-}
-
-if (tokenResetBtn) {
-  tokenResetBtn.addEventListener("click", () => {
-    tokenUse = { date: ptToday(), kinds: {} };
-    saveTokenUse(tokenUse);
-    renderTokenPanel();
-  });
-}
-renderTokenPanel();
-
-// ── 모델별 "오늘 사용량" 추적 ──
+syncModelAvailability(); // 초기 탭(지문 분석) 기준으로 Pro 잠금 상태를 맞춰 둔다
 
 // '꼼꼼 검토' 체크 상태 기억
 const REVIEW_STORE = "gemini_review";
@@ -661,7 +610,6 @@ async function analyze() {
         },
         "분석에 실패했습니다."
       );
-      addTokenUse("analyze", data);
       htmlParts.push(buildAnalysisHtml(data, job, total));
       if (Array.isArray(data.vocab) && data.vocab.length) {
         vocabSets.push({ name: job.name, vocab: data.vocab });
@@ -829,10 +777,44 @@ const MCQ_TYPES = [
 ];
 // 주관식(서술형·단답형) 유형
 const SAQ_TYPES = [
-  { id: "서술형배열", def: true }, { id: "OX진위", def: true },
+  { id: "서술형배열", def: true }, { id: "OX진위(영)", def: true }, { id: "OX진위(한)", def: false },
   { id: "어휘 선택형", def: true }, { id: "어법 선택형", def: true },
   { id: "틀린 어휘 찾기", def: false }, { id: "틀린 어법 찾기", def: false },
 ];
+
+// select 대신 '체크박스처럼 보이는 라디오 그룹'으로 값을 관리할 때 쓰는 어댑터.
+// select와 똑같이 .value getter/setter, .addEventListener("change", ...)를 제공해서
+// 아래 출제 순서·지문 변형·단어장 형식/정렬 로직을 select였을 때와 그대로 재사용한다.
+// 해당 name의 라디오가 화면에 하나도 없으면(예: 주관식 탭의 '지문 변형') null을 반환해
+// 기존의 `if (variationEl) {...}` 같은 존재 여부 검사가 그대로 동작하게 한다.
+function radioGroup(name) {
+  const inputs = () => [...document.querySelectorAll(`input[name="${name}"]`)];
+  if (!inputs().length) return null;
+  return {
+    get value() {
+      const on = inputs().find((i) => i.checked);
+      return on ? on.value : "";
+    },
+    set value(v) {
+      inputs().forEach((i) => (i.checked = i.value === v));
+      syncPicked(name);
+    },
+    addEventListener(type, fn) {
+      inputs().forEach((i) =>
+        i.addEventListener(type, (e) => {
+          syncPicked(name);
+          fn(e);
+        })
+      );
+    },
+  };
+}
+// 선택된 라디오의 라벨에 .picked 를 붙여 유형 선택 칸과 같은 방식으로 강조 표시한다
+function syncPicked(name) {
+  document.querySelectorAll(`input[name="${name}"]`).forEach((i) => {
+    i.closest("label").classList.toggle("picked", i.checked);
+  });
+}
 
 // 문제 제작 탭 하나를 구성한다 (객관식·주관식이 같은 로직을 공유)
 function setupQuizTab({ prefix, types, footer }) {
@@ -847,9 +829,15 @@ function setupQuizTab({ prefix, types, footer }) {
   const loadingEl = $(prefix + "Loading");
   const loadingTextEl = $(prefix + "LoadingText");
   const resultEl = $(prefix + "Result");
-  const orderEl = $(prefix + "Order");
+  const orderEl = radioGroup(prefix + "Order");
   const orderHintEl = $(prefix + "OrderHint");
   const ORDER_STORE = "gemini_" + prefix + "_order";
+  // 지문 변형 — 지금은 객관식 탭에만 있는 컨트롤이라 주관식 탭에서는 radioGroup이 null을 반환한다.
+  // 어법·어휘 선택형처럼 [정답|오답] 쌍이 실제 원문 단어와 정확히 일치해야 하는 주관식
+  // 포맷과 변형이 섞이면 정답 근거가 애매해지므로, 주관식은 항상 "원문 그대로"로 보낸다.
+  const variationEl = radioGroup(prefix + "Variation");
+  const variationHintEl = $(prefix + "VariationHint");
+  const VARIATION_STORE = "gemini_" + prefix + "_variation";
 
   // 유형 체크박스 생성
   types.forEach((t) => {
@@ -890,6 +878,44 @@ function setupQuizTab({ prefix, types, footer }) {
     updateOrderHint();
   });
   updateOrderHint();
+
+  // 지문 변형 정도 — 있는 탭에서만 동작 (없으면 항상 "verbatim"으로 취급)
+  const variation = () => (variationEl ? variationEl.value : "verbatim");
+  function updateVariationHint() {
+    if (!variationHintEl) return;
+    const base = {
+      verbatim: "지문을 그대로 사용합니다.",
+      light: "지문 전체에서 약 5개 단어·표현을 비슷한 뜻의 다른 말로 바꿔 사용합니다. 사실·순서·난이도는 그대로 유지됩니다.",
+      heavy: "지문 전체에서 5개보다 많은 단어·표현을 바꿔 사용합니다. 사실·순서·난이도는 그대로 유지됩니다.",
+    }[variation()];
+    variationHintEl.textContent =
+      base + (isProModelId(modelEl.value) ? "" : " '5개 이상 변형'은 모델을 Pro로 선택해야 고를 수 있습니다.");
+  }
+  if (variationEl) {
+    // '5개 이상 변형'은 Pro에서만 고를 수 있다 — 사실·순서·난이도는 그대로 두면서 지문
+    // 전체를 대량으로 바꿔 쓰는 건 Flash보다 Pro가 훨씬 안정적으로 해내는 작업이라,
+    // 여기서만 모델 선택과 지문 변형 설정을 서로 묶는다.
+    const heavyRadio = document.querySelector(`input[name="${prefix}Variation"][value="heavy"]`);
+    function applyHeavyLock() {
+      if (!heavyRadio) return;
+      const proOk = isProModelId(modelEl.value);
+      heavyRadio.disabled = !proOk;
+      heavyRadio.closest("label").classList.toggle("disabled", !proOk);
+      if (!proOk && heavyRadio.checked) {
+        // Pro에서 Flash로 바뀌는 순간 '5개 이상'은 더 못 쓰므로 안전한 단계로 내려준다
+        variationEl.value = "light";
+        localStorage.setItem(VARIATION_STORE, "light");
+      }
+      updateVariationHint();
+    }
+    variationEl.value = localStorage.getItem(VARIATION_STORE) || "verbatim";
+    variationEl.addEventListener("change", () => {
+      localStorage.setItem(VARIATION_STORE, variationEl.value);
+      updateVariationHint();
+    });
+    modelEl.addEventListener("change", applyHeavyLock);
+    applyHeavyLock();
+  }
 
   // 전체 선택 / 전체 해제 (일부만 선택된 상태는 '중간' 표시)
   function syncAll() {
@@ -1017,10 +1043,9 @@ function setupQuizTab({ prefix, types, footer }) {
       try {
         const data = await postJson(
           "/api/quiz",
-          { passage: job.text, types: picked, count, model: modelEl.value, apiKey },
+          { passage: job.text, types: picked, count, model: modelEl.value, apiKey, variation: variation() },
           "문제 생성에 실패했습니다."
         );
-        addTokenUse("quiz", data);
         // 무작위 모드 — 받아온 문항을 섞는다. 지문마다 다시 섞이고, 문제지 번호와
         // 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매기므로 어긋나지 않는다.
         if (isRandom() && Array.isArray(data.questions)) {
@@ -1236,6 +1261,7 @@ document.addEventListener("click", (e) => {
 // 지원 단계 — 참고 자료(10단계 워크북)의 번호·명칭을 그대로 사용
 const WB_STAGES = [
   { id: 3, name: "빈칸 연습 (영문)", guide: "우리말 해석을 보고 영문을 완성하시오.", def: true },
+  { id: 4, name: "해석 연습", guide: "영어 문장을 읽고 우리말 해석을 쓰시오.", def: true },
   { id: 5, name: "동사형 연습", guide: "괄호 안에 주어진 단어를 알맞게 고쳐 쓰시오.", def: true },
   { id: 6, name: "어법 선택형 연습", guide: "괄호 안에서 어법상 알맞은 것을 고르시오.", def: true },
   { id: 7, name: "어색한 곳 찾기 연습", guide: "밑줄 친 부분 중 문맥상 어색한 것을 찾아 바르게 고쳐 쓰시오.", def: true },
@@ -1384,7 +1410,6 @@ async function generateWorkbook() {
         { passage: job.text, model: modelEl.value, apiKey },
         "워크북 생성에 실패했습니다."
       );
-      addTokenUse("workbook", data);
       htmlParts.push(buildWorkbookHtml(data, stages, job, total));
       okCount++;
     } catch (err) {
@@ -1542,6 +1567,12 @@ function renderStageSentence(stageId, s) {
       <div class="wb-ko">${esc(s.ko)}</div>
       <div class="wb-en">${html}</div>
       ${wbAns(answers.join(" / "))}`;
+  } else if (stageId === 4) {
+    // 해석 연습 — 영문 보고 해석 쓰기
+    body = `
+      <div class="wb-en">${esc(s.en)}</div>
+      <div class="wb-writeline"></div>
+      ${wbAns(s.ko || "")}`;
   } else if (stageId === 5) {
     // 동사형 연습
     const { html, answers } = renderVerbForms(s.verbForm || "");
@@ -1620,8 +1651,13 @@ function renderStage7(paras) {
 
 const VOCAB_STORE = "gemini_vocab_sets";
 const vocabSourceEl = $("vocabSource");
-const vocabFormatEl = $("vocabFormat");
-const vocabSortEl = $("vocabSort");
+const vocabFormatEl = radioGroup("vocabFormat");
+const vocabSortEl = radioGroup("vocabSort");
+// select였을 땐 값만 읽으면 됐지만 라디오는 선택 표시(.picked)를 직접 갱신해야 한다
+syncPicked("vocabFormat");
+syncPicked("vocabSort");
+vocabFormatEl.addEventListener("change", () => {});
+vocabSortEl.addEventListener("change", () => {});
 const vocabTitleEl = $("vocabTitle");
 const vocabDedupEl = $("vocabDedup");
 const vocabAnswerChk = $("vocabAnswerChk");

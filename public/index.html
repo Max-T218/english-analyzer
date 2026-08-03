@@ -80,39 +80,33 @@
 
     <div class="row">
       <div class="field">
-        <label for="model">모델 (Flash) <span class="sub" id="modelStatus"></span></label>
+        <label for="model">모델 <span class="sub" id="modelStatus"></span></label>
         <select id="model">
           <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
         </select>
+        <div class="hint" id="modelProHint"></div>
       </div>
-    </div>
-
-    <!-- 오늘 사용량(Gemini 응답의 usageMetadata 실측 누적).
-         남은 한도는 API가 알려주지 않으므로, 공식 한도 페이지 링크를 함께 둔다. -->
-    <div class="token-panel" id="tokenPanel">
-      <div class="token-title">
-        📊 오늘 사용량
-        <a href="https://aistudio.google.com/rate-limit" target="_blank" rel="noopener" class="keylink">내 한도 확인 ↗</a>
-      </div>
-      <div class="token-rows" id="tokenRows"></div>
-      <div class="hint" id="tokenHint">
-        남은 한도는 Google이 API로 알려주지 않아, 이 앱이 실제로 쓴 양만 표시합니다.
-        한도 자체는 위 <b>내 한도 확인</b>에서 볼 수 있습니다.
-      </div>
-      <button type="button" class="btn ghost small" id="tokenResetBtn">기록 지우기</button>
     </div>
 
     <div class="brand-panel">
       <div class="brand-title">🏫 학원 마크 <span class="sub">(학원명은 인쇄물 좌측 하단, 로고는 우측 하단 · 창을 닫으면 지워집니다)</span></div>
       <div class="brand-body">
-        <label for="brandName">학원명 (선택)</label>
-        <input type="text" id="brandName" placeholder="예: ARA 어학원">
-        <label for="brandFile" style="margin-top:12px">로고 이미지 (선택, 5MB 이하)</label>
-        <input type="file" id="brandFile" accept="image/*">
-        <div class="brand-preview" id="brandPreview">
-          <span class="muted">업로드한 로고가 여기에 미리보기로 표시됩니다.</span>
+        <div class="row">
+          <div class="field">
+            <label for="brandName">학원명 (선택)</label>
+            <input type="text" id="brandName" placeholder="예: ARA 어학원">
+          </div>
+          <div class="field">
+            <label for="brandFile">로고 이미지 (선택, 5MB 이하)</label>
+            <input type="file" id="brandFile" accept="image/*">
+          </div>
         </div>
-        <button type="button" class="btn ghost small" id="brandRemoveBtn" style="margin-top:8px">마크 삭제</button>
+        <div class="brand-preview-row">
+          <div class="brand-preview" id="brandPreview">
+            <span class="muted">업로드한 로고가 여기에 미리보기로 표시됩니다.</span>
+          </div>
+          <button type="button" class="btn ghost small" id="brandRemoveBtn">마크 삭제</button>
+        </div>
       </div>
     </div>
 
@@ -181,14 +175,21 @@
             <label class="chk toggle-all"><input type="checkbox" id="mcqTypeAll"> 전체 선택 / 해제</label>
           </div>
           <div class="quiz-type-grid" id="mcqTypeGrid"></div>
-          <div class="order-row">
-            <label for="mcqOrder">출제 순서</label>
-            <select id="mcqOrder">
-              <option value="type">유형 순서대로</option>
-              <option value="random">무작위로 섞기</option>
-            </select>
+
+          <label class="group-label">출제 순서</label>
+          <div class="quiz-type-grid radio-grid">
+            <label><input type="radio" name="mcqOrder" value="type" checked> 유형 순서대로</label>
+            <label><input type="radio" name="mcqOrder" value="random"> 무작위로 섞기</label>
           </div>
           <div class="hint type-order-hint" id="mcqOrderHint"></div>
+
+          <label class="group-label">지문 변형</label>
+          <div class="quiz-type-grid radio-grid">
+            <label><input type="radio" name="mcqVariation" value="verbatim" checked> 원문 그대로 사용</label>
+            <label><input type="radio" name="mcqVariation" value="light"> 단어 5개 내외 변형</label>
+            <label><input type="radio" name="mcqVariation" value="heavy"> 단어 5개 이상 변형</label>
+          </div>
+          <div class="hint type-order-hint" id="mcqVariationHint"></div>
         </div>
         <div class="field" style="flex:0 0 210px">
           <label for="mcqCount">지문당 문항 수</label>
@@ -224,12 +225,11 @@
             <label class="chk toggle-all"><input type="checkbox" id="saqTypeAll"> 전체 선택 / 해제</label>
           </div>
           <div class="quiz-type-grid" id="saqTypeGrid"></div>
-          <div class="order-row">
-            <label for="saqOrder">출제 순서</label>
-            <select id="saqOrder">
-              <option value="type">유형 순서대로</option>
-              <option value="random">무작위로 섞기</option>
-            </select>
+
+          <label class="group-label">출제 순서</label>
+          <div class="quiz-type-grid radio-grid">
+            <label><input type="radio" name="saqOrder" value="type" checked> 유형 순서대로</label>
+            <label><input type="radio" name="saqOrder" value="random"> 무작위로 섞기</label>
           </div>
           <div class="hint type-order-hint" id="saqOrderHint"></div>
         </div>
@@ -306,20 +306,22 @@
       <p class="hint" id="vocabSource"></p>
 
       <div class="row">
-        <div class="field">
-          <label for="vocabFormat">형식</label>
-          <select id="vocabFormat">
-            <option value="list">단어장 (뜻·유의어 포함)</option>
-            <option value="ko">시험지 · 뜻 쓰기 (영어 보고)</option>
-            <option value="en">시험지 · 영어 쓰기 (뜻 보고)</option>
-          </select>
+        <div class="field" style="flex:1 1 100%">
+          <label class="group-label">형식</label>
+          <div class="quiz-type-grid radio-grid">
+            <label><input type="radio" name="vocabFormat" value="list" checked> 단어장 (뜻·유의어 포함)</label>
+            <label><input type="radio" name="vocabFormat" value="ko"> 시험지 · 뜻 쓰기 (영어 보고)</label>
+            <label><input type="radio" name="vocabFormat" value="en"> 시험지 · 영어 쓰기 (뜻 보고)</label>
+          </div>
         </div>
-        <div class="field">
-          <label for="vocabSort">정렬</label>
-          <select id="vocabSort">
-            <option value="passage">지문 순서</option>
-            <option value="alpha">알파벳 순</option>
-          </select>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:1 1 100%">
+          <label class="group-label">정렬</label>
+          <div class="quiz-type-grid radio-grid">
+            <label><input type="radio" name="vocabSort" value="passage" checked> 지문 순서</label>
+            <label><input type="radio" name="vocabSort" value="alpha"> 알파벳 순</label>
+          </div>
         </div>
         <div class="field">
           <label for="vocabTitle">제목 (선택)</label>

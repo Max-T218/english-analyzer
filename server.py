@@ -14,7 +14,6 @@ import json
 import os
 import re
 import sys
-import threading
 import time
 import urllib.request
 import urllib.error
@@ -240,7 +239,7 @@ QUIZ_SCHEMA = {
 QUIZ_TYPE_LABELS = [
     "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
-    "서술형배열", "OX진위",
+    "서술형배열", "OX진위(영)", "OX진위(한)",
     "어휘 선택형", "어법 선택형", "틀린 어휘 찾기", "틀린 어법 찾기",
 ]
 
@@ -249,16 +248,32 @@ QUIZ_SYSTEM_PROMPT = r"""You are an expert Korean high-school English teacher wh
 passage. Return ONLY the structured JSON described by the schema — no markdown, no prose.
 
 You will receive: (1) one English passage, (2) a list of ALLOWED question types, (3) how
-many questions total to produce. Produce EXACTLY that many questions, choosing types ONLY
-from the allowed list (spread across different types when possible; only repeat a type if
-the allowed list is smaller than the requested count).
+many questions total to produce, (4) a passage variation level. Produce EXACTLY that many
+questions, choosing types ONLY from the allowed list (spread across different types when
+possible; only repeat a type if the allowed list is smaller than the requested count).
+
+## Passage variation level
+The request states one of three levels for how much you may reword the input passage before
+building questions from it:
+- "원문 그대로" — Use the input passage exactly as given. Change no wording at all.
+- "단어 5개 내외 변형" — First silently produce ONE reworded version of the ENTIRE passage:
+  replace roughly 5 content words/phrases with different wording of equivalent meaning and
+  difficulty (동의어·다른 표현으로 자연스럽게 교체). Keep every fact, the order of ideas,
+  sentence count, paragraph breaks, proper nouns, and numbers exactly the same — only the
+  wording changes.
+- "단어 5개 이상 변형" — Same rules as above, but replace MORE than 5 content words/phrases.
+Whichever level applies (including "원문 그대로"), build EVERY question in this response from
+THAT SAME single version of the passage — never re-derive a second, different rewording
+partway through — so that blanks, underlines, scrambled blocks, and every "다음 글의 내용과
+일치하는 것은?" style choice stay consistent with each other and with what the student reads
+in every other question.
 
 ## Output per question — fields
 - `no`: 1, 2, 3… in order.
 - `type`: one of the allowed type names, EXACTLY as given (e.g. "주제").
-- `format`: "mc" for 5-choice questions, "write" for 서술형배열, "tf" for OX진위,
+- `format`: "mc" for 5-choice questions, "write" for 서술형배열, "tf" for OX진위(영)/OX진위(한),
   "pick" for 어휘/어법 선택형, "fix" for 틀린 어휘/어법 찾기.
-  Every type is "mc" EXCEPT those five.
+  Every other type is "mc".
 - `instruction`: the exact Korean question line the student reads (수능 어투 그대로), e.g.
   "다음 글의 주제로 가장 적절한 것은?". For "문장삽입" also embed the sentence to insert,
   on its own line after the question line, like:
@@ -278,12 +293,12 @@ the allowed list is smaller than the requested count).
   the others are wrong — specific, referencing the passage content.
 
 ## Type-specific rules (only use types present in the allowed list)
-- "주제" — instruction "다음 글의 주제로 가장 적절한 것은?". passageHtml = full passage,
-  unmodified. choices = 5 topic phrases (English or Korean), one clearly correct.
-- "제목" — instruction "다음 글의 제목으로 가장 적절한 것은?". passageHtml = full passage,
-  unmodified. choices = 5 short English title phrases.
-- "요지" — instruction "다음 글의 요지로 가장 적절한 것은?". passageHtml = full passage,
-  unmodified. choices = 5 Korean 요지 문장.
+- "주제" — instruction "다음 글의 주제로 가장 적절한 것은?". passageHtml = the passage in
+  full. choices = 5 topic phrases (English or Korean), one clearly correct.
+- "제목" — instruction "다음 글의 제목으로 가장 적절한 것은?". passageHtml = the passage in
+  full. choices = 5 short English title phrases.
+- "요지" — instruction "다음 글의 요지로 가장 적절한 것은?". passageHtml = the passage in
+  full. choices = 5 Korean 요지 문장.
 - "빈칸" — instruction "다음 빈칸에 들어갈 말로 가장 적절한 것은?". passageHtml = the
   passage with ONE key phrase replaced by "_______________". choices = 5 candidate English
   phrases that fit the blank grammatically, one clearly the best fit.
@@ -309,12 +324,12 @@ the allowed list is smaller than the requested count).
   = the rest of the passage (after removing one sentence) with 5 candidate insertion points
   marked as circled numbers ①~⑤ placed BETWEEN sentences. choices = ["①","②","③","④","⑤"]
   in that literal order; answer = where the removed sentence truly belongs.
-- "내용일치(영)" — instruction "다음 글의 내용과 일치하는 것은?". passageHtml = full passage,
-  unmodified. choices = 5 ENGLISH statements about the passage; EXACTLY ONE is true to the
+- "내용일치(영)" — instruction "다음 글의 내용과 일치하는 것은?". passageHtml = the passage
+  in full. choices = 5 ENGLISH statements about the passage; EXACTLY ONE is true to the
   passage, the other 4 must CONTRADICT it (not merely be unmentioned). answer = the true one.
 - "내용일치(한)" — identical to "내용일치(영)" but every choice is written in KOREAN.
-- "내용불일치(영)" — instruction "다음 글의 내용과 일치하지 않는 것은?". passageHtml = full
-  passage, unmodified. choices = 5 ENGLISH statements; EXACTLY FOUR are true to the passage
+- "내용불일치(영)" — instruction "다음 글의 내용과 일치하지 않는 것은?". passageHtml = the
+  passage in full. choices = 5 ENGLISH statements; EXACTLY FOUR are true to the passage
   and ONE contradicts it. answer = the FALSE one.
 - "내용불일치(한)" — identical to "내용불일치(영)" but every choice is written in KOREAN.
   For all four 내용일치/불일치 types: base each statement on a DIFFERENT part of the passage,
@@ -356,13 +371,16 @@ the allowed list is smaller than the requested count).
   (주어-동사 수일치 오류, 시제/태 오류, to부정사↔동명사 오용, 관계사 오용, 병렬 파괴 등).
   `fixes` = {wrong: the ungrammatical form you planted, right: the original correct form}.
   choices = [], answer = 0, answerText = "".
-- "OX진위" (format "tf") — instruction
+- "OX진위(영)" (format "tf") — instruction
   "다음 글의 내용과 일치하면 O, 일치하지 않으면 X를 쓰시오."
   passageHtml = full passage, unmodified. `tfItems` = EXACTLY 5 objects {text, isTrue}:
   · `text` = one short ENGLISH statement about the passage.
   · `isTrue` = true if it matches the passage, false if it contradicts it.
   Mix them up — roughly 2~3 true and 2~3 false, in a non-obvious order. Each statement must
   come from a DIFFERENT part of the passage. choices = [], answer = 0.
+- "OX진위(한)" — identical to "OX진위(영)" in every way (same instruction, same passageHtml,
+  same true/false mix, same rules) EXCEPT `text` for each tfItem is written in KOREAN instead
+  of English (자연스러운 한국어 문장으로, 영어 원문을 그대로 옮기지 말고 내용만 정확히 번역).
 
 ## Quality rules
 - Base everything on the ACTUAL passage content — never invent facts not in the passage.
@@ -374,13 +392,13 @@ the allowed list is smaller than the requested count).
 ## explanation — MANDATORY FOR EVERY SINGLE QUESTION (no exceptions)
 This is the most frequently violated rule. Read it twice.
 - EVERY object in `questions` MUST carry a non-empty Korean `explanation`. There is no
-  question type that is exempt — 객관식 and 주관식 (서술형배열 / OX진위 / 어휘 선택형 /
-  어법 선택형 / 틀린 어휘 찾기 / 틀린 어법 찾기) all require one.
+  question type that is exempt — 객관식 and 주관식 (서술형배열 / OX진위(영) / OX진위(한) /
+  어휘 선택형 / 어법 선택형 / 틀린 어휘 찾기 / 틀린 어법 찾기) all require one.
 - NEVER output "", " ", "-", "없음", "해설 없음", or a copy of the answer. An empty string
   is a FAILED response even though the schema accepts it.
 - Minimum 25 Korean characters. State WHY the answer is right — the grammar point, the
   contextual clue, or the sentence in the passage it rests on. For multi-part answers
-  (OX진위, 틀린 어법/어휘 찾기, 선택형) cover EVERY part, e.g. "(1)…, (2)…".
+  (OX진위(영)/OX진위(한), 틀린 어법/어휘 찾기, 선택형) cover EVERY part, e.g. "(1)…, (2)…".
 - Before returning, count your questions and count your non-empty explanations. The two
   numbers MUST be equal. If they are not, write the missing explanations and only then return.
 
@@ -399,8 +417,19 @@ def blank_explanations(result):
     return out
 
 
-def build_quiz_user_prompt(passage, types, count, short_hint=None, explain_hint=None):
+# 화면의 '지문 변형' 드롭다운 값 → 프롬프트에 넣을 한국어 표현.
+# 서버가 받는 값은 이 딕셔너리의 key로만 한정하고, 모르는 값은 "원문 그대로"로 되돌린다
+# (예전 버전 화면이 캐시돼 이상한 값을 보내도 안전하게 동작하도록).
+QUIZ_VARIATIONS = {
+    "verbatim": "원문 그대로",
+    "light": "단어 5개 내외 변형",
+    "heavy": "단어 5개 이상 변형",
+}
+
+
+def build_quiz_user_prompt(passage, types, count, short_hint=None, explain_hint=None, variation="verbatim"):
     lines = [
+        f"지문 변형 정도: {QUIZ_VARIATIONS.get(variation, QUIZ_VARIATIONS['verbatim'])}",
         f"허용된 문제 유형: {', '.join(types)}",
         f"총 문항 수: {count}개 (정확히 이 개수만큼 생성)",
         # 화면의 유형 선택 칸에 '출제 순서' 번호를 보여 주므로, 그 순서와 실제
@@ -481,7 +510,8 @@ def fix_underline_bounds(html):
     return html
 
 
-def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None, explain_hint=None):
+def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None,
+                      explain_hint=None, variation="verbatim"):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -491,12 +521,23 @@ def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None, exp
     model = model if (model and _MODEL_RE.match(model)) else MODEL
     types = [t for t in (types or []) if t in QUIZ_TYPE_LABELS] or ["주제", "제목", "요지"]
     count = max(1, min(int(count or 5), 30))
+    variation = variation if variation in QUIZ_VARIATIONS else "verbatim"
+    # 화면에서 이미 막지만, 화면을 우회해도 서버가 최종 방어한다(다른 검증들과 같은 원칙).
+    # '5개 이상 변형'은 지문 전체를 사실·순서·난이도는 그대로 두고 대량으로 바꿔 쓰는
+    # 작업이라 Flash보다 Pro가 훨씬 안정적으로 해낸다.
+    if variation == "heavy" and "pro" not in (model or "").lower():
+        raise RuntimeError(
+            "지문 변형 '단어 5개 이상 변형'은 Pro 모델에서만 사용할 수 있습니다. "
+            "정확도(모델)에서 Pro를 선택하거나, 변형 정도를 '단어 5개 내외 변형'으로 낮추세요."
+        )
 
     payload = {
         "systemInstruction": {"parts": [{"text": QUIZ_SYSTEM_PROMPT}]},
         "contents": [
             {"role": "user", "parts": [
-                {"text": build_quiz_user_prompt(passage, types, count, short_hint, explain_hint)}
+                {"text": build_quiz_user_prompt(
+                    passage, types, count, short_hint, explain_hint, variation
+                )}
             ]}
         ],
         "generationConfig": {
@@ -1112,34 +1153,6 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
     return "\n".join(lines)
 
 
-# ── 실제 토큰 사용량 집계 ──────────────────────────────────────────────
-# Gemini 응답의 usageMetadata 가 유일하게 정확한 수치다(AI Studio 대시보드는
-# 요청별로 보여주지 않는다). 한 번의 화면 요청이 보정 재요청으로 여러 번 호출될 수
-# 있으므로, 요청 단위로 합산해 결과에 실어 보낸다.
-# 서버가 스레드로 동시 처리하므로 요청별 격리를 위해 thread-local 을 쓴다.
-_usage_local = threading.local()
-
-
-def usage_reset():
-    _usage_local.acc = {"calls": 0, "input": 0, "output": 0, "thinking": 0, "total": 0}
-
-
-def usage_add(body):
-    acc = getattr(_usage_local, "acc", None)
-    if acc is None:
-        return
-    u = (body or {}).get("usageMetadata") or {}
-    acc["calls"] += 1
-    acc["input"] += u.get("promptTokenCount", 0) or 0
-    acc["output"] += u.get("candidatesTokenCount", 0) or 0
-    acc["thinking"] += u.get("thoughtsTokenCount", 0) or 0
-    acc["total"] += u.get("totalTokenCount", 0) or 0
-
-
-def usage_get():
-    return getattr(_usage_local, "acc", None)
-
-
 def _gemini_call_with_retry(data, api_key, model):
     """페이로드(JSON bytes)를 모델에 전송하고 재시도·모델 대체를 공통 처리한다
     (지문분석·문제제작 등 모든 Gemini 호출이 공유).
@@ -1157,7 +1170,6 @@ def _gemini_call_with_retry(data, api_key, model):
         )
         with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT) as resp:
             body = json.loads(resp.read().decode("utf-8"))
-        usage_add(body)   # 실제 소모 토큰 집계 (보정 재요청분까지 합산)
         return body
 
     def _generate(use_model):
@@ -1403,27 +1415,38 @@ def list_models(api_key):
             continue
         # Flash·Pro 모두 노출한다. (Pro는 결제된 키에서만 동작하며, 무료 키로 고르면
         #  분석 시 "이 키로는 Pro를 쓸 수 없다"는 안내가 뜨도록 처리한다.)
-        if "flash" not in low and "pro" not in low:
+        is_pro = "pro" in low
+        if "flash" not in low and not is_pro:
             continue
         # Flash-Lite 제외 (분석 품질 우선 — 누락이 많아 사용 안 함)
         if "lite" in low:
             continue
-        # 별칭(-latest)·프리뷰·실험 버전 제외 — 별칭은 실제 모델과 할당량을 공유해
-        # 사용량 집계만 흐리고, 프리뷰/실험판은 품질이 들쭉날쭉하다.
-        if mid.endswith("-latest") or "preview" in low or "-exp" in low:
+        # 별칭(-latest)·실험 버전은 늘 제외 — 별칭은 실제 모델과 할당량을 공유해 사용량
+        # 집계만 흐리고, 실험판은 품질이 들쭉날쭉하다.
+        if mid.endswith("-latest") or "-exp" in low:
             continue
-        # 구버전 제외 — 현재 주력인 3.5 이상만 노출 (새 버전이 나오면 자동 포함)
+        # 프리뷰 제외 — 단, Pro는 이 글을 쓰는 시점에 정식(GA) 버전이 없어 프리뷰
+        # (gemini-3.1-pro-preview 등)가 유일한 통로다. Flash는 항상 안정판이 있으므로
+        # 프리뷰를 걸러 품질 들쭉날쭉함을 피한다. Pro가 GA로 나오면 프리뷰 없이도
+        # 이 조건을 통과하고, rank()가 GA를 프리뷰보다 우선하도록 해 뒀다.
+        if "preview" in low and not is_pro:
+            continue
+        # 구버전 제외. Pro와 Flash는 버전 번호를 독립적으로 매겨(현재 Flash 3.6대,
+        # Pro는 3.1대) 하나의 하한을 같이 쓰면 Pro가 걸러지므로 하한을 따로 둔다.
         vm = re.search(r"gemini-(\d+(?:\.\d+)?)", low)
-        if not vm or float(vm.group(1)) < 3.5:
+        floor = 3.0 if is_pro else 3.5
+        if not vm or float(vm.group(1)) < floor:
             continue
         models.append({"id": mid, "label": m.get("displayName", mid)})
-    # 최신순 정렬 후 상위 5개만 반환 (-latest 별칭 우선, 그다음 버전 숫자 내림차순)
+    # 최신순 정렬 후 상위 5개만 반환
+    # (-latest 별칭 > 버전 숫자 내림차순 > GA가 프리뷰보다 우선)
     def rank(m):
         mid = m["id"].lower()
         is_latest = 1 if mid.endswith("-latest") else 0
+        is_ga = 0 if "preview" in mid else 1
         vm = re.search(r"gemini-(\d+(?:\.\d+)?)", mid)
         ver = float(vm.group(1)) if vm else 0.0
-        return (is_latest, ver, mid)
+        return (is_latest, ver, is_ga, mid)
 
     models.sort(key=rank, reverse=True)
     return {"models": models[:5]}
@@ -1505,7 +1528,6 @@ class Handler(BaseHTTPRequestHandler):
             api_key = req.get("apiKey") or ""
             model = req.get("model") or MODEL
             t0 = time.monotonic()
-            usage_reset()
             try:
                 result = call_gemini_workbook(passage, api_key, model)
                 # 문장 누락 방어 — 실제 문장 수보다 많이 부족하면 자동 보정 재요청
@@ -1530,9 +1552,6 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
-            u = usage_get()
-            if isinstance(result, dict) and u:
-                result["_usage"] = u
             self._send_json(result)
             return
 
@@ -1545,10 +1564,10 @@ class Handler(BaseHTTPRequestHandler):
             count = req.get("count") or 5
             api_key = req.get("apiKey") or ""
             model = req.get("model") or MODEL
+            variation = req.get("variation") or "verbatim"
             t0 = time.monotonic()
-            usage_reset()
             try:
-                result = call_gemini_quiz(passage, types, count, api_key, model)
+                result = call_gemini_quiz(passage, types, count, api_key, model, variation=variation)
                 # 문항 누락 방어 — 요청한 개수보다 적게 오면 한 번 더 요청해 채운다
                 want = max(1, min(int(count or 5), 30))
                 for _ in range(2):
@@ -1558,7 +1577,7 @@ class Handler(BaseHTTPRequestHandler):
                     if _over_budget(t0):  # 프록시가 끊기 전에 현재 결과라도 돌려준다
                         break
                     retry = call_gemini_quiz(
-                        passage, types, count, api_key, model, short_hint=got
+                        passage, types, count, api_key, model, short_hint=got, variation=variation
                     )
                     # 더 많이 만들어 온 결과만 채택 (재시도가 더 나쁘면 기존 유지)
                     if len(retry.get("questions", [])) > got:
@@ -1573,7 +1592,7 @@ class Handler(BaseHTTPRequestHandler):
                     if _over_budget(t0):
                         break
                     retry = call_gemini_quiz(
-                        passage, types, count, api_key, model, explain_hint=missing
+                        passage, types, count, api_key, model, explain_hint=missing, variation=variation
                     )
                     # 문항 수가 줄지 않고 해설이 더 잘 채워진 결과만 채택
                     if (
@@ -1592,8 +1611,6 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
-            u = usage_get()
-            if isinstance(result, dict) and u: result["_usage"] = u
             self._send_json(result)
             return
 
@@ -1608,7 +1625,6 @@ class Handler(BaseHTTPRequestHandler):
         review = bool(req.get("review"))
 
         t0 = time.monotonic()
-        usage_reset()
         try:
             result = call_gemini(passage, target_grammar, mode, api_key, model)
             # 문장 누락 방어 — 실제 문장 수보다 분석이 많이 부족하면 자동 보정 재요청
@@ -1646,9 +1662,6 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e)}, 502)
             return
-        u = usage_get()
-        if isinstance(result, dict) and u:
-            result["_usage"] = u
         self._send_json(result)
 
 
