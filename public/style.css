@@ -78,6 +78,8 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 .btn:disabled{opacity:.5; cursor:not-allowed;}
 .btn.ghost{background:var(--card); color:var(--ink); border-color:var(--line);}
 .btn.ghost:hover{border-color:var(--accent);}
+.btn.ghost.danger{color:var(--g);}
+.btn.ghost.danger:hover{border-color:var(--g);}
 .hint{font-size:12px; color:var(--ink-soft);}
 .chk{display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--ink); cursor:pointer; user-select:none;}
 .chk input{width:16px; height:16px; accent-color:var(--accent); cursor:pointer;}
@@ -175,12 +177,19 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 .quiz-type-grid label.disabled{opacity:.45; cursor:not-allowed;}
 .quiz-type-grid label.disabled input{cursor:not-allowed;}
 .type-order-hint{margin-top:6px;}
-/* 출제 순서·지문 변형·단어장 형식/정렬처럼 select였던 단일 선택 항목을 유형 선택 칸과
-   같은 모양(체크박스처럼 보이는 라디오 그리드)으로 통일한 것. 옵션 글자가 길어
-   140px 칸에서는 잘 접혀서, 이 항목들만 칸을 더 넓게 잡는다. */
-.radio-grid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); margin-top:8px;}
+/* 출제 순서·지문 변형·단어장 형식/정렬처럼 select였던 항목을 유형 선택 칸과 같은 모양으로
+   통일한 것. 옵션 글자가 길어("단어 5개 내외 변형") 140px 칸에서는 두 줄로 접히므로,
+   이 항목들만 칸을 더 넓게 잡아 한 줄에 들어가게 한다.
+   .radio-grid = 단일 선택(라디오), .wide-grid = 복수 선택(체크박스) — 너비 규칙은 같다. */
+.radio-grid,
+.wide-grid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); margin-top:8px;}
+.quiz-type-grid label.opt-2line{align-items:flex-start;}
+#wbStageGrid{grid-template-columns:repeat(4, minmax(0,1fr));}
+.opt-text{display:flex; flex-direction:column; line-height:1.35;}
+.opt-sub{font-weight:500; font-size:11.5px; color:var(--ink-soft);}
 /* 라디오 그리드 위에 붙는 소제목 — 그 위 유형 선택 칸과 시각적으로 구분되도록 여백만 더 준다 */
 .group-label{margin-top:14px !important;}
+.group-note{font-weight:400; font-size:11.5px; color:var(--ink-soft);}
 
 /* ── 문제 카드 ── */
 .qz-card{
@@ -414,6 +423,11 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
   border-radius:8px; letter-spacing:.03em;
 }
 @media (prefers-color-scheme:dark) and (min-width:999999px){.passage-banner{color:#0f141a;}}
+/* 지문 변형 세트 이름 — 같은 지문에서 나온 원문/변형 문제지를 구분한다 */
+.passage-banner-tag{
+  margin-left:9px; padding:2px 8px; border-radius:6px;
+  background:rgba(255,255,255,.24); font-size:12px; font-weight:700; letter-spacing:0;
+}
 .passage-block{margin-bottom:10px;}
 .passage-error{
   border:1px solid rgba(207,46,46,.35); background:rgba(207,46,46,.08);
@@ -608,6 +622,10 @@ ruby.theme-rt .gv{color:var(--gv); font-weight:600;}
 ruby.theme-rt rt{color:var(--gv);}
 /* 병렬구조(초록 형광펜) — 노란 형광펜(.hl)과 같은 굵기로 맞춘다 */
 .conj-hl{background:var(--conj-bg); border-radius:3px; padding:0 3px; font-weight:600;}
+/* 짧은 주석 대상은 줄 끝에서 쪼개지지 않게 한다. ruby가 두 줄로 나뉘면 브라우저가
+   위의 한글 설명까지 나눠 붙여('예시' → '예' + '시') 뜻을 알 수 없게 되기 때문.
+   긴 대상에는 서버가 이 클래스를 붙이지 않으므로 화면 밖으로 넘칠 일은 없다. */
+.nobreak{white-space:nowrap;}
 sup.conj-num-top{color:var(--conj); font-weight:700; font-size:9px; vertical-align:super;}
 ruby.hl-rt .hl{background:var(--hl); border-radius:3px; padding:0 2px; font-weight:600;}
 ruby.hl-rt rt{color:var(--ink-soft);}

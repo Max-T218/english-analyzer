@@ -121,6 +121,7 @@
     <div id="passageList"></div>
     <div class="passage-add-row">
       <button type="button" class="btn ghost small" id="addPassageBtn">＋ 지문 추가</button>
+      <button type="button" class="btn ghost small danger" id="clearPassagesBtn">🗑️ 지문 전체 지우기</button>
       <span class="passage-max-note" id="passageMaxNote" role="status" aria-live="polite"></span>
     </div>
   </section>
@@ -183,26 +184,20 @@
           </div>
           <div class="hint type-order-hint" id="mcqOrderHint"></div>
 
-          <label class="group-label">지문 변형</label>
-          <div class="quiz-type-grid radio-grid">
-            <label><input type="radio" name="mcqVariation" value="verbatim" checked> 원문 그대로 사용</label>
-            <label><input type="radio" name="mcqVariation" value="light"> 단어 5개 내외 변형</label>
-            <label><input type="radio" name="mcqVariation" value="heavy"> 단어 5개 이상 변형</label>
+          <label class="group-label">지문 변형 <span class="group-note">(여러 개 선택 가능 — 고른 만큼 세트가 늘어납니다)</span></label>
+          <div class="quiz-type-grid wide-grid" id="mcqVariationGrid">
+            <label><input type="checkbox" name="mcqVariation" value="verbatim" checked> 원문 그대로 사용</label>
+            <label><input type="checkbox" name="mcqVariation" value="light"> 단어 5개 내외 변형</label>
+            <label><input type="checkbox" name="mcqVariation" value="heavy"> 단어 5개 이상 변형</label>
           </div>
           <div class="hint type-order-hint" id="mcqVariationHint"></div>
-        </div>
-        <div class="field" style="flex:0 0 210px">
-          <label for="mcqCount">지문당 문항 수</label>
-          <input type="number" id="mcqCount" min="1" max="30" value="4">
-          <div class="count-hint" id="mcqCountHint"></div>
-          <button type="button" class="btn ghost small count-fit" id="mcqFitBtn">유형 수에 맞추기</button>
         </div>
       </div>
 
       <div class="actions">
         <button class="btn" id="mcqBtn">문제 만들기</button>
         <button class="btn ghost" id="mcqPrintBtn" style="display:none">🖨️ 인쇄 / PDF</button>
-        <span class="hint">문항이 많거나 유형이 까다로우면(순서·문장삽입) 시간이 더 걸릴 수 있어요.</span>
+        <span class="hint">유형 1개당 1문항씩 만들어집니다. 순서·문장삽입이 섞이면 시간이 더 걸릴 수 있어요.</span>
       </div>
       <div class="error" id="mcqError"></div>
     </section>
@@ -233,18 +228,12 @@
           </div>
           <div class="hint type-order-hint" id="saqOrderHint"></div>
         </div>
-        <div class="field" style="flex:0 0 210px">
-          <label for="saqCount">지문당 문항 수</label>
-          <input type="number" id="saqCount" min="1" max="30" value="4">
-          <div class="count-hint" id="saqCountHint"></div>
-          <button type="button" class="btn ghost small count-fit" id="saqFitBtn">유형 수에 맞추기</button>
-        </div>
       </div>
 
       <div class="actions">
         <button class="btn" id="saqBtn">문제 만들기</button>
         <button class="btn ghost" id="saqPrintBtn" style="display:none">🖨️ 인쇄 / PDF</button>
-        <span class="hint">학생이 직접 쓰는 서술형·단답형 문제를 만듭니다.</span>
+        <span class="hint">유형 1개당 1문항씩, 학생이 직접 쓰는 서술형·단답형 문제를 만듭니다.</span>
       </div>
       <div class="error" id="saqError"></div>
     </section>
@@ -309,9 +298,9 @@
         <div class="field" style="flex:1 1 100%">
           <label class="group-label">형식</label>
           <div class="quiz-type-grid radio-grid">
-            <label><input type="radio" name="vocabFormat" value="list" checked> 단어장 (뜻·유의어 포함)</label>
-            <label><input type="radio" name="vocabFormat" value="ko"> 시험지 · 뜻 쓰기 (영어 보고)</label>
-            <label><input type="radio" name="vocabFormat" value="en"> 시험지 · 영어 쓰기 (뜻 보고)</label>
+            <label class="opt-2line"><input type="radio" name="vocabFormat" value="list" checked> <span class="opt-text">단어장<span class="opt-sub">(뜻·유의어 포함)</span></span></label>
+            <label class="opt-2line"><input type="radio" name="vocabFormat" value="ko"> <span class="opt-text">시험지 · 뜻 쓰기<span class="opt-sub">(영어 보고)</span></span></label>
+            <label class="opt-2line"><input type="radio" name="vocabFormat" value="en"> <span class="opt-text">시험지 · 영어 쓰기<span class="opt-sub">(뜻 보고)</span></span></label>
           </div>
         </div>
       </div>

@@ -80,6 +80,11 @@ class ProUnavailable(RuntimeError):
     """결제되지 않은 키로 Pro 모델을 고른 경우 — Flash로 바꿔야 하므로 즉시 중단한다."""
 
 
+class NeedsPro(RuntimeError):
+    """반대로, 고른 기능이 Pro를 요구하는데 Flash가 선택된 경우('5개 이상 변형').
+    모델을 바꾸기 전에는 몇 번을 시도해도 같으므로 남은 작업까지 즉시 중단한다."""
+
+
 def _over_budget(t0):
     """이번 요청에 이미 REFINE_BUDGET 이상을 썼으면 True.
     (품질 보정 재요청을 한 번 더 시작할 여유가 없다는 뜻)"""
@@ -225,7 +230,11 @@ QUIZ_SCHEMA = {
                     },
                     "explanation": {"type": "STRING"},
                 },
-                "required": ["no", "type", "format", "instruction", "passageHtml",
+                # passageHtml은 required가 아니다 — 지문을 가공 없이 그대로 쓰는 유형
+                # (QUIZ_PLAIN_PASSAGE_TYPES)은 비워서 보내고 서버가 채운다.
+                # 지문을 유형 수만큼 되받지 않으므로 출력 토큰이 크게 줄고,
+                # 문항끼리 지문이 미묘하게 달라지는 사고도 사라진다.
+                "required": ["no", "type", "format", "instruction",
                              "choices", "answer", "answerText", "tfItems", "fixes", "explanation"],
                 "propertyOrdering": ["no", "type", "format", "instruction", "passageHtml",
                                      "choices", "answer", "answerText", "tfItems", "fixes", "explanation"],
@@ -242,6 +251,25 @@ QUIZ_TYPE_LABELS = [
     "서술형배열", "OX진위(영)", "OX진위(한)",
     "어휘 선택형", "어법 선택형", "틀린 어휘 찾기", "틀린 어법 찾기",
 ]
+
+# 지문을 '가공 없이 통째로' 보여 주는 유형 — 빈칸·밑줄·블록 분할이 전혀 없다.
+# 이 유형들의 passageHtml은 매번 지문 전문의 복사본이라, 유형 수만큼 지문이
+# 출력에 중복돼 실린다(12유형이면 지문 12벌). 모델에게는 비워서 보내게 하고
+# 서버가 지문으로 채워, 출력 토큰과 생성 시간을 함께 줄인다.
+QUIZ_PLAIN_PASSAGE_TYPES = {
+    "주제", "제목", "요지",
+    "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
+    "OX진위(영)", "OX진위(한)",
+}
+
+
+def passage_to_html(passage):
+    """지문 원문을 문항용 HTML로 바꾼다 — 모델이 만들어 주던 것과 같은 형태.
+    < > & 를 이스케이프하고 줄바꿈을 <br>(문단 사이는 <br><br>)로 바꾼다."""
+    text = (passage or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    text = re.sub(r"\r\n?", "\n", text).strip()
+    text = re.sub(r"\n{2,}", "<br><br>", text)
+    return text.replace("\n", "<br>")
 
 QUIZ_SYSTEM_PROMPT = r"""You are an expert Korean high-school English teacher who writes
 수능·모의고사 style multiple-choice reading-comprehension questions from a given English
@@ -281,6 +309,11 @@ in every other question.
   <b>주어진 문장:</b> The sentence text.
 - `passageHtml`: the passage the student reads for THIS question, reformatted per the rules
   below. Plain text plus ONLY <br>, <u>, <b> tags allowed — nothing else (no colors/ruby).
+  ⚠️ When the request says "지문 재사용: 켬", the types listed there show the passage with NO
+  modification at all (no blank, no underline, no scrambling, no insertion markers). For those
+  types you MUST OMIT `passageHtml` entirely — the app inserts the passage itself. Copying the
+  passage out again wastes output and risks it drifting from what other questions show.
+  Every OTHER type still requires `passageHtml`, because its passage is genuinely modified.
 - `choices`: for "mc", EXACTLY 5 short strings — do NOT prefix them with ①②③④⑤ (the app adds
   those). For "write" and "tf", set `choices` to an empty array [].
 - `answer`: for "mc", integer 1–5 = the 1-based index of the correct choice.
@@ -293,12 +326,14 @@ in every other question.
   the others are wrong — specific, referencing the passage content.
 
 ## Type-specific rules (only use types present in the allowed list)
-- "주제" — instruction "다음 글의 주제로 가장 적절한 것은?". passageHtml = the passage in
-  full. choices = 5 topic phrases (English or Korean), one clearly correct.
-- "제목" — instruction "다음 글의 제목으로 가장 적절한 것은?". passageHtml = the passage in
-  full. choices = 5 short English title phrases.
-- "요지" — instruction "다음 글의 요지로 가장 적절한 것은?". passageHtml = the passage in
-  full. choices = 5 Korean 요지 문장.
+Below, "passageHtml = 지문 전문" means: OMIT the field when 지문 재사용 is on, otherwise output
+the passage in full.
+- "주제" — instruction "다음 글의 주제로 가장 적절한 것은?". passageHtml = 지문 전문.
+  choices = 5 topic phrases (English or Korean), one clearly correct.
+- "제목" — instruction "다음 글의 제목으로 가장 적절한 것은?". passageHtml = 지문 전문.
+  choices = 5 short English title phrases.
+- "요지" — instruction "다음 글의 요지로 가장 적절한 것은?". passageHtml = 지문 전문.
+  choices = 5 Korean 요지 문장.
 - "빈칸" — instruction "다음 빈칸에 들어갈 말로 가장 적절한 것은?". passageHtml = the
   passage with ONE key phrase replaced by "_______________". choices = 5 candidate English
   phrases that fit the blank grammatically, one clearly the best fit.
@@ -324,12 +359,12 @@ in every other question.
   = the rest of the passage (after removing one sentence) with 5 candidate insertion points
   marked as circled numbers ①~⑤ placed BETWEEN sentences. choices = ["①","②","③","④","⑤"]
   in that literal order; answer = where the removed sentence truly belongs.
-- "내용일치(영)" — instruction "다음 글의 내용과 일치하는 것은?". passageHtml = the passage
-  in full. choices = 5 ENGLISH statements about the passage; EXACTLY ONE is true to the
+- "내용일치(영)" — instruction "다음 글의 내용과 일치하는 것은?". passageHtml = 지문 전문.
+  choices = 5 ENGLISH statements about the passage; EXACTLY ONE is true to the
   passage, the other 4 must CONTRADICT it (not merely be unmentioned). answer = the true one.
 - "내용일치(한)" — identical to "내용일치(영)" but every choice is written in KOREAN.
-- "내용불일치(영)" — instruction "다음 글의 내용과 일치하지 않는 것은?". passageHtml = the
-  passage in full. choices = 5 ENGLISH statements; EXACTLY FOUR are true to the passage
+- "내용불일치(영)" — instruction "다음 글의 내용과 일치하지 않는 것은?".
+  passageHtml = 지문 전문. choices = 5 ENGLISH statements; EXACTLY FOUR are true to the passage
   and ONE contradicts it. answer = the FALSE one.
 - "내용불일치(한)" — identical to "내용불일치(영)" but every choice is written in KOREAN.
   For all four 내용일치/불일치 types: base each statement on a DIFFERENT part of the passage,
@@ -373,7 +408,7 @@ in every other question.
   choices = [], answer = 0, answerText = "".
 - "OX진위(영)" (format "tf") — instruction
   "다음 글의 내용과 일치하면 O, 일치하지 않으면 X를 쓰시오."
-  passageHtml = full passage, unmodified. `tfItems` = EXACTLY 5 objects {text, isTrue}:
+  passageHtml = 지문 전문. `tfItems` = EXACTLY 5 objects {text, isTrue}:
   · `text` = one short ENGLISH statement about the passage.
   · `isTrue` = true if it matches the passage, false if it contradicts it.
   Mix them up — roughly 2~3 true and 2~3 false, in a non-obvious order. Each statement must
@@ -432,6 +467,19 @@ def build_quiz_user_prompt(passage, types, count, short_hint=None, explain_hint=
         f"지문 변형 정도: {QUIZ_VARIATIONS.get(variation, QUIZ_VARIATIONS['verbatim'])}",
         f"허용된 문제 유형: {', '.join(types)}",
         f"총 문항 수: {count}개 (정확히 이 개수만큼 생성)",
+    ]
+    # 지문 재사용(passageHtml 생략)은 '원문 그대로'일 때만 켠다.
+    # light/heavy는 모델이 응답 안에서 즉석으로 리워딩하므로 서버가 가진 원문으로
+    # 채우면 학생이 읽는 지문과 어긋난다 — 그때는 지금까지처럼 모델이 직접 싣는다.
+    reuse = sorted(set(types) & QUIZ_PLAIN_PASSAGE_TYPES) if variation == "verbatim" else []
+    if reuse:
+        lines.append(
+            "지문 재사용: 켬 — 다음 유형은 passageHtml 필드를 아예 넣지 마세요(앱이 지문을 "
+            f"그대로 채웁니다): {', '.join(reuse)}"
+        )
+    else:
+        lines.append("지문 재사용: 끔 — 모든 문항에 passageHtml을 직접 채우세요.")
+    lines += [
         # 화면의 유형 선택 칸에 '출제 순서' 번호를 보여 주므로, 그 순서와 실제
         # 출제 순서가 반드시 일치해야 한다.
         "⚠️ 문항 순서: 위 '허용된 문제 유형'에 나열된 순서 그대로 questions 배열에 담으세요. "
@@ -455,10 +503,18 @@ def build_quiz_user_prompt(passage, types, count, short_hint=None, explain_hint=
             f"허용된 유형 중 {count}개를 골라 서로 다른 유형으로 1문항씩 출제하세요."
         )
     if short_hint is not None:
-        lines.append(
-            f"⚠️ 이전 시도는 {short_hint}문항만 만들었습니다. 이번에는 반드시 {count}문항을 "
-            f"끝까지 모두 생성하세요. 중간에 멈추지 마세요."
-        )
+        # 유형별 1문항 고정이므로, 몇 개가 모자랐는지보다 '어떤 유형이 빠졌는지'를
+        # 알려 주는 편이 재요청 한 번에 채워질 확률이 높다.
+        if isinstance(short_hint, (list, tuple, set)) and short_hint:
+            lines.append(
+                f"⚠️ 이전 시도는 {', '.join(short_hint)} 유형을 빠뜨렸습니다. "
+                f"이번에는 빠진 유형을 반드시 포함해 {count}문항을 끝까지 모두 생성하세요."
+            )
+        else:
+            lines.append(
+                f"⚠️ 이전 시도는 {short_hint}문항만 만들었습니다. 이번에는 반드시 {count}문항을 "
+                f"끝까지 모두 생성하세요. 중간에 멈추지 마세요."
+            )
     if explain_hint:
         lines.append(
             f"⚠️ 이전 시도는 {len(explain_hint)}개 문항({', '.join(map(str, explain_hint))}번)의 "
@@ -526,7 +582,7 @@ def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None,
     # '5개 이상 변형'은 지문 전체를 사실·순서·난이도는 그대로 두고 대량으로 바꿔 쓰는
     # 작업이라 Flash보다 Pro가 훨씬 안정적으로 해낸다.
     if variation == "heavy" and "pro" not in (model or "").lower():
-        raise RuntimeError(
+        raise NeedsPro(
             "지문 변형 '단어 5개 이상 변형'은 Pro 모델에서만 사용할 수 있습니다. "
             "정확도(모델)에서 Pro를 선택하거나, 변형 정도를 '단어 5개 내외 변형'으로 낮추세요."
         )
@@ -551,6 +607,17 @@ def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None,
     data = json.dumps(payload).encode("utf-8")
     body = _gemini_call_with_retry(data, api_key, model)
     result = _extract_gemini_json(body, _QUIZ_TRUNC_MSG)
+
+    # 지문을 그대로 쓰는 유형의 빈 passageHtml을 서버가 채운다.
+    # '원문 그대로'일 때만 해당한다 — light/heavy는 모델이 응답 안에서 리워딩한 지문을
+    # 쓰므로 원문으로 채우면 학생이 읽는 지문과 어긋난다.
+    if variation == "verbatim":
+        plain_html = passage_to_html(passage)
+        for q in result.get("questions", []):
+            if not isinstance(q, dict):
+                continue
+            if q.get("type") in QUIZ_PLAIN_PASSAGE_TYPES and not str(q.get("passageHtml") or "").strip():
+                q["passageHtml"] = plain_html
 
     for q in result.get("questions", []):
         if not isinstance(q, dict):
@@ -578,6 +645,96 @@ def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None,
                     if fx.get(k):
                         fx[k] = sanitize_quiz_html(fx[k])
     return result
+
+
+# ── 지문 변형(리워딩) ──
+# 문제 생성과 분리된 짧은 호출이다. 유형을 나눠 여러 번 호출할 때 각 호출이 저마다
+# 다른 변형본을 만들어 버리면 한 문제지 안에서 지문이 달라진다. 그래서 변형본을
+# 먼저 한 번 확정해 두고, 이후 문제 생성은 그 텍스트를 '원문 그대로'로 받아 쓴다.
+REWORD_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {"passage": {"type": "STRING"}},
+    "required": ["passage"],
+    "propertyOrdering": ["passage"],
+}
+
+REWORD_SYSTEM_PROMPT = r"""You reword English reading passages for Korean high-school exams.
+Return ONLY the structured JSON described by the schema — no markdown, no prose, no commentary.
+
+Produce ONE reworded version of the ENTIRE passage at the requested level:
+- "단어 5개 내외 변형" — replace roughly 5 content words/phrases.
+- "단어 5개 이상 변형" — replace clearly more than 5 (about 8~15) content words/phrases.
+
+Rules (all levels):
+- Replace words with wording of EQUIVALENT meaning and EQUIVALENT difficulty
+  (동의어·다른 표현으로 자연스럽게 교체). The result must read like natural published English.
+- Keep EVERY fact, the order of ideas, the number of sentences, paragraph breaks, proper
+  nouns, numbers, and quoted text exactly the same. Do not add, merge, split, or drop
+  sentences. Do not add or remove information.
+- Keep the reading difficulty the same — do not simplify and do not make it fancier.
+- Return the FULL passage, start to finish, as plain text. No HTML, no markdown, no
+  underlines, no numbering, no title, no notes about what you changed.
+
+The output is what students will read, so it must stand on its own as a complete passage."""
+
+
+def build_reword_user_prompt(passage, variation):
+    return "\n".join([
+        f"변형 정도: {QUIZ_VARIATIONS.get(variation, QUIZ_VARIATIONS['light'])}",
+        "",
+        "[원문]",
+        passage.strip(),
+    ])
+
+
+_REWORD_TRUNC_MSG = "지문 변형본이 잘렸습니다. 지문을 더 짧게 나눠 다시 시도하세요."
+
+
+def call_gemini_reword(passage, variation, api_key, model):
+    """지문을 한 번만 리워딩해 확정된 변형본 텍스트를 돌려준다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "Gemini API 키가 없습니다. 화면 상단의 'API 키' 칸에 키를 입력하거나 "
+            "환경변수 GEMINI_API_KEY 를 설정하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+    if variation not in ("light", "heavy"):
+        # 변형이 필요 없는 값이 오면 원문을 그대로 돌려준다 (호출 자체가 낭비)
+        return passage
+    # '5개 이상 변형'은 Pro에서만 — 문제 생성이 아니라 이 단계에 걸리는 제약이다.
+    if variation == "heavy" and "pro" not in (model or "").lower():
+        raise NeedsPro(
+            "지문 변형 '단어 5개 이상 변형'은 Pro 모델에서만 사용할 수 있습니다. "
+            "정확도(모델)에서 Pro를 선택하거나, 변형 정도를 '단어 5개 내외 변형'으로 낮추세요."
+        )
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": REWORD_SYSTEM_PROMPT}]},
+        "contents": [
+            {"role": "user", "parts": [{"text": build_reword_user_prompt(passage, variation)}]}
+        ],
+        "generationConfig": {
+            # 지문 하나만 다시 쓰는 짧은 작업이라 온도를 낮게 잡아 사실 왜곡을 줄인다
+            "temperature": 0.3,
+            "maxOutputTokens": 8192,
+            "responseMimeType": "application/json",
+            "responseSchema": REWORD_SCHEMA,
+        },
+    }
+    data = json.dumps(payload).encode("utf-8")
+    body = _gemini_call_with_retry(data, api_key, model)
+    result = _extract_gemini_json(body, _REWORD_TRUNC_MSG)
+
+    out = str(result.get("passage") or "").strip()
+    # 빈 응답이나 눈에 띄게 짧아진 결과는 채택하지 않는다 — 문장을 통째로 날려 먹은
+    # 경우인데, 그대로 쓰면 뒤따르는 모든 문항의 근거가 사라진다.
+    if len(out) < len(passage.strip()) * 0.6:
+        raise RuntimeError(
+            "지문 변형본이 원문보다 크게 짧아 사용하지 않았습니다. 다시 시도하거나 "
+            "'원문 그대로'로 만들어 주세요."
+        )
+    return out
 
 
 # ── 워크북(10단계 통합 학습지) 스키마 ──
@@ -854,13 +1011,30 @@ Find and mark ALL notable grammar structures with a "g" ann. Scan for every occu
   - 목적격보어(원형/현재분사/과거분사), 사역·지각동사
 분명한 문법 포인트는 빠뜨리지 말고 표시하라. 매칭할 `t`는 반드시 `text` 안의 실제 문자열이어야 한다.
 
+### VOCABULARY COVERAGE (role "v"/"gv") — do NOT omit, 문장당 평균 1~3개 목표
+Grammar만큼 어휘도 빠짐없이 스캔하라. 한 문장을 다 훑었는데 표시된 "g"를 빼고 아무 "v"/"gv"도
+없다면 대개 누락이다. 아래 기준에 해당하는 단어/표현을 찾아 반드시 "v"(단어) 또는 "gv"(2단어
+이상 고정표현)로 표시하라:
+  - 고1~고3 학생 기준으로 뜻을 모르면 해석이 막히는 중·고난도 단어 (예: derogatory, compelling)
+  - 다의어가 이 문맥에서 특정한 뜻으로 쓰인 경우 (예: address = "다루다", not "주소")
+  - 문맥상 핵심 개념어 — 주제·요지와 직결되는 명사/동사/형용사
+  - 비유·함축적 표현 (밑줄 함축의미 문제의 소재가 될 만한 것)
+  - 숙어·구동사·전치사구 관용표현 (2단어 이상 → "gv": give rise to, account for, at odds with)
+  - 유의어/반의어 함정이 있어 어휘 선택형(문맥상 낱말 쓰임 적절성) 문제로 낼 만한 단어
+이미 "g"로 표시한 단어(관계사·전치사·조동사 등 순수 문법 기능어)는 "v"로 중복 표시하지 말고,
+내용어(content word)의 "뜻"이 핵심일 때만 "v"를 붙인다. 쉬운 단어(the, is, very, good 등)까지
+전부 태그하지 말 것 — 문맥상 학습 가치가 있는 단어만 고른다.
+
 ### FINAL SELF-CHECK (mandatory, before returning)
 1. ENGLISH: mentally read all chunks' `text` in order — they MUST reconstruct the WHOLE
    passage with no words missing.
 2. `t` 정확성: every ann's `t` must be an exact substring of its chunk's `text` (아니면 무시됨).
-3. COVERAGE: every grammar point in the coverage list has a "g" ann.
-4. 등위접속사 SWEEP: every parallel and/or/but/nor/yet has a "conj" ann + numbered elements.
-Only return JSON after all four checks.
+3. GRAMMAR COVERAGE: every grammar point in the coverage list has a "g" ann.
+4. VOCAB COVERAGE: re-read each sentence — any content word/expression that would block
+   comprehension if unknown, or that fits the vocabulary-coverage criteria above, has a
+   "v" or "gv" ann. A sentence with a "g" ann but zero "v"/"gv" is suspicious — double-check it.
+5. 등위접속사 SWEEP: every parallel and/or/but/nor/yet has a "conj" ann + numbered elements.
+Only return JSON after all five checks.
 
 ## note — per-sentence commentary
 - One or two sentences of objective, written-style Korean explaining the main grammar
@@ -1039,6 +1213,18 @@ _ROLE_RUBY = {
 }
 
 
+# 줄바꿈 금지를 붙일 최대 길이. 이보다 긴 대상은 그냥 접히게 둔다 —
+# 좁은 화면에서 한 줄로 붙들면 카드 밖으로 삐져나가는 쪽이 더 나쁘기 때문.
+_NOBREAK_MAX = 28
+
+
+def _nobreak(word):
+    """루비/형광 표시가 줄 끝에서 쪼개지지 않게 할지. 짧은 대상에만 적용한다.
+    브라우저는 ruby의 본문이 두 줄로 나뉘면 위의 한글 설명까지 잘라서 나눠 붙인다
+    ('For example,' + '예시' → 'For'에 '예', 'example,'에 '시'). 실제로 나던 오류."""
+    return len(word) <= _NOBREAK_MAX and word.count(" ") <= 4
+
+
 def _wrap_ann(word, a):
     """평문 영어 조각 word 에 역할(role)에 맞는 루비/색상/병렬번호를 입힌다."""
     role = (a.get("role") or "g").strip()
@@ -1048,12 +1234,42 @@ def _wrap_ann(word, a):
     numhtml = ""
     if isinstance(num, (int, float)) and int(num) > 0:
         numhtml = f'<sup class="conj-num-top">{int(num)}</sup>'
+    nb = " nobreak" if _nobreak(word) else ""
     if role == "conj":
-        return numhtml + f'<span class="conj-hl">{w}</span>'
+        return numhtml + f'<span class="conj-hl{nb}">{w}</span>'
     if role in _ROLE_RUBY:
-        return (numhtml + f'<ruby class="{_ROLE_RUBY[role]}">'
+        return (numhtml + f'<ruby class="{_ROLE_RUBY[role]}{nb}">'
                 f'<span class="{role}">{w}</span><rt>{rt}</rt></ruby>')
     return numhtml + w  # role "num" 등: 번호만, 색 없음
+
+
+_WORD_CH_RE = re.compile(r"[0-9A-Za-z]")
+
+
+def _is_word_ch(c):
+    return bool(c) and bool(_WORD_CH_RE.match(c))
+
+
+def _find_ann(text, t, used):
+    """text에서 주석 대상 t의 위치를 찾는다. 이미 다른 주석이 차지한 구간(used)은 건너뛴다.
+
+    t가 낱말 문자로 시작/끝나면 그쪽은 반드시 낱말 경계여야 한다.
+    이 검사가 없으면 등위접속사 'and'가 'exp|and|ed'의 한가운데에, 'or'가
+    'mem|or|y' 한가운데에 걸려 단어가 쪼개진 채 표시된다(실제로 나던 오류).
+    구두점으로 시작/끝나는 대상(",", "(" 등)에는 경계 조건을 걸지 않는다."""
+    need_left = _is_word_ch(t[:1])
+    need_right = _is_word_ch(t[-1:])
+    idx = text.find(t)
+    while idx != -1:
+        end = idx + len(t)
+        if (
+            not any(used[idx:end])
+            and not (need_left and idx > 0 and _is_word_ch(text[idx - 1]))
+            and not (need_right and end < len(text) and _is_word_ch(text[end]))
+        ):
+            return idx
+        idx = text.find(t, idx + 1)
+    return -1
 
 
 def assemble_eng(text, anns):
@@ -1071,9 +1287,7 @@ def assemble_eng(text, anns):
         t = a.get("t") or ""
         if not t:
             continue
-        idx = text.find(t)
-        while idx != -1 and any(used[idx:idx + len(t)]):
-            idx = text.find(t, idx + 1)
+        idx = _find_ann(text, t, used)
         if idx == -1:
             continue
         for i in range(idx, idx + len(t)):
@@ -1494,7 +1708,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook"):
+        if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
+                        "/api/reword"):
             self.send_error(404, "Not found")
             return
         try:
@@ -1555,6 +1770,29 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(result)
             return
 
+        # 지문 변형본을 먼저 확정하는 단계. 유형을 나눠 여러 번 문제를 만들어도
+        # 모든 문항이 같은 지문을 쓰도록, 화면이 이 결과를 받아 이후 호출에 넘긴다.
+        if path == "/api/reword":
+            passage = (req.get("passage") or "").strip()
+            if len(passage) < 20:
+                self._send_json({"error": "변형할 영어 지문을 입력하세요 (20자 이상)."}, 400)
+                return
+            variation = req.get("variation") or "light"
+            api_key = req.get("apiKey") or ""
+            model = req.get("model") or MODEL
+            try:
+                self._send_json({"passage": call_gemini_reword(passage, variation, api_key, model)})
+            except NeedsPro as e:
+                # 모델을 바꾸기 전에는 계속 실패한다 — 화면이 남은 작업을 멈추도록 code를 붙인다
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
         if path == "/api/quiz":
             passage = (req.get("passage") or "").strip()
             if len(passage) < 20:
@@ -1576,8 +1814,13 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     if _over_budget(t0):  # 프록시가 끊기 전에 현재 결과라도 돌려준다
                         break
+                    # 유형별 1문항이 기본이므로, 개수 대신 '빠진 유형'을 알려 주면
+                    # 재요청 한 번으로 채워질 확률이 높다.
+                    made = {q.get("type") for q in result.get("questions", []) if isinstance(q, dict)}
+                    missing = [t for t in types if t not in made]
                     retry = call_gemini_quiz(
-                        passage, types, count, api_key, model, short_hint=got, variation=variation
+                        passage, types, count, api_key, model,
+                        short_hint=(missing or got), variation=variation
                     )
                     # 더 많이 만들어 온 결과만 채택 (재시도가 더 나쁘면 기존 유지)
                     if len(retry.get("questions", [])) > got:
@@ -1600,6 +1843,9 @@ class Handler(BaseHTTPRequestHandler):
                         and len(blank_explanations(retry)) < len(missing)
                     ):
                         result = retry
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+                return
             except ProUnavailable as e:
                 self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
                 return

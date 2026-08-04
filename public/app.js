@@ -17,6 +17,7 @@ const apiKeyEl = $("apiKey");
 const toggleKeyEl = $("toggleKey");
 const passageListEl = $("passageList");
 const addPassageBtn = $("addPassageBtn");
+const clearPassagesBtn = $("clearPassagesBtn");
 const passageCountEl = $("passageCount");
 const grammarEl = $("targetGrammar");
 const modelEl = $("model");
@@ -72,26 +73,42 @@ function isProUnavailableError(err) {
   return !!(err && err.code === "pro_unavailable");
 }
 
+// 반대로 '이 기능은 Pro가 필요한데 Flash를 골랐다'는 경우 ('5개 이상 변형').
+// 모델을 올리기 전에는 계속 실패하므로 역시 즉시 중단한다.
+function isNeedsProError(err) {
+  return !!(err && err.code === "needs_pro");
+}
+
 function isQuotaError(err) {
   if (err && err.code === "quota") return true;
   if (isProUnavailableError(err)) return true; // 남은 지문을 즉시 중단시키기 위해
+  if (isNeedsProError(err)) return true;
   const msg = (err && err.message) || String(err || "");
   return /한도|quota|exceeded|429/i.test(msg);
 }
 
-// 중단 안내 카드 — Pro 사용 불가와 한도 소진을 구분해서 보여 준다
-function quotaStopHtml(left, err) {
+// 중단 안내 카드 — Pro 사용 불가와 한도 소진을 구분해서 보여 준다.
+// unit: 남은 분량의 단위. 문제 제작은 '지문 × 변형 × 유형묶음'으로 쪼개 부르므로
+// 지문 수가 아니라 '작업' 수를 센다.
+function quotaStopHtml(left, err, unit = "지문") {
+  if (isNeedsProError(err)) {
+    return `<section class="passage-block"><div class="passage-error">
+      <b>Pro 모델이 필요해 중단했습니다</b>
+      ${esc(err.message || "")}
+      남은 ${unit} ${left}개는 시도하지 않았습니다.
+    </div></section>`;
+  }
   if (isProUnavailableError(err)) {
     return `<section class="passage-block"><div class="passage-error">
       <b>Pro 모델을 사용할 수 없어 중단했습니다</b>
       이 API 키는 Pro 모델을 쓸 수 없습니다(결제된 키에서만 동작).
       위 <b>모델</b> 목록에서 <b>Flash</b> 모델을 선택한 뒤 다시 실행해 주세요.
-      남은 지문 ${left}개는 시도하지 않았습니다.
+      남은 ${unit} ${left}개는 시도하지 않았습니다.
     </div></section>`;
   }
   return `<section class="passage-block"><div class="passage-error">
     <b>한도 초과로 중단했습니다</b>
-    남은 지문 ${left}개는 시도하지 않았습니다. 지금은 다시 시도해도 같은 결과라
+    남은 ${unit} ${left}개는 시도하지 않았습니다. 지금은 다시 시도해도 같은 결과라
     시간만 걸리기 때문입니다. 한도가 리셋된 뒤 이어서 진행하세요.
   </div></section>`;
 }
@@ -443,6 +460,11 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
 
   addBtn.addEventListener("click", () => addRow(true));
 
+  function clearAll() {
+    listEl.innerHTML = "";
+    addRow(false);
+  }
+
   function getJobs() {
     const items = [...listEl.querySelectorAll(".passage-item")];
     const jobs = [];
@@ -460,7 +482,7 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
     return jobs;
   }
 
-  return { addRow, getJobs, renumber };
+  return { addRow, getJobs, renumber, clearAll };
 }
 
 // 모든 탭이 공유하는 지문 입력 (탭 밖 공통 패널) — 별도 저장소 없이 화면 하나로 공유
@@ -480,6 +502,11 @@ function runActiveTab() {
 
 // 지문은 저장하지 않는다 (파일 맨 위 localStorage.clear()와 같은 취지)
 passageMgr.addRow(false); // 시작 시 지문 입력칸 1개
+clearPassagesBtn.addEventListener("click", () => {
+  if (confirm("입력한 지문을 모두 지우시겠습니까?\n되돌릴 수 없습니다.")) {
+    passageMgr.clearAll();
+  }
+});
 
 // ── 탭 전환 ──
 const tabBtns = [...document.querySelectorAll(".tab-btn")];
@@ -572,6 +599,7 @@ async function analyze() {
 
   analyzeBtn.disabled = true;
   addPassageBtn.disabled = true;
+  clearPassagesBtn.disabled = true;
   loadingEl.classList.add("on");
   setEditMode(false); // 새로 분석하면 이전 수정 상태를 끈다 (내용도 새로 덮어써진다)
   resultEl.innerHTML = "";
@@ -639,6 +667,7 @@ async function analyze() {
   loadingEl.classList.remove("on");
   analyzeBtn.disabled = false;
   addPassageBtn.disabled = false;
+  clearPassagesBtn.disabled = false;
   resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -666,16 +695,23 @@ function safeHTML(s) {
 }
 
 // 한 지문의 분석 실패 카드
-function buildErrorHtml(job, total, msg) {
-  const head = total > 1 || job.named ? `${job.name} 분석 실패` : "분석 실패";
+// label: 지문 변형 세트 이름 ("원문" / "5개 내외 변형" …). 변형을 하나만 골랐으면 빈 값.
+// what: 실패한 작업 이름 (기본 "분석" — 문제 제작 탭에서는 "문제 제작")
+function buildErrorHtml(job, total, msg, label, kind) {
+  const what = kind === "mcq" || kind === "saq" ? "문제 제작" : "분석";
+  const named = total > 1 || job.named || label;
+  const who = [named ? job.name : "", label].filter(Boolean).join(" · ");
+  const head = who ? `${who} ${what} 실패` : `${what} 실패`;
   return `<section class="passage-block"><div class="passage-error"><b>${esc(head)}</b>${esc(msg)}</div></section>`;
 }
 
-// 결과 상단에 지문 이름표를 붙일지 (여러 지문이거나, 직접 이름을 지었을 때)
-function passageBanner(job, total) {
-  return total > 1 || job.named
-    ? `<div class="passage-banner">${esc(job.name)}</div>`
-    : "";
+// 결과 상단에 지문 이름표를 붙일지 (여러 지문이거나, 직접 이름을 지었을 때).
+// 변형 세트를 여러 개 만들었으면 어느 세트인지도 함께 보여 준다 — 세트끼리 지문이
+// 달라서, 이름표가 없으면 인쇄 후에 어느 쪽이 원문인지 알 수 없다.
+function passageBanner(job, total, label) {
+  if (!(total > 1 || job.named || label)) return "";
+  const tail = label ? `<span class="passage-banner-tag">${esc(label)}</span>` : "";
+  return `<div class="passage-banner">${esc(job.name)}${tail}</div>`;
 }
 
 // 한 지문의 전체 분석본 HTML을 문자열로 만든다 (여러 지문을 이어붙이기 위함)
@@ -816,13 +852,62 @@ function syncPicked(name) {
   });
 }
 
+// 여러 개를 고를 수 있는 체크박스 묶음. radioGroup과 짝을 이루되 값이 배열이다.
+// (지문 변형처럼 "여러 개를 고르면 고른 수만큼 세트가 늘어나는" 컨트롤에 쓴다)
+function checkGroup(name) {
+  const inputs = () => [...document.querySelectorAll(`input[name="${name}"]`)];
+  if (!inputs().length) return null;
+  return {
+    get values() {
+      return inputs().filter((i) => i.checked).map((i) => i.value);
+    },
+    set values(list) {
+      const want = new Set(list || []);
+      inputs().forEach((i) => (i.checked = want.has(i.value)));
+      syncPicked(name);
+    },
+    input(value) {
+      return inputs().find((i) => i.value === value) || null;
+    },
+    addEventListener(type, fn) {
+      inputs().forEach((i) =>
+        i.addEventListener(type, (e) => {
+          syncPicked(name);
+          fn(e);
+        })
+      );
+    },
+  };
+}
+
+// 지문 변형 단계 — 화면 표시용 이름과 설명
+const VARIATION_LABELS = {
+  verbatim: "원문",
+  light: "5개 내외 변형",
+  heavy: "5개 이상 변형",
+};
+const VARIATION_DESC = {
+  verbatim: "지문을 그대로 사용합니다.",
+  light: "지문 전체에서 약 5개 단어·표현을 비슷한 뜻의 다른 말로 바꿉니다.",
+  heavy: "지문 전체에서 5개보다 많은 단어·표현을 바꿉니다.",
+};
+
+// 한 번의 호출에 넣을 최대 유형 수.
+// 유형마다 지문이 통째로 실려 나오므로 한 번에 12유형을 요청하면 출력이 커져
+// 배포 환경의 프록시 제한(약 100초)에 걸린다. 4개씩 끊어 여러 번 부르면
+// 호출당 시간이 짧아지고, 하나가 실패해도 그 4문항만 잃는다.
+const QUIZ_TYPES_PER_CALL = 4;
+
+function chunkTypes(types, size = QUIZ_TYPES_PER_CALL) {
+  const out = [];
+  for (let i = 0; i < types.length; i += size) out.push(types.slice(i, i + size));
+  return out;
+}
+
 // 문제 제작 탭 하나를 구성한다 (객관식·주관식이 같은 로직을 공유)
 function setupQuizTab({ prefix, types, footer }) {
   const gridEl = $(prefix + "TypeGrid");
   const allEl = $(prefix + "TypeAll");
-  const countEl = $(prefix + "Count");
-  const countHintEl = $(prefix + "CountHint");
-  const fitBtn = $(prefix + "FitBtn");
   const btn = $(prefix + "Btn");
   const printBtn = $(prefix + "PrintBtn");
   const errorEl = $(prefix + "Error");
@@ -832,10 +917,10 @@ function setupQuizTab({ prefix, types, footer }) {
   const orderEl = radioGroup(prefix + "Order");
   const orderHintEl = $(prefix + "OrderHint");
   const ORDER_STORE = "gemini_" + prefix + "_order";
-  // 지문 변형 — 지금은 객관식 탭에만 있는 컨트롤이라 주관식 탭에서는 radioGroup이 null을 반환한다.
+  // 지문 변형 — 지금은 객관식 탭에만 있는 컨트롤이라 주관식 탭에서는 checkGroup이 null을 반환한다.
   // 어법·어휘 선택형처럼 [정답|오답] 쌍이 실제 원문 단어와 정확히 일치해야 하는 주관식
   // 포맷과 변형이 섞이면 정답 근거가 애매해지므로, 주관식은 항상 "원문 그대로"로 보낸다.
-  const variationEl = radioGroup(prefix + "Variation");
+  const variationEl = checkGroup(prefix + "Variation");
   const variationHintEl = $(prefix + "VariationHint");
   const VARIATION_STORE = "gemini_" + prefix + "_variation";
 
@@ -879,38 +964,65 @@ function setupQuizTab({ prefix, types, footer }) {
   });
   updateOrderHint();
 
-  // 지문 변형 정도 — 있는 탭에서만 동작 (없으면 항상 "verbatim"으로 취급)
-  const variation = () => (variationEl ? variationEl.value : "verbatim");
+  // 지문 변형 정도 — 있는 탭에서만 동작 (없으면 항상 ["verbatim"] 한 세트로 취급).
+  // 여러 개를 고르면 고른 수만큼 문제 세트가 만들어진다 (원문 1세트 + 변형 1세트 …).
+  const variations = () => {
+    if (!variationEl) return ["verbatim"];
+    const on = variationEl.values;
+    return on.length ? on : ["verbatim"];
+  };
   function updateVariationHint() {
     if (!variationHintEl) return;
-    const base = {
-      verbatim: "지문을 그대로 사용합니다.",
-      light: "지문 전체에서 약 5개 단어·표현을 비슷한 뜻의 다른 말로 바꿔 사용합니다. 사실·순서·난이도는 그대로 유지됩니다.",
-      heavy: "지문 전체에서 5개보다 많은 단어·표현을 바꿔 사용합니다. 사실·순서·난이도는 그대로 유지됩니다.",
-    }[variation()];
-    variationHintEl.textContent =
-      base + (isProModelId(modelEl.value) ? "" : " '5개 이상 변형'은 모델을 Pro로 선택해야 고를 수 있습니다.");
+    const on = variationEl ? variationEl.values : [];
+    const parts = [];
+    if (!on.length) {
+      parts.push("지문 변형을 하나 이상 선택하세요.");
+    } else if (on.length === 1) {
+      parts.push(VARIATION_DESC[on[0]] || "");
+    } else {
+      parts.push(
+        `<b>${on.map((v) => VARIATION_LABELS[v]).join(" + ")}</b> — ` +
+          `지문 1개당 <b>${on.length}세트</b>가 만들어집니다. 사실·순서·난이도는 모두 그대로 유지됩니다.`
+      );
+    }
+    if (on.includes("light") || on.includes("heavy")) {
+      // 변형본은 문제를 만들기 전에 한 번 확정한다. 그래야 유형을 나눠 여러 번
+      // 호출해도 모든 문항이 같은 지문을 쓴다.
+      parts.push("변형본은 먼저 한 번 만들어 확정한 뒤, 그 지문으로 모든 문항을 출제합니다.");
+    }
+    if (!isProModelId(modelEl.value)) {
+      parts.push("'5개 이상 변형'은 모델을 Pro로 선택해야 고를 수 있습니다.");
+    }
+    variationHintEl.innerHTML = parts.filter(Boolean).join(" ");
   }
   if (variationEl) {
     // '5개 이상 변형'은 Pro에서만 고를 수 있다 — 사실·순서·난이도는 그대로 두면서 지문
     // 전체를 대량으로 바꿔 쓰는 건 Flash보다 Pro가 훨씬 안정적으로 해내는 작업이라,
     // 여기서만 모델 선택과 지문 변형 설정을 서로 묶는다.
-    const heavyRadio = document.querySelector(`input[name="${prefix}Variation"][value="heavy"]`);
+    const heavyBox = variationEl.input("heavy");
     function applyHeavyLock() {
-      if (!heavyRadio) return;
+      if (!heavyBox) return;
       const proOk = isProModelId(modelEl.value);
-      heavyRadio.disabled = !proOk;
-      heavyRadio.closest("label").classList.toggle("disabled", !proOk);
-      if (!proOk && heavyRadio.checked) {
-        // Pro에서 Flash로 바뀌는 순간 '5개 이상'은 더 못 쓰므로 안전한 단계로 내려준다
-        variationEl.value = "light";
-        localStorage.setItem(VARIATION_STORE, "light");
+      heavyBox.disabled = !proOk;
+      heavyBox.closest("label").classList.toggle("disabled", !proOk);
+      // Pro에서 Flash로 바뀌는 순간 '5개 이상'은 더 못 쓰므로 체크를 풀어 준다.
+      // (라디오와 달리 다른 단계로 '내려줄' 필요 없이 그 세트만 빠진다)
+      if (!proOk && heavyBox.checked) {
+        heavyBox.checked = false;
+        syncPicked(prefix + "Variation");
+        saveVariations();
       }
       updateVariationHint();
     }
-    variationEl.value = localStorage.getItem(VARIATION_STORE) || "verbatim";
+    function saveVariations() {
+      localStorage.setItem(VARIATION_STORE, variationEl.values.join(","));
+    }
+    const saved = (localStorage.getItem(VARIATION_STORE) || "verbatim")
+      .split(",")
+      .filter((v) => v in VARIATION_LABELS);
+    variationEl.values = saved.length ? saved : ["verbatim"];
     variationEl.addEventListener("change", () => {
-      localStorage.setItem(VARIATION_STORE, variationEl.value);
+      saveVariations();
       updateVariationHint();
     });
     modelEl.addEventListener("change", applyHeavyLock);
@@ -924,72 +1036,22 @@ function setupQuizTab({ prefix, types, footer }) {
     allEl.checked = on === boxes.length;
     allEl.indeterminate = on > 0 && on < boxes.length;
   }
-  // 문항 수 규칙: 선택한 유형은 최소 1문항씩 나와야 하므로
-  //   · 하한 = 체크한 유형 수 (그 아래로는 못 내려감)
-  //   · 유형을 체크하면 문항 수가 자동으로 따라 올라감
-  //   · 사용자가 더 늘리는 것은 자유 (최대 30) → 유형을 반복해 더 많이 출제
-  const MAX_COUNT = 30;
+  // 문항 수는 '체크한 유형 수'로 고정한다 — 유형 1개당 정확히 1문항.
+  // 같은 유형을 여러 문항 뽑으면 지문의 같은 자리를 두 번 묻게 되어 품질이 떨어지고,
+  // 더 필요할 때는 '지문 변형'을 하나 더 골라 세트를 늘리는 편이 낫다.
   const typeCount = () => gridEl.querySelectorAll("input:checked").length;
-
-  function updateHint() {
-    const n = typeCount();
-    const c = parseInt(countEl.value, 10) || 0;
-    let msg, cls = "";
-    if (!n) {
-      msg = "유형을 선택하세요";
-      cls = "warn";
-    } else if (c < n) {
-      msg = `선택 유형 ${n}개 · 최소 ${n}문항`;
-      cls = "warn";
-    } else if (c === n) {
-      msg = `선택 유형 ${n}개 · 유형당 1문항`;
-    } else {
-      const per = (c / n).toFixed(1).replace(/\.0$/, "");
-      msg = `선택 유형 ${n}개 · 유형당 약 ${per}문항`;
-    }
-    countHintEl.textContent = msg;
-    countHintEl.className = "count-hint" + (cls ? " " + cls : "");
-  }
-
-  // 입력을 마쳤을 때(blur/Enter) 하한·상한으로 보정 — 타이핑 도중에는 건드리지 않는다
-  function clampCount() {
-    const n = Math.max(1, typeCount());
-    let c = parseInt(countEl.value, 10);
-    if (!Number.isFinite(c) || c < n) c = n;
-    if (c > MAX_COUNT) c = MAX_COUNT;
-    countEl.value = c;
-    updateHint();
-  }
-
-  // 유형 선택이 바뀌면 하한과 문항 수를 체크한 유형 수에 맞춘다.
-  // 체크하면 올라가고, 해제하면 같이 내려간다. (원하면 그 뒤에 직접 더 늘릴 수 있음)
-  function syncCount() {
-    const n = Math.max(1, typeCount());
-    countEl.min = n;
-    countEl.value = n;
-    updateHint();
-  }
 
   allEl.addEventListener("change", () => {
     const check = allEl.checked;
     gridEl.querySelectorAll("input").forEach((b) => (b.checked = check));
     syncAll();
-    syncCount();
     renumberTypes();
   });
   gridEl.addEventListener("change", () => {
     syncAll();
-    syncCount();
     renumberTypes();
   });
-  countEl.addEventListener("input", updateHint);   // 타이핑 중에는 안내만
-  countEl.addEventListener("change", clampCount);  // 확정되면 하한으로 보정
-  fitBtn.addEventListener("click", () => {
-    countEl.value = Math.max(1, typeCount());
-    updateHint();
-  });
   syncAll();
-  syncCount();
   renumberTypes();
 
   async function generate() {
@@ -1010,68 +1072,145 @@ function setupQuizTab({ prefix, types, footer }) {
       errorEl.textContent = "출제 유형을 하나 이상 선택하세요.";
       return;
     }
-    // 선택한 유형은 최소 1문항씩 보장 (하한 = 유형 수), 상한 30
-    clampCount();
-    const count = Math.min(
-      Math.max(parseInt(countEl.value, 10) || picked.length, picked.length),
-      MAX_COUNT
-    );
+    const vars = variationEl && !variationEl.values.length ? [] : variations();
+    if (!vars.length) {
+      errorEl.textContent = "지문 변형을 하나 이상 선택하세요.";
+      return;
+    }
 
     btn.disabled = true;
     addPassageBtn.disabled = true;
+    clearPassagesBtn.disabled = true;
     loadingEl.classList.add("on");
     resultEl.innerHTML = "";
     printBtn.style.display = "none";
     syncFloatPrint();
 
+    // 완성될 때마다 화면에 붙인다. 도중에 멈추거나 창을 닫아도 그때까지 만든
+    // 세트는 남아 인쇄까지 할 수 있다 (여기까지 쓴 토큰을 버리지 않기 위해).
+    const showFooter = () => {
+      if (!resultEl.querySelector(".qz-footer")) {
+        resultEl.insertAdjacentHTML("beforeend", `<footer class="qz-footer">${esc(footer)} · 자동 생성</footer>`);
+      }
+      printBtn.style.display = "inline-flex";
+      syncFloatPrint();
+    };
+    const append = (html) => {
+      const foot = resultEl.querySelector(".qz-footer");
+      if (foot) foot.remove();
+      resultEl.insertAdjacentHTML("beforeend", html);
+    };
+
     const total = jobs.length;
-    const usedModel = modelEl.value;
+    const chunks = chunkTypes(picked);
+    // 전체 진행 칸 수 = 지문 × 변형 × 청크. 어디까지 왔는지 보여 주기 위한 값.
+    const steps = total * vars.length * chunks.length;
+    let step = 0;
     let okCount = 0;
-    const htmlParts = [];
-    for (let i = 0; i < total; i++) {
+    let stopped = false;
+    let stopErr = null;
+
+    for (let i = 0; i < total && !stopped; i++) {
       const job = jobs[i];
-      loadingTextEl.textContent =
-        total > 1
-          ? `${job.name} 문제 만드는 중… (${i + 1}/${total})`
-          : "AI가 문제를 만들고 있습니다… (유형·문항 수에 따라 시간이 걸릴 수 있어요)";
 
       if (job.text.length < 20) {
-        htmlParts.push(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
+        append(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력).", "", prefix));
         continue;
       }
 
-      try {
-        const data = await postJson(
-          "/api/quiz",
-          { passage: job.text, types: picked, count, model: modelEl.value, apiKey, variation: variation() },
-          "문제 생성에 실패했습니다."
-        );
-        // 무작위 모드 — 받아온 문항을 섞는다. 지문마다 다시 섞이고, 문제지 번호와
-        // 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매기므로 어긋나지 않는다.
-        if (isRandom() && Array.isArray(data.questions)) {
-          data.questions = seededShuffle(data.questions, Math.floor(Math.random() * 1e9));
+      for (let v = 0; v < vars.length && !stopped; v++) {
+        const variation = vars[v];
+        const label = vars.length > 1 ? VARIATION_LABELS[variation] : "";
+        const who = total > 1 || job.named ? job.name : "지문";
+        const tag = label ? `${who} · ${label}` : who;
+
+        // ① 변형본 확정 — 유형을 나눠 여러 번 호출해도 모든 문항이 같은 지문을 쓰도록
+        //    문제를 만들기 전에 지문을 한 번만 다시 쓴다.
+        let source = job.text;
+        if (variation !== "verbatim") {
+          loadingTextEl.textContent = `${tag} 지문 변형본 만드는 중…`;
+          try {
+            const r = await postJson(
+              "/api/reword",
+              { passage: job.text, variation, model: modelEl.value, apiKey },
+              "지문 변형에 실패했습니다."
+            );
+            source = (r.passage || "").trim() || job.text;
+          } catch (err) {
+            append(buildErrorHtml(job, total, err.message || String(err), label, prefix));
+            if (isQuotaError(err)) {
+              stopped = true;
+              stopErr = err;
+              const left = steps - step;
+              if (left > 0) append(quotaStopHtml(left, err, "작업"));
+            }
+            step += chunks.length;
+            continue;
+          }
         }
-        htmlParts.push(buildQuizHtml(data, job, total, prefix));
-        okCount++;
-      } catch (err) {
-        const msg = err.message || String(err);
-        htmlParts.push(buildErrorHtml(job, total, msg));
-        // 한도 소진은 기다려도 안 풀린다 — 남은 지문을 시도하지 않고 즉시 멈춘다
-        if (isQuotaError(err)) {
-            const left = total - (i + 1);
-          if (left > 0) htmlParts.push(quotaStopHtml(left, err));
-          break;
+
+        // ② 문제 생성 — 확정된 지문을 '원문 그대로'로 넘긴다. 변형은 ①에서 이미 끝났다.
+        const questions = [];
+        const failed = [];
+        for (const group of chunks) {
+          step++;
+          loadingTextEl.textContent =
+            steps > 1
+              ? `${tag} 문제 만드는 중… (${step}/${steps}) — ${group.join(", ")}`
+              : "AI가 문제를 만들고 있습니다…";
+          try {
+            const data = await postJson(
+              "/api/quiz",
+              {
+                passage: source,
+                types: group,
+                count: group.length,   // 유형 1개당 1문항
+                model: modelEl.value,
+                apiKey,
+                variation: "verbatim",
+              },
+              "문제 생성에 실패했습니다."
+            );
+            if (Array.isArray(data.questions)) questions.push(...data.questions);
+          } catch (err) {
+            failed.push({ group, msg: err.message || String(err) });
+            // 한도 소진·Pro 불가는 기다려도 안 풀린다 — 남은 작업을 시도하지 않는다
+            if (isQuotaError(err)) {
+              stopped = true;
+              stopErr = err;
+              break;
+            }
+          }
+        }
+
+        // 일부 청크가 실패해도 성공한 문항은 살려 낸다 (그만큼 토큰을 이미 썼다)
+        if (questions.length) {
+          // 무작위 모드 — 받아온 문항을 섞는다. 세트마다 다시 섞이고, 문제지 번호와
+          // 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매기므로 어긋나지 않는다.
+          const set = { questions };
+          if (isRandom()) {
+            set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
+          }
+          append(buildQuizHtml(set, job, total, prefix, label));
+          okCount++;
+          showFooter();
+        }
+        failed.forEach((f) => {
+          append(buildErrorHtml(job, total, `${f.group.join(", ")} — ${f.msg}`, label, prefix));
+        });
+        if (stopped && stopErr) {
+          const left = steps - step;
+          if (left > 0) append(quotaStopHtml(left, stopErr, "작업"));
         }
       }
     }
 
-    if (okCount) htmlParts.push(`<footer>${esc(footer)} · 자동 생성</footer>`);
-    resultEl.innerHTML = htmlParts.join("");
-    if (okCount) printBtn.style.display = "inline-flex";
+    if (okCount) showFooter();
     syncFloatPrint();
     loadingEl.classList.remove("on");
     btn.disabled = false;
     addPassageBtn.disabled = false;
+    clearPassagesBtn.disabled = false;
     resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -1183,10 +1322,10 @@ function quizBodyHtml(q) {
 
 // 문제 카드 + 정답/해설(화면: 토글, 인쇄: 항상 별도 섹션) HTML 생성
 // kind: "mcq" | "saq" — 주관식 해설지에는 해설 열을 넣지 않는다(정답만).
-function buildQuizHtml(d, job, total, kind) {
+function buildQuizHtml(d, job, total, kind, label) {
   const parts = [];
   parts.push(`<section class="passage-block qz-block">`);
-  parts.push(passageBanner(job, total));
+  parts.push(passageBanner(job, total, label));
 
   // 문항 카드는 별도 래퍼에 담는다 — 인쇄할 때 이 래퍼에만 2단 조판을 적용하고
   // '정답 및 해설' 표는 단 나눔 없이 전체 폭을 쓰게 하기 위해서다.
@@ -1272,9 +1411,15 @@ const WB_STAGES = [
 const wbStageGridEl = $("wbStageGrid");
 WB_STAGES.forEach((s) => {
   const label = document.createElement("label");
+  // 빈칸 연습(영문)만 괄호 설명을 아래 줄로 내려 표시한다
+  const split = s.id === 3 ? s.name.match(/^(.*?)\s*(\([^)]*\))$/) : null;
+  const nameHtml = split
+    ? `<span class="opt-text">${esc(split[1])}<span class="opt-sub">${esc(split[2])}</span></span>`
+    : `<span>${esc(s.name)}</span>`;
+  if (split) label.classList.add("opt-2line");
   label.innerHTML =
     `<input type="checkbox" value="${s.id}" ${s.def ? "checked" : ""}>` +
-    `<span class="type-no"></span><span>${esc(s.name)}</span>`;
+    `<span class="type-no"></span>${nameHtml}`;
   wbStageGridEl.appendChild(label);
 });
 
@@ -1373,6 +1518,7 @@ async function generateWorkbook() {
 
   wbBtn.disabled = true;
   addPassageBtn.disabled = true;
+  clearPassagesBtn.disabled = true;
   wbLoadingEl.classList.add("on");
   workbookDocEl.innerHTML = "";
   workbookPrintBtn.style.display = "none";
@@ -1435,6 +1581,7 @@ async function generateWorkbook() {
   wbLoadingEl.classList.remove("on");
   wbBtn.disabled = false;
   addPassageBtn.disabled = false;
+  clearPassagesBtn.disabled = false;
   workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
