@@ -406,6 +406,18 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
 .passage-count.danger{color:var(--g); font-weight:700;}
 @media (prefers-color-scheme:dark) and (min-width:999999px){ .passage-count.warn{color:#e0a83a;} }
 .passage-del{padding:4px 10px; font-size:12px; line-height:1;}
+/* 붙여넣기 정리 안내 — 무엇을 지웠는지 알리고 되돌릴 수 있게 한다 */
+.passage-note{
+  margin-top:6px; font-size:11.5px; color:var(--ink-soft);
+  display:flex; align-items:center; gap:8px;
+}
+/* display를 직접 지정하면 hidden 속성(UA의 display:none)을 덮어써 버린다 — 다시 눌러 준다 */
+.passage-note[hidden]{display:none;}
+.passage-note b{color:var(--ink);}
+.linkish{
+  background:none; border:0; padding:0; cursor:pointer;
+  font:inherit; color:var(--accent); font-weight:700; text-decoration:underline;
+}
 .passage-input{
   width:100%; min-height:130px; resize:vertical; font:inherit; line-height:1.55;
   color:var(--ink); background:var(--card); border:1px solid var(--line);

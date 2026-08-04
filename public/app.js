@@ -400,6 +400,47 @@ function updatePassageCount(ta) {
 // 올라가기 때문이다. 지문 10개면 분석에 대략 3~10분(꼼꼼 검토 시 2배).
 const MAX_PASSAGES = 10;
 
+/* ── 붙여넣은 지문의 문장 번호(❶ ① ➊ …) 자동 제거 ──
+   교재·기출 자료를 복사하면 문장마다 원문자 번호가 딸려 온다. 그대로 두면
+   ① 분석본의 영어 줄에 번호가 섞이고,
+   ② 문제 제작에서 앱이 쓰는 보기 기호(어휘·어법의 ①~⑤, 문장삽입의 삽입 위치 ①~⑤)와
+      뒤섞여 학생이 무엇을 고르는지 알 수 없게 된다.
+   그래서 입력 단계에서 지운다. 지우는 자리는 '문두'뿐이다 —
+   문자열 처음 / 줄 처음 / 문장부호 뒤. 문장 중간의 원문자는 보기 기호일 수 있어 남긴다
+   (이미 만든 어휘 문제를 다시 붙여넣어도 안전하다).
+   ASCII 표기(1. / (1) / 1))는 '1990. That year…' 같은 연도를 잘못 지울 수 있어 건드리지 않는다. */
+const CIRCLED_MARKERS =
+  "①-⑳" + // ①②③ … ⑳
+  "⑴-⒇" + // ⑴⑵⑶ … ⒇
+  "⒈-⒛" + // ⒈⒉⒊ … ⒛
+  "⓵-⓾" + // ⓵⓶⓷ …
+  "❶-❿" + // ❶❷❸ … ❿
+  "➀-➉" + // ➀➁➂ …
+  "➊-➓" + // ➊➋➌ …
+  "㉑-㉟" + // ㉑㉒ … ㉟
+  "㊱-㊿" + // ㊱㊲ …
+  "㉠-㉻" + // ㉠㉡ / ㉮㉯ (한글 원문자)
+  "Ⅰ-Ⅻ";  // ⅠⅡⅢ … (로마 숫자)
+// 앞자리(문두 조건)는 캡처 그룹으로 잡아 그대로 되돌려 놓는다.
+// 후방탐색((?<=…))을 쓰면 지원하지 않는 구형 브라우저에서 이 파일 전체가
+// SyntaxError로 죽으므로 일부러 쓰지 않는다.
+// 마커 바로 뒤에 붙는 구분 기호(Ⅰ. / ①) / ㉮:)도 함께 걷어낸다.
+// 마커에 '붙어 있는' 것만 지우므로 문장 끝 마침표에는 영향이 없다.
+const SENT_MARKER_RE = new RegExp(
+  `(^|[\\n\\r]|[.!?"'”’)\\]][ \\t])[ \\t]*[${CIRCLED_MARKERS}][.):\\]]?[ \\t]*`,
+  "gm"
+);
+
+// 문두 문장 번호를 지운 텍스트와 지운 개수를 돌려준다. 여러 번 적용해도 결과가 같다.
+function stripSentenceMarkers(text) {
+  let count = 0;
+  const out = String(text || "").replace(SENT_MARKER_RE, (m, lead) => {
+    count++;
+    return lead; // 줄바꿈·문장부호 등 앞자리는 그대로 두고 번호만 걷어낸다
+  });
+  return { text: out.replace(/[ \t]{2,}/g, " ").trim(), count };
+}
+
 function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
   const rowCount = () => listEl.querySelectorAll(".passage-item").length;
 
@@ -437,17 +478,73 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
         <span class="passage-count" aria-live="polite"></span>
         <button type="button" class="btn ghost small passage-del" title="이 지문 삭제">✕ 삭제</button>
       </div>
-      <textarea class="passage-input" placeholder="분석할 영어 지문을 여기에 붙여넣으세요."></textarea>`;
+      <textarea class="passage-input" placeholder="분석할 영어 지문을 여기에 붙여넣으세요."></textarea>
+      <div class="passage-note" hidden></div>`;
     listEl.appendChild(item);
     const ta = item.querySelector(".passage-input");
     const nameEl = item.querySelector(".passage-name");
+    const noteEl = item.querySelector(".passage-note");
+
+    // 붙여넣기 직후 문장 번호를 정리하고, 무엇을 지웠는지 알려 준다.
+    // 안내는 두 상태를 오간다 — 지운 뒤에는 '되돌리기', 되돌린 뒤에는 '다시 지우기'.
+    // undoText는 '방금 지웠다' 상태에서만 값을 갖는다(= 되돌릴 것이 있다는 뜻).
+    let undoText = null;
+
+    function noteHtml(msg, cls, label) {
+      noteEl.innerHTML = `${msg} <button type="button" class="linkish ${cls}">${label}</button>`;
+      noteEl.hidden = false;
+    }
+    // 현재 입력값에 남아 있는 문장 번호 수에 맞춰 '다시 지우기'를 띄운다(없으면 숨김)
+    function offerStrip() {
+      const { count } = stripSentenceMarkers(ta.value);
+      if (count) noteHtml(`문장 번호 <b>${count}개</b>가 있습니다.`, "passage-restrip", "번호 지우기");
+      else noteEl.hidden = true;
+    }
+    function doStrip() {
+      const { text, count } = stripSentenceMarkers(ta.value);
+      if (!count) {
+        noteEl.hidden = true;
+        return;
+      }
+      undoText = ta.value;
+      ta.value = text;
+      updatePassageCount(ta);
+      noteHtml(`문장 번호 <b>${count}개</b>를 지웠습니다.`, "passage-undo", "되돌리기");
+    }
+
+    // 브라우저가 붙여넣기를 반영한 뒤에 값을 읽어야 하므로 다음 틱으로 미룬다.
+    // (execCommand 대신 이 방식을 쓰면 브라우저의 되돌리기 스택도 그대로 살아 있다)
+    ta.addEventListener("paste", () => setTimeout(doStrip, 0));
+
+    noteEl.addEventListener("click", (e) => {
+      if (e.target.closest(".passage-restrip")) {
+        // 되돌린 뒤(또는 직접 번호를 넣은 뒤) 다시 지우기 — 항상 '지금 값'을 기준으로 센다
+        doStrip();
+        ta.focus();
+        return;
+      }
+      if (e.target.closest(".passage-undo") && undoText != null) {
+        ta.value = undoText;
+        undoText = null;
+        updatePassageCount(ta);
+        offerStrip();   // 되돌렸으니 이제 다시 지울 수 있다고 알린다
+        ta.focus();
+      }
+    });
     ta.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && onEnter) onEnter();
     });
     nameEl.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && onEnter) onEnter();
     });
-    ta.addEventListener("input", () => updatePassageCount(ta));
+    ta.addEventListener("input", () => {
+      updatePassageCount(ta);
+      // 사용자가 직접 고치면 안내를 현재 내용에 맞춘다 — 남은 번호 수가 실제와 어긋나면
+      // 안내가 거짓말이 되기 때문. 이때 '되돌리기'는 더 이상 유효하지 않다.
+      // (붙여넣기의 input은 doStrip보다 먼저 실행되므로 지운 뒤 안내를 덮지 않는다)
+      undoText = null;
+      offerStrip();
+    });
     updatePassageCount(ta);
     item.querySelector(".passage-del").addEventListener("click", () => {
       item.remove();
