@@ -992,14 +992,37 @@ words. So for English your only job is: give the plain text, then list what to m
   HARD LIMITS: "g" rt=문법용어만(뜻 0%) / "v" rt=뜻만 / "gv"=2단어 이상만 / rt는 해석 아님·아주 짧게.
   WRONG rt <재배하다(과거 수동태)>  →  RIGHT rt <과거 수동태>.
 
-### 등위·상관접속사 병렬 (MANDATORY — 절대 빠뜨리지 말 것)
-Scan every "and / or / but / nor / yet" (and correlatives both…and / either…or /
-not only…but also / neither…nor / not…but) that joins parallel elements. For EACH:
-  · add an ann for the conjunction: {t:"and", role:"conj", rt:"", num:0}
-  · add an ann for EACH parallel element with num = 1, 2, 3…: e.g.
+### 등위·상관접속사 병렬 (MANDATORY — 가장 자주 빠뜨리는 항목, 기계 검사로 대조된다)
+DEFAULT = MARK IT. 지문에 나오는 "and / or / but / nor / yet"은 아래 '제외 목록'에 해당하지
+않는 한 **전부** 등위접속사로 보고 표시하라. "이건 굳이 병렬이라 할 것까진…" 하고 넘기지 말 것.
+빠뜨린 접속사는 서버가 기계적으로 세어 되돌려 보내므로, 처음부터 빠짐없이 표시하는 편이 낫다.
+
+For EACH such conjunction:
+  · 접속사 자체에 ann: {t:"and", role:"conj", rt:"", num:0}
+  · 그 접속사가 잇는 **모든** 병렬 요소에 번호 ann: num = 1, 2, 3…
       {t:"influence", role:"num", rt:"", num:1}, {t:"invest", role:"num", rt:"", num:2}
-    (use role "g"/"v"/"gv" instead of "num" if that element also deserves color.)
-Never skip one, not even a simple "and" joining two nouns.
+    (그 요소가 색도 받을 만하면 role을 "num" 대신 "g"/"v"/"gv"로 주고 num만 붙인다.)
+  · 상관접속사는 **두 짝을 모두** "conj"로 표시한다:
+      both…and / either…or / neither…nor / not only…but (also) / not…but /
+      between A and B — "both"와 "and" 각각에 conj ann.
+
+▸ 놓치기 쉬운 병렬 — 이 목록을 한 항목씩 짚어 가며 지문을 훑어라:
+  1. 3개 이상 나열: "A, B, and C" → 쉼표로 이어진 앞의 것들까지 전부 num 부여 (1,2,3).
+  2. **절·문장 병렬**: "S+V …, and S+V …" — 절을 잇는 and/but/or도 반드시 표시.
+  3. **동사구 병렬**: "can help develop and improve" — 조동사 뒤 원형 두 개.
+  4. **to부정사 병렬에서 두 번째 to 생략**: "to grow and (to) survive".
+  5. 전치사구·분사구·형용사·부사의 병렬: "in schools and in homes", "growing and spreading".
+  6. 명사구 병렬: "hundreds of chemical reactions and processes".
+  7. 문두의 But/And/Or (앞 문장과 잇는 경우)도 conj로 표시한다.
+  8. 병렬 요소가 여러 chunk에 걸쳐 있어도 각 chunk의 anns에 각각 번호를 넣어 이어 붙인다.
+
+▸ 제외(표시하지 않음): 굳어진 표현 안의 and/or/but —
+  and so on / and so forth / as well as / all but / nothing but / anything but /
+  but for / more or less / sooner or later. "yet"이 부사('아직·그런데도')인 경우도 제외.
+
+▸ `t` 주의: 접속사 ann의 `t`는 반드시 **독립된 낱말**이어야 한다. "expanded" 속의 "and",
+  "memory" 속의 "or"처럼 단어 일부를 `t`로 주면 그 ann은 버려지고 진짜 접속사는 표시되지
+  않는다. 접속사 하나에 ann 하나씩, 앞뒤가 공백/구두점인 자리만 고른다.
 
 ### GRAMMAR COVERAGE (role "g") — do NOT omit
 Find and mark ALL notable grammar structures with a "g" ann. Scan for every occurrence of:
@@ -1033,8 +1056,15 @@ Grammar만큼 어휘도 빠짐없이 스캔하라. 한 문장을 다 훑었는�
 4. VOCAB COVERAGE: re-read each sentence — any content word/expression that would block
    comprehension if unknown, or that fits the vocabulary-coverage criteria above, has a
    "v" or "gv" ann. A sentence with a "g" ann but zero "v"/"gv" is suspicious — double-check it.
-5. 등위접속사 SWEEP: every parallel and/or/but/nor/yet has a "conj" ann + numbered elements.
-Only return JSON after all five checks.
+5. 등위접속사 COUNT (숫자로 대조하라 — 눈으로 훑지 말 것):
+   (a) 지문 전체에서 낱말 "and / or / but / nor"가 몇 번 나오는지 센다 → N
+   (b) 굳어진 표현(and so on, as well as, all but …) 안에 든 것을 뺀다 → N'
+   (c) 내가 만든 "conj" ann의 개수를 센다 → M
+   (d) M < N' 이면 반드시 누락이다. 어느 것을 빠뜨렸는지 찾아 conj ann과 번호를 추가한 뒤
+       다시 세어 M = N' 이 될 때까지 반복한다. 상관접속사(both…and 등)는 짝마다 1개씩 센다.
+6. 병렬 번호: 모든 "conj" ann에는 그것이 잇는 요소들의 num ann이 최소 2개 딸려 있어야 한다.
+   conj만 있고 번호가 없으면 미완성이다.
+Only return JSON after all six checks.
 
 ## note — per-sentence commentary
 - One or two sentences of objective, written-style Korean explaining the main grammar
@@ -1272,13 +1302,10 @@ def _find_ann(text, t, used):
     return -1
 
 
-def assemble_eng(text, anns):
-    """모델이 준 평문 영어(text) 위에, 주석 목록(anns)의 대상 문자열을 찾아
-    색상/루비/병렬번호를 겹쳐 최종 영어 HTML을 만든다. 매칭 안 되는 주석은 무시하되
-    영어 원문은 항상 그대로 보존된다."""
-    text = text or ""
-    if not text:
-        return ""
+def _ann_spans(text, anns):
+    """주석 목록을 text 위의 (시작, 끝, 주석) 구간으로 확정한다.
+    앞선 주석이 차지한 자리는 뒤 주석이 다시 쓰지 못한다(겹침 방지).
+    조립(assemble_eng)과 누락 검사(unmarked_conjunctions)가 같은 결과를 보도록 공유한다."""
     used = [False] * len(text)
     spans = []
     for a in anns or []:
@@ -1294,6 +1321,17 @@ def assemble_eng(text, anns):
             used[i] = True
         spans.append((idx, idx + len(t), a))
     spans.sort()
+    return spans
+
+
+def assemble_eng(text, anns):
+    """모델이 준 평문 영어(text) 위에, 주석 목록(anns)의 대상 문자열을 찾아
+    색상/루비/병렬번호를 겹쳐 최종 영어 HTML을 만든다. 매칭 안 되는 주석은 무시하되
+    영어 원문은 항상 그대로 보존된다."""
+    text = text or ""
+    if not text:
+        return ""
+    spans = _ann_spans(text, anns)
     out = []
     pos = 0
     for st, en, a in spans:
@@ -1302,6 +1340,79 @@ def assemble_eng(text, anns):
         pos = en
     out.append(_esc_html(text[pos:]))
     return "".join(out)
+
+
+# 등위접속사 후보. 'yet'은 부사('아직/그런데도')로 쓰이는 일이 훨씬 잦아 오탐이 많으므로
+# 기계 검사에서는 뺀다 — 프롬프트에서는 여전히 표시 대상이다.
+_COORD_RE = re.compile(r"\b(and|or|but|nor)\b", re.I)
+# 접속사가 아니라 굳어진 표현의 일부라 병렬로 보지 않는 것들
+_COORD_SKIP = re.compile(
+    r"\b(?:and so on|and so forth|as well as|all but|nothing but|anything but|"
+    r"no one but|none but|but for|or so|more or less|sooner or later)\b", re.I
+)
+
+
+# 상관접속사의 '앞짝'. 뒤짝(and/or/nor/but)이 같은 chunk 뒤쪽에 실제로 있을 때만
+# 후보로 본다 — "both of them"처럼 짝 없이 쓰인 경우를 걸러내기 위해서다.
+_CORRELATIVES = [
+    (re.compile(r"\bboth\b", re.I), re.compile(r"\band\b", re.I)),
+    (re.compile(r"\beither\b", re.I), re.compile(r"\bor\b", re.I)),
+    (re.compile(r"\bneither\b", re.I), re.compile(r"\bnor\b", re.I)),
+    (re.compile(r"\bnot only\b", re.I), re.compile(r"\bbut\b", re.I)),
+]
+
+
+def unmarked_conjunctions(result, limit=10):
+    """chunk의 평문 text에서 등위접속사를 찾아, "conj" 주석이 안 붙은 것을 모은다.
+
+    모델이 가장 자주 빠뜨리는 부분이라 성실성에만 맡기지 않고 기계로 한 번 더 센다.
+    반환값은 재요청 프롬프트에 그대로 넣을 수 있는 문자열 목록
+    (예: '3번 문장: "…can help develop and improve…"').
+    굳어진 표현(and so on 등)은 후보에서 뺀다."""
+    out = []
+    for s in result.get("sentences", []) or []:
+        if not isinstance(s, dict):
+            continue
+        no = s.get("no")
+        for c in s.get("chunks", []) or []:
+            if not isinstance(c, dict):
+                continue
+            text = _TAG_STRIP_RE.sub("", c.get("text", "") or "")
+            if not text:
+                continue
+            spans = _ann_spans(text, c.get("anns", []))
+            marked = [
+                (st, en) for st, en, a in spans
+                if (a.get("role") or "").strip() == "conj"
+            ]
+            skip = [m.span() for m in _COORD_SKIP.finditer(text)]
+
+            def report(m, note=""):
+                st, en = m.span()
+                if any(a <= st and en <= b for a, b in marked):
+                    return False      # 이미 표시됨
+                if any(a <= st and en <= b for a, b in skip):
+                    return False      # 굳어진 표현
+                lo, hi = max(0, st - 30), min(len(text), en + 30)
+                out.append(
+                    f'{no}번 문장의 "{m.group(0)}"{note} — …{text[lo:hi].strip()}…'
+                )
+                return True
+
+            for m in _COORD_RE.finditer(text):
+                report(m)
+                if len(out) >= limit:
+                    return out
+            # 상관접속사 앞짝(both/either/neither/not only)도 conj 표시 대상이다.
+            # 뒤짝이 실제로 뒤따를 때만 짚어 "both of them" 같은 경우를 걸러낸다.
+            for head_re, tail_re in _CORRELATIVES:
+                for m in head_re.finditer(text):
+                    if not tail_re.search(text, m.end()):
+                        continue
+                    report(m, "(상관접속사 앞짝)")
+                    if len(out) >= limit:
+                        return out
+    return out
 
 
 def english_incomplete(result, passage):
@@ -1323,7 +1434,8 @@ def english_incomplete(result, passage):
     return dropped or got < src * 0.6
 
 
-def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=None, english_fix=False):
+def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=None,
+                      english_fix=False, conj_hint=None):
     lines = []
     if mode == "student":
         lines.append("대상: 학생 자기주도 학습용. 해설은 이해하기 쉽게 쓰되 정확하게.")
@@ -1341,6 +1453,16 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
             f"이번에는 지문의 '모든' 문장을 1번부터 끝까지 `sentences` 배열에 반드시 포함하세요. "
             f"어떤 문장도 건너뛰지 말고, 요약에서 언급한 문장 수와 분석한 문장 수가 같아야 합니다."
         )
+    if conj_hint:
+        # 기계 검사가 짚어 준 자리 — 어림짐작이 아니라 '여기'를 다시 보게 한다
+        lines.append(
+            "⚠️ 이전 시도에서 아래 등위접속사에 \"conj\" 표시가 빠졌습니다. "
+            "각 자리를 다시 보고, 병렬을 잇는 접속사라면 conj ann과 병렬 요소 번호(num)를 "
+            "추가하세요. 굳어진 표현이거나 정말 병렬이 아니라면 그대로 두세요. "
+            "이미 올바른 표시는 절대 지우지 마세요."
+        )
+        for h in conj_hint:
+            lines.append("  · " + h)
     if english_fix:
         lines.append(
             "⚠️ 이전 시도에서 일부 chunk의 평문 영어(`text`)가 비어 있거나 누락됐습니다. "
@@ -1354,7 +1476,12 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
         # 2차 검토 패스: 1차 결과를 주고 빠진 어법·어휘·등위접속사를 보강시킨다.
         lines.append("")
         lines.append("[1차 분석 결과 — 아래를 검토·보강하라]")
-        lines.append(json.dumps(prior, ensure_ascii=False))
+        # 서버 내부용 키(_로 시작)는 빼고 보낸다 — 모델이 스키마에 없는 필드를
+        # 따라 만들거나 혼란스러워하지 않도록.
+        lines.append(json.dumps(
+            {k: v for k, v in prior.items() if not str(k).startswith("_")},
+            ensure_ascii=False,
+        ))
         lines.append("")
         lines.append(
             "위 1차 결과를 지문과 대조하여, 빠지거나 틀린 표시를 모두 보강·수정하라. "
@@ -1532,7 +1659,8 @@ _ANALYZE_TRUNC_MSG = (
 )
 
 
-def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, complete_hint=None, english_fix=False):
+def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, complete_hint=None,
+                english_fix=False, conj_hint=None):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -1556,7 +1684,8 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior, complete_hint, english_fix)}],
+                "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior,
+                                                     complete_hint, english_fix, conj_hint)}],
             }
         ],
         "generationConfig": {
@@ -1569,6 +1698,9 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
     data = json.dumps(payload).encode("utf-8")
     body = _gemini_call_with_retry(data, api_key, model)
     result = _extract_gemini_json(body, _ANALYZE_TRUNC_MSG)
+    # 등위접속사 누락 검사는 조립 '전'에 해야 한다 — 아래 루프가 anns를 버리기 때문.
+    # 결과는 비공개 키로 얹어 두고, 핸들러가 재요청 판단에 쓴 뒤 응답 전에 지운다.
+    missed = unmarked_conjunctions(result)
     # AI 마크업 정화 + 한국어 루비 제거 (레이아웃 붕괴/오류 방어)
     for s in result.get("sentences", []):
         if not isinstance(s, dict):
@@ -1590,6 +1722,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
     for item in result.get("summary", []):
         if isinstance(item, dict) and item.get("content"):
             item["content"] = sanitize_inline(item["content"])
+    result["_conjMiss"] = missed
     return result
 
 
@@ -1899,6 +2032,26 @@ class Handler(BaseHTTPRequestHandler):
                 result = call_gemini(
                     passage, target_grammar, mode, api_key, model, prior=result
                 )
+            # 등위접속사 누락 방어 — 모델이 가장 자주 빠뜨리는 항목이라, 서버가 직접
+            # 세어 빠진 자리를 짚어 준 뒤 다시 요청한다. 더 많이 표시해 온 결과만 채택해
+            # 재요청이 오히려 표시를 지우고 오는 경우를 막는다.
+            for _ in range(2):
+                missed = result.get("_conjMiss") or []
+                if not missed or _over_budget(t0):
+                    break
+                retry = call_gemini(
+                    passage, target_grammar, mode, api_key, model, conj_hint=missed
+                )
+                better = (
+                    len(retry.get("_conjMiss") or []) < len(missed)
+                    # 접속사를 더 찾아왔더라도 문장이나 영어를 잃었으면 채택하지 않는다
+                    and len(retry.get("sentences") or []) >= len(result.get("sentences") or [])
+                    and not english_incomplete(retry, passage)
+                )
+                if not better:
+                    break
+                result = retry
+            result.pop("_conjMiss", None)
         except ProUnavailable as e:
             self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
             return
