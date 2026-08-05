@@ -1626,6 +1626,7 @@ function setupQuizTab({ prefix, types, footer }) {
         // ① 변형본 확정 — 유형을 나눠 여러 번 호출해도 모든 문항이 같은 지문을 쓰도록
         //    문제를 만들기 전에 지문을 한 번만 다시 쓴다.
         let source = job.text;
+        let varied = [];
         if (variation !== "verbatim") {
           loadingTextEl.textContent = `${tag} 지문 변형본 만드는 중…`;
           try {
@@ -1635,6 +1636,7 @@ function setupQuizTab({ prefix, types, footer }) {
               "지문 변형에 실패했습니다."
             );
             source = (r.passage || "").trim() || job.text;
+            varied = Array.isArray(r.variations) ? r.variations : [];
           } catch (err) {
             append(buildErrorHtml(job, total, err.message || String(err), label, prefix));
             if (isQuotaError(err)) {
@@ -1686,7 +1688,7 @@ function setupQuizTab({ prefix, types, footer }) {
         if (questions.length) {
           // 무작위 모드 — 받아온 문항을 섞는다. 세트마다 다시 섞이고, 문제지 번호와
           // 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매기므로 어긋나지 않는다.
-          const set = { questions };
+          const set = { questions, variations: varied };
           if (isRandom()) {
             set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
           }
@@ -1820,6 +1822,53 @@ function quizBodyHtml(q) {
     <ul class="qz-choices">${choicesHtml}</ul>`;
 }
 
+// 지문에서 '변형된 낱말'에 표시를 입힌다.
+// <v>로 감싸는 방식인 이유: 화면에서는 형광 배경이 보여 어디를 손댔는지 한눈에
+// 확인할 수 있고, 인쇄 CSS가 그 배경만 지우므로 시험지에는 평범한 본문으로 찍힌다.
+// 낱말 자체는 어느 쪽에서도 사라지지 않는다.
+function markVariations(html, variations) {
+  const list = (variations || []).filter((v) => v && v.to && v.from);
+  if (!html || !list.length) return html;
+
+  const box = document.createElement("div");
+  box.innerHTML = html;
+
+  // 긴 표현을 먼저 매칭해야 짧은 낱말이 긴 표현을 조각내지 않는다
+  const sorted = list.slice().sort((a, b) => b.to.length - a.to.length);
+  const origOf = new Map(sorted.map((v) => [v.to.toLowerCase(), v.from]));
+  const alts = sorted
+    .map((v) => v.to.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  // \b 대신 영숫자 전후 확인 — 변형 낱말에 어퍼스트로피·하이픈이 섞여도 정확히 끊긴다
+  const re = new RegExp(`(?<![A-Za-z0-9])(?:${alts})(?![A-Za-z0-9])`, "gi");
+
+  const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+  const targets = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    re.lastIndex = 0;
+    if (re.test(n.nodeValue)) targets.push(n);
+  }
+
+  targets.forEach((node) => {
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    node.nodeValue.replace(re, (m, offset) => {
+      if (offset > last) frag.appendChild(document.createTextNode(node.nodeValue.slice(last, offset)));
+      const mark = document.createElement("v");
+      const from = origOf.get(m.toLowerCase());
+      if (from) mark.title = `원문: ${from}`;
+      mark.textContent = m;
+      frag.appendChild(mark);
+      last = offset + m.length;
+      return m;
+    });
+    if (last < node.nodeValue.length) frag.appendChild(document.createTextNode(node.nodeValue.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  });
+
+  return box.innerHTML;
+}
+
 // 문제 카드 + 정답/해설(화면: 토글, 인쇄: 항상 별도 섹션) HTML 생성
 // kind: "mcq" | "saq" — 주관식 해설지에는 해설 열을 넣지 않는다(정답만).
 function buildQuizHtml(d, job, total, kind, label) {
@@ -1838,7 +1887,7 @@ function buildQuizHtml(d, job, total, kind, label) {
       <div class="qz-card">
         <div class="qz-head"><span class="qz-no">${i + 1}</span><span class="qz-type">${esc(q.type)}</span></div>
         <div class="qz-instruction">${safeHTML(q.instruction)}</div>
-        ${quizBodyHtml(q)}
+        ${markVariations(quizBodyHtml(q), d.variations)}
         <button type="button" class="qz-reveal-btn">정답·해설 보기</button>
         <div class="qz-answer-box">
           <b>정답 ${quizAnswerLabel(q)}</b><br>${safeHTML(q.explanation)}
@@ -1876,6 +1925,25 @@ function buildQuizHtml(d, job, total, kind, label) {
       <h3 class="section page-break"><span class="num">📌</span> ${anyExp ? "정답 및 해설" : "정답"}</h3>
       <div class="table-wrap"><table class="answerkey">
         <thead><tr><th>번호</th><th>유형</th><th>정답</th>${expHead}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    `);
+  }
+
+  // 지문 변형 내역 — 어떤 낱말을 무엇으로 바꿨는지. 문제지의 형광 표시는 인쇄되지
+  // 않지만 이 표는 인쇄된다. 선생님이 답지를 들고 확인하는 자료이기 때문이다.
+  const varied = (d.variations || []).filter((v) => v && v.from && v.to);
+  if (varied.length) {
+    const rows = varied
+      .map(
+        (v, i) => `
+      <tr><td>${i + 1}</td><td>${esc(v.from)}</td><td>${esc(v.to)}</td></tr>`
+      )
+      .join("");
+    parts.push(`
+      <h3 class="section"><span class="num">✏️</span> 지문 변형 내역 <span class="qz-varied-count">${varied.length}곳</span></h3>
+      <div class="table-wrap"><table class="answerkey variedkey">
+        <thead><tr><th>번호</th><th>원문</th><th>변형</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
     `);

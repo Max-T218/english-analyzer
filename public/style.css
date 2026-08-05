@@ -264,8 +264,27 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 .qz-answer-box.show{display:block;}
 .qz-answer-box b{color:var(--accent);}
 table.answerkey td:nth-child(1),table.answerkey td:nth-child(3){font-weight:700; color:var(--accent); white-space:nowrap;}
+/* 변형 내역표는 '원문' 열도 낱말이라 가운데 열까지 줄바꿈을 막는다 */
+table.variedkey td:nth-child(2){white-space:nowrap; color:var(--ink-soft); font-weight:600;}
+.qz-varied-count{
+  font-size:12px; font-weight:600; color:var(--ink-soft);
+  margin-left:6px; vertical-align:middle;
+}
+
+/* ── 지문 변형 표시 ──
+   변형 모드로 만든 지문에서 실제로 바뀐 낱말. 화면에서는 형광펜으로 어디를
+   손댔는지 바로 보이고, 마우스를 올리면 원문 낱말이 뜬다. 인쇄할 때는 아래
+   @media print가 배경·밑줄만 지워서 학생이 받는 시험지에는 흔적이 남지 않는다
+   (낱말 자체는 그대로 찍힌다). */
+v{
+  background:var(--hl); border-bottom:2px dotted var(--target-ink);
+  border-radius:2px; padding:0 .1em; cursor:help;
+}
 @media print{
   .qz-reveal-btn, .qz-answer-box{display:none !important;}
+
+  /* 변형 표시 지우기 — 낱말은 남기고 형광펜 자국만 없앤다 */
+  v{background:none !important; border-bottom:none !important; padding:0 !important;}
 
   /* ── 실제 시험지처럼 A4 2단 조판 ──
      문항마다 지문이 통째로 들어가 한 문항이 한 쪽을 다 먹던 것을 두 단으로 흘려

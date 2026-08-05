@@ -10,6 +10,7 @@ API 키는 (1) 웹 화면에서 입력(브라우저 localStorage 저장) 또는
 실행:  python server.py       (기본 http://localhost:8000)
 """
 
+import difflib
 import json
 import os
 import re
@@ -748,6 +749,42 @@ def call_gemini_reword(passage, variation, api_key, model):
             "'원문 그대로'로 만들어 주세요."
         )
     return out
+
+
+# 변형본에서 실제로 바뀐 낱말을 찾아낸다.
+# 모델에게 "무엇을 바꿨는지 같이 알려 달라"고 시키지 않는 이유: 모델의 자기 보고는
+# 빠뜨리거나 실제 출력과 어긋나기 쉽고 토큰도 더 쓴다. 원문과 결과를 직접 비교하면
+# 언제나 출력과 정확히 일치하는 목록이 나온다.
+_WORD_TOKEN_RE = re.compile(r"[A-Za-z0-9’'\-]+|\s+|[^\sA-Za-z0-9’'\-]+")
+
+
+def _is_word(tok):
+    return bool(tok) and (tok[0].isalnum() or tok[0] in "’'")
+
+
+def diff_variations(original, reworded):
+    """원문 → 변형본에서 교체된 낱말 쌍 [{"from": …, "to": …}] 목록."""
+    a = [t for t in _WORD_TOKEN_RE.findall(original or "")]
+    b = [t for t in _WORD_TOKEN_RE.findall(reworded or "")]
+    # 공백·문장부호는 비교에서 빼고 낱말만 맞춰야 '한 낱말 → 두 낱말' 교체도
+    # 하나의 변경으로 잡힌다 (사이에 낀 공백이 별도 변경으로 쪼개지지 않는다).
+    aw = [t for t in a if _is_word(t)]
+    bw = [t for t in b if _is_word(t)]
+    pairs = []
+    seen = set()
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, aw, bw, autojunk=False).get_opcodes():
+        if op != "replace":
+            continue  # 순수 삽입·삭제는 '교체'가 아니므로 목록에 넣지 않는다
+        src = " ".join(aw[i1:i2]).strip()
+        dst = " ".join(bw[j1:j2]).strip()
+        if not src or not dst or src.lower() == dst.lower():
+            continue
+        key = (src.lower(), dst.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        pairs.append({"from": src, "to": dst})
+    return pairs
 
 
 # ── 사진에서 지문 옮겨 적기(OCR) ──
@@ -2176,7 +2213,13 @@ class Handler(BaseHTTPRequestHandler):
             api_key = req.get("apiKey") or ""
             model = req.get("model") or MODEL
             try:
-                self._send_json({"passage": call_gemini_reword(passage, variation, api_key, model)})
+                reworded = call_gemini_reword(passage, variation, api_key, model)
+                # 바뀐 낱말 목록을 함께 돌려준다 — 화면이 지문에서 그 낱말을 표시하고
+                # 해설지에 '원문 → 변형' 표를 싣는 데 쓴다.
+                self._send_json({
+                    "passage": reworded,
+                    "variations": diff_variations(passage, reworded),
+                })
             except NeedsPro as e:
                 # 모델을 바꾸기 전에는 계속 실패한다 — 화면이 남은 작업을 멈추도록 code를 붙인다
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
