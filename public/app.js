@@ -23,12 +23,78 @@ const grammarEl = $("targetGrammar");
 const modelEl = $("model");
 const analyzeBtn = $("analyzeBtn");
 const printBtn = $("printBtn");
+const floatPrintGroup = $("floatPrintGroup");
 const floatPrintBtn = $("floatPrintBtn");
+const floatPdfBtn = $("floatPdfBtn");
 const reviewChk = $("reviewChk");
 const errorEl = $("error");
 const loadingEl = $("loading");
 const loadingTextEl = $("loadingText");
 const resultEl = $("result");
+
+/* ── PDF로 저장 ──
+   웹페이지는 인쇄 대화상자에 어떤 프린터가 뜨는지, 무엇이 먼저 선택돼 있는지 정할 수
+   없다(브라우저 보안 정책 — 사이트가 사용자 몰래 파일을 저장하지 못하게 막는 장치).
+   그래서 '버튼 한 번에 저장 위치 창'은 만들 수 없고, 대신
+   ① 인쇄 대화상자에서 무엇을 골라야 하는지 미리 안내하고,
+   ② 실제로 'PDF로 저장'을 고른 뒤 뜨는 저장 창의 기본 파일명을 지문·제목에서 뽑아 채운다
+      (Chrome·Edge의 '인쇄 → PDF로 저장' 흐름은 document.title을 파일명 제안으로 쓴다). */
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+// 파일명에 못 쓰는 문자(Windows 기준 \ / : * ? " < > |)를 지운다
+function sanitizeFilename(s) {
+  return String(s || "").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+}
+// 첫 지문에 사용자가 직접 이름을 지었으면 그 이름을, 아니면 유형명만 파일명에 쓴다
+function passageBasedName(prefix) {
+  const jobs = passageMgr.getJobs();
+  const first = jobs[0];
+  const label = first && first.named ? sanitizeFilename(first.name) : "";
+  return [prefix, label, todayStr()].filter(Boolean).join("_");
+}
+// 제목 입력칸(워크북·단어장)이 채워져 있으면 그 제목을, 비어 있으면 지문 이름을 쓴다
+function titledName(prefix, titleElId) {
+  const el = $(titleElId);
+  const t = el ? sanitizeFilename(el.value.trim()) : "";
+  return t ? [prefix, t, todayStr()].filter(Boolean).join("_") : passageBasedName(prefix);
+}
+
+const ORIGINAL_TITLE = document.title;
+
+// PDF저장 버튼의 공통 동작 — 안내 후 인쇄 대화상자를 연다.
+// nameFn: 저장 대화상자에 뜰 기본 파일명을 만드는 함수 (지금 화면 상태를 보고 매번 새로 계산)
+function pdfPrint(nameFn) {
+  const ok = confirm(
+    "PDF로 저장하는 방법\n\n" +
+      "1. 잠시 후 뜨는 인쇄 대화상자에서 '대상'(프린터)을 'PDF로 저장'으로 선택하세요.\n" +
+      "   (Windows는 'Microsoft Print to PDF'로 표시되기도 합니다.)\n" +
+      "2. '저장' 버튼을 누르면 저장 위치를 고르는 창이 뜹니다.\n\n" +
+      "※ 어떤 프린터가 뜰지는 브라우저가 정하므로 이 앱이 'PDF로 저장'만 남기고 나머지를\n" +
+      "   숨길 수는 없습니다 — 위 안내대로 직접 골라 주세요.\n\n" +
+      "확인을 누르면 인쇄 대화상자를 엽니다."
+  );
+  if (!ok) return;
+  let name = "";
+  try {
+    name = sanitizeFilename(nameFn ? nameFn() : "");
+  } catch {
+    name = "";
+  }
+  document.title = name || ORIGINAL_TITLE;
+  const restore = () => {
+    document.title = ORIGINAL_TITLE;
+    window.removeEventListener("afterprint", restore);
+  };
+  window.addEventListener("afterprint", restore);
+  // afterprint를 안 보내는(또는 대화상자를 그냥 닫은) 경우를 대비한 안전장치
+  setTimeout(restore, 60000);
+  window.print();
+}
 
 const KEY_STORE = "gemini_api_key";
 
@@ -476,6 +542,7 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
       <div class="passage-item-head">
         <input type="text" class="passage-name" placeholder="지문 1" title="지문 이름 (비워두면 지문 1, 지문 2 …)">
         <span class="passage-count" aria-live="polite"></span>
+        <button type="button" class="btn ghost small passage-expand" title="지문 전체를 한눈에 보기">🔍 크게 보기</button>
         <button type="button" class="btn ghost small passage-del" title="이 지문 삭제">✕ 삭제</button>
       </div>
       <textarea class="passage-input" placeholder="분석할 영어 지문을 여기에 붙여넣으세요."></textarea>
@@ -514,7 +581,16 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
 
     // 브라우저가 붙여넣기를 반영한 뒤에 값을 읽어야 하므로 다음 틱으로 미룬다.
     // (execCommand 대신 이 방식을 쓰면 브라우저의 되돌리기 스택도 그대로 살아 있다)
-    ta.addEventListener("paste", () => setTimeout(doStrip, 0));
+    ta.addEventListener("paste", (e) => {
+      // 캡처 이미지를 붙여넣으면 텍스트 대신 OCR로 보낸다 (선생님들이 가장 많이 쓰는 경로)
+      const shots = [...((e.clipboardData && e.clipboardData.files) || [])].filter(isPhoto);
+      if (shots.length) {
+        e.preventDefault(); // 이미지가 파일명 같은 텍스트로 새어 들어가는 것을 막는다
+        runOcr(shots);
+        return;
+      }
+      setTimeout(doStrip, 0);
+    });
 
     noteEl.addEventListener("click", (e) => {
       if (e.target.closest(".passage-restrip")) {
@@ -544,8 +620,29 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
       // (붙여넣기의 input은 doStrip보다 먼저 실행되므로 지운 뒤 안내를 덮지 않는다)
       undoText = null;
       offerStrip();
+      if (item.classList.contains("expanded")) fitExpanded(); // 넓힌 채로 계속 늘려 준다
     });
     updatePassageCount(ta);
+
+    /* ── '크게 보기' — 지문 전체를 스크롤 없이 한눈에 보이게 칸을 늘린다 ──
+       resize:vertical 손잡이를 매번 끌어 늘리는 게 긴 지문에서는 번거로워서,
+       버튼 하나로 실제 내용 길이만큼 즉시 펼친다. 화면 높이의 80%를 넘는 아주 긴
+       지문은 그 위에서 안쪽 스크롤로 바뀐다(칸 자체가 화면보다 커지지 않도록). */
+    const expandBtn = item.querySelector(".passage-expand");
+    function fitExpanded() {
+      ta.style.height = "auto";
+      const max = Math.round(window.innerHeight * 0.8);
+      ta.style.height = Math.min(ta.scrollHeight + 2, max) + "px";
+    }
+    expandBtn.addEventListener("click", () => {
+      const on = !item.classList.contains("expanded");
+      item.classList.toggle("expanded", on);
+      expandBtn.textContent = on ? "🔽 접기" : "🔍 크게 보기";
+      expandBtn.classList.toggle("active", on);
+      if (on) fitExpanded();
+      else ta.style.height = ""; // 원래 min-height·수동 크기 조절로 되돌림
+    });
+
     item.querySelector(".passage-del").addEventListener("click", () => {
       item.remove();
       renumber();
@@ -579,7 +676,24 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
     return jobs;
   }
 
-  return { addRow, getJobs, renumber, clearAll };
+  // 사진에서 옮겨 온 지문을 입력칸에 채운다. 빈 칸부터 쓰고, 없으면 칸을 늘린다.
+  // 사진 1장 = 지문 1개이므로 텍스트 하나가 칸 하나를 차지한다.
+  // 반환: 실제로 채웠으면 true (상한 MAX_PASSAGES에 걸리면 false)
+  function fillText(raw) {
+    const text = String(raw || "").trim();
+    if (!text) return false;
+    let ta = [...listEl.querySelectorAll(".passage-input")].find((t) => !t.value.trim());
+    if (!ta) ta = addRow(false);
+    if (!ta) return false;   // 지문 칸 상한에 닿음
+    ta.value = text;
+    // 글자 수·안내를 직접 입력했을 때와 똑같이 갱신한다
+    // (문장번호가 남아 있으면 '번호 지우기' 안내가 자동으로 뜬다)
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    renumber();
+    return true;
+  }
+
+  return { addRow, getJobs, renumber, clearAll, fillText };
 }
 
 // 모든 탭이 공유하는 지문 입력 (탭 밖 공통 패널) — 별도 저장소 없이 화면 하나로 공유
@@ -605,6 +719,274 @@ clearPassagesBtn.addEventListener("click", () => {
   }
 });
 
+/* ══════════════ 사진에서 지문 가져오기 (OCR) ══════════════
+   Gemini가 멀티모달이라 지금 쓰는 API 키·엔드포인트를 그대로 쓴다 (별도 OCR 서비스 없음).
+   사진 1장 = 지문 1개. 여러 장을 올리면 장마다 따로 요청한다 — 한 장이 실패해도 나머지는
+   살고, 끝나는 대로 입력칸에 채워져 진행이 보이기 때문.
+   결과는 입력칸에 채우기만 하고 실행은 사용자가 직접 누른다 — 잘못 읽은 단어 하나가
+   분석·문제 전체를 오염시키므로 검토 단계를 건너뛰지 않는다. */
+const ocrBtn = $("ocrBtn");
+const ocrFileEl = $("ocrFile");
+const ocrStatusEl = $("ocrStatus");
+
+// 업로드 전 축소 — 긴 변 1600px면 지문 글자를 읽기에 충분하고,
+// 전송량·토큰·처리 시간이 크게 준다 (4MB 사진 → 대개 0.3MB 안팎).
+const OCR_MAX_EDGE = 1600;
+const OCR_JPEG_QUALITY = 0.85;
+const OCR_MAX_UPLOAD = 12 * 1024 * 1024; // base64 기준. 서버 상한(14MB)보다 먼저 잡는다
+
+// 사진인지 판정. 끌어다 놓기나 일부 파일 관리자는 type을 비워 주므로 확장자로도 확인한다.
+function isPhoto(file) {
+  const type = (file.type || "").toLowerCase();
+  const name = (file.name || "").toLowerCase();
+  return /^image\//.test(type) || /\.(jpe?g|png|webp|heic|heif|bmp)$/.test(name);
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result).split(",")[1] || "");
+    fr.onerror = () => reject(new Error("파일을 읽지 못했습니다."));
+    fr.readAsDataURL(blob);
+  });
+}
+
+async function photoToPart(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, OCR_MAX_EDGE / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * scale));
+    const h = Math.max(1, Math.round(bmp.height * scale));
+    const cv = document.createElement("canvas");
+    cv.width = w;
+    cv.height = h;
+    cv.getContext("2d").drawImage(bmp, 0, 0, w, h);
+    if (bmp.close) bmp.close();
+    const blob = await new Promise((r) => cv.toBlob(r, "image/jpeg", OCR_JPEG_QUALITY));
+    if (!blob) throw new Error("no blob");
+    return { mime: "image/jpeg", data: await blobToBase64(blob) };
+  } catch {
+    // 브라우저가 못 여는 형식(아이폰 HEIC 등)은 원본 그대로 보내 모델에 맡긴다
+    return { mime: file.type || "image/jpeg", data: await blobToBase64(file) };
+  }
+}
+
+/* ── 재현(RECITATION) 차단 우회: 사진을 가로로 잘라 조각별로 읽기 ──
+   Gemini는 '학습 데이터의 원문을 길게 그대로 재현'하는 출력을 막는다. 수능·모평 기출처럼
+   널리 공개된 지문은 통째로 옮기려 하면 이 검사에 걸린다. 사진을 몇 조각으로 나누면
+   조각 하나가 만드는 출력이 짧아져 긴 연속 일치가 생기지 않아 통과한다.
+   조각 경계에서 문장이 잘리므로 위아래를 겹쳐 자르고, 이어 붙일 때 겹친 부분을 지운다. */
+const OCR_SLICE_OVERLAP = 0.14; // 조각끼리 겹치는 비율 — 경계에서 잘린 문장을 살리기 위함
+
+async function sliceImage(file, count) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, OCR_MAX_EDGE / Math.max(bmp.width, bmp.height));
+  const w = Math.max(1, Math.round(bmp.width * scale));
+  const fullH = Math.max(1, Math.round(bmp.height * scale));
+  const band = fullH / count;
+  const pad = band * OCR_SLICE_OVERLAP;
+  const parts = [];
+  for (let i = 0; i < count; i++) {
+    const top = Math.max(0, Math.round(i * band - pad));
+    const bottom = Math.min(fullH, Math.round((i + 1) * band + pad));
+    const h = bottom - top;
+    if (h <= 0) continue;
+    const cv = document.createElement("canvas");
+    cv.width = w;
+    cv.height = h;
+    // 원본 좌표계로 되돌려 해당 띠만 그린다
+    cv.getContext("2d").drawImage(
+      bmp, 0, top / scale, bmp.width, h / scale, 0, 0, w, h
+    );
+    const blob = await new Promise((r) => cv.toBlob(r, "image/jpeg", OCR_JPEG_QUALITY));
+    parts.push({ mime: "image/jpeg", data: await blobToBase64(blob) });
+  }
+  if (bmp.close) bmp.close();
+  return parts;
+}
+
+// 이어 붙이기 — 겹쳐 자른 탓에 같은 문장이 두 조각에 모두 나온다. 앞 조각의 끝과
+// 뒤 조각의 시작에서 가장 긴 공통 부분을 찾아 한 번만 남긴다.
+function joinOverlap(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  const norm = (s) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  const na = norm(a);
+  const nb = norm(b);
+  const max = Math.min(na.length, nb.length, 600);
+  for (let k = max; k >= 25; k--) {
+    if (na.slice(-k) === nb.slice(0, k)) {
+      // 겹친 길이만큼 뒤 조각 앞부분을 잘라낸다 (정규화 전 문자열 기준으로 근사)
+      let cut = 0, seen = 0;
+      while (cut < b.length && seen < k) {
+        if (!/\s/.test(b[cut]) || (seen > 0 && !/\s/.test(b[cut - 1]))) seen++;
+        cut++;
+      }
+      return a.replace(/\s+$/, "") + " " + b.slice(cut).replace(/^\s+/, "");
+    }
+  }
+  return a.replace(/\s+$/, "") + " " + b.replace(/^\s+/, "");
+}
+
+function ocrStatus(html, tone) {
+  ocrStatusEl.innerHTML = html;
+  ocrStatusEl.className = "ocr-status" + (tone ? " " + tone : "");
+  ocrStatusEl.hidden = !html;
+}
+
+function isRecitationError(err) {
+  if (err && err.code === "recitation") return true;
+  return /RECITATION/i.test((err && err.message) || "");
+}
+
+// 사진을 조각내어 읽고 이어 붙인다. 조각 수를 늘려 가며 시도하고, 조각조차 막히면 포기한다.
+async function ocrBySlices(file, who, apiKey, onProgress) {
+  let lastErr = null;
+  for (const count of [3, 5]) {
+    try {
+      const slices = await sliceImage(file, count);
+      let text = "";
+      const notes = [];
+      for (let i = 0; i < slices.length; i++) {
+        onProgress(`나눠 읽는 중… (${i + 1}/${slices.length})`);
+        const part = slices[i];
+        const data = await postJson(
+          "/api/ocr",
+          { file: part, partial: true, model: modelEl.value, apiKey },
+          "조각을 옮기지 못했습니다."
+        );
+        text = joinOverlap(text, data.text || "");
+        if (data.note) notes.push(data.note);
+      }
+      if (text.trim()) return { text: text.trim(), note: notes.join(" ") };
+      lastErr = new Error("나눠 읽었지만 지문을 찾지 못했습니다.");
+    } catch (err) {
+      lastErr = err;
+      // 한도 소진이면 조각을 더 쪼개 봐야 소용없다
+      if (isQuotaError(err)) throw err;
+    }
+  }
+  // 통짜로도, 나눠서도 막혔다 — 사용자가 다음에 뭘 할지 알 수 있게 안내한다
+  if (isRecitationError(lastErr)) {
+    const e = new Error(
+      "널리 공개된 지문이라 사진을 나눠서까지 시도했지만 모두 차단되었습니다(RECITATION). " +
+        "지문을 문단별로 따로 찍어 올리거나, 글자를 직접 붙여넣어 주세요."
+    );
+    e.code = "recitation";
+    throw e;
+  }
+  throw lastErr || new Error("사진을 나눠 읽는 데 실패했습니다.");
+}
+
+let ocrBusy = false;
+
+async function runOcr(fileList) {
+  const files = [...fileList].filter((f) => f && isPhoto(f));
+  if (!files.length) {
+    ocrStatus("사진(JPG·PNG·WEBP)만 올릴 수 있습니다.", "warn");
+    return;
+  }
+  const apiKey = apiKeyEl.value.trim();
+  if (!apiKey) {
+    ocrStatus("먼저 Gemini API 키를 입력하세요.", "warn");
+    apiKeyEl.focus();
+    return;
+  }
+  if (ocrBusy) return;
+  ocrBusy = true;
+  ocrBtn.disabled = true;
+
+  let added = 0;
+  const notes = [];
+  const fails = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const who = file.name || `사진 ${i + 1}`;
+    ocrStatus(
+      `<span class="spinner"></span> ${esc(who)} 읽는 중… (${i + 1}/${files.length})`
+    );
+    try {
+      const part = await photoToPart(file);
+      // 다 올려 놓고 거절당하면 시간만 버린다 — 여기서 먼저 잡는다
+      if (part.data.length > OCR_MAX_UPLOAD) {
+        fails.push(`${who} — 사진이 너무 큽니다. 더 작게 찍어 올려 주세요.`);
+        continue;
+      }
+      let data;
+      try {
+        data = await postJson(
+          "/api/ocr",
+          { file: part, model: modelEl.value, apiKey },
+          "사진에서 지문을 옮기지 못했습니다."
+        );
+      } catch (err) {
+        if (!isRecitationError(err)) throw err;
+        // 널리 공개된 지문이라 통째로는 막혔다 — 사진을 잘라 조각별로 읽어 이어 붙인다
+        data = await ocrBySlices(file, who, apiKey, (msg) =>
+          ocrStatus(`<span class="spinner"></span> ${esc(who)} ${msg}`)
+        );
+        notes.push(`${who}: 널리 공개된 지문이라 사진을 나눠 읽었습니다. 문장이 이어지는지 특히 잘 확인하세요.`);
+      }
+      if (data.note) notes.push(`${who}: ${data.note}`);
+      if (passageMgr.fillText(data.text)) added++;
+      else fails.push(`${who} — 지문 칸이 가득 차 더 넣지 못했습니다.`);
+    } catch (err) {
+      const msg = err.message || String(err);
+      fails.push(`${who} — ${msg}`);
+      // 한도 소진은 기다려도 안 풀린다 — 남은 사진을 시도하지 않는다
+      if (isQuotaError(err)) {
+        const left = files.length - (i + 1);
+        if (left > 0) fails.push(`한도 초과로 중단했습니다. 남은 ${left}장은 시도하지 않았습니다.`);
+        break;
+      }
+    }
+  }
+
+  const parts = [];
+  if (added) {
+    parts.push(
+      `<b>지문 ${added}개</b>를 입력칸에 옮겼습니다. ` +
+        `사진과 대조해 <b>오타가 없는지 확인한 뒤</b> 실행하세요.`
+    );
+  }
+  notes.forEach((n) => parts.push(`⚠️ ${esc(n)}`));
+  fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
+  if (!parts.length) parts.push("옮길 지문을 찾지 못했습니다.");
+  ocrStatus(parts.join("<br>"), added ? (fails.length ? "warn" : "ok") : "warn");
+
+  ocrBusy = false;
+  ocrBtn.disabled = false;
+  ocrFileEl.value = ""; // 같은 파일을 다시 골라도 change가 나도록 비운다
+}
+
+ocrBtn.addEventListener("click", () => ocrFileEl.click());
+ocrFileEl.addEventListener("change", () => {
+  if (ocrFileEl.files && ocrFileEl.files.length) runOcr(ocrFileEl.files);
+});
+
+// 지문 패널에 사진을 끌어다 놓기
+const passagePanelEl = document.querySelector(".passage-panel");
+["dragenter", "dragover"].forEach((ev) =>
+  passagePanelEl.addEventListener(ev, (e) => {
+    if (![...((e.dataTransfer && e.dataTransfer.types) || [])].includes("Files")) return;
+    e.preventDefault();
+    passagePanelEl.classList.add("dropping");
+  })
+);
+["dragleave", "drop"].forEach((ev) =>
+  passagePanelEl.addEventListener(ev, (e) => {
+    if (ev === "dragleave" && passagePanelEl.contains(e.relatedTarget)) return;
+    passagePanelEl.classList.remove("dropping");
+  })
+);
+passagePanelEl.addEventListener("drop", (e) => {
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if (!files || !files.length) return;
+  e.preventDefault();
+  runOcr(files);
+});
+
 // ── 탭 전환 ──
 const tabBtns = [...document.querySelectorAll(".tab-btn")];
 const tabPages = [...document.querySelectorAll(".tab-page")];
@@ -615,8 +997,22 @@ function syncFloatPrint() {
     active.querySelector(
       "#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn"
     );
-  floatPrintBtn.hidden = !(btn && btn.style.display !== "none");
+  floatPrintGroup.hidden = !(btn && btn.style.display !== "none");
 }
+// 떠 있는 버튼은 '지금 활성 탭'의 진짜 인쇄/PDF 버튼을 대신 눌러 준다.
+// 그러면 각 탭이 자기 nameFn·안내문구를 그대로 갖고 있으므로 여기서 따로 만들 필요가 없다.
+function activeSectionBtn(selector) {
+  const active = document.querySelector(".tab-page.active");
+  return active && active.querySelector(selector);
+}
+floatPrintBtn.addEventListener("click", () => {
+  const b = activeSectionBtn("#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn");
+  if (b) b.click();
+});
+floatPdfBtn.addEventListener("click", () => {
+  const b = activeSectionBtn("#analyzePdfBtn, #mcqPdfBtn, #saqPdfBtn, #workbookPdfBtn, #vocabPdfBtn");
+  if (b) b.click();
+});
 tabBtns.forEach((btn) => {
   btn.addEventListener("click", () => {
     tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
@@ -676,7 +1072,7 @@ editBtn.addEventListener("click", () => {
 
 analyzeBtn.addEventListener("click", analyze);
 printBtn.addEventListener("click", () => window.print());
-floatPrintBtn.addEventListener("click", () => window.print());
+$("analyzePdfBtn").addEventListener("click", () => pdfPrint(() => passageBasedName("지문분석")));
 syncFloatPrint(); // 초기 탭(지문 분석) 기준으로 상태 맞춤
 
 async function analyze() {
@@ -701,6 +1097,7 @@ async function analyze() {
   setEditMode(false); // 새로 분석하면 이전 수정 상태를 끈다 (내용도 새로 덮어써진다)
   resultEl.innerHTML = "";
   printBtn.style.display = "none";
+  $("analyzePdfBtn").style.display = "none";
   editBtn.style.display = "none";
   syncFloatPrint();
 
@@ -758,6 +1155,7 @@ async function analyze() {
   resultEl.innerHTML = htmlParts.join("");
   if (okCount) {
     printBtn.style.display = "inline-flex";
+    $("analyzePdfBtn").style.display = "inline-flex";
     editBtn.style.display = "inline-flex";
   }
   syncFloatPrint();
@@ -1007,6 +1405,8 @@ function setupQuizTab({ prefix, types, footer }) {
   const allEl = $(prefix + "TypeAll");
   const btn = $(prefix + "Btn");
   const printBtn = $(prefix + "PrintBtn");
+  const pdfBtn = $(prefix + "PdfBtn");
+  const pdfName = prefix === "mcq" ? "객관식문제" : "주관식문제";
   const errorEl = $(prefix + "Error");
   const loadingEl = $(prefix + "Loading");
   const loadingTextEl = $(prefix + "LoadingText");
@@ -1181,6 +1581,7 @@ function setupQuizTab({ prefix, types, footer }) {
     loadingEl.classList.add("on");
     resultEl.innerHTML = "";
     printBtn.style.display = "none";
+    pdfBtn.style.display = "none";
     syncFloatPrint();
 
     // 완성될 때마다 화면에 붙인다. 도중에 멈추거나 창을 닫아도 그때까지 만든
@@ -1190,6 +1591,7 @@ function setupQuizTab({ prefix, types, footer }) {
         resultEl.insertAdjacentHTML("beforeend", `<footer class="qz-footer">${esc(footer)} · 자동 생성</footer>`);
       }
       printBtn.style.display = "inline-flex";
+      pdfBtn.style.display = "inline-flex";
       syncFloatPrint();
     };
     const append = (html) => {
@@ -1313,6 +1715,7 @@ function setupQuizTab({ prefix, types, footer }) {
 
   btn.addEventListener("click", generate);
   printBtn.addEventListener("click", () => window.print());
+  pdfBtn.addEventListener("click", () => pdfPrint(() => passageBasedName(pdfName)));
 }
 
 setupQuizTab({ prefix: "mcq", types: MCQ_TYPES, footer: "수능형 객관식 문제" });
@@ -1559,6 +1962,7 @@ const wbTitleEl = $("wbTitle");
 const wbAnswerChk = $("wbAnswerChk");
 const workbookDocEl = $("workbookDoc");
 const workbookPrintBtn = $("workbookPrintBtn");
+const workbookPdfBtn = $("workbookPdfBtn");
 const wbAnswerPrintBtn = $("wbAnswerPrintBtn");
 
 
@@ -1575,6 +1979,7 @@ wbAnswerChk.addEventListener("change", () => {
 
 wbBtn.addEventListener("click", generateWorkbook);
 workbookPrintBtn.addEventListener("click", () => window.print());
+workbookPdfBtn.addEventListener("click", () => pdfPrint(() => titledName("워크북", "wbTitle")));
 
 // 답지만 인쇄 — 문제 내용을 감추고 번호와 정답만 지면에 올린다.
 // 다시 그리지 않고 클래스만 바꾸므로, 섞인 보기·순서가 학생용 문제지와 정확히 일치한다.
@@ -1619,6 +2024,7 @@ async function generateWorkbook() {
   wbLoadingEl.classList.add("on");
   workbookDocEl.innerHTML = "";
   workbookPrintBtn.style.display = "none";
+  workbookPdfBtn.style.display = "none";
   wbAnswerPrintBtn.style.display = "none";
   syncFloatPrint();
 
@@ -1672,6 +2078,7 @@ async function generateWorkbook() {
   applyAnswerVisibility();
   if (okCount) {
     workbookPrintBtn.style.display = "inline-flex";
+    workbookPdfBtn.style.display = "inline-flex";
     wbAnswerPrintBtn.style.display = "inline-flex";
   }
   syncFloatPrint();
@@ -1907,6 +2314,7 @@ const vocabDedupEl = $("vocabDedup");
 const vocabAnswerChk = $("vocabAnswerChk");
 const vocabBtn = $("vocabBtn");
 const vocabPrintBtn = $("vocabPrintBtn");
+const vocabPdfBtn = $("vocabPdfBtn");
 const vocabErrorEl = $("vocabError");
 const vocabDocEl = $("vocabDoc");
 
@@ -1947,6 +2355,7 @@ vocabAnswerChk.addEventListener("change", () => {
 
 vocabBtn.addEventListener("click", buildVocab);
 vocabPrintBtn.addEventListener("click", () => window.print());
+vocabPdfBtn.addEventListener("click", () => pdfPrint(() => titledName("단어장", "vocabTitle")));
 
 function buildVocab() {
   vocabErrorEl.textContent = "";
@@ -2040,6 +2449,7 @@ function buildVocab() {
   vocabDocEl.innerHTML = parts.join("");
   applyVocabAnswer();
   vocabPrintBtn.style.display = "inline-flex";
+  vocabPdfBtn.style.display = "inline-flex";
   syncFloatPrint();
   vocabDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }

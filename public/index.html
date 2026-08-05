@@ -121,9 +121,17 @@
     <div id="passageList"></div>
     <div class="passage-add-row">
       <button type="button" class="btn ghost small" id="addPassageBtn">＋ 지문 추가</button>
+      <button type="button" class="btn ghost small" id="ocrBtn">📷 사진에서 가져오기</button>
       <button type="button" class="btn ghost small danger" id="clearPassagesBtn">🗑️ 지문 전체 지우기</button>
       <span class="passage-max-note" id="passageMaxNote" role="status" aria-live="polite"></span>
     </div>
+    <input type="file" id="ocrFile" accept="image/*" multiple hidden>
+    <div class="ocr-hint">
+      <b>사진 1장 = 지문 1개</b>로 들어갑니다. 여러 장을 한 번에 올려도 됩니다.
+      입력칸에 <b>끌어다 놓거나</b> <b>Ctrl+V</b>로 캡처를 붙여넣어도 됩니다.
+      옮긴 뒤에는 <b>오타가 없는지 꼭 확인하세요.</b>
+    </div>
+    <div class="ocr-status" id="ocrStatus" role="status" aria-live="polite" hidden></div>
   </section>
 
   <nav class="tabs" id="tabNav">
@@ -146,7 +154,8 @@
 
       <div class="actions">
         <button class="btn" id="analyzeBtn">분석하기</button>
-        <button class="btn ghost" id="printBtn" style="display:none">🖨️ 인쇄 / PDF</button>
+        <button class="btn ghost" id="printBtn" style="display:none">🖨️ 인쇄</button>
+        <button class="btn ghost" id="analyzePdfBtn" style="display:none">📄 PDF로 저장</button>
         <button class="btn ghost" id="editBtn" style="display:none"
                 title="분석본을 직접 고칠 수 있습니다. 해석·해설·어휘표 모두 수정 가능하고, 수정한 내용 그대로 인쇄됩니다.">✏️ 직접 수정</button>
         <span class="edit-hint" id="editHint"></span>
@@ -196,7 +205,8 @@
 
       <div class="actions">
         <button class="btn" id="mcqBtn">문제 만들기</button>
-        <button class="btn ghost" id="mcqPrintBtn" style="display:none">🖨️ 인쇄 / PDF</button>
+        <button class="btn ghost" id="mcqPrintBtn" style="display:none">🖨️ 인쇄</button>
+        <button class="btn ghost" id="mcqPdfBtn" style="display:none">📄 PDF로 저장</button>
         <span class="hint">유형 1개당 1문항씩 만들어집니다. 순서·문장삽입이 섞이면 시간이 더 걸릴 수 있어요.</span>
       </div>
       <div class="error" id="mcqError"></div>
@@ -232,7 +242,8 @@
 
       <div class="actions">
         <button class="btn" id="saqBtn">문제 만들기</button>
-        <button class="btn ghost" id="saqPrintBtn" style="display:none">🖨️ 인쇄 / PDF</button>
+        <button class="btn ghost" id="saqPrintBtn" style="display:none">🖨️ 인쇄</button>
+        <button class="btn ghost" id="saqPdfBtn" style="display:none">📄 PDF로 저장</button>
         <span class="hint">유형 1개당 1문항씩, 학생이 직접 쓰는 서술형·단답형 문제를 만듭니다.</span>
       </div>
       <div class="error" id="saqError"></div>
@@ -271,7 +282,8 @@
 
       <div class="actions">
         <button class="btn" id="wbBtn">워크북 만들기</button>
-        <button class="btn ghost" id="workbookPrintBtn" style="display:none">🖨️ 인쇄 / PDF</button>
+        <button class="btn ghost" id="workbookPrintBtn" style="display:none">🖨️ 인쇄</button>
+        <button class="btn ghost" id="workbookPdfBtn" style="display:none">📄 PDF로 저장</button>
         <button class="btn ghost" id="wbAnswerPrintBtn" style="display:none"
                 title="문제 내용은 빼고 번호와 정답만 인쇄합니다. '정답 표시' 설정과 무관하게 항상 정답이 나옵니다.">🔑 답지만 인쇄</button>
         <label class="chk" title="켜면 정답이 지면에 함께 인쇄됩니다(교사용). 끄면 학생용 문제지가 됩니다.">
@@ -320,7 +332,8 @@
 
       <div class="actions">
         <button class="btn" id="vocabBtn">단어장 만들기</button>
-        <button class="btn ghost" id="vocabPrintBtn" style="display:none">🖨️ 인쇄 / PDF</button>
+        <button class="btn ghost" id="vocabPrintBtn" style="display:none">🖨️ 인쇄</button>
+        <button class="btn ghost" id="vocabPdfBtn" style="display:none">📄 PDF로 저장</button>
         <label class="chk" title="여러 지문에 같은 단어가 나오면 하나로 합칩니다.">
           <input type="checkbox" id="vocabDedup" checked> 중복 단어 합치기
         </label>
@@ -340,7 +353,10 @@
 </div>
 </td></tr></tbody>
 </table>
-<button type="button" class="float-print" id="floatPrintBtn" hidden>🖨️ 인쇄 / PDF 저장</button>
+<div class="float-print-group" id="floatPrintGroup" hidden>
+  <button type="button" class="float-print float-pdf" id="floatPdfBtn">📄 PDF로 저장</button>
+  <button type="button" class="float-print" id="floatPrintBtn">🖨️ 인쇄</button>
+</div>
 <script src="/app.js"></script>
 </body>
 </html>

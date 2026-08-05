@@ -131,7 +131,28 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 @media print{ .gate, .key-bar{display:none !important;} }
 
 /* 모든 탭이 공유하는 지문 패널 */
-.passage-panel{border-color:var(--accent); border-width:1px;}
+.passage-panel{border-color:var(--accent); border-width:1px; transition:background .12s, box-shadow .12s;}
+/* ── 사진에서 지문 가져오기 ── */
+/* 사진을 끌고 들어왔을 때 — 여기에 놓으면 된다는 것을 보여 준다 */
+.passage-panel.dropping{
+  background:var(--accent-soft);
+  box-shadow:inset 0 0 0 2px var(--accent);
+}
+.passage-panel.dropping .passage-input{pointer-events:none;}
+.ocr-hint{margin-top:10px; font-size:11.5px; color:var(--ink-soft); line-height:1.6;}
+.ocr-hint b{color:var(--ink);}
+.ocr-status{
+  margin-top:8px; padding:9px 12px; border-radius:8px; font-size:12px; line-height:1.65;
+  background:var(--paper); border:1px solid var(--line);
+}
+/* display를 직접 지정하므로 hidden 속성(UA의 display:none)을 다시 눌러 준다 */
+.ocr-status[hidden]{display:none;}
+.ocr-status.ok{border-color:var(--accent); background:var(--accent-soft);}
+.ocr-status.warn{border-color:#d9a441; background:rgba(217,164,65,.10);}
+.ocr-status .spinner{
+  width:13px; height:13px; border-width:2px;
+  display:inline-block; vertical-align:-2px; margin-right:5px;
+}
 .passage-panel .field-head .hint{font-size:11.5px;}
 
 /* ── 탭 내비게이션 ── */
@@ -424,6 +445,11 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
   border-radius:8px; padding:10px 12px;
 }
 .passage-input:focus{outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent);}
+/* '크게 보기' — resize:vertical 손잡이를 수동으로 끄는 동작과 트랜지션이 섞이면
+   드래그가 뒤늦게 쫓아오는 느낌을 주므로 애니메이션 없이 즉시 크기를 바꾼다.
+   80vh를 넘는 아주 긴 지문은 JS가 그 높이에서 멈추므로 여기서 세로 스크롤이 생긴다. */
+.passage-item.expanded .passage-input{overflow-y:auto;}
+.passage-expand.active{border-color:var(--accent); color:var(--accent);}
 .passage-add-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px;}
 .passage-max-note{font-size:12px; font-weight:600; color:#b8760a;}
 .passage-max-note:empty{display:none;}
@@ -476,9 +502,13 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
 .brand-preview img, .brand-mark img{max-height:36px; max-width:140px; object-fit:contain;}
 .brand-name{font-weight:700; color:var(--ink); font-size:13.5px;}
 
-/* 화면 어디서든 누를 수 있는 고정 인쇄 버튼 */
-.float-print{
+/* 화면 어디서든 누를 수 있는 고정 인쇄/PDF저장 버튼 — 세로로 쌓아 둔다 */
+.float-print-group{
   position:fixed; right:22px; bottom:22px; z-index:50;
+  display:flex; flex-direction:column; align-items:flex-end; gap:10px;
+}
+.float-print-group[hidden]{display:none;}
+.float-print{
   font:inherit; font-size:14px; font-weight:700; cursor:pointer;
   color:#fff; background:var(--accent); border:none;
   padding:13px 20px; border-radius:30px;
@@ -488,9 +518,13 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
 .float-print:hover{box-shadow:0 8px 26px rgba(20,30,45,.36);}
 .float-print:active{transform:translateY(1px);}
 .float-print:focus-visible{outline:2px solid var(--accent); outline-offset:3px;}
-.float-print[hidden]{display:none;}
-@media (max-width:560px){ .float-print{right:14px; bottom:14px; padding:12px 16px; font-size:13px;} }
-@media print{ .float-print{display:none !important;} }
+/* PDF저장은 보조 동작이라 톤을 한 단계 낮춘다 */
+.float-pdf{background:var(--card); color:var(--ink); border:1px solid var(--line); box-shadow:0 4px 14px rgba(20,30,45,.20);}
+@media (max-width:560px){
+  .float-print-group{right:14px; bottom:14px; gap:8px;}
+  .float-print{padding:12px 16px; font-size:13px;}
+}
+@media print{ .float-print-group{display:none !important;} }
 
 /* ── 밑줄 ──
    브라우저 기본값 text-decoration-skip-ink:auto 는 g·p·y 같은 디센더와 겹치는

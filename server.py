@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import time
+import traceback
 import urllib.request
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,6 +34,15 @@ GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models?pageS
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 )
+
+# --- 요청 본문 상한 ---------------------------------------------------------
+# 본문은 통째로 메모리에 올라간다. 상한이 없으면 큰 요청 몇 개에 인스턴스가
+# 죽을 수 있다(Render 무료 512MB).
+MAX_BODY_BYTES = int(os.environ.get("MAX_BODY_BYTES", str(14 * 1024 * 1024)))
+# 사진 1장의 상한. 화면이 긴 변 1600px JPEG로 줄여 보내므로 보통 0.3~0.6MB가 된다.
+MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", str(10 * 1024 * 1024)))
+# 사진에서 지문 옮겨 적기(OCR)에 받는 형식. PDF는 다루지 않는다 — 사진만.
+OCR_MIMES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
 
 # 전송 실패 자동 재시도 설정 — 시간이 걸려도 모든 지문을 끝까지 분석(사용자 요청).
 # 상한(포기) 없이 성공할 때까지 재시도하되, 한 번의 대기는 아래 값으로 잘라 반복한다.
@@ -78,6 +88,13 @@ class QuotaExceeded(RuntimeError):
 
 class ProUnavailable(RuntimeError):
     """결제되지 않은 키로 Pro 모델을 고른 경우 — Flash로 바꿔야 하므로 즉시 중단한다."""
+
+
+class Recitation(RuntimeError):
+    """Gemini가 '학습 데이터의 문헌을 그대로 재현 중'이라고 보고 출력을 막은 경우.
+    안전(SAFETY) 필터와 달리 지문 내용이 문제인 게 아니라 '원문 그대로 복제'라는
+    행위 자체가 걸린 것이라, 표본을 달리해 다시 뽑으면 통과하는 일이 잦다.
+    (수능·모평 기출이나 교과서 지문처럼 학습 데이터에 있는 글에서 특히 자주 난다)"""
 
 
 class NeedsPro(RuntimeError):
@@ -604,9 +621,7 @@ def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None,
             "responseSchema": QUIZ_SCHEMA,
         },
     }
-    data = json.dumps(payload).encode("utf-8")
-    body = _gemini_call_with_retry(data, api_key, model)
-    result = _extract_gemini_json(body, _QUIZ_TRUNC_MSG)
+    result = _gemini_json(payload, api_key, model, _QUIZ_TRUNC_MSG)
 
     # 지문을 그대로 쓰는 유형의 빈 passageHtml을 서버가 채운다.
     # '원문 그대로'일 때만 해당한다 — light/heavy는 모델이 응답 안에서 리워딩한 지문을
@@ -722,9 +737,7 @@ def call_gemini_reword(passage, variation, api_key, model):
             "responseSchema": REWORD_SCHEMA,
         },
     }
-    data = json.dumps(payload).encode("utf-8")
-    body = _gemini_call_with_retry(data, api_key, model)
-    result = _extract_gemini_json(body, _REWORD_TRUNC_MSG)
+    result = _gemini_json(payload, api_key, model, _REWORD_TRUNC_MSG)
 
     out = str(result.get("passage") or "").strip()
     # 빈 응답이나 눈에 띄게 짧아진 결과는 채택하지 않는다 — 문장을 통째로 날려 먹은
@@ -735,6 +748,157 @@ def call_gemini_reword(passage, variation, api_key, model):
             "'원문 그대로'로 만들어 주세요."
         )
     return out
+
+
+# ── 사진에서 지문 옮겨 적기(OCR) ──
+# 사진 1장 = 지문 1개. 그래서 요청도 응답도 '한 장'만 다룬다.
+# 여러 장을 올리면 화면이 장마다 따로 요청한다 — 한 장이 실패해도 나머지는 살고,
+# 끝나는 대로 입력칸에 채워져 진행이 보이기 때문.
+# 지문을 통짜 문자열 하나로 받지 않고 '문장별 배열'로 받는다.
+# Gemini의 재현(RECITATION) 검사는 출력의 '연속된 구간'이 학습 데이터의 원문과 길게
+# 일치하는지를 보는데, 문장마다 따로 담으면 원 응답 문자열이 따옴표·쉼표로 끊겨
+# 긴 연속 일치가 생기지 않아 차단을 훨씬 덜 만난다. 서버가 다시 이어 붙인다.
+OCR_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "lines": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "note": {"type": "STRING"},
+    },
+    "required": ["lines", "note"],
+    "propertyOrdering": ["lines", "note"],
+}
+
+OCR_SYSTEM_PROMPT = r"""You transcribe the English reading passage from ONE photo of Korean
+school/exam material (교과서·모의고사·문제집). Return ONLY the structured JSON in the schema —
+no markdown, no commentary.
+
+## Output shape — one SENTENCE per array item
+`lines` is an array. Put ONE sentence of the passage in each item, in order.
+- Split at sentence ends (. ? !). Do not split mid-sentence.
+- Use "" (an empty string item) to mark a paragraph break between sentences.
+- Do NOT number the items and do NOT add any text that is not in the photo.
+Report any problem you hit in `note`.
+
+## Transcribe EXACTLY — this is transcription, not writing
+- Copy the English word for word: same spelling, capitalization, punctuation, numbers.
+- NEVER translate, NEVER fix grammar or spelling (even if the original looks wrong),
+  NEVER summarize, NEVER shorten, NEVER continue a sentence that is cut off.
+- NEVER invent text. If a word is blurred, covered by handwriting, or cut off at the edge,
+  transcribe only what you can actually read and record the problem in `note`. A plausible
+  guess is the worst possible outcome — one wrong word corrupts every question built from
+  this passage later.
+- If the photo has no English reading passage at all, set `lines` to [] and say so in `note`.
+
+## Remove — these are NOT part of the passage
+- Question numbers and Korean prompts: "24.", "다음 글의 제목으로 가장 적절한 것은?"
+- Multiple-choice options: ① ② ③ ④ ⑤ lines, and (A)/(B)/(C) answer boxes
+- Korean translations, Korean explanations, vocabulary glosses, footnotes
+- Page numbers, headers, footers, source tags ("[2024학년도 수능]", "고3 3월 학평")
+- Handwriting and highlighter marks — transcribe the printed word underneath
+- Sentence markers at the start of sentences (❶ ① ➊ …) — drop the marker, keep the sentence
+
+## Keep and repair
+- Keep the passage's own sentence order. Mark paragraph breaks with an empty item.
+- JOIN text that the page layout broke mid-sentence — each item must be a whole sentence,
+  never one printed line.
+- Repair hyphenation split across lines: "compre-" + "hension" → "comprehension".
+- If the page has TWO COLUMNS, read the left column fully, then the right column.
+- Blanks printed in the passage (______ or (A)) stay as they are; mention them in `note`
+  so the teacher knows this is a question version, not the original text.
+
+## note (Korean, short)
+- "" when the photo was clean and fully readable.
+- Otherwise state the concrete problem in one sentence: 흐려서 못 읽은 부분, 잘린 부분,
+  필기에 가려진 부분, 빈칸이 포함된 문제용 지문임, 영어 지문이 없음 등.
+
+Return valid JSON only."""
+
+
+_OCR_TRUNC_MSG = "사진의 글자가 너무 많아 옮기다가 잘렸습니다. 나눠 찍어 올려 주세요."
+
+
+def _join_ocr_lines(lines):
+    """문장별 배열을 다시 하나의 지문으로 잇는다.
+    빈 항목은 문단 경계이므로 빈 줄로 바꾸고, 나머지는 공백으로 잇는다."""
+    paras, cur = [], []
+    for raw in lines or []:
+        line = _TAG_STRIP_RE.sub("", str(raw or "")).strip()
+        if not line:
+            if cur:
+                paras.append(" ".join(cur))
+                cur = []
+            continue
+        cur.append(line)
+    if cur:
+        paras.append(" ".join(cur))
+    return "\n\n".join(paras).strip()
+
+
+def call_gemini_ocr(file, api_key, model, partial=False):
+    """사진 1장(base64)에서 영어 지문을 옮겨 적어 {text, note}를 돌려준다.
+    file: {"mime": "image/jpeg", "data": "<base64>"} — 화면이 이미 축소해 보낸다.
+    partial: 이 사진이 한 페이지를 가로로 자른 '조각'인 경우 True
+             (재현 차단을 피하려고 화면이 사진을 나눠 보낼 때 쓴다)."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "Gemini API 키가 없습니다. 화면 상단의 'API 키' 칸에 키를 입력하거나 "
+            "환경변수 GEMINI_API_KEY 를 설정하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+
+    mime = (file.get("mime") or "").lower().split(";")[0].strip()
+    data = file.get("data") or ""
+    if mime not in OCR_MIMES:
+        raise RuntimeError(
+            f"지원하지 않는 파일 형식입니다({mime or '알 수 없음'}). "
+            "JPG·PNG·WEBP 사진만 올릴 수 있습니다."
+        )
+    if not data:
+        raise RuntimeError("사진 내용이 비어 있습니다.")
+    if len(data) > MAX_FILE_BYTES:
+        raise RuntimeError(
+            f"사진이 너무 큽니다 (최대 {MAX_FILE_BYTES // 1048576}MB). "
+            "해상도를 낮춰 다시 올려 주세요."
+        )
+
+    ask = "이 사진에서 영어 지문을 그대로 옮겨 적으세요."
+    if partial:
+        # 조각은 위아래가 문장 중간에서 잘려 있다. 이어 붙이는 건 화면이 하므로
+        # 여기서는 '보이는 것만' 정확히 옮기게 하고, 없는 말을 채우지 못하게 막는다.
+        ask = (
+            "이 사진은 한 페이지를 가로로 자른 '조각'입니다. 조각에 보이는 영어만 옮겨 "
+            "적으세요. 위나 아래가 문장 중간에서 잘려 있어도 보이는 만큼만 그대로 적고, "
+            "잘린 앞뒤 내용을 절대 짐작해서 채우지 마세요. 잘린 조각이므로 첫 항목과 "
+            "마지막 항목은 완전한 문장이 아닐 수 있습니다 — 그대로 두세요."
+        )
+    payload = {
+        "systemInstruction": {"parts": [{"text": OCR_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [
+            {"inlineData": {"mimeType": mime, "data": data}},
+            {"text": ask},
+        ]}],
+        "generationConfig": {
+            # 옮겨 적기는 창작이 아니라 낮은 온도가 맞지만, 0으로 두면 '가장 그럴듯한 다음
+            # 토큰'만 골라 학습 데이터의 원문과 글자 단위로 일치해 RECITATION 차단을
+            # 부른다(실제로 기출 지문에서 발생). 읽을 대상이 사진에 있어 모델이 추측할
+            # 여지가 크지 않으므로, 살짝 올려도 정확도 손해는 거의 없다.
+            "temperature": 0.15,
+            "maxOutputTokens": 16384,
+            "responseMimeType": "application/json",
+            "responseSchema": OCR_SCHEMA,
+        },
+    }
+    result = _gemini_json(payload, api_key, model, _OCR_TRUNC_MSG)
+
+    # 문장별 배열을 다시 잇는다 (태그가 섞여 오면 걷어낸다)
+    text = _join_ocr_lines(result.get("lines"))
+    note = str(result.get("note") or "").strip()
+    if not text:
+        raise RuntimeError(
+            note or "사진에서 영어 지문을 찾지 못했습니다. 지문이 잘 보이게 다시 찍어 올려 주세요."
+        )
+    return {"text": text, "note": note}
 
 
 # ── 워크북(10단계 통합 학습지) 스키마 ──
@@ -899,9 +1063,7 @@ def call_gemini_workbook(passage, api_key, model, complete_hint=None):
             "responseSchema": WORKBOOK_SCHEMA,
         },
     }
-    data = json.dumps(payload).encode("utf-8")
-    body = _gemini_call_with_retry(data, api_key, model)
-    return _extract_gemini_json(body, _WORKBOOK_TRUNC_MSG)
+    return _gemini_json(payload, api_key, model, _WORKBOOK_TRUNC_MSG)
 
 
 SYSTEM_PROMPT = r"""You are an expert Korean high-school English teacher who produces
@@ -1629,8 +1791,18 @@ def _extract_gemini_json(body, trunc_msg):
 
     cand = candidates[0]
     finish = cand.get("finishReason")
-    if finish in ("SAFETY", "RECITATION", "PROHIBITED_CONTENT"):
-        raise RuntimeError(f"응답이 필터링되었습니다: {finish}")
+    if finish == "RECITATION":
+        # 지문 내용이 부적절해서가 아니라, '원문을 그대로 재현한다'는 점이 걸린 것이다.
+        # 호출부가 표본을 달리해 다시 시도할 수 있도록 별도 예외로 올린다.
+        raise Recitation(
+            "이 지문은 이미 널리 공개된 글이라 원문 그대로 옮기는 것이 차단되었습니다"
+            "(RECITATION). 다시 시도하거나, 지문을 나눠 찍어 올리거나, 직접 붙여넣어 주세요."
+        )
+    if finish in ("SAFETY", "PROHIBITED_CONTENT"):
+        raise RuntimeError(
+            f"안전 필터에 걸려 응답이 차단되었습니다({finish}). 지문에 민감한 표현이 "
+            "있는지 확인하거나, 문단을 나눠 다시 시도하세요."
+        )
 
     text = ""
     for part in cand.get("content", {}).get("parts", []):
@@ -1651,6 +1823,29 @@ def _extract_gemini_json(body, trunc_msg):
     if finish == "MAX_TOKENS":
         raise RuntimeError(trunc_msg)
     return result
+
+
+def _gemini_json(payload, api_key, model, trunc_msg):
+    """페이로드를 보내고 JSON 결과를 받는다 (모든 Gemini 호출의 공통 입구).
+
+    RECITATION으로 막히면 표본추출 설정을 바꿔 다시 시도한다. 이 차단은 '가장 그럴듯한
+    다음 토큰'만 고르는 결정적 디코딩에서 특히 잘 나는데, 그렇게 뽑은 문장이 학습 데이터에
+    있는 원문과 글자 단위로 일치해 버리기 때문이다. 온도를 올려 표본을 흔들면 같은 내용을
+    담으면서도 차단을 피해 가는 경우가 많다.
+    (safetySettings로는 끌 수 없다 — RECITATION은 유해성 분류가 아니라 별도 검사다)"""
+    attempts = (None, 0.4, 0.85)
+    last = None
+    for temp in attempts:
+        if temp is not None:
+            payload.setdefault("generationConfig", {})["temperature"] = temp
+        data = json.dumps(payload).encode("utf-8")
+        body = _gemini_call_with_retry(data, api_key, model)
+        try:
+            return _extract_gemini_json(body, trunc_msg)
+        except Recitation as e:
+            last = e
+            continue
+    raise last
 
 
 _ANALYZE_TRUNC_MSG = (
@@ -1695,9 +1890,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
             "responseSchema": GEMINI_SCHEMA,
         },
     }
-    data = json.dumps(payload).encode("utf-8")
-    body = _gemini_call_with_retry(data, api_key, model)
-    result = _extract_gemini_json(body, _ANALYZE_TRUNC_MSG)
+    result = _gemini_json(payload, api_key, model, _ANALYZE_TRUNC_MSG)
     # 등위접속사 누락 검사는 조립 '전'에 해야 한다 — 아래 루프가 anns를 버리기 때문.
     # 결과는 비공개 키로 얹어 두고, 핸들러가 재요청 판단에 쓴 뒤 응답 전에 지운다.
     missed = unmarked_conjunctions(result)
@@ -1839,14 +2032,57 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # 너무 큰 본문을 '읽어서 버리는' 한 조각 크기와, 그마저 포기하는 한계.
+    # 한계를 넘으면 안내를 포기하고 끊는다(악의적 요청에 계속 읽어 줄 이유는 없다).
+    _DRAIN_CHUNK = 64 * 1024
+    _DRAIN_LIMIT = 128 * 1024 * 1024
+
+    def _drain(self, length):
+        """요청 본문을 조각내어 읽고 버린다 (메모리에 쌓지 않는다)."""
+        if length > self._DRAIN_LIMIT:
+            return
+        left = length
+        while left > 0:
+            chunk = self.rfile.read(min(self._DRAIN_CHUNK, left))
+            if not chunk:
+                break
+            left -= len(chunk)
+
     def do_POST(self):
+        """예상 못 한 예외가 나도 연결을 끊지 않고 JSON 오류로 답한다.
+        여기서 터지면 화면은 'JSON 대신 HTML' 같은 엉뚱한 메시지밖에 볼 수 없어
+        원인을 찾기가 매우 어렵다(실제로 그런 사고가 있었다)."""
+        try:
+            self._handle_post()
+        except Exception as e:
+            traceback.print_exc()
+            try:
+                self._send_json({"error": f"서버 내부 오류입니다: {e}"}, 500)
+            except Exception:
+                pass
+
+    def _handle_post(self):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
-                        "/api/reword"):
+                        "/api/reword", "/api/ocr"):
             self.send_error(404, "Not found")
             return
         try:
             length = int(self.headers.get("content-length", "0"))
+            # 본문을 통째로 메모리에 올리므로 상한이 없으면 큰 사진 몇 장에
+            # 인스턴스가 죽는다(Render 무료 512MB). 읽기 '전에' 막는다.
+            if length > MAX_BODY_BYTES:
+                # 응답만 보내고 끊으면 클라이언트는 아직 본문을 보내는 중이라
+                # 응답을 읽지 못하고 연결 오류만 본다. 본문을 조각내어 버리며 끝까지
+                # 받아 준 뒤에 413을 보내야 안내 문구가 실제로 도달한다.
+                # (버리기만 하므로 메모리는 조각 크기만 쓴다)
+                self._drain(length)
+                self._send_json({
+                    "error": f"보낸 자료가 너무 큽니다 "
+                             f"({length / 1048576:.1f}MB / 최대 {MAX_BODY_BYTES // 1048576}MB). "
+                             "사진 수를 줄이거나 더 작은 파일로 다시 시도하세요."
+                }, 413)
+                return
             raw = self.rfile.read(length) if length else b"{}"
             req = json.loads(raw.decode("utf-8"))
         except (ValueError, json.JSONDecodeError):
@@ -1905,6 +2141,32 @@ class Handler(BaseHTTPRequestHandler):
 
         # 지문 변형본을 먼저 확정하는 단계. 유형을 나눠 여러 번 문제를 만들어도
         # 모든 문항이 같은 지문을 쓰도록, 화면이 이 결과를 받아 이후 호출에 넘긴다.
+        # 사진에서 지문 옮겨 적기. 사진 1장 = 지문 1개이므로 요청도 1장씩 온다.
+        # 결과는 화면의 지문 입력칸에 채워지고, 실행은 사용자가 확인한 뒤 직접 누른다
+        # (잘못 읽은 단어 하나가 분석·문제 전체를 오염시키므로 검토를 건너뛰지 않는다).
+        if path == "/api/ocr":
+            file = req.get("file")
+            if not isinstance(file, dict):
+                self._send_json({"error": "올릴 사진을 선택하세요."}, 400)
+                return
+            api_key = req.get("apiKey") or ""
+            model = req.get("model") or MODEL
+            partial = bool(req.get("partial"))
+            try:
+                self._send_json(call_gemini_ocr(file, api_key, model, partial))
+            except Recitation as e:
+                # 화면이 '사진을 조각내어 다시 시도'로 넘어갈 수 있게 식별자를 붙인다
+                self._send_json({"error": str(e), "code": "recitation"}, 502)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
         if path == "/api/reword":
             passage = (req.get("passage") or "").strip()
             if len(passage) < 20:
