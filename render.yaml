@@ -26,6 +26,9 @@ services:
       # GOOGLE_CLIENT_ID                   : Google Cloud OAuth 클라이언트 ID (구글 로그인용)
       # GOOGLE_APPLICATION_CREDENTIALS_JSON: Firestore 서비스 계정 키 JSON 전체 내용 (로그인 저장용, 필수)
       # SMTP_USER / SMTP_PASSWORD          : 회원가입 인증코드를 보낼 Gmail 계정 + 앱 비밀번호
+      # ADMIN_USERNAME / ADMIN_PASSWORD    : /admin.html 관리자 페이지 로그인 (회원 목록·
+      #                                       토큰 조회·충전). ADMIN_PASSWORD를 안 넣으면
+      #                                       관리자 페이지는 항상 로그인이 거부된다.
       - key: GEMINI_API_KEY
         sync: false
       - key: GOOGLE_CLIENT_ID
@@ -35,4 +38,8 @@ services:
       - key: SMTP_USER
         sync: false
       - key: SMTP_PASSWORD
+        sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
         sync: false

@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>관리자 · English Lab</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap" style="max-width:760px;">
+
+  <header class="app-head">
+    <h1 class="eyebrow">English Lab · 관리자</h1>
+    <p>회원 목록 · 잔여 토큰 조회 · 토큰 충전</p>
+  </header>
+
+  <!-- ══════════ 관리자 로그인 ══════════ -->
+  <section class="panel" id="adminGate">
+    <form class="auth-panel" id="adminLoginForm" style="max-width:320px;">
+      <label for="adminUsername">아이디</label>
+      <input type="text" id="adminUsername" autocomplete="username" placeholder="admin">
+      <label for="adminPassword">비밀번호</label>
+      <input type="password" id="adminPassword" autocomplete="current-password" placeholder="비밀번호">
+      <div class="gate-actions">
+        <button type="submit" class="btn" id="adminLoginBtn">로그인</button>
+        <span class="gate-status" id="adminLoginStatus"></span>
+      </div>
+      <div class="error" id="adminLoginError"></div>
+    </form>
+  </section>
+
+  <!-- ══════════ 관리자 화면 ══════════ -->
+  <section id="adminWorkspace" hidden>
+    <div class="panel" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+      <span class="hint" id="adminSummary"></span>
+      <div style="display:flex; gap:10px;">
+        <button type="button" class="btn ghost small" id="adminRefreshBtn">↻ 새로고침</button>
+        <button type="button" class="btn ghost small" id="adminLogoutBtn">로그아웃</button>
+      </div>
+    </div>
+
+    <div class="error" id="adminListError"></div>
+
+    <div class="panel" style="overflow-x:auto;">
+      <table id="userTable" style="width:100%; border-collapse:collapse; font-size:13.5px;">
+        <thead>
+          <tr style="text-align:left; border-bottom:1px solid var(--line);">
+            <th style="padding:8px 6px;">이메일</th>
+            <th style="padding:8px 6px;">이름</th>
+            <th style="padding:8px 6px;">가입방식</th>
+            <th style="padding:8px 6px;">가입일</th>
+            <th style="padding:8px 6px; text-align:right;">잔여 토큰</th>
+            <th style="padding:8px 6px;">토큰 충전</th>
+          </tr>
+        </thead>
+        <tbody id="userTableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+async function postJson(url, payload) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload || {}),
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch {}
+  if (!data) throw new Error(`서버 오류 (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(data.error || "요청에 실패했습니다.");
+  return data;
+}
+async function getJson(url) {
+  const res = await fetch(url);
+  const text = await res.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch {}
+  if (!data) throw new Error(`서버 오류 (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(data.error || "요청에 실패했습니다.");
+  return data;
+}
+
+const esc = (s) => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+const gateEl = $("adminGate");
+const workspaceEl = $("adminWorkspace");
+function showGate() {
+  gateEl.hidden = false;
+  workspaceEl.hidden = true;
+}
+function showWorkspace() {
+  gateEl.hidden = true;
+  workspaceEl.hidden = false;
+  loadUsers();
+}
+
+// 이미 로그인된 세션이면(관리자 세션 쿠키) 다시 로그인하지 않고 바로 들여보낸다
+(async () => {
+  try {
+    const info = await getJson("/api/admin/me");
+    if (info.loggedIn) showWorkspace();
+    else showGate();
+  } catch (_) {
+    showGate();
+  }
+})();
+
+const loginBtn = $("adminLoginBtn");
+const loginError = $("adminLoginError");
+const loginStatus = $("adminLoginStatus");
+$("adminLoginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = $("adminUsername").value.trim();
+  const password = $("adminPassword").value;
+  loginError.textContent = "";
+  if (!username || !password) {
+    loginError.textContent = "아이디와 비밀번호를 입력하세요.";
+    return;
+  }
+  loginBtn.disabled = true;
+  loginStatus.textContent = "확인 중…";
+  try {
+    await postJson("/api/admin/login", { username, password });
+    $("adminPassword").value = "";
+    showWorkspace();
+  } catch (err) {
+    loginError.textContent = err.message || "로그인에 실패했습니다.";
+  } finally {
+    loginBtn.disabled = false;
+    loginStatus.textContent = "";
+  }
+});
+
+$("adminLogoutBtn").addEventListener("click", async () => {
+  try { await postJson("/api/admin/logout"); } catch (_) {}
+  showGate();
+});
+$("adminRefreshBtn").addEventListener("click", loadUsers);
+
+function fmtDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleDateString("ko-KR") + " " + d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+}
+
+let currentUsers = [];
+
+async function loadUsers() {
+  const errEl = $("adminListError");
+  errEl.textContent = "";
+  try {
+    const data = await getJson("/api/admin/users");
+    currentUsers = data.users || [];
+    renderUsers();
+  } catch (err) {
+    // 세션이 만료됐으면 로그인 화면으로 되돌린다
+    if (/로그인/.test(err.message || "")) {
+      showGate();
+      return;
+    }
+    errEl.textContent = err.message || "회원 목록을 불러오지 못했습니다.";
+  }
+}
+
+function renderUsers() {
+  const total = currentUsers.length;
+  const totalTokens = currentUsers.reduce((sum, u) => sum + (u.tokensRemaining || 0), 0);
+  $("adminSummary").textContent = `회원 ${total}명 · 전체 잔여 토큰 ${totalTokens.toLocaleString()}개`;
+
+  $("userTableBody").innerHTML = currentUsers.map((u) => `
+    <tr style="border-bottom:1px solid var(--line-soft);" data-uid="${esc(u.id)}">
+      <td style="padding:8px 6px;">${esc(u.email)}</td>
+      <td style="padding:8px 6px;">${esc(u.name)}</td>
+      <td style="padding:8px 6px;">${u.provider === "google" ? "구글" : "이메일"}</td>
+      <td style="padding:8px 6px; white-space:nowrap; color:var(--ink-soft); font-size:12px;">${esc(fmtDate(u.createdAt))}</td>
+      <td style="padding:8px 6px; text-align:right; font-weight:700;" class="cell-tokens">${u.tokensRemaining.toLocaleString()}</td>
+      <td style="padding:8px 6px;">
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input type="number" class="recharge-input" placeholder="±토큰" style="width:100px; padding:6px 8px; font-size:12.5px;">
+          <button type="button" class="btn ghost small recharge-btn">충전</button>
+        </div>
+      </td>
+    </tr>
+  `).join("") || `<tr><td colspan="6" style="padding:16px 6px; color:var(--ink-soft);">회원이 없습니다.</td></tr>`;
+}
+
+$("userTableBody").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".recharge-btn");
+  if (!btn) return;
+  const row = btn.closest("tr");
+  const uid = row.dataset.uid;
+  const input = row.querySelector(".recharge-input");
+  const amount = parseInt(input.value, 10);
+  if (!amount) {
+    input.focus();
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const data = await postJson("/api/admin/recharge", { userId: uid, amount });
+    row.querySelector(".cell-tokens").textContent = data.tokensRemaining.toLocaleString();
+    const u = currentUsers.find((x) => x.id === uid);
+    if (u) u.tokensRemaining = data.tokensRemaining;
+    input.value = "";
+    $("adminSummary").textContent =
+      `회원 ${currentUsers.length}명 · 전체 잔여 토큰 ${currentUsers.reduce((s, x) => s + (x.tokensRemaining || 0), 0).toLocaleString()}개`;
+  } catch (err) {
+    alert(err.message || "충전에 실패했습니다.");
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

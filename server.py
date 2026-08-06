@@ -22,6 +22,7 @@ import smtplib
 import socket
 import ssl
 import sys
+import threading
 import time
 import traceback
 import urllib.request
@@ -46,6 +47,19 @@ PUBLIC_DIR = Path(__file__).resolve().parent / "public"
 # --- 로그인(구글 OAuth + 이메일/비밀번호) + Firestore -----------------------
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 세션 유지 기간(초) — 30일
+# 계정을 새로 만들 때 지급하는 토큰 — 관리자 Gemini 키의 실제 사용량(입력+출력 토큰)을
+# 그대로 깎는다. 지문 분석 1회가 보통 수천~수만 토큰이므로, 기본값은 대략 10~수십 회
+# 분량이다. 필요에 맞게 환경변수로 조정하고, 특정 사용자에게 더 주고 싶으면 Firestore
+# 콘솔에서 users/<id> 문서의 tokens_remaining 값을 직접 고치면 된다.
+DEFAULT_USER_TOKENS = int(os.environ.get("DEFAULT_USER_TOKENS", "300000"))
+
+# --- 관리자 페이지(public/admin.html) — 회원 목록·토큰 조회/충전 --------------
+# 일반 회원 로그인(이메일 정규식 검증 등)과 완전히 분리된, 아이디 하나짜리 단일
+# 관리자 로그인이다. ADMIN_PASSWORD를 설정하지 않으면 관리자 로그인은 항상 거부된다
+# (기본값을 코드에 두지 않는 이유 — 설정을 깜빡했다고 아무나 들어올 수 있게 하면 안 된다).
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+ADMIN_SESSION_MAX_AGE = 60 * 60 * 12  # 관리자 세션은 짧게 — 12시간
 
 
 def _load_firestore():
@@ -205,6 +219,7 @@ def complete_signup(email, code):
         "password_hash": d["password_hash"],
         "provider": "password",
         "created_at": _now_iso(),
+        "tokens_remaining": DEFAULT_USER_TOKENS,
     })
     ref.delete()
     return user_id
@@ -2154,6 +2169,9 @@ def _gemini_json(payload, api_key, model, trunc_msg):
             payload.setdefault("generationConfig", {})["temperature"] = temp
         data = json.dumps(payload).encode("utf-8")
         body = _gemini_call_with_retry(data, api_key, model)
+        # 실제로 청구되는 토큰 수 — 이 호출이 이후에 실패(RECITATION 등)로 버려지더라도
+        # 구글에는 이미 청구됐으므로 그대로 누적한다.
+        _add_call_tokens((body.get("usageMetadata") or {}).get("totalTokenCount", 0))
         try:
             return _extract_gemini_json(body, trunc_msg)
         except Recitation as e:
@@ -2348,9 +2366,71 @@ def upsert_user(sub, email, name):
     _require_db()
     ref = DB.collection("users").document(sub)
     if not ref.get().exists:
-        ref.set({"email": email, "name": name, "created_at": _now_iso()})
+        ref.set({
+            "email": email, "name": name, "created_at": _now_iso(),
+            "tokens_remaining": DEFAULT_USER_TOKENS,
+        })
     else:
         ref.set({"email": email, "name": name}, merge=True)
+
+
+def get_user_tokens(user_id):
+    _require_db()
+    snap = DB.collection("users").document(user_id).get()
+    if not snap.exists:
+        return 0
+    try:
+        return int(snap.to_dict().get("tokens_remaining", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _account_payload(user_id):
+    """/api/me와 로그인·회원가입 성공 응답이 공유하는 계정 정보 — 화면이 이름·잔여
+    토큰을 표시하는 데 쓴다."""
+    _require_db()
+    info = DB.collection("users").document(user_id).get().to_dict() or {}
+    try:
+        tokens = int(info.get("tokens_remaining", 0))
+    except (TypeError, ValueError):
+        tokens = 0
+    return {
+        "loggedIn": True,
+        "email": info.get("email"),
+        "name": info.get("name"),
+        "tokensRemaining": tokens,
+    }
+
+
+def deduct_tokens(user_id, amount):
+    """이번 요청에서 실제로 쓴 Gemini 토큰만큼 사용자 잔여량에서 뺀다. 호출을 이미
+    시작한 뒤라 잔여량이 음수로 내려갈 수 있는데, 막지 않는다 — 한도 안에서 시작한
+    호출은 끝까지 완료시켜 주는 게 맞고, 다음 요청부터 막힌다."""
+    if amount <= 0:
+        return
+    _require_db()
+    DB.collection("users").document(user_id).update({
+        "tokens_remaining": firestore.Increment(-amount)
+    })
+
+
+# 이번 요청에서 실제로 쓴 Gemini 토큰 수를 세어 두는 스레드별 저장소.
+# ThreadingHTTPServer라 요청마다 별도 스레드에서 처리되므로, 전역 변수 하나를
+# 공유하면 동시 요청끼리 값이 섞인다 — 요청(스레드)마다 독립된 값을 쓰기 위해
+# threading.local()을 쓴다.
+_token_ctx = threading.local()
+
+
+def _reset_call_tokens():
+    _token_ctx.total = 0
+
+
+def _add_call_tokens(n):
+    _token_ctx.total = getattr(_token_ctx, "total", 0) + (n or 0)
+
+
+def _get_call_tokens():
+    return getattr(_token_ctx, "total", 0)
 
 
 def create_session(sub):
@@ -2400,6 +2480,117 @@ def _session_user(handler):
         ref.delete()
         return None
     return sess.get("user_id")
+
+
+# --- 관리자 로그인 (일반 회원 로그인과 완전히 별개) ---------------------------
+
+# 무차별대입 방지 — 4자리 숫자 같은 짧은 비밀번호는 시도 횟수를 안 막으면 순식간에
+# 뚫린다. IP별로 실패 횟수를 세어 잠깐 막는다. 서버 재시작하면 초기화되지만, 재시작
+# 자체가 흔치 않고 그사이 시도 기록이 사라져도 큰 문제는 아니다.
+_admin_login_fails = {}  # ip -> [실패시각, ...]
+ADMIN_LOGIN_MAX_ATTEMPTS = 5
+ADMIN_LOGIN_WINDOW = 300  # 5분
+
+
+def _client_ip(handler):
+    fwd = handler.headers.get("X-Forwarded-For", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return handler.client_address[0]
+
+
+def _admin_login_blocked(ip):
+    now = time.monotonic()
+    fails = [t for t in _admin_login_fails.get(ip, []) if now - t < ADMIN_LOGIN_WINDOW]
+    _admin_login_fails[ip] = fails
+    return len(fails) >= ADMIN_LOGIN_MAX_ATTEMPTS
+
+
+def _admin_login_record_fail(ip):
+    _admin_login_fails.setdefault(ip, []).append(time.monotonic())
+
+
+def _admin_login_clear(ip):
+    _admin_login_fails.pop(ip, None)
+
+
+def verify_admin_password(username, password):
+    if not ADMIN_PASSWORD:
+        raise ValueError("관리자 로그인이 아직 설정되지 않았습니다 (ADMIN_PASSWORD 미설정).")
+    # 아이디·비밀번호 둘 다 길이가 노출되지 않도록 compare_digest로 비교
+    ok_user = secrets.compare_digest(username.strip(), ADMIN_USERNAME)
+    ok_pass = secrets.compare_digest(password, ADMIN_PASSWORD)
+    if not (ok_user and ok_pass):
+        raise ValueError("아이디 또는 비밀번호가 올바르지 않습니다.")
+
+
+def create_admin_session():
+    _require_db()
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(seconds=ADMIN_SESSION_MAX_AGE)
+    DB.collection("admin_sessions").document(token).set({
+        "created_at": _now_iso(),
+        "expires_at": expires.isoformat(),
+    })
+    return token
+
+
+def _admin_session_valid(handler):
+    if DB is None:
+        return False
+    token = _parse_cookies(handler.headers.get("Cookie", "")).get("admin_session")
+    if not token:
+        return False
+    ref = DB.collection("admin_sessions").document(token)
+    snap = ref.get()
+    if not snap.exists:
+        return False
+    try:
+        expires = datetime.fromisoformat(snap.to_dict()["expires_at"])
+    except Exception:
+        return False
+    if datetime.now(timezone.utc) >= expires:
+        ref.delete()
+        return False
+    return True
+
+
+def delete_admin_session(token):
+    if DB is None or not token:
+        return
+    DB.collection("admin_sessions").document(token).delete()
+
+
+def list_all_users():
+    """회원 목록 — 이메일·이름·가입방식·잔여 토큰·가입일. 가입일 최신순."""
+    _require_db()
+    rows = []
+    for doc in DB.collection("users").stream():
+        d = doc.to_dict() or {}
+        try:
+            tokens = int(d.get("tokens_remaining", 0))
+        except (TypeError, ValueError):
+            tokens = 0
+        rows.append({
+            "id": doc.id,
+            "email": d.get("email", ""),
+            "name": d.get("name", ""),
+            "provider": "password" if d.get("password_hash") else "google",
+            "tokensRemaining": tokens,
+            "createdAt": d.get("created_at", ""),
+        })
+    rows.sort(key=lambda r: r["createdAt"], reverse=True)
+    return rows
+
+
+def recharge_user_tokens(user_id, amount):
+    """관리자가 임의로 토큰을 더하거나(양수) 뺀다(음수). 계정이 실제로 있는지 먼저 확인한다."""
+    _require_db()
+    ref = DB.collection("users").document(user_id)
+    if not ref.get().exists:
+        raise ValueError("해당 회원을 찾을 수 없습니다.")
+    ref.update({"tokens_remaining": firestore.Increment(int(amount))})
+    return get_user_tokens(user_id)
 
 
 def list_saved_items(user_id):
@@ -2466,13 +2657,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
-    def _send_json(self, obj, status=200, cookies=None):
+    def _send_json(self, obj, status=200, cookies=None, headers=None):
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("content-type", "application/json; charset=utf-8")
         self.send_header("content-length", str(len(data)))
         for c in cookies or ():
             self.send_header("Set-Cookie", c)
+        for k, v in (headers or {}).items():
+            self.send_header(k, str(v))
         self.end_headers()
         self.wfile.write(data)
 
@@ -2484,6 +2677,14 @@ class Handler(BaseHTTPRequestHandler):
     def _cleared_session_cookie(self):
         secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
         return f"session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"
+
+    def _admin_session_cookie(self, token, max_age):
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return f"admin_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}"
+
+    def _cleared_admin_session_cookie(self):
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return f"admin_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"
 
     def do_GET(self):
         """/api/*는 Firestore를 호출하므로, do_POST처럼 예상 못 한 예외에도
@@ -2506,8 +2707,21 @@ class Handler(BaseHTTPRequestHandler):
             if not user_id:
                 self._send_json({"loggedIn": False})
                 return
-            info = (DB.collection("users").document(user_id).get().to_dict() or {})
-            self._send_json({"loggedIn": True, "email": info.get("email"), "name": info.get("name")})
+            self._send_json(_account_payload(user_id))
+            return
+
+        if path == "/api/admin/me":
+            self._send_json({"loggedIn": _admin_session_valid(self)})
+            return
+
+        if path == "/api/admin/users":
+            if not _admin_session_valid(self):
+                self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
+                return
+            try:
+                self._send_json({"users": list_all_users()})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
             return
 
         if path == "/api/saved":
@@ -2589,13 +2803,33 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"서버 내부 오류입니다: {e}"}, 500)
             except Exception:
                 pass
+        finally:
+            # 이번 요청에서 Gemini에 실제로 청구된 토큰만큼 사용자 잔액을 깎는다.
+            # 요청이 도중에 실패했더라도(RECITATION 재시도, 완성도 보정 재시도 등)
+            # 이미 나간 호출은 구글에 청구됐으므로 그만큼은 반드시 차감한다.
+            # 응답은 이미 위에서 다 보낸 뒤라, 여기서 실패해도 사용자에게는 영향 없다.
+            used = _get_call_tokens()
+            user_id = getattr(self, "_auth_user_id", None)
+            if used and user_id:
+                try:
+                    deduct_tokens(user_id, used)
+                except Exception:
+                    traceback.print_exc()
 
     def _handle_post(self):
+        # keep-alive 연결에서는 같은 핸들러 인스턴스(=같은 스레드)가 요청을 여러 번
+        # 처리할 수 있다 — 지난 요청의 흔적이 이번 요청으로 새어 들어오지 않도록
+        # 요청마다 맨 먼저 초기화한다(안 하면 토큰이 이중으로 깎이거나 엉뚱한 사용자
+        # 이름으로 깎일 수 있다).
+        self._auth_user_id = None
+        _reset_call_tokens()
+
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
                         "/api/reword", "/api/ocr",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
-                        "/api/auth/login", "/api/logout", "/api/saved", "/api/saved/delete"):
+                        "/api/auth/login", "/api/logout", "/api/saved", "/api/saved/delete",
+                        "/api/admin/login", "/api/admin/logout", "/api/admin/recharge"):
             self.send_error(404, "Not found")
             return
         try:
@@ -2623,16 +2857,30 @@ class Handler(BaseHTTPRequestHandler):
         # AI를 실제로 호출하는 엔드포인트는 전부 로그인이 있어야 쓸 수 있다 —
         # 이제 사용자가 자기 Gemini 키를 내지 않고 관리자 키 하나를 같이 쓰므로,
         # 로그인이 곧 '누가 관리자 키를 쓰는지' 구분하는 유일한 장치다.
-        if path in ("/api/analyze", "/api/models", "/api/quiz",
-                    "/api/workbook", "/api/reword", "/api/ocr"):
+        # 그중 실제로 콘텐츠를 생성하는(=토큰을 쓰는) 다섯 개는 토큰 잔액도 확인한다
+        # (/api/models는 모델 목록만 조회할 뿐 토큰을 쓰지 않으므로 잔액 0이어도 된다).
+        GENERATE_PATHS = ("/api/analyze", "/api/quiz", "/api/workbook",
+                           "/api/reword", "/api/ocr")
+        if path in GENERATE_PATHS + ("/api/models",):
             if DB is None:
                 self._send_json(
                     {"error": "로그인 기능이 아직 설정되지 않았습니다 (관리자에게 문의하세요)."}, 503
                 )
                 return
-            if not _session_user(self):
+            user_id = _session_user(self)
+            if not user_id:
                 self._send_json({"error": "로그인이 필요한 서비스입니다."}, 401)
                 return
+            self._auth_user_id = user_id
+            if path in GENERATE_PATHS:
+                remaining = get_user_tokens(user_id)
+                if remaining <= 0:
+                    self._send_json(
+                        {"error": "토큰을 모두 사용했습니다. 관리자에게 문의하세요.", "code": "no_tokens"},
+                        402,
+                    )
+                    return
+                _reset_call_tokens()
 
         if path == "/api/auth/google":
             credential = req.get("credential") or ""
@@ -2651,7 +2899,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"로그인에 실패했습니다: {e}"}, 500)
                 return
             self._send_json(
-                {"loggedIn": True, "email": claims.get("email"), "name": claims.get("name")},
+                _account_payload(sub),
                 cookies=[self._session_cookie(token, SESSION_MAX_AGE)],
             )
             return
@@ -2686,9 +2934,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": f"인증에 실패했습니다: {e}"}, 500)
                 return
-            info = DB.collection("users").document(user_id).get().to_dict() or {}
             self._send_json(
-                {"loggedIn": True, "email": info.get("email"), "name": info.get("name")},
+                _account_payload(user_id),
                 cookies=[self._session_cookie(token, SESSION_MAX_AGE)],
             )
             return
@@ -2700,7 +2947,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "이메일과 비밀번호를 입력하세요."}, 400)
                 return
             try:
-                user_id, info = login_with_password(email, password)
+                user_id, _info = login_with_password(email, password)
                 token = create_session(user_id)
             except ValueError as e:
                 self._send_json({"error": str(e)}, 401)
@@ -2709,7 +2956,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"로그인에 실패했습니다: {e}"}, 500)
                 return
             self._send_json(
-                {"loggedIn": True, "email": info.get("email"), "name": info.get("name")},
+                _account_payload(user_id),
                 cookies=[self._session_cookie(token, SESSION_MAX_AGE)],
             )
             return
@@ -2718,6 +2965,64 @@ class Handler(BaseHTTPRequestHandler):
             token = _parse_cookies(self.headers.get("Cookie", "")).get("session")
             delete_session(token)
             self._send_json({"loggedIn": False}, cookies=[self._cleared_session_cookie()])
+            return
+
+        if path == "/api/admin/login":
+            ip = _client_ip(self)
+            if _admin_login_blocked(ip):
+                self._send_json(
+                    {"error": f"로그인 시도가 너무 많습니다. {ADMIN_LOGIN_WINDOW // 60}분 뒤 다시 시도하세요."},
+                    429,
+                )
+                return
+            username = (req.get("username") or "").strip()
+            password = req.get("password") or ""
+            try:
+                verify_admin_password(username, password)
+            except ValueError as e:
+                _admin_login_record_fail(ip)
+                self._send_json({"error": str(e)}, 401)
+                return
+            _admin_login_clear(ip)
+            try:
+                token = create_admin_session()
+            except Exception as e:
+                self._send_json({"error": f"로그인에 실패했습니다: {e}"}, 500)
+                return
+            self._send_json(
+                {"loggedIn": True},
+                cookies=[self._admin_session_cookie(token, ADMIN_SESSION_MAX_AGE)],
+            )
+            return
+
+        if path == "/api/admin/logout":
+            token = _parse_cookies(self.headers.get("Cookie", "")).get("admin_session")
+            delete_admin_session(token)
+            self._send_json({"loggedIn": False}, cookies=[self._cleared_admin_session_cookie()])
+            return
+
+        if path == "/api/admin/recharge":
+            if not _admin_session_valid(self):
+                self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
+                return
+            user_id = req.get("userId") or ""
+            try:
+                amount = int(req.get("amount"))
+            except (TypeError, ValueError):
+                self._send_json({"error": "충전량은 정수여야 합니다."}, 400)
+                return
+            if not user_id or amount == 0:
+                self._send_json({"error": "회원과 충전량을 지정하세요."}, 400)
+                return
+            try:
+                new_balance = recharge_user_tokens(user_id, amount)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+                return
+            except Exception as e:
+                self._send_json({"error": f"충전에 실패했습니다: {e}"}, 500)
+                return
+            self._send_json({"tokensRemaining": new_balance})
             return
 
         if path == "/api/saved":

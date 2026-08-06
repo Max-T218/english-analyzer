@@ -180,10 +180,17 @@ function isNeedsProError(err) {
   return !!(err && err.code === "needs_pro");
 }
 
+// 로그인 계정의 잔여 토큰이 0인 경우 — Gemini 한도와는 별개로, 이 계정이 더 쓸 수
+// 없는 상태다. 다시 시도해도 똑같이 실패하므로 한도 소진과 같은 방식(즉시 중단)으로 다룬다.
+function isNoTokensError(err) {
+  return !!(err && err.code === "no_tokens");
+}
+
 function isQuotaError(err) {
   if (err && err.code === "quota") return true;
   if (isProUnavailableError(err)) return true; // 남은 지문을 즉시 중단시키기 위해
   if (isNeedsProError(err)) return true;
+  if (isNoTokensError(err)) return true;
   const msg = (err && err.message) || String(err || "");
   return /한도|quota|exceeded|429/i.test(msg);
 }
@@ -205,6 +212,12 @@ function quotaStopHtml(left, err, unit = "지문") {
       이 API 키는 Pro 모델을 쓸 수 없습니다(결제된 키에서만 동작).
       위 <b>모델</b> 목록에서 <b>Flash</b> 모델을 선택한 뒤 다시 실행해 주세요.
       남은 ${unit} ${left}개는 시도하지 않았습니다.
+    </div></section>`;
+  }
+  if (isNoTokensError(err)) {
+    return `<section class="passage-block"><div class="passage-error">
+      <b>토큰을 모두 사용해 중단했습니다</b>
+      남은 ${unit} ${left}개는 시도하지 않았습니다. 관리자에게 문의해 토큰을 더 받으세요.
     </div></section>`;
   }
   return `<section class="passage-block"><div class="passage-error">
@@ -277,7 +290,10 @@ let isLoggedIn = false; // 저장/불러오기 버튼들이 이 값으로 로그
 
 function renderAccount(info) {
   isLoggedIn = !!(info && info.loggedIn);
-  if (isLoggedIn) accountNameEl.textContent = `${info.name || info.email || "로그인됨"}님`;
+  if (!isLoggedIn) return;
+  const tokens = Number(info.tokensRemaining);
+  const tokenText = Number.isFinite(tokens) ? ` · 잔여 토큰 ${tokens.toLocaleString()}개` : "";
+  accountNameEl.textContent = `${info.name || info.email || "로그인됨"}님${tokenText}`;
 }
 
 async function refreshAccount() {
@@ -293,6 +309,16 @@ async function refreshAccount() {
   }
 }
 refreshAccount();
+
+// 생성 작업이 끝난 뒤 잔여 토큰 표시만 갱신한다 — refreshAccount()와 달리 게이트/작업
+// 화면을 오가지 않는다(방금 결과를 만든 화면에서 로그인 화면으로 튕겨 나가면 안 되므로).
+async function refreshTokenDisplay() {
+  try {
+    renderAccount(await getJson("/api/me", ""));
+  } catch (_) {
+    /* 표시 갱신 실패는 조용히 무시 — 다음 생성 때 다시 시도된다 */
+  }
+}
 
 // index.html의 data-callback="handleGoogleCredential"이 로그인 성공 시 이 함수를 부른다.
 window.handleGoogleCredential = async function (response) {
@@ -1115,6 +1141,7 @@ async function runOcr(fileList) {
   ocrBusy = false;
   ocrBtn.disabled = false;
   ocrFileEl.value = ""; // 같은 파일을 다시 골라도 change가 나도록 비운다
+  refreshTokenDisplay();
 }
 
 ocrBtn.addEventListener("click", () => ocrFileEl.click());
@@ -1314,6 +1341,7 @@ async function analyze() {
   addPassageBtn.disabled = false;
   clearPassagesBtn.disabled = false;
   resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  refreshTokenDisplay(); // 방금 쓴 만큼 잔여 토큰 표시를 갱신 (실패했어도 일부 소모됐을 수 있음)
 }
 
 // "내 저장함"에서 불러온 분석 결과를 화면에 되살린다 — API를 다시 부르지 않고,
@@ -1891,6 +1919,7 @@ function setupQuizTab({ prefix, types, footer }) {
     addPassageBtn.disabled = false;
     clearPassagesBtn.disabled = false;
     resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    refreshTokenDisplay();
   }
 
   // "내 저장함"에서 불러온 문제 세트를 다시 그린다 — API를 다시 부르지 않고
@@ -2405,6 +2434,7 @@ async function generateWorkbook() {
   addPassageBtn.disabled = false;
   clearPassagesBtn.disabled = false;
   workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  refreshTokenDisplay();
 }
 
 // "내 저장함"에서 불러온 워크북을 다시 그린다 — API를 다시 부르지 않고, 저장해 둔
