@@ -53,7 +53,7 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 세션 유지 기간(초) — 30일
 # 계정을 새로 만들 때 지급하는 잔액(원). 필요에 맞게 환경변수로 조정하고, 특정
 # 사용자에게 더 주고 싶으면 관리자 페이지(/admin.html)에서 충전하거나 Firestore
 # 콘솔에서 users/<id> 문서의 krw_remaining 값을 직접 고치면 된다.
-DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "3000"))
+DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "50000"))
 
 # --- 요금제: 실제 Gemini 사용량이 아니라, 행동 하나당 고정 가격(원)을 매긴다 ----
 # 실사용 토큰을 그때그때 재는 대신 정찰제로 가는 이유: 사용자 입장에서 예측 가능하고,
@@ -247,6 +247,7 @@ def complete_signup(email, code):
         raise ValueError("인증코드가 올바르지 않습니다.")
 
     user_id = _user_doc_id(email)
+    starting_krw = 0 if _was_previously_deleted(email) else DEFAULT_USER_KRW
     DB.collection("users").document(user_id).set({
         "email": email,
         "name": d.get("name") or "",
@@ -254,7 +255,7 @@ def complete_signup(email, code):
         "password_hash": d["password_hash"],
         "provider": "password",
         "created_at": _now_iso(),
-        "krw_remaining": DEFAULT_USER_KRW,
+        "krw_remaining": starting_krw,
     })
     ref.delete()
     return user_id
@@ -2413,16 +2414,41 @@ def verify_google_id_token(credential):
     return claims
 
 
+def _was_previously_deleted(email):
+    """이 이메일로 탈퇴한 적이 있는지 확인한다 — 탈퇴 후 재가입으로
+    시작 잔액을 반복해서 받는 것(어뷰징)을 막는 데 쓴다."""
+    _require_db()
+    return DB.collection("deleted_accounts").document(email.strip().lower()).get().exists
+
+
 def upsert_user(sub, email, name):
     _require_db()
     ref = DB.collection("users").document(sub)
     if not ref.get().exists:
+        starting_krw = 0 if _was_previously_deleted(email) else DEFAULT_USER_KRW
         ref.set({
             "email": email, "name": name, "created_at": _now_iso(),
-            "krw_remaining": DEFAULT_USER_KRW,
+            "krw_remaining": starting_krw,
         })
     else:
         ref.set({"email": email, "name": name}, merge=True)
+
+
+def delete_user_account(user_id):
+    """계정 탈퇴 — 계정 문서와 그 계정이 저장해 둔 자료를 전부 지운다.
+    되돌릴 수 없다(잔액도 함께 사라진다). 같은 이메일로 재가입해도 시작 잔액을
+    다시 받지 못하도록 deleted_accounts에 이메일을 남겨 둔다(어뷰징 방지).
+    세션은 호출부(로그아웃과 동일하게)에서 지운다."""
+    _require_db()
+    snap = DB.collection("users").document(user_id).get()
+    email = (snap.to_dict() or {}).get("email") if snap.exists else None
+    for item in DB.collection("saved_items").where("user_id", "==", user_id).stream():
+        item.reference.delete()
+    DB.collection("users").document(user_id).delete()
+    if email:
+        DB.collection("deleted_accounts").document(email.strip().lower()).set({
+            "deleted_at": _now_iso(),
+        })
 
 
 def get_user_krw(user_id):
@@ -2859,7 +2885,9 @@ class Handler(BaseHTTPRequestHandler):
         if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
                         "/api/reword", "/api/ocr",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
-                        "/api/auth/login", "/api/logout", "/api/saved", "/api/saved/delete",
+                        "/api/auth/login", "/api/logout", "/api/auth/delete",
+                        "/api/account/recharge",
+                        "/api/saved", "/api/saved/delete",
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge"):
             self.send_error(404, "Not found")
             return
@@ -3010,6 +3038,51 @@ class Handler(BaseHTTPRequestHandler):
             token = _parse_cookies(self.headers.get("Cookie", "")).get("session")
             delete_session(token)
             self._send_json({"loggedIn": False}, cookies=[self._cleared_session_cookie()])
+            return
+
+        if path == "/api/auth/delete":
+            if DB is None:
+                self._send_json({"error": "로그인 기능이 아직 설정되지 않았습니다."}, 503)
+                return
+            token = _parse_cookies(self.headers.get("Cookie", "")).get("session")
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요한 서비스입니다."}, 401)
+                return
+            try:
+                delete_user_account(user_id)
+            except Exception as e:
+                self._send_json({"error": f"탈퇴 처리에 실패했습니다: {e}"}, 500)
+                return
+            delete_session(token)
+            self._send_json({"loggedIn": False}, cookies=[self._cleared_session_cookie()])
+            return
+
+        if path == "/api/account/recharge":
+            # 결제사가 아직 연결되지 않은 비공개 테스트 단계 전용 — 로그인만 하면
+            # 원하는 만큼 스스로 충전할 수 있다. 결제사 연동 후에는 반드시 이 경로를
+            # 실제 결제 확인 로직으로 바꾸거나 없애야 한다.
+            if DB is None:
+                self._send_json({"error": "로그인 기능이 아직 설정되지 않았습니다."}, 503)
+                return
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요한 서비스입니다."}, 401)
+                return
+            try:
+                amount = int(req.get("amount"))
+            except (TypeError, ValueError):
+                self._send_json({"error": "충전 금액이 올바르지 않습니다."}, 400)
+                return
+            if amount <= 0 or amount > 10_000_000:
+                self._send_json({"error": "충전 금액이 올바르지 않습니다."}, 400)
+                return
+            try:
+                new_krw = recharge_user_krw(user_id, amount)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+                return
+            self._send_json({"krwRemaining": new_krw})
             return
 
         if path == "/api/admin/login":

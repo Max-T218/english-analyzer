@@ -232,6 +232,7 @@ const gateEl = $("gate");
 const workspaceEl = $("workspace");
 const loginModalEl = $("loginModalOverlay");
 const signupModalEl = $("signupModalOverlay");
+const rechargeModalEl = $("rechargeModalOverlay");
 const loginPanelEl = $("loginPanel");
 const signupPanelEl = $("signupPanel");
 const verifyPanelEl = $("verifyPanel");
@@ -248,6 +249,7 @@ function closeModal(overlay) {
 function closeAllModals() {
   closeModal(loginModalEl);
   closeModal(signupModalEl);
+  closeModal(rechargeModalEl);
 }
 function showSignupStep(step) {
   signupPanelEl.hidden = step !== "form";
@@ -265,8 +267,9 @@ $("openSignupBtn").addEventListener("click", () => {
 });
 $("loginModalClose").addEventListener("click", () => closeModal(loginModalEl));
 $("signupModalClose").addEventListener("click", () => closeModal(signupModalEl));
+$("rechargeModalClose").addEventListener("click", () => closeModal(rechargeModalEl));
 // 배경(어두운 부분) 클릭 시 닫기 — 안쪽 상자를 클릭한 건 버블링으로 안 걸리게 확인
-[loginModalEl, signupModalEl].forEach((overlay) => {
+[loginModalEl, signupModalEl, rechargeModalEl].forEach((overlay) => {
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) closeModal(overlay);
   });
@@ -350,6 +353,7 @@ const myLibraryBtn = $("myLibraryBtn");
 const logoutBtn = $("logoutBtn");
 
 let isLoggedIn = false; // 저장/불러오기 버튼들이 이 값으로 로그인 여부를 판단한다
+let lastAccountLabel = ""; // 이름/이메일 표시용 — 충전 후 잔액만 다시 그릴 때 재사용
 
 function renderAccount(info) {
   isLoggedIn = !!(info && info.loggedIn);
@@ -359,8 +363,9 @@ function renderAccount(info) {
   }
   const krw = Number(info.krwRemaining);
   currentKrw = Number.isFinite(krw) ? krw : null;
+  if (info.name || info.email) lastAccountLabel = info.name || info.email;
   const krwText = currentKrw !== null ? ` · 잔액 ${currentKrw.toLocaleString()}원` : "";
-  accountNameEl.textContent = `${info.name || info.email || "로그인됨"}님${krwText}`;
+  accountNameEl.textContent = `${lastAccountLabel || "로그인됨"}님${krwText}`;
 }
 
 async function refreshAccount() {
@@ -410,6 +415,65 @@ logoutBtn.addEventListener("click", async () => {
   }
   renderAccount({ loggedIn: false });
   showGate();
+});
+
+const deleteAccountBtn = $("deleteAccountBtn");
+deleteAccountBtn.addEventListener("click", async () => {
+  if (!confirm("정말 탈퇴하시겠습니까?\n남은 잔액과 저장된 자료가 모두 사라지며 되돌릴 수 없습니다."))
+    return;
+  try {
+    await postJson("/api/auth/delete", {}, "탈퇴 처리에 실패했습니다.");
+  } catch (err) {
+    alert(err.message || "탈퇴 처리에 실패했습니다.");
+    return;
+  }
+  renderAccount({ loggedIn: false });
+  showGate();
+});
+
+/* ── 충전(결제사 연동 전, 비공개 테스트 기간 임시 무료 충전) ── */
+const rechargeCustomForm = $("rechargeCustomForm");
+const rechargeCustomAmountEl = $("rechargeCustomAmount");
+const rechargeCustomBtn = $("rechargeCustomBtn");
+const rechargeStatusEl = $("rechargeStatus");
+const rechargeErrorEl = $("rechargeError");
+
+async function submitRecharge(amount) {
+  rechargeErrorEl.textContent = "";
+  if (!Number.isFinite(amount) || amount <= 0) {
+    rechargeErrorEl.textContent = "충전할 금액을 올바르게 입력하세요.";
+    return;
+  }
+  rechargeStatusEl.textContent = "충전 중…";
+  try {
+    const data = await postJson("/api/account/recharge", { amount }, "충전에 실패했습니다.");
+    renderAccount({ loggedIn: true, krwRemaining: data.krwRemaining });
+    closeModal(rechargeModalEl);
+  } catch (err) {
+    rechargeErrorEl.textContent = err.message || "충전에 실패했습니다.";
+  } finally {
+    rechargeStatusEl.textContent = "";
+  }
+}
+
+$("openRechargeBtn").addEventListener("click", () => {
+  rechargeErrorEl.textContent = "";
+  rechargeCustomForm.hidden = true;
+  rechargeCustomAmountEl.value = "";
+  openModal(rechargeModalEl);
+});
+$("rechargePresets").addEventListener("click", (e) => {
+  const btn = e.target.closest(".recharge-preset-btn");
+  if (!btn) return;
+  submitRecharge(parseInt(btn.dataset.amount, 10));
+});
+$("rechargeCustomToggleBtn").addEventListener("click", () => {
+  rechargeCustomForm.hidden = !rechargeCustomForm.hidden;
+  if (!rechargeCustomForm.hidden) rechargeCustomAmountEl.focus();
+});
+rechargeCustomForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  submitRecharge(parseInt(rechargeCustomAmountEl.value, 10));
 });
 
 /* ── 이메일/비밀번호 로그인·회원가입 ── */
