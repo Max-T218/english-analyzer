@@ -47,11 +47,16 @@ PUBLIC_DIR = Path(__file__).resolve().parent / "public"
 # --- 로그인(구글 OAuth + 이메일/비밀번호) + Firestore -----------------------
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 세션 유지 기간(초) — 30일
-# 계정을 새로 만들 때 지급하는 토큰 — 관리자 Gemini 키의 실제 사용량(입력+출력 토큰)을
-# 그대로 깎는다. 지문 분석 1회가 보통 수천~수만 토큰이므로, 기본값은 대략 10~수십 회
-# 분량이다. 필요에 맞게 환경변수로 조정하고, 특정 사용자에게 더 주고 싶으면 Firestore
-# 콘솔에서 users/<id> 문서의 tokens_remaining 값을 직접 고치면 된다.
-DEFAULT_USER_TOKENS = int(os.environ.get("DEFAULT_USER_TOKENS", "300000"))
+# 계정을 새로 만들 때 지급하는 토큰. 필요에 맞게 환경변수로 조정하고, 특정 사용자에게
+# 더 주고 싶으면 관리자 페이지(/admin.html)에서 충전하거나 Firestore 콘솔에서
+# users/<id> 문서의 tokens_remaining 값을 직접 고치면 된다.
+DEFAULT_USER_TOKENS = int(os.environ.get("DEFAULT_USER_TOKENS", "10000"))
+# Gemini는 출력 토큰이 입력 토큰보다 훨씬 비싸다(모델마다 다르지만 보통 3~5배).
+# 입력·출력을 그냥 더한 수(totalTokenCount)를 그대로 깎으면 실제 청구 비용과
+# 안 맞으므로, 출력 토큰에 이 배율을 곱해서 '비용에 가까운 가중치 토큰'을 깎는다.
+# 실제 요금표(https://ai.google.dev/pricing)에서 쓰는 모델의 출력가/입력가 비율로
+# 맞춰서 조정하면 더 정확해진다.
+OUTPUT_TOKEN_WEIGHT = float(os.environ.get("OUTPUT_TOKEN_WEIGHT", "4"))
 
 # --- 관리자 페이지(public/admin.html) — 회원 목록·토큰 조회/충전 --------------
 # 일반 회원 로그인(이메일 정규식 검증 등)과 완전히 분리된, 아이디 하나짜리 단일
@@ -1734,6 +1739,23 @@ _ROLE_RUBY = {
 }
 
 
+# 모델이 영한 혼용 문법 용어를 가끔 오타 낸다(특히 처리할 문법 포인트가 많은
+# 긴 지문에서) — "to부정사"의 "to"가 발음이 비슷한 한글 "투"로 바뀌는 식.
+# 프롬프트로는 100% 못 막으므로, 화면에 나가기 직전 기계적으로 바로잡는다.
+# 같은 종류의 오타가 더 발견되면 이 목록에 추가하면 된다.
+_KNOWN_TERM_FIXES = (
+    (re.compile(r"투부정사"), "to부정사"),
+)
+
+
+def _fix_known_typos(text):
+    if not text:
+        return text
+    for pat, repl in _KNOWN_TERM_FIXES:
+        text = pat.sub(repl, text)
+    return text
+
+
 # 줄바꿈 금지를 붙일 최대 길이. 이보다 긴 대상은 그냥 접히게 둔다 —
 # 좁은 화면에서 한 줄로 붙들면 카드 밖으로 삐져나가는 쪽이 더 나쁘기 때문.
 _NOBREAK_MAX = 28
@@ -1749,7 +1771,7 @@ def _nobreak(word):
 def _wrap_ann(word, a):
     """평문 영어 조각 word 에 역할(role)에 맞는 루비/색상/병렬번호를 입힌다."""
     role = (a.get("role") or "g").strip()
-    rt = _esc_html((a.get("rt") or "").strip())
+    rt = _esc_html(_fix_known_typos((a.get("rt") or "").strip()))
     w = _esc_html(word)
     num = a.get("num")
     numhtml = ""
@@ -2169,9 +2191,13 @@ def _gemini_json(payload, api_key, model, trunc_msg):
             payload.setdefault("generationConfig", {})["temperature"] = temp
         data = json.dumps(payload).encode("utf-8")
         body = _gemini_call_with_retry(data, api_key, model)
-        # 실제로 청구되는 토큰 수 — 이 호출이 이후에 실패(RECITATION 등)로 버려지더라도
-        # 구글에는 이미 청구됐으므로 그대로 누적한다.
-        _add_call_tokens((body.get("usageMetadata") or {}).get("totalTokenCount", 0))
+        # 이 호출이 이후에 실패(RECITATION 등)로 버려지더라도 구글에는 이미 청구됐으므로
+        # 그대로 누적한다. 입력·출력 토큰을 그냥 더하지 않고, 더 비싼 출력 토큰에
+        # OUTPUT_TOKEN_WEIGHT를 곱해 실제 비용에 가깝게 만든다.
+        usage = body.get("usageMetadata") or {}
+        prompt_tokens = usage.get("promptTokenCount", 0) or 0
+        output_tokens = usage.get("candidatesTokenCount", 0) or 0
+        _add_call_tokens(round(prompt_tokens + output_tokens * OUTPUT_TOKEN_WEIGHT))
         try:
             return _extract_gemini_json(body, trunc_msg)
         except Recitation as e:
@@ -2240,13 +2266,15 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
             c.pop("text", None)
             c.pop("anns", None)
             if c.get("kor"):
-                c["kor"] = sanitize_inline(clean_korean(c["kor"]))
+                c["kor"] = _fix_known_typos(sanitize_inline(clean_korean(c["kor"])))
         if s.get("note"):
-            s["note"] = sanitize_inline(clean_note(s["note"]))
+            s["note"] = _fix_known_typos(sanitize_inline(clean_note(s["note"])))
+        if s.get("examNote"):
+            s["examNote"] = _fix_known_typos(s["examNote"])
     # 요약 content 도 정화 (표/구조 태그가 레이아웃을 깨는 것을 서버에서도 차단)
     for item in result.get("summary", []):
         if isinstance(item, dict) and item.get("content"):
-            item["content"] = sanitize_inline(item["content"])
+            item["content"] = _fix_known_typos(sanitize_inline(item["content"]))
     result["_conjMiss"] = missed
     return result
 

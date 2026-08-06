@@ -233,34 +233,62 @@ function quotaStopHtml(left, err, unit = "지문") {
 // 구분하는 용도다. 로그인 방법은 구글 OAuth 또는 이메일/비밀번호 회원가입 둘 다.
 const gateEl = $("gate");
 const workspaceEl = $("workspace");
-const authTabsEl = $("authTabs");
+const loginModalEl = $("loginModalOverlay");
+const signupModalEl = $("signupModalOverlay");
 const loginPanelEl = $("loginPanel");
 const signupPanelEl = $("signupPanel");
 const verifyPanelEl = $("verifyPanel");
 
-function showAuthPanel(name) {
-  [...authTabsEl.querySelectorAll(".auth-tab")].forEach((t) =>
-    t.classList.toggle("active", t.dataset.authtab === name)
-  );
-  authTabsEl.hidden = name === "verify";
-  loginPanelEl.hidden = name !== "login";
-  signupPanelEl.hidden = name !== "signup";
-  verifyPanelEl.hidden = name !== "verify";
+// 로그인/회원가입은 시작 화면의 버튼 두 개로만 열리는 플로팅 창이다. 회원가입 창은
+// 안에서 '이메일·비밀번호 입력'→'인증코드 입력' 두 단계를 오가고, 로그인 창은
+// 구글 버튼과 이메일/비밀번호 폼을 한 창에 같이 보여준다.
+function openModal(overlay) {
+  overlay.hidden = false;
 }
-authTabsEl.querySelectorAll(".auth-tab").forEach((t) =>
-  t.addEventListener("click", () => showAuthPanel(t.dataset.authtab))
-);
+function closeModal(overlay) {
+  overlay.hidden = true;
+}
+function closeAllModals() {
+  closeModal(loginModalEl);
+  closeModal(signupModalEl);
+}
+function showSignupStep(step) {
+  signupPanelEl.hidden = step !== "form";
+  verifyPanelEl.hidden = step !== "verify";
+}
+
+$("openLoginBtn").addEventListener("click", () => {
+  loginErrorEl.textContent = "";
+  openModal(loginModalEl);
+});
+$("openSignupBtn").addEventListener("click", () => {
+  signupErrorEl.textContent = "";
+  showSignupStep("form");
+  openModal(signupModalEl);
+});
+$("loginModalClose").addEventListener("click", () => closeModal(loginModalEl));
+$("signupModalClose").addEventListener("click", () => closeModal(signupModalEl));
+// 배경(어두운 부분) 클릭 시 닫기 — 안쪽 상자를 클릭한 건 버블링으로 안 걸리게 확인
+[loginModalEl, signupModalEl].forEach((overlay) => {
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeModal(overlay);
+  });
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeAllModals();
+});
 
 function showGate() {
   gateEl.hidden = false;
   workspaceEl.hidden = true;
-  showAuthPanel("login");
+  closeAllModals();
   window.scrollTo({ top: 0 });
 }
 
 function enterWorkspace() {
   gateEl.hidden = true;
   workspaceEl.hidden = false;
+  closeAllModals();
   window.scrollTo({ top: 0 });
   loadModels();
 }
@@ -398,7 +426,7 @@ signupPanelEl.addEventListener("submit", async (e) => {
     pendingSignupEmail = email;
     verifyHintEl.textContent = `${email} 로 인증코드를 보냈습니다. 메일함(스팸함 포함)을 확인하세요.`;
     $("verifyCode").value = "";
-    showAuthPanel("verify");
+    showSignupStep("verify");
   } catch (err) {
     signupErrorEl.textContent = err.message || "회원가입에 실패했습니다.";
   } finally {
@@ -433,7 +461,7 @@ verifyPanelEl.addEventListener("submit", async (e) => {
     verifyStatusEl.textContent = "";
   }
 });
-$("verifyBackBtn").addEventListener("click", () => showAuthPanel("signup"));
+$("verifyBackBtn").addEventListener("click", () => showSignupStep("form"));
 
 // 로그인 후 관리자 키로 실제 쓸 수 있는 모델 목록을 불러와 드롭다운을 채움
 async function loadModels() {
