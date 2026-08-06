@@ -4,17 +4,23 @@
 지문을 받아 Google Gemini API로 '청크 단위 직독직해' 분석본 JSON을 생성하고,
 정적 프런트엔드(public/)가 이를 좌우 7:3 카드 형식으로 렌더링한다.
 
-API 키는 (1) 웹 화면에서 입력(브라우저 localStorage 저장) 또는
-        (2) 환경변수 GEMINI_API_KEY  로 제공할 수 있다.
+Gemini API 키는 관리자(운영자)가 환경변수 GEMINI_API_KEY 하나로만 설정한다.
+사용자는 개인 키를 입력하지 않고, 대신 로그인(구글 또는 이메일/비밀번호 회원가입)
+해야 AI 기능을 쓸 수 있다 — 로그인은 '누가 관리자의 키를 쓰는지' 구분하는
+용도이지, 사용자별 키를 받기 위한 것이 아니다.
 
 실행:  python server.py       (기본 http://localhost:8000)
 """
 
 import difflib
+import hashlib
 import json
 import os
 import re
 import secrets
+import smtplib
+import socket
+import ssl
 import sys
 import time
 import traceback
@@ -22,6 +28,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -36,7 +43,7 @@ MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 _MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]+$")
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
 
-# --- 저장/불러오기(구글 로그인 + Firestore) -------------------------------
+# --- 로그인(구글 OAuth + 이메일/비밀번호) + Firestore -----------------------
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 세션 유지 기간(초) — 30일
 
@@ -46,8 +53,8 @@ def _load_firestore():
     (GOOGLE_APPLICATION_CREDENTIALS)를, Render 등 배포 환경은 JSON 내용을 통째로 담은
     환경변수(GOOGLE_APPLICATION_CREDENTIALS_JSON)를 지원한다 — 배포 환경엔 영구 디스크가
     없어 키 파일을 둘 곳이 없으므로 값 자체를 환경변수로 넣는 쪽이 더 간단하다.
-    둘 다 없으면 None을 돌려주고, 로그인/저장 기능만 비활성화된 채로 나머지 앱은
-    그대로 동작한다(설정 전에도 분석·문제 제작 기능은 써야 하므로)."""
+    둘 다 없으면 None을 돌려준다 — 이제 로그인은 AI 기능(관리자 키 사용)의 전제
+    조건이므로, Firestore가 없으면 로그인은 물론 분석·문제 제작도 함께 막힌다."""
     raw = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     if raw:
         info = json.loads(raw)
@@ -59,6 +66,162 @@ def _load_firestore():
 
 
 DB = _load_firestore()
+
+# --- 이메일/비밀번호 회원가입 -----------------------------------------------
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+VERIFY_CODE_TTL = 15 * 60    # 인증코드 유효 시간(초)
+VERIFY_MAX_ATTEMPTS = 5      # 인증코드 오답 허용 횟수 — 넘으면 처음부터 다시 가입
+SIGNUP_RESEND_COOLDOWN = 60  # 같은 이메일로 인증코드를 다시 보낼 수 있는 최소 간격(초)
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class _IPv4SMTP_SSL(smtplib.SMTP_SSL):
+    """Render 등 일부 컨테이너 환경은 IPv6 주소만 갖고 실제 경로는 없어서,
+    smtp.gmail.com이 IPv6로 먼저 풀리면 'Network is unreachable'로 실패한다.
+    소켓 연결만 IPv4로 강제하고, TLS 인증서 검증은 원래 호스트명으로 그대로 한다."""
+
+    def _get_socket(self, host, port, timeout):
+        addrinfo = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+        ip = addrinfo[0][4][0]
+        new_socket = socket.create_connection((ip, port), timeout, self.source_address)
+        if self.timeout is not None and not self.timeout:
+            new_socket.setblocking(True)
+        return self.context.wrap_socket(new_socket, server_hostname=self._host)
+
+
+def _gen_verify_code():
+    return "".join(secrets.choice("0123456789") for _ in range(6))
+
+
+def send_verification_email(to_email, code):
+    """인증코드를 메일로 보낸다. SMTP 설정이 없으면(로컬 개발 등) 메일 대신
+    서버 로그에 코드를 남기고 넘어간다 — 관리자가 콘솔에서 코드를 보고 직접
+    전달할 수 있고, 실제 메일 없이도 회원가입 흐름을 테스트할 수 있다."""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        print(f"[signup] SMTP 설정이 없어 메일을 보내지 못했습니다. "
+              f"{to_email} 인증코드: {code}", file=sys.stderr)
+        return
+    msg = EmailMessage()
+    msg["Subject"] = "[English Lab] 이메일 인증코드"
+    msg["From"] = SMTP_USER
+    msg["To"] = to_email
+    msg.set_content(
+        f"English Lab 회원가입 인증코드는 {code} 입니다.\n"
+        f"{VERIFY_CODE_TTL // 60}분 안에 입력해 주세요.\n\n"
+        "본인이 요청한 것이 아니라면 이 메일을 무시하셔도 됩니다."
+    )
+    context = ssl.create_default_context()
+    with _IPv4SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context, timeout=20) as server:
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.send_message(msg)
+
+
+def _hash_password(password, salt=None):
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 200_000)
+    return salt.hex(), digest.hex()
+
+
+def _verify_password_hash(password, salt_hex, hash_hex):
+    _, digest_hex = _hash_password(password, bytes.fromhex(salt_hex))
+    return secrets.compare_digest(digest_hex, hash_hex)
+
+
+def _user_doc_id(email):
+    return "email:" + email.strip().lower()
+
+
+def start_signup(email, password, name):
+    """1단계: 이메일·비밀번호를 임시 저장하고 인증코드를 보낸다.
+    아직 users 컬렉션에는 만들지 않는다 — complete_signup에서 코드 확인 후 만든다."""
+    _require_db()
+    email = email.strip().lower()
+    if not _EMAIL_RE.match(email):
+        raise ValueError("올바른 이메일 주소를 입력하세요.")
+    if len(password) < 8:
+        raise ValueError("비밀번호는 8자 이상이어야 합니다.")
+    if DB.collection("users").document(_user_doc_id(email)).get().exists:
+        raise ValueError("이미 가입된 이메일입니다. 로그인해 주세요.")
+
+    ref = DB.collection("pending_signups").document(email)
+    snap = ref.get()
+    if snap.exists:
+        try:
+            created = datetime.fromisoformat(snap.to_dict().get("created_at"))
+            elapsed = (datetime.now(timezone.utc) - created).total_seconds()
+        except Exception:
+            elapsed = SIGNUP_RESEND_COOLDOWN
+        if elapsed < SIGNUP_RESEND_COOLDOWN:
+            wait = int(SIGNUP_RESEND_COOLDOWN - elapsed)
+            raise ValueError(f"잠시 후 다시 시도하세요 ({wait}초 남음).")
+
+    salt_hex, hash_hex = _hash_password(password)
+    code = _gen_verify_code()
+    ref.set({
+        "email": email,
+        "name": name.strip(),
+        "password_salt": salt_hex,
+        "password_hash": hash_hex,
+        "code": code,
+        "attempts": 0,
+        "created_at": _now_iso(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=VERIFY_CODE_TTL)).isoformat(),
+    })
+    send_verification_email(email, code)
+
+
+def complete_signup(email, code):
+    """2단계: 인증코드를 확인하고 실제 계정(users 문서)을 만든다. 성공하면
+    세션에 쓸 user_id를 돌려준다."""
+    _require_db()
+    email = email.strip().lower()
+    ref = DB.collection("pending_signups").document(email)
+    snap = ref.get()
+    if not snap.exists:
+        raise ValueError("회원가입 요청을 찾을 수 없습니다. 다시 시도하세요.")
+    d = snap.to_dict()
+    try:
+        expires = datetime.fromisoformat(d["expires_at"])
+    except Exception:
+        expires = datetime.now(timezone.utc)
+    if datetime.now(timezone.utc) >= expires:
+        ref.delete()
+        raise ValueError("인증코드가 만료되었습니다. 다시 가입해 주세요.")
+    if d.get("attempts", 0) >= VERIFY_MAX_ATTEMPTS:
+        ref.delete()
+        raise ValueError("인증 시도 횟수를 초과했습니다. 다시 가입해 주세요.")
+    if code.strip() != d.get("code"):
+        ref.update({"attempts": firestore.Increment(1)})
+        raise ValueError("인증코드가 올바르지 않습니다.")
+
+    user_id = _user_doc_id(email)
+    DB.collection("users").document(user_id).set({
+        "email": email,
+        "name": d.get("name") or "",
+        "password_salt": d["password_salt"],
+        "password_hash": d["password_hash"],
+        "provider": "password",
+        "created_at": _now_iso(),
+    })
+    ref.delete()
+    return user_id
+
+
+def login_with_password(email, password):
+    _require_db()
+    email = email.strip().lower()
+    snap = DB.collection("users").document(_user_doc_id(email)).get()
+    if not snap.exists:
+        raise ValueError("이메일 또는 비밀번호가 올바르지 않습니다.")
+    d = snap.to_dict()
+    if not d.get("password_hash"):
+        raise ValueError("이 계정은 구글 로그인 전용입니다. 구글로 로그인해 주세요.")
+    if not _verify_password_hash(password, d["password_salt"], d["password_hash"]):
+        raise ValueError("이메일 또는 비밀번호가 올바르지 않습니다.")
+    return _user_doc_id(email), d
 
 GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000"
 
@@ -619,8 +782,8 @@ def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None,
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
-            "Gemini API 키가 없습니다. 화면 상단의 'API 키' 칸에 키를 입력하거나 "
-            "환경변수 GEMINI_API_KEY 를 설정하세요."
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
         )
     model = model if (model and _MODEL_RE.match(model)) else MODEL
     types = [t for t in (types or []) if t in QUIZ_TYPE_LABELS] or ["주제", "제목", "요지"]
@@ -741,8 +904,8 @@ def call_gemini_reword(passage, variation, api_key, model):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
-            "Gemini API 키가 없습니다. 화면 상단의 'API 키' 칸에 키를 입력하거나 "
-            "환경변수 GEMINI_API_KEY 를 설정하세요."
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
         )
     model = model if (model and _MODEL_RE.match(model)) else MODEL
     if variation not in ("light", "heavy"):
@@ -909,8 +1072,8 @@ def call_gemini_ocr(file, api_key, model, partial=False):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
-            "Gemini API 키가 없습니다. 화면 상단의 'API 키' 칸에 키를 입력하거나 "
-            "환경변수 GEMINI_API_KEY 를 설정하세요."
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
         )
     model = model if (model and _MODEL_RE.match(model)) else MODEL
 
@@ -1197,8 +1360,8 @@ def call_gemini_workbook(passage, api_key, model, complete_hint=None):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
-            "Gemini API 키가 없습니다. 화면 상단의 'API 키' 칸에 키를 입력하거나 "
-            "환경변수 GEMINI_API_KEY 를 설정하세요."
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
         )
     model = model if (model and _MODEL_RE.match(model)) else MODEL
 
@@ -2010,8 +2173,8 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
-            "Gemini API 키가 없습니다. 화면 상단의 'API 키' 칸에 키를 입력하거나 "
-            "환경변수 GEMINI_API_KEY 를 설정하세요."
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
         )
     model = model if (model and _MODEL_RE.match(model)) else MODEL
 
@@ -2074,7 +2237,7 @@ def list_models(api_key):
     """해당 키로 generateContent가 가능한 gemini 모델 목록을 반환."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("Gemini API 키가 없습니다. 먼저 키를 입력하세요.")
+        raise RuntimeError("관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다.")
     req = urllib.request.Request(
         GEMINI_LIST_URL,
         method="GET",
@@ -2431,7 +2594,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
                         "/api/reword", "/api/ocr",
-                        "/api/auth/google", "/api/logout", "/api/saved", "/api/saved/delete"):
+                        "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
+                        "/api/auth/login", "/api/logout", "/api/saved", "/api/saved/delete"):
             self.send_error(404, "Not found")
             return
         try:
@@ -2456,6 +2620,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "잘못된 요청입니다."}, 400)
             return
 
+        # AI를 실제로 호출하는 엔드포인트는 전부 로그인이 있어야 쓸 수 있다 —
+        # 이제 사용자가 자기 Gemini 키를 내지 않고 관리자 키 하나를 같이 쓰므로,
+        # 로그인이 곧 '누가 관리자 키를 쓰는지' 구분하는 유일한 장치다.
+        if path in ("/api/analyze", "/api/models", "/api/quiz",
+                    "/api/workbook", "/api/reword", "/api/ocr"):
+            if DB is None:
+                self._send_json(
+                    {"error": "로그인 기능이 아직 설정되지 않았습니다 (관리자에게 문의하세요)."}, 503
+                )
+                return
+            if not _session_user(self):
+                self._send_json({"error": "로그인이 필요한 서비스입니다."}, 401)
+                return
+
         if path == "/api/auth/google":
             credential = req.get("credential") or ""
             if not credential:
@@ -2474,6 +2652,64 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(
                 {"loggedIn": True, "email": claims.get("email"), "name": claims.get("name")},
+                cookies=[self._session_cookie(token, SESSION_MAX_AGE)],
+            )
+            return
+
+        if path == "/api/auth/signup":
+            email = (req.get("email") or "").strip()
+            password = req.get("password") or ""
+            name = (req.get("name") or "").strip()
+            try:
+                start_signup(email, password, name)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            except Exception as e:
+                self._send_json({"error": f"회원가입에 실패했습니다: {e}"}, 500)
+                return
+            self._send_json({"sent": True})
+            return
+
+        if path == "/api/auth/verify":
+            email = (req.get("email") or "").strip()
+            code = (req.get("code") or "").strip()
+            if not email or not code:
+                self._send_json({"error": "이메일과 인증코드를 입력하세요."}, 400)
+                return
+            try:
+                user_id = complete_signup(email, code)
+                token = create_session(user_id)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            except Exception as e:
+                self._send_json({"error": f"인증에 실패했습니다: {e}"}, 500)
+                return
+            info = DB.collection("users").document(user_id).get().to_dict() or {}
+            self._send_json(
+                {"loggedIn": True, "email": info.get("email"), "name": info.get("name")},
+                cookies=[self._session_cookie(token, SESSION_MAX_AGE)],
+            )
+            return
+
+        if path == "/api/auth/login":
+            email = (req.get("email") or "").strip()
+            password = req.get("password") or ""
+            if not email or not password:
+                self._send_json({"error": "이메일과 비밀번호를 입력하세요."}, 400)
+                return
+            try:
+                user_id, info = login_with_password(email, password)
+                token = create_session(user_id)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 401)
+                return
+            except Exception as e:
+                self._send_json({"error": f"로그인에 실패했습니다: {e}"}, 500)
+                return
+            self._send_json(
+                {"loggedIn": True, "email": info.get("email"), "name": info.get("name")},
                 cookies=[self._session_cookie(token, SESSION_MAX_AGE)],
             )
             return
@@ -2771,14 +3007,18 @@ def main():
     if not PUBLIC_DIR.is_dir():
         sys.exit(f"public 디렉터리를 찾을 수 없습니다: {PUBLIC_DIR}")
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    key_set = "환경변수 설정됨" if os.environ.get("GEMINI_API_KEY") else "미설정 (화면에서 입력 가능)"
+    key_set = "설정됨" if os.environ.get("GEMINI_API_KEY") else "미설정 (AI 기능 전체가 막힘)"
+    login_set = "설정됨" if DB is not None else "미설정 (로그인·AI 기능 전체가 막힘)"
+    google_set = "설정됨" if GOOGLE_CLIENT_ID else "미설정 (구글 로그인 버튼 비활성)"
+    smtp_set = "설정됨" if (SMTP_USER and SMTP_PASSWORD) else "미설정 (인증코드가 서버 로그에만 출력됨)"
     print("영어 지문 분석본 웹앱 실행 중 (Google Gemini)")
-    print(f"  주소     : http://{HOST}:{PORT}")
-    print(f"  모델     : {MODEL}")
-    print(f"  API 키   : {key_set}")
-    login_set = "설정됨" if (GOOGLE_CLIENT_ID and DB is not None) else "미설정 (저장/불러오기 비활성화)"
-    print(f"  저장 기능 : {login_set}")
-    print("  종료     : Ctrl+C")
+    print(f"  주소       : http://{HOST}:{PORT}")
+    print(f"  모델       : {MODEL}")
+    print(f"  관리자 API 키(GEMINI_API_KEY) : {key_set}")
+    print(f"  로그인 저장소(Firestore)      : {login_set}")
+    print(f"  구글 로그인(GOOGLE_CLIENT_ID) : {google_set}")
+    print(f"  회원가입 메일(SMTP)           : {smtp_set}")
+    print("  종료       : Ctrl+C")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

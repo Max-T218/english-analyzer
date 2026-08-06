@@ -52,10 +52,6 @@ input,select,textarea,button{font-family:inherit;}
   padding:18px; box-shadow:var(--shadow); margin-bottom:22px;
 }
 .panel label{display:block; font-size:12.5px; font-weight:700; color:var(--ink-soft); margin:0 0 6px; letter-spacing:.02em;}
-.panel label .keylink{float:right; font-weight:600; font-size:11.5px; color:var(--accent); text-decoration:none;}
-.panel label .keylink:hover{text-decoration:underline;}
-.key-row{display:flex; gap:8px; align-items:stretch;}
-.key-row input{flex:1; min-width:0;}
 .btn.small{padding:8px 12px; font-size:13px;}
 textarea, input[type=text], select{
   width:100%; font:inherit; color:var(--ink); background:var(--paper);
@@ -113,22 +109,42 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 .gate-steps{margin:20px 0 0; padding-left:20px; font-size:13.5px; line-height:1.9; color:var(--ink);}
 .gate-steps span{color:var(--ink-soft); font-size:12.5px;}
 
-.gate-key{
-  padding:20px 22px; border:1px solid var(--accent); border-radius:14px;
-  background:var(--card); box-shadow:var(--shadow);
+/* ── 로그인/회원가입 게이트 ── */
+.gate-auth{
+  padding:24px 26px; border:1px solid var(--accent); border-radius:14px;
+  background:var(--card); box-shadow:var(--shadow); max-width:420px;
 }
-.gate-actions{display:flex; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap;}
+.auth-google{display:flex; justify-content:center; margin-bottom:16px;}
+.auth-divider{
+  display:flex; align-items:center; gap:10px; margin:4px 0 18px;
+  font-size:12px; color:var(--ink-soft);
+}
+.auth-divider::before, .auth-divider::after{content:""; flex:1; height:1px; background:var(--line);}
+
+.auth-tabs{display:flex; gap:4px; margin-bottom:16px; background:var(--paper); border-radius:10px; padding:4px;}
+.auth-tab{
+  flex:1; padding:9px 0; border:none; border-radius:8px; background:transparent;
+  font:inherit; font-size:13.5px; font-weight:600; color:var(--ink-soft); cursor:pointer;
+}
+.auth-tab.active{background:var(--accent); color:#fff;}
+.auth-tab[hidden]{display:none;}
+
+.auth-panel[hidden]{display:none;}
+.auth-panel label{
+  display:block; font-size:12.5px; font-weight:600; color:var(--ink-soft);
+  margin:12px 0 6px;
+}
+.auth-panel label:first-of-type{margin-top:0;}
+.auth-panel label .opt-sub{font-weight:500; color:var(--ink-soft); font-size:11.5px;}
+.auth-panel input{width:100%;}
+
+.gate-actions{display:flex; align-items:center; gap:12px; margin-top:16px; flex-wrap:wrap;}
 .gate-actions .btn{padding:11px 22px; font-size:15px;}
 .gate-status{font-size:12.5px; color:var(--ink-soft);}
-#gateError:not(:empty){margin-top:12px;}
-#gateError .btn{margin-left:8px;}
+#loginError:not(:empty), #signupError:not(:empty), #verifyError:not(:empty){margin-top:12px;}
 
-/* 작업 화면 상단 — 키가 들어와 있음을 알리고 다시 바꿀 수 있게 */
 #workspace[hidden]{display:none;}
-.key-bar{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
-
-.key-bar-ok{font-size:13px; font-weight:600; color:var(--ink-soft);}
-@media print{ .gate, .key-bar, .account-bar{display:none !important;} }
+@media print{ .gate, .account-bar{display:none !important;} }
 
 /* ── 저장/불러오기 계정 바 ── */
 .account-bar{margin-top:10px; padding-top:10px; border-top:1px dashed var(--line);}

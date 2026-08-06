@@ -19,15 +19,20 @@ services:
         value: "90"     # Gemini 호출 1회 소켓 타임아웃(초)
       - key: REFINE_BUDGET
         value: "40"     # 이 시간(초) 이후에는 품질 보정 재요청을 시작하지 않음
-      # (선택) 모든 사용자 공용 키를 쓰려면 아래 주석을 풀고 값을 넣으세요.
-      # 지금은 '선생님마다 본인 키 입력' 방식이라 설정하지 않습니다.
-      # - key: GEMINI_API_KEY
-      #   sync: false
-      # 저장/불러오기(구글 로그인) 기능 — Render 대시보드의 Environment 탭에서
-      # 아래 두 값을 직접 입력하세요(비밀값이라 이 파일에는 적지 않습니다).
-      # GOOGLE_CLIENT_ID                  : Google Cloud OAuth 클라이언트 ID
-      # GOOGLE_APPLICATION_CREDENTIALS_JSON: Firestore 서비스 계정 키 JSON 전체 내용
+      # 아래 값들은 Render 대시보드의 Environment 탭에서 직접 입력하세요
+      # (비밀값이라 이 파일에는 적지 않습니다):
+      # GEMINI_API_KEY                     : 관리자(운영자)의 Gemini API 키 — 모든 사용자가
+      #                                       로그인 후 이 키 하나를 같이 씁니다(필수)
+      # GOOGLE_CLIENT_ID                   : Google Cloud OAuth 클라이언트 ID (구글 로그인용)
+      # GOOGLE_APPLICATION_CREDENTIALS_JSON: Firestore 서비스 계정 키 JSON 전체 내용 (로그인 저장용, 필수)
+      # SMTP_USER / SMTP_PASSWORD          : 회원가입 인증코드를 보낼 Gmail 계정 + 앱 비밀번호
+      - key: GEMINI_API_KEY
+        sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
         sync: false

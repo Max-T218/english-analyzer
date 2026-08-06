@@ -1,34 +1,21 @@
 "use strict";
 
 // ── 열 때마다 완전 초기화 ──────────────────────────────────────────────
-// 창을 새로 열면 API 키·지문·학원 마크·모델 설정·단어장 데이터까지 전부 비운다.
+// 창을 새로 열면 지문·학원 마크·모델 설정·단어장 데이터까지 전부 비운다.
 // 공용 PC에서 앞사람 흔적이 남지 않게 하려는 것으로, 아래의 모든 초기화 코드보다
 // 먼저 실행되어야 하므로 파일 맨 위에 둔다.
 // (한 세션 안에서의 저장은 그대로 동작한다 — 예: 지문 분석 결과의 어휘를 단어장
 //  탭이 이어받는 흐름. 다만 새로고침하면 함께 사라진다.)
 //
-// 예외 하나: 구글 로그인 상태에서는 API 키만 지우지 않는다(로그인은 유지되는데
-// 키를 매번 새로 입력해야 하면 이상하므로). "gemini_keep_key" 플래그는 로그인 성공
-// 직후에만 세워지고 로그아웃하면 지워진다 — 로그인한 채로 로그아웃 없이 브라우저만
-// 닫으면 다음 사람이 이 브라우저에서 API 키를 볼 수 있으므로, 공용 PC라면 반드시
-// 로그아웃하라고 화면에 안내한다.
+// 로그인 상태는 여기 영향받지 않는다 — 세션은 브라우저가 못 보는 HttpOnly
+// 쿠키에 있어서, localStorage를 지워도 로그인은 유지된다.
 try {
-  const KEEP_KEY_FLAG = "gemini_keep_key";
-  const API_KEY_STORE = "gemini_api_key";
-  const keepKey = localStorage.getItem(KEEP_KEY_FLAG) === "1";
-  const savedApiKey = keepKey ? localStorage.getItem(API_KEY_STORE) : null;
   localStorage.clear();
-  if (keepKey) {
-    localStorage.setItem(KEEP_KEY_FLAG, "1");
-    if (savedApiKey) localStorage.setItem(API_KEY_STORE, savedApiKey);
-  }
 } catch (_) {
   /* 사생활 보호 모드 등에서 접근이 막혀도 앱은 그대로 동작 */
 }
 
 const $ = (id) => document.getElementById(id);
-const apiKeyEl = $("apiKey");
-const toggleKeyEl = $("toggleKey");
 const passageListEl = $("passageList");
 const addPassageBtn = $("addPassageBtn");
 const clearPassagesBtn = $("clearPassagesBtn");
@@ -146,8 +133,6 @@ function printDoc(nameFn, opts) {
   showPrintGuide(() => runPrint(nameFn, opts && opts.before, opts && opts.after));
 }
 
-const KEY_STORE = "gemini_api_key";
-
 const modelStatusEl = $("modelStatus");
 
 // 서버 API 호출 공통 헬퍼.
@@ -229,10 +214,47 @@ function quotaStopHtml(left, err, unit = "지문") {
   </div></section>`;
 }
 
-/* ══════════ 구글 로그인 / 저장·불러오기 ══════════
-   서버는 구글이 이미 검증한 로그인 토큰만 확인하고 세션 쿠키(HttpOnly)를 내려준다 —
-   여기서는 쿠키 값을 볼 수 없다. 그래서 로그인 여부는 항상 /api/me로 서버에 물어서
-   판단하고, 브라우저 쪽에 별도의 "로그인함" 상태를 두지 않는다. */
+/* ══════════════════════════ 시작 화면(로그인/회원가입) ══════════════════════════ */
+// 개인 API 키 없이, 로그인해야만 작업 화면으로 들어간다 — 실제 AI 호출은 전부
+// 관리자(운영자)의 서버 키 하나로 이루어지고, 로그인은 '누가 그 키를 쓰는지'
+// 구분하는 용도다. 로그인 방법은 구글 OAuth 또는 이메일/비밀번호 회원가입 둘 다.
+const gateEl = $("gate");
+const workspaceEl = $("workspace");
+const authTabsEl = $("authTabs");
+const loginPanelEl = $("loginPanel");
+const signupPanelEl = $("signupPanel");
+const verifyPanelEl = $("verifyPanel");
+
+function showAuthPanel(name) {
+  [...authTabsEl.querySelectorAll(".auth-tab")].forEach((t) =>
+    t.classList.toggle("active", t.dataset.authtab === name)
+  );
+  authTabsEl.hidden = name === "verify";
+  loginPanelEl.hidden = name !== "login";
+  signupPanelEl.hidden = name !== "signup";
+  verifyPanelEl.hidden = name !== "verify";
+}
+authTabsEl.querySelectorAll(".auth-tab").forEach((t) =>
+  t.addEventListener("click", () => showAuthPanel(t.dataset.authtab))
+);
+
+function showGate() {
+  gateEl.hidden = false;
+  workspaceEl.hidden = true;
+  showAuthPanel("login");
+  window.scrollTo({ top: 0 });
+}
+
+function enterWorkspace() {
+  gateEl.hidden = true;
+  workspaceEl.hidden = false;
+  window.scrollTo({ top: 0 });
+  loadModels();
+}
+
+/* ══════════ 로그인 상태 / 계정 표시 ══════════
+   서버는 세션 쿠키(HttpOnly)로 로그인 여부를 관리한다 — 여기서는 쿠키 값을 볼 수
+   없으므로, 로그인 여부는 항상 /api/me로 서버에 물어서 판단한다. */
 async function getJson(url, fallbackMsg) {
   const res = await fetch(url);
   const text = await res.text();
@@ -243,13 +265,10 @@ async function getJson(url, fallbackMsg) {
   return data;
 }
 
-const KEEP_KEY_FLAG = "gemini_keep_key"; // 파일 맨 위 초기화 예외와 같은 플래그
 // 탭마다 자신을 등록해 두는 저장/불러오기 레지스트리. 각 항목:
 //   saveBtn: 저장 버튼 엘리먼트, getPayload(): 지금 상태를 저장용 객체로,
 //   applyPayload(payload): 불러온 값으로 화면을 되살림
 const TAB_SAVE = {};
-const accountLoggedOutEl = $("accountLoggedOut");
-const accountLoggedInEl = $("accountLoggedIn");
 const accountNameEl = $("accountName");
 const myLibraryBtn = $("myLibraryBtn");
 const logoutBtn = $("logoutBtn");
@@ -258,16 +277,19 @@ let isLoggedIn = false; // 저장/불러오기 버튼들이 이 값으로 로그
 
 function renderAccount(info) {
   isLoggedIn = !!(info && info.loggedIn);
-  accountLoggedOutEl.hidden = isLoggedIn;
-  accountLoggedInEl.hidden = !isLoggedIn;
   if (isLoggedIn) accountNameEl.textContent = `${info.name || info.email || "로그인됨"}님`;
 }
 
 async function refreshAccount() {
   try {
-    renderAccount(await getJson("/api/me", "로그인 상태를 확인하지 못했습니다."));
+    const info = await getJson("/api/me", "로그인 상태를 확인하지 못했습니다.");
+    renderAccount(info);
+    // 세션이 살아 있으면(예: 새로고침) 로그인 화면을 다시 거치지 않고 바로 들여보낸다
+    if (info.loggedIn) enterWorkspace();
+    else showGate();
   } catch (_) {
     renderAccount({ loggedIn: false });
+    showGate();
   }
 }
 refreshAccount();
@@ -280,8 +302,8 @@ window.handleGoogleCredential = async function (response) {
       { credential: response.credential },
       "구글 로그인에 실패했습니다."
     );
-    localStorage.setItem(KEEP_KEY_FLAG, "1"); // 다음부터는 새로 열어도 API 키를 지우지 않음
     renderAccount(info);
+    enterWorkspace();
   } catch (err) {
     alert(err.message || "구글 로그인에 실패했습니다.");
   }
@@ -293,31 +315,106 @@ logoutBtn.addEventListener("click", async () => {
   } catch (_) {
     /* 실패해도 화면은 로그아웃 상태로 되돌린다 — 세션 쿠키는 만료되면 어차피 무효 */
   }
-  localStorage.removeItem(KEEP_KEY_FLAG);
   renderAccount({ loggedIn: false });
+  showGate();
 });
 
-// 저장된 키 불러오기
-apiKeyEl.value = localStorage.getItem(KEY_STORE) || "";
-// 입력 시 자동 저장 + 모델 목록 자동 갱신(디바운스)
-let keyTimer = null;
-apiKeyEl.addEventListener("input", () => {
-  const v = apiKeyEl.value.trim();
-  if (v) localStorage.setItem(KEY_STORE, v);
-  else localStorage.removeItem(KEY_STORE);
-  clearTimeout(keyTimer);
-  keyTimer = setTimeout(loadModels, 800);
+/* ── 이메일/비밀번호 로그인·회원가입 ── */
+const loginBtn = $("loginBtn");
+const loginErrorEl = $("loginError");
+const loginStatusEl = $("loginStatus");
+loginPanelEl.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = $("loginEmail").value.trim();
+  const password = $("loginPassword").value;
+  loginErrorEl.textContent = "";
+  if (!email || !password) {
+    loginErrorEl.textContent = "이메일과 비밀번호를 입력하세요.";
+    return;
+  }
+  loginBtn.disabled = true;
+  loginStatusEl.textContent = "로그인 중…";
+  try {
+    const info = await postJson("/api/auth/login", { email, password }, "로그인에 실패했습니다.");
+    renderAccount(info);
+    enterWorkspace();
+  } catch (err) {
+    loginErrorEl.textContent = err.message || "로그인에 실패했습니다.";
+  } finally {
+    loginBtn.disabled = false;
+    loginStatusEl.textContent = "";
+  }
 });
 
-// 이 키로 실제 사용 가능한 모델을 불러와 드롭다운을 채움 (모델 지원 중단 대비)
+const signupBtn = $("signupBtn");
+const signupErrorEl = $("signupError");
+const signupStatusEl = $("signupStatus");
+const verifyHintEl = $("verifyHint");
+let pendingSignupEmail = "";
+signupPanelEl.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("signupName").value.trim();
+  const email = $("signupEmail").value.trim();
+  const password = $("signupPassword").value;
+  signupErrorEl.textContent = "";
+  if (!email || !password) {
+    signupErrorEl.textContent = "이메일과 비밀번호를 입력하세요.";
+    return;
+  }
+  if (password.length < 8) {
+    signupErrorEl.textContent = "비밀번호는 8자 이상이어야 합니다.";
+    return;
+  }
+  signupBtn.disabled = true;
+  signupStatusEl.textContent = "인증코드 보내는 중…";
+  try {
+    await postJson("/api/auth/signup", { email, password, name }, "회원가입에 실패했습니다.");
+    pendingSignupEmail = email;
+    verifyHintEl.textContent = `${email} 로 인증코드를 보냈습니다. 메일함(스팸함 포함)을 확인하세요.`;
+    $("verifyCode").value = "";
+    showAuthPanel("verify");
+  } catch (err) {
+    signupErrorEl.textContent = err.message || "회원가입에 실패했습니다.";
+  } finally {
+    signupBtn.disabled = false;
+    signupStatusEl.textContent = "";
+  }
+});
+
+const verifyBtn = $("verifyBtn");
+const verifyErrorEl = $("verifyError");
+const verifyStatusEl = $("verifyStatus");
+verifyPanelEl.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const code = $("verifyCode").value.trim();
+  verifyErrorEl.textContent = "";
+  if (!code) {
+    verifyErrorEl.textContent = "인증코드를 입력하세요.";
+    return;
+  }
+  verifyBtn.disabled = true;
+  verifyStatusEl.textContent = "확인 중…";
+  try {
+    const info = await postJson(
+      "/api/auth/verify", { email: pendingSignupEmail, code }, "인증에 실패했습니다."
+    );
+    renderAccount(info);
+    enterWorkspace();
+  } catch (err) {
+    verifyErrorEl.textContent = err.message || "인증에 실패했습니다.";
+  } finally {
+    verifyBtn.disabled = false;
+    verifyStatusEl.textContent = "";
+  }
+});
+$("verifyBackBtn").addEventListener("click", () => showAuthPanel("signup"));
+
+// 로그인 후 관리자 키로 실제 쓸 수 있는 모델 목록을 불러와 드롭다운을 채움
 async function loadModels() {
-  const apiKey = apiKeyEl.value.trim();
-  if (!apiKey) return;
+  if (!isLoggedIn) return;
   modelStatusEl.textContent = "· 모델 목록 불러오는 중…";
   try {
-    const data = await postJson(
-      "/api/models", { apiKey }, "모델 목록을 불러오지 못했습니다."
-    );
+    const data = await postJson("/api/models", {}, "모델 목록을 불러오지 못했습니다.");
     if (!data.models || !data.models.length) {
       modelStatusEl.textContent = "";
       return;
@@ -384,9 +481,6 @@ function syncModelAvailability() {
       (switchedAway ? " 지금은 Flash로 전환했습니다." : "");
   }
 }
-toggleKeyEl.addEventListener("click", () => {
-  apiKeyEl.type = apiKeyEl.type === "password" ? "text" : "password";
-});
 
 // 모델 선택 기억
 const MODEL_STORE = "gemini_model";
@@ -395,73 +489,6 @@ if (savedModel) modelEl.value = savedModel;
 modelEl.addEventListener("change", () => {
   localStorage.setItem(MODEL_STORE, modelEl.value);
 });
-
-loadModels(); // 저장된 키가 있으면 시작 시 사용 가능한 모델을 불러옴
-
-/* ══════════════════════════ 시작 화면(소개 + 키 입력) ══════════════════════════ */
-// 처음 들어온 사람이 무슨 사이트인지 알 수 있도록 소개를 먼저 보여주고,
-// 키를 확인한 뒤에야 작업 화면으로 넘어간다.
-const gateEl = $("gate");
-const workspaceEl = $("workspace");
-const gateStartBtn = $("gateStartBtn");
-const gateStatusEl = $("gateStatus");
-const gateErrorEl = $("gateError");
-const changeKeyBtn = $("changeKeyBtn");
-
-function showGate() {
-  gateEl.hidden = false;
-  workspaceEl.hidden = true;
-  gateErrorEl.textContent = "";
-  gateStatusEl.textContent = "";
-  window.scrollTo({ top: 0 });
-  apiKeyEl.focus();
-}
-
-function enterWorkspace() {
-  gateEl.hidden = true;
-  workspaceEl.hidden = false;
-  window.scrollTo({ top: 0 });
-}
-
-async function startWithKey() {
-  const key = apiKeyEl.value.trim();
-  gateErrorEl.textContent = "";
-  if (!key) {
-    gateErrorEl.textContent = "API 키를 입력하세요.";
-    apiKeyEl.focus();
-    return;
-  }
-  gateStartBtn.disabled = true;
-  gateStatusEl.textContent = "키 확인 중…";
-  try {
-    // 실제로 쓸 수 있는 키인지 모델 목록으로 확인한다(문항 생성과 달리 사용량이 거의 없다)
-    const data = await postJson("/api/models", { apiKey: key }, "키를 확인하지 못했습니다.");
-    if (!data.models || !data.models.length) throw new Error("이 키로 쓸 수 있는 모델이 없습니다.");
-    await loadModels();
-    enterWorkspace();
-  } catch (err) {
-    // 확인에 실패하면 들여보내지 않는다. 틀린 키로 들어가 봐야 이후 작업이 모두
-    // 실패할 뿐이고, 그때는 원인이 훨씬 알기 어려워진다.
-    // (키 확인에 쓰는 모델 목록 조회는 생성과 별개 경로라, 생성 한도가 소진된
-    //  상태에서도 정상 동작한다 — 한도 때문에 못 들어가는 일은 없다.)
-    const msg = err.message || String(err);
-    gateErrorEl.textContent =
-      /Failed to fetch|NetworkError|HTTP 5\d\d/i.test(msg)
-        ? `서버에 연결하지 못했습니다. 잠시 뒤 다시 시도하세요. (${msg})`
-        : `${msg} 키를 다시 확인해 주세요.`;
-    apiKeyEl.focus();
-    apiKeyEl.select();
-  } finally {
-    gateStartBtn.disabled = false;
-    gateStatusEl.textContent = "";
-  }
-}
-
-gateStartBtn.addEventListener("click", startWithKey);
-apiKeyEl.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !gateEl.hidden) startWithKey();
-});
-changeKeyBtn.addEventListener("click", showGate);
 
 // ── 학원 마크(로고) — 고정 파일 대신 사용자가 업로드해 이 브라우저에 저장 ──
 const BRAND_IMG_STORE = "brand_mark_img";   // data URL
@@ -976,7 +1003,7 @@ function isRecitationError(err) {
 }
 
 // 사진을 조각내어 읽고 이어 붙인다. 조각 수를 늘려 가며 시도하고, 조각조차 막히면 포기한다.
-async function ocrBySlices(file, who, apiKey, onProgress) {
+async function ocrBySlices(file, who, onProgress) {
   let lastErr = null;
   for (const count of [3, 5]) {
     try {
@@ -988,7 +1015,7 @@ async function ocrBySlices(file, who, apiKey, onProgress) {
         const part = slices[i];
         const data = await postJson(
           "/api/ocr",
-          { file: part, partial: true, model: modelEl.value, apiKey },
+          { file: part, partial: true, model: modelEl.value },
           "조각을 옮기지 못했습니다."
         );
         text = joinOverlap(text, data.text || "");
@@ -1022,12 +1049,6 @@ async function runOcr(fileList) {
     ocrStatus("사진(JPG·PNG·WEBP)만 올릴 수 있습니다.", "warn");
     return;
   }
-  const apiKey = apiKeyEl.value.trim();
-  if (!apiKey) {
-    ocrStatus("먼저 Gemini API 키를 입력하세요.", "warn");
-    apiKeyEl.focus();
-    return;
-  }
   if (ocrBusy) return;
   ocrBusy = true;
   ocrBtn.disabled = true;
@@ -1053,13 +1074,13 @@ async function runOcr(fileList) {
       try {
         data = await postJson(
           "/api/ocr",
-          { file: part, model: modelEl.value, apiKey },
+          { file: part, model: modelEl.value },
           "사진에서 지문을 옮기지 못했습니다."
         );
       } catch (err) {
         if (!isRecitationError(err)) throw err;
         // 널리 공개된 지문이라 통째로는 막혔다 — 사진을 잘라 조각별로 읽어 이어 붙인다
-        data = await ocrBySlices(file, who, apiKey, (msg) =>
+        data = await ocrBySlices(file, who, (msg) =>
           ocrStatus(`<span class="spinner"></span> ${esc(who)} ${msg}`)
         );
         notes.push(`${who}: 널리 공개된 지문이라 사진을 나눠 읽었습니다. 문장이 이어지는지 특히 잘 확인하세요.`);
@@ -1209,13 +1230,7 @@ printBtn.addEventListener("click", () => printDoc(() => passageBasedName("지문
 syncFloatPrint(); // 초기 탭(지문 분석) 기준으로 상태 맞춤
 
 async function analyze() {
-  const apiKey = apiKeyEl.value.trim();
   errorEl.textContent = "";
-  if (!apiKey) {
-    errorEl.textContent = "먼저 Gemini API 키를 입력하세요.";
-    apiKeyEl.focus();
-    return;
-  }
 
   const jobs = passageMgr.getJobs();
   if (!jobs.length) {
@@ -1262,7 +1277,6 @@ async function analyze() {
           targetGrammar: grammarEl.value,
           model: modelEl.value,
           review: reviewOn,
-          apiKey,
         },
         "분석에 실패했습니다."
       );
@@ -1720,13 +1734,7 @@ function setupQuizTab({ prefix, types, footer }) {
   renumberTypes();
 
   async function generate() {
-    const apiKey = apiKeyEl.value.trim();
     errorEl.textContent = "";
-    if (!apiKey) {
-      errorEl.textContent = "먼저 Gemini API 키를 입력하세요.";
-      apiKeyEl.focus();
-      return;
-    }
     const jobs = passageMgr.getJobs();
     if (!jobs.length) {
       errorEl.textContent = "문제를 만들 영어 지문을 입력하세요.";
@@ -1801,7 +1809,7 @@ function setupQuizTab({ prefix, types, footer }) {
           try {
             const r = await postJson(
               "/api/reword",
-              { passage: job.text, variation, model: modelEl.value, apiKey },
+              { passage: job.text, variation, model: modelEl.value },
               "지문 변형에 실패했습니다."
             );
             source = (r.passage || "").trim() || job.text;
@@ -1836,7 +1844,6 @@ function setupQuizTab({ prefix, types, footer }) {
                 types: group,
                 count: group.length,   // 유형 1개당 1문항
                 model: modelEl.value,
-                apiKey,
                 variation: "verbatim",
               },
               "문제 생성에 실패했습니다."
@@ -2296,13 +2303,7 @@ wbAnswerPrintBtn.addEventListener("click", () =>
 );
 
 async function generateWorkbook() {
-  const apiKey = apiKeyEl.value.trim();
   wbErrorEl.textContent = "";
-  if (!apiKey) {
-    wbErrorEl.textContent = "먼저 Gemini API 키를 입력하세요.";
-    apiKeyEl.focus();
-    return;
-  }
   const jobs = passageMgr.getJobs();
   if (!jobs.length) {
     wbErrorEl.textContent = "워크북을 만들 영어 지문을 입력하세요.";
@@ -2355,7 +2356,7 @@ async function generateWorkbook() {
     try {
       const data = await postJson(
         "/api/workbook",
-        { passage: job.text, model: modelEl.value, apiKey },
+        { passage: job.text, model: modelEl.value },
         "워크북 생성에 실패했습니다."
       );
       const built = buildWorkbookHtml(data, stages, job, total, exam);

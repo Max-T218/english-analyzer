@@ -44,29 +44,65 @@
       </div>
 
       <ol class="gate-steps">
-        <li>아래에 <b>Google Gemini API 키</b>를 입력합니다 <span>(무료 발급)</span></li>
+        <li>아래에서 <b>로그인</b>하거나 <b>회원가입</b>합니다 <span>(개인 API 키 불필요)</span></li>
         <li>영어 지문을 붙여 넣습니다 <span>(한 번에 최대 10개)</span></li>
         <li>원하는 탭에서 자료를 만들고 인쇄합니다</li>
       </ol>
     </div>
 
-    <div class="gate-key">
-      <label for="apiKey">Gemini API 키
-        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="keylink">키 발급받기 ↗</a>
-      </label>
-      <div class="key-row">
-        <input type="password" id="apiKey" placeholder="API 키 발급하여 작성하세요" autocomplete="off">
-        <button type="button" class="btn ghost small" id="toggleKey" title="보이기/숨기기">👁</button>
+    <div class="gate-auth">
+      <div id="g_id_onload"
+           data-client_id="%%GOOGLE_CLIENT_ID%%"
+           data-callback="handleGoogleCredential"
+           data-auto_prompt="false"></div>
+      <div class="auth-google">
+        <div class="g_id_signin" data-type="standard" data-size="large" data-theme="outline"
+             data-text="signin_with" data-shape="rectangular" data-logo_alignment="left"></div>
       </div>
-      <div class="hint" id="keyStatus">
-        키는 서버에 저장되지 않습니다. 이 창을 닫으면 입력하신 내용과 함께 모두 지워집니다.
-        Google AI Studio에서 <b>카드 등록 없이 무료로</b> 발급받을 수 있습니다.
+      <div class="auth-divider"><span>또는</span></div>
+
+      <div class="auth-tabs" id="authTabs">
+        <button type="button" class="auth-tab active" data-authtab="login">로그인</button>
+        <button type="button" class="auth-tab" data-authtab="signup">회원가입</button>
       </div>
-      <div class="gate-actions">
-        <button class="btn" id="gateStartBtn">확인하고 시작하기</button>
-        <span class="gate-status" id="gateStatus"></span>
-      </div>
-      <div class="error" id="gateError"></div>
+
+      <form class="auth-panel" id="loginPanel">
+        <label for="loginEmail">이메일</label>
+        <input type="email" id="loginEmail" autocomplete="username" placeholder="you@example.com">
+        <label for="loginPassword">비밀번호</label>
+        <input type="password" id="loginPassword" autocomplete="current-password" placeholder="비밀번호">
+        <div class="gate-actions">
+          <button type="submit" class="btn" id="loginBtn">로그인</button>
+          <span class="gate-status" id="loginStatus"></span>
+        </div>
+        <div class="error" id="loginError"></div>
+      </form>
+
+      <form class="auth-panel" id="signupPanel" hidden>
+        <label for="signupName">이름 <span class="opt-sub">(선택)</span></label>
+        <input type="text" id="signupName" autocomplete="name" placeholder="홍길동">
+        <label for="signupEmail">이메일</label>
+        <input type="email" id="signupEmail" autocomplete="username" placeholder="you@example.com">
+        <label for="signupPassword">비밀번호 <span class="opt-sub">(8자 이상)</span></label>
+        <input type="password" id="signupPassword" autocomplete="new-password" placeholder="비밀번호">
+        <div class="gate-actions">
+          <button type="submit" class="btn" id="signupBtn">인증코드 받기</button>
+          <span class="gate-status" id="signupStatus"></span>
+        </div>
+        <div class="error" id="signupError"></div>
+      </form>
+
+      <form class="auth-panel" id="verifyPanel" hidden>
+        <p class="hint" id="verifyHint"></p>
+        <label for="verifyCode">인증코드 (6자리)</label>
+        <input type="text" id="verifyCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000">
+        <div class="gate-actions">
+          <button type="submit" class="btn" id="verifyBtn">확인하고 가입 완료</button>
+          <button type="button" class="btn ghost small" id="verifyBackBtn">다시 가입하기</button>
+          <span class="gate-status" id="verifyStatus"></span>
+        </div>
+        <div class="error" id="verifyError"></div>
+      </form>
     </div>
   </section>
 
@@ -74,22 +110,8 @@
   <div id="workspace" hidden>
 
   <section class="panel">
-    <div class="key-bar">
-      <span class="key-bar-ok">✅ API 키가 입력되었습니다</span>
-      <button type="button" class="btn ghost small" id="changeKeyBtn">키 변경</button>
-    </div>
-
     <div class="account-bar" id="accountBar">
-      <div id="g_id_onload"
-           data-client_id="%%GOOGLE_CLIENT_ID%%"
-           data-callback="handleGoogleCredential"
-           data-auto_prompt="false"></div>
-      <div id="accountLoggedOut" class="account-state">
-        <div class="g_id_signin" data-type="standard" data-size="medium" data-theme="outline"
-             data-text="signin_with" data-shape="rectangular" data-logo_alignment="left"></div>
-        <span class="hint">로그인하면 만든 자료를 저장해두고 나중에 다시 불러올 수 있습니다.</span>
-      </div>
-      <div id="accountLoggedIn" class="account-state" hidden>
+      <div id="accountLoggedIn" class="account-state">
         <span class="account-name" id="accountName"></span>
         <button type="button" class="btn ghost small" id="myLibraryBtn">📂 내 저장함</button>
         <button type="button" class="btn ghost small" id="logoutBtn">로그아웃</button>
