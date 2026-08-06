@@ -667,8 +667,15 @@ u{
 /* 청크: 영문 바로 아래 한글 (직독직해) */
 .chunk{min-width:0; margin:0; max-width:100%;}
 .c-eng{font-size:16px; line-height:2.05; letter-spacing:.01em; overflow-wrap:break-word;}
+/* 한글 해석은 11px — 영문(16px)보다 확실히 작게 두는 데는 이유가 있다.
+   청크 박스의 폭은 영문과 한글 중 '넓은 쪽'이 정하는데, 짧은 영어에 긴 한글이
+   붙는 청크(예: or / 쓰레기나)에서는 한글이 폭을 잡아 영문 뒤에 빈 자리가 남고,
+   그 빈 자리가 다음 낱말을 밀어내 띄어쓰기가 들쭉날쭉해 보인다.
+   12.5px → 11px로 낮춰 그 낭비를 약 30% 줄였다. 더 줄이면 한글이 낱말 중간에서
+   잘리기 시작하므로(word-break:keep-all이라 띄어쓰기 없는 낱말은 쪼갤 데가 없다)
+   여기가 안전한 하한이다. */
 .c-kor{
-  font-size:12.5px; color:var(--ink-soft); line-height:1.45; margin-top:1px;
+  font-size:11px; color:var(--ink-soft); line-height:1.45; margin-top:1px;
   overflow-wrap:break-word; word-break:keep-all;
 }
 .sent-no{
