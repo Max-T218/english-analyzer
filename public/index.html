@@ -154,8 +154,8 @@
 
       <div class="actions">
         <button class="btn" id="analyzeBtn">분석하기</button>
-        <button class="btn ghost" id="printBtn" style="display:none">🖨️ 인쇄</button>
-        <button class="btn ghost" id="analyzePdfBtn" style="display:none">📄 PDF로 저장</button>
+        <button class="btn ghost" id="printBtn" style="display:none"
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
         <button class="btn ghost" id="editBtn" style="display:none"
                 title="분석본을 직접 고칠 수 있습니다. 해석·해설·어휘표 모두 수정 가능하고, 수정한 내용 그대로 인쇄됩니다.">✏️ 직접 수정</button>
         <span class="edit-hint" id="editHint"></span>
@@ -205,8 +205,8 @@
 
       <div class="actions">
         <button class="btn" id="mcqBtn">문제 만들기</button>
-        <button class="btn ghost" id="mcqPrintBtn" style="display:none">🖨️ 인쇄</button>
-        <button class="btn ghost" id="mcqPdfBtn" style="display:none">📄 PDF로 저장</button>
+        <button class="btn ghost" id="mcqPrintBtn" style="display:none"
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
         <span class="hint">유형 1개당 1문항씩 만들어집니다. 순서·문장삽입이 섞이면 시간이 더 걸릴 수 있어요.</span>
       </div>
       <div class="error" id="mcqError"></div>
@@ -242,8 +242,8 @@
 
       <div class="actions">
         <button class="btn" id="saqBtn">문제 만들기</button>
-        <button class="btn ghost" id="saqPrintBtn" style="display:none">🖨️ 인쇄</button>
-        <button class="btn ghost" id="saqPdfBtn" style="display:none">📄 PDF로 저장</button>
+        <button class="btn ghost" id="saqPrintBtn" style="display:none"
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
         <span class="hint">유형 1개당 1문항씩, 학생이 직접 쓰는 서술형·단답형 문제를 만듭니다.</span>
       </div>
       <div class="error" id="saqError"></div>
@@ -286,10 +286,10 @@
 
       <div class="actions">
         <button class="btn" id="wbBtn">워크북 만들기</button>
-        <button class="btn ghost" id="workbookPrintBtn" style="display:none">🖨️ 인쇄</button>
-        <button class="btn ghost" id="workbookPdfBtn" style="display:none">📄 PDF로 저장</button>
+        <button class="btn ghost" id="workbookPrintBtn" style="display:none"
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
         <button class="btn ghost" id="wbAnswerPrintBtn" style="display:none"
-                title="문제 내용은 빼고 번호와 정답만 인쇄합니다. '정답 표시' 설정과 무관하게 항상 정답이 나옵니다.">🔑 답지만 인쇄</button>
+                title="문제 내용은 빼고 번호와 정답만 지면에 올립니다. '정답 표시' 설정과 무관하게 항상 정답이 나옵니다.">🔑 답지만</button>
         <label class="chk" title="켜면 정답이 지면에 함께 인쇄됩니다(교사용). 끄면 학생용 문제지가 됩니다.">
           <input type="checkbox" id="wbAnswerChk"> 정답 표시 <span class="chk-sub">(교사용)</span>
         </label>
@@ -339,8 +339,8 @@
 
       <div class="actions">
         <button class="btn" id="vocabBtn">단어장 만들기</button>
-        <button class="btn ghost" id="vocabPrintBtn" style="display:none">🖨️ 인쇄</button>
-        <button class="btn ghost" id="vocabPdfBtn" style="display:none">📄 PDF로 저장</button>
+        <button class="btn ghost" id="vocabPrintBtn" style="display:none"
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
         <label class="chk" title="여러 지문에 같은 단어가 나오면 하나로 합칩니다.">
           <input type="checkbox" id="vocabDedup" checked> 중복 단어 합치기
         </label>
@@ -361,8 +361,29 @@
 </td></tr></tbody>
 </table>
 <div class="float-print-group" id="floatPrintGroup" hidden>
-  <button type="button" class="float-print float-pdf" id="floatPdfBtn">📄 PDF로 저장</button>
-  <button type="button" class="float-print" id="floatPrintBtn">🖨️ 인쇄</button>
+  <button type="button" class="float-print" id="floatPrintBtn">🖨️ 인쇄 / PDF 저장</button>
+</div>
+
+<!-- 인쇄 안내 창 — 종이 인쇄와 PDF 저장은 어차피 같은 인쇄 대화상자에서 갈리므로,
+     버튼을 나누는 대신 누를 때 '대상(프린터)'에서 무엇을 고르면 되는지 알려 준다. -->
+<div class="print-guide" id="printGuide" hidden>
+  <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="printGuideTitle">
+    <h3 id="printGuideTitle">🖨️ 인쇄 / PDF로 저장</h3>
+    <p class="print-guide-lead">아래 버튼을 누르면 브라우저 <b>인쇄 창</b>이 열립니다. 그 창의 <b>‘대상(프린터)’</b>을 무엇으로 고르느냐에 따라 종이 인쇄가 되기도, PDF 파일이 되기도 합니다.</p>
+    <ul class="print-guide-steps">
+      <li><b>종이로 인쇄</b> — ‘대상’에서 쓰던 프린터를 고르고 <b>[인쇄]</b></li>
+      <li><b>PDF 파일로 저장</b> — ‘대상’을 <b>‘PDF로 저장’</b>으로 바꾸고 <b>[저장]</b><br>
+        <span class="print-guide-sub">(Windows에서는 ‘Microsoft Print to PDF’로 보이기도 합니다. 저장 위치를 고르는 창이 이어서 뜹니다.)</span></li>
+    </ul>
+    <p class="print-guide-note">파일 이름은 지문·제목과 날짜로 미리 채워 둡니다. 인쇄 창에 어떤 프린터가 먼저 떠 있을지는 브라우저가 정하므로(보통 마지막에 쓰던 설정) 앱에서 대신 골라 둘 수는 없습니다.</p>
+    <label class="chk print-guide-skip">
+      <input type="checkbox" id="printGuideSkip"> 이 안내 다시 보지 않기 <span class="chk-sub">(창을 닫으면 초기화)</span>
+    </label>
+    <div class="print-guide-actions">
+      <button type="button" class="btn ghost" id="printGuideCancel">취소</button>
+      <button type="button" class="btn" id="printGuideGo">인쇄 창 열기</button>
+    </div>
+  </div>
 </div>
 <script src="/app.js"></script>
 </body>

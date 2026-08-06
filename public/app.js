@@ -25,19 +25,19 @@ const analyzeBtn = $("analyzeBtn");
 const printBtn = $("printBtn");
 const floatPrintGroup = $("floatPrintGroup");
 const floatPrintBtn = $("floatPrintBtn");
-const floatPdfBtn = $("floatPdfBtn");
 const reviewChk = $("reviewChk");
 const errorEl = $("error");
 const loadingEl = $("loading");
 const loadingTextEl = $("loadingText");
 const resultEl = $("result");
 
-/* ── PDF로 저장 ──
-   웹페이지는 인쇄 대화상자에 어떤 프린터가 뜨는지, 무엇이 먼저 선택돼 있는지 정할 수
-   없다(브라우저 보안 정책 — 사이트가 사용자 몰래 파일을 저장하지 못하게 막는 장치).
-   그래서 '버튼 한 번에 저장 위치 창'은 만들 수 없고, 대신
-   ① 인쇄 대화상자에서 무엇을 골라야 하는지 미리 안내하고,
-   ② 실제로 'PDF로 저장'을 고른 뒤 뜨는 저장 창의 기본 파일명을 지문·제목에서 뽑아 채운다
+/* ── 인쇄 / PDF로 저장 ──
+   종이 인쇄든 PDF 저장이든 브라우저 인쇄 대화상자가 뜨고, '대상(프린터)'에서 무엇을
+   고르느냐만 다르다. 게다가 그 목록에 무엇이 먼저 선택돼 있는지는 브라우저가 정한다
+   (보안 정책 — 사이트가 사용자 몰래 파일을 저장하지 못하게 막는 장치). 그래서 버튼을
+   둘로 나눌 이유가 없어 하나로 합치고, 대신
+   ① 누를 때 대화상자에서 무엇을 골라야 하는지 안내 창으로 알려 주고,
+   ② 'PDF로 저장'을 고른 뒤 뜨는 저장 창의 기본 파일명을 지문·제목에서 뽑아 채운다
       (Chrome·Edge의 '인쇄 → PDF로 저장' 흐름은 document.title을 파일명 제안으로 쓴다). */
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -66,19 +66,45 @@ function titledName(prefix, titleElId) {
 
 const ORIGINAL_TITLE = document.title;
 
-// PDF저장 버튼의 공통 동작 — 안내 후 인쇄 대화상자를 연다.
+// 안내 창 — '다시 보지 않기'를 켜면 이번 세션 동안만 건너뛴다
+// (창을 새로 열면 맨 위의 localStorage.clear()로 함께 지워진다).
+const PRINT_GUIDE_SKIP = "gemini_print_guide_skip";
+const printGuideEl = $("printGuide");
+const printGuideSkipEl = $("printGuideSkip");
+let printGuideRun = null; // 안내를 확인하면 실행할 인쇄 동작
+
+function closePrintGuide() {
+  printGuideEl.hidden = true;
+  printGuideRun = null;
+}
+function showPrintGuide(run) {
+  if (localStorage.getItem(PRINT_GUIDE_SKIP) === "1") {
+    run();
+    return;
+  }
+  printGuideRun = run;
+  printGuideEl.hidden = false;
+  $("printGuideGo").focus();
+}
+$("printGuideCancel").addEventListener("click", closePrintGuide);
+$("printGuideGo").addEventListener("click", () => {
+  const run = printGuideRun;
+  if (printGuideSkipEl.checked) localStorage.setItem(PRINT_GUIDE_SKIP, "1");
+  closePrintGuide();
+  if (run) run();
+});
+// 바깥을 누르거나 Esc를 누르면 닫는다 (인쇄는 하지 않는다)
+printGuideEl.addEventListener("click", (e) => {
+  if (e.target === printGuideEl) closePrintGuide();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !printGuideEl.hidden) closePrintGuide();
+});
+
+// 실제 인쇄 실행.
 // nameFn: 저장 대화상자에 뜰 기본 파일명을 만드는 함수 (지금 화면 상태를 보고 매번 새로 계산)
-function pdfPrint(nameFn) {
-  const ok = confirm(
-    "PDF로 저장하는 방법\n\n" +
-      "1. 잠시 후 뜨는 인쇄 대화상자에서 '대상'(프린터)을 'PDF로 저장'으로 선택하세요.\n" +
-      "   (Windows는 'Microsoft Print to PDF'로 표시되기도 합니다.)\n" +
-      "2. '저장' 버튼을 누르면 저장 위치를 고르는 창이 뜹니다.\n\n" +
-      "※ 어떤 프린터가 뜰지는 브라우저가 정하므로 이 앱이 'PDF로 저장'만 남기고 나머지를\n" +
-      "   숨길 수는 없습니다 — 위 안내대로 직접 골라 주세요.\n\n" +
-      "확인을 누르면 인쇄 대화상자를 엽니다."
-  );
-  if (!ok) return;
+// before/after: 인쇄하는 동안에만 지면 구성을 바꿔야 할 때 쓴다 (워크북 '답지만')
+function runPrint(nameFn, before, after) {
   let name = "";
   try {
     name = sanitizeFilename(nameFn ? nameFn() : "");
@@ -86,14 +112,24 @@ function pdfPrint(nameFn) {
     name = "";
   }
   document.title = name || ORIGINAL_TITLE;
+  if (before) before();
+  let done = false;
   const restore = () => {
+    if (done) return;
+    done = true;
     document.title = ORIGINAL_TITLE;
+    if (after) after();
     window.removeEventListener("afterprint", restore);
   };
   window.addEventListener("afterprint", restore);
   // afterprint를 안 보내는(또는 대화상자를 그냥 닫은) 경우를 대비한 안전장치
   setTimeout(restore, 60000);
   window.print();
+}
+
+// 인쇄/PDF저장 버튼의 공통 동작 — 안내 후 인쇄 대화상자를 연다.
+function printDoc(nameFn, opts) {
+  showPrintGuide(() => runPrint(nameFn, opts && opts.before, opts && opts.after));
 }
 
 const KEY_STORE = "gemini_api_key";
@@ -999,18 +1035,14 @@ function syncFloatPrint() {
     );
   floatPrintGroup.hidden = !(btn && btn.style.display !== "none");
 }
-// 떠 있는 버튼은 '지금 활성 탭'의 진짜 인쇄/PDF 버튼을 대신 눌러 준다.
-// 그러면 각 탭이 자기 nameFn·안내문구를 그대로 갖고 있으므로 여기서 따로 만들 필요가 없다.
+// 떠 있는 버튼은 '지금 활성 탭'의 진짜 인쇄 버튼을 대신 눌러 준다.
+// 그러면 각 탭이 자기 파일명 규칙을 그대로 갖고 있으므로 여기서 따로 만들 필요가 없다.
 function activeSectionBtn(selector) {
   const active = document.querySelector(".tab-page.active");
   return active && active.querySelector(selector);
 }
 floatPrintBtn.addEventListener("click", () => {
   const b = activeSectionBtn("#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn");
-  if (b) b.click();
-});
-floatPdfBtn.addEventListener("click", () => {
-  const b = activeSectionBtn("#analyzePdfBtn, #mcqPdfBtn, #saqPdfBtn, #workbookPdfBtn, #vocabPdfBtn");
   if (b) b.click();
 });
 tabBtns.forEach((btn) => {
@@ -1071,8 +1103,7 @@ editBtn.addEventListener("click", () => {
 });
 
 analyzeBtn.addEventListener("click", analyze);
-printBtn.addEventListener("click", () => window.print());
-$("analyzePdfBtn").addEventListener("click", () => pdfPrint(() => passageBasedName("지문분석")));
+printBtn.addEventListener("click", () => printDoc(() => passageBasedName("지문분석")));
 syncFloatPrint(); // 초기 탭(지문 분석) 기준으로 상태 맞춤
 
 async function analyze() {
@@ -1097,7 +1128,6 @@ async function analyze() {
   setEditMode(false); // 새로 분석하면 이전 수정 상태를 끈다 (내용도 새로 덮어써진다)
   resultEl.innerHTML = "";
   printBtn.style.display = "none";
-  $("analyzePdfBtn").style.display = "none";
   editBtn.style.display = "none";
   syncFloatPrint();
 
@@ -1155,7 +1185,6 @@ async function analyze() {
   resultEl.innerHTML = htmlParts.join("");
   if (okCount) {
     printBtn.style.display = "inline-flex";
-    $("analyzePdfBtn").style.display = "inline-flex";
     editBtn.style.display = "inline-flex";
   }
   syncFloatPrint();
@@ -1405,8 +1434,7 @@ function setupQuizTab({ prefix, types, footer }) {
   const allEl = $(prefix + "TypeAll");
   const btn = $(prefix + "Btn");
   const printBtn = $(prefix + "PrintBtn");
-  const pdfBtn = $(prefix + "PdfBtn");
-  const pdfName = prefix === "mcq" ? "객관식문제" : "주관식문제";
+  const docName = prefix === "mcq" ? "객관식문제" : "주관식문제";
   const errorEl = $(prefix + "Error");
   const loadingEl = $(prefix + "Loading");
   const loadingTextEl = $(prefix + "LoadingText");
@@ -1581,7 +1609,6 @@ function setupQuizTab({ prefix, types, footer }) {
     loadingEl.classList.add("on");
     resultEl.innerHTML = "";
     printBtn.style.display = "none";
-    pdfBtn.style.display = "none";
     syncFloatPrint();
 
     // 완성될 때마다 화면에 붙인다. 도중에 멈추거나 창을 닫아도 그때까지 만든
@@ -1591,7 +1618,6 @@ function setupQuizTab({ prefix, types, footer }) {
         resultEl.insertAdjacentHTML("beforeend", `<footer class="qz-footer">${esc(footer)} · 자동 생성</footer>`);
       }
       printBtn.style.display = "inline-flex";
-      pdfBtn.style.display = "inline-flex";
       syncFloatPrint();
     };
     const append = (html) => {
@@ -1716,8 +1742,7 @@ function setupQuizTab({ prefix, types, footer }) {
   }
 
   btn.addEventListener("click", generate);
-  printBtn.addEventListener("click", () => window.print());
-  pdfBtn.addEventListener("click", () => pdfPrint(() => passageBasedName(pdfName)));
+  printBtn.addEventListener("click", () => printDoc(() => passageBasedName(docName)));
 }
 
 setupQuizTab({ prefix: "mcq", types: MCQ_TYPES, footer: "수능형 객관식 문제" });
@@ -2034,7 +2059,6 @@ const wbAnswerChk = $("wbAnswerChk");
 const wbAnswerBookChk = $("wbAnswerBookChk");
 const workbookDocEl = $("workbookDoc");
 const workbookPrintBtn = $("workbookPrintBtn");
-const workbookPdfBtn = $("workbookPdfBtn");
 const wbAnswerPrintBtn = $("wbAnswerPrintBtn");
 
 // 머리말(시험명)은 다음에 열 때도 그대로 쓰도록 기억해 둔다
@@ -2058,26 +2082,17 @@ wbAnswerChk.addEventListener("change", () => {
 });
 
 wbBtn.addEventListener("click", generateWorkbook);
-workbookPrintBtn.addEventListener("click", () => window.print());
-workbookPdfBtn.addEventListener("click", () => pdfPrint(() => titledName("워크북", "wbTitle")));
+workbookPrintBtn.addEventListener("click", () => printDoc(() => titledName("워크북", "wbTitle")));
 
-// 답지만 인쇄 — 문제 내용을 감추고 뒤쪽 '정답' 모음만 지면에 올린다.
+// 답지만 — 문제 내용을 감추고 뒤쪽 '정답' 모음만 지면에 올린다.
 // 다시 그리지 않고 클래스만 바꾸므로, 섞인 보기·순서가 학생용 문제지와 정확히 일치한다.
 // '정답 표시' 체크와 무관하게 항상 정답이 나오고, 인쇄가 끝나면 원래 화면으로 돌아온다.
-function printWorkbookAnswers() {
-  workbookDocEl.classList.add("answers-only");
-  let done = false;
-  const restore = () => {
-    if (done) return;
-    done = true;
-    workbookDocEl.classList.remove("answers-only");
-    window.removeEventListener("afterprint", restore);
-  };
-  window.addEventListener("afterprint", restore);
-  setTimeout(restore, 60000); // afterprint를 안 보내는 브라우저 대비 안전장치
-  window.print();
-}
-wbAnswerPrintBtn.addEventListener("click", printWorkbookAnswers);
+wbAnswerPrintBtn.addEventListener("click", () =>
+  printDoc(() => titledName("워크북_답지", "wbTitle"), {
+    before: () => workbookDocEl.classList.add("answers-only"),
+    after: () => workbookDocEl.classList.remove("answers-only"),
+  })
+);
 
 async function generateWorkbook() {
   const apiKey = apiKeyEl.value.trim();
@@ -2104,7 +2119,6 @@ async function generateWorkbook() {
   wbLoadingEl.classList.add("on");
   workbookDocEl.innerHTML = "";
   workbookPrintBtn.style.display = "none";
-  workbookPdfBtn.style.display = "none";
   wbAnswerPrintBtn.style.display = "none";
   syncFloatPrint();
 
@@ -2175,8 +2189,7 @@ async function generateWorkbook() {
   applyAnswerVisibility();
   if (okCount) {
     workbookPrintBtn.style.display = "inline-flex";
-    workbookPdfBtn.style.display = "inline-flex";
-    // '답지만 인쇄'는 뒤쪽 정답 모음을 지면에 올리는 기능이라, 그게 없으면 쓸 수 없다
+    // '답지만'은 뒤쪽 정답 모음을 지면에 올리는 기능이라, 그게 없으면 쓸 수 없다
     wbAnswerPrintBtn.style.display = hasAnswerBook ? "inline-flex" : "none";
   }
   syncFloatPrint();
@@ -2610,7 +2623,6 @@ const vocabDedupEl = $("vocabDedup");
 const vocabAnswerChk = $("vocabAnswerChk");
 const vocabBtn = $("vocabBtn");
 const vocabPrintBtn = $("vocabPrintBtn");
-const vocabPdfBtn = $("vocabPdfBtn");
 const vocabErrorEl = $("vocabError");
 const vocabDocEl = $("vocabDoc");
 
@@ -2650,8 +2662,7 @@ vocabAnswerChk.addEventListener("change", () => {
 });
 
 vocabBtn.addEventListener("click", buildVocab);
-vocabPrintBtn.addEventListener("click", () => window.print());
-vocabPdfBtn.addEventListener("click", () => pdfPrint(() => titledName("단어장", "vocabTitle")));
+vocabPrintBtn.addEventListener("click", () => printDoc(() => titledName("단어장", "vocabTitle")));
 
 function buildVocab() {
   vocabErrorEl.textContent = "";
@@ -2745,7 +2756,6 @@ function buildVocab() {
   vocabDocEl.innerHTML = parts.join("");
   applyVocabAnswer();
   vocabPrintBtn.style.display = "inline-flex";
-  vocabPdfBtn.style.display = "inline-flex";
   syncFloatPrint();
   vocabDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }

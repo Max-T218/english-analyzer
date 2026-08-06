@@ -586,13 +586,41 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
 .float-print:hover{box-shadow:0 8px 26px rgba(20,30,45,.36);}
 .float-print:active{transform:translateY(1px);}
 .float-print:focus-visible{outline:2px solid var(--accent); outline-offset:3px;}
-/* PDF저장은 보조 동작이라 톤을 한 단계 낮춘다 */
-.float-pdf{background:var(--card); color:var(--ink); border:1px solid var(--line); box-shadow:0 4px 14px rgba(20,30,45,.20);}
 @media (max-width:560px){
   .float-print-group{right:14px; bottom:14px; gap:8px;}
   .float-print{padding:12px 16px; font-size:13px;}
 }
 @media print{ .float-print-group{display:none !important;} }
+
+/* ── 인쇄 안내 창 ──
+   인쇄 버튼을 누르면 먼저 뜨는 안내. 인쇄 대화상자에서 '대상(프린터)'을 무엇으로
+   고르면 종이/PDF가 되는지 알려 준다. (브라우저가 그 목록을 정하므로 앱이 대신
+   고를 수 없다 — 사이트가 몰래 파일을 저장하지 못하게 막는 보안 정책.) */
+.print-guide{
+  position:fixed; inset:0; z-index:200;
+  display:flex; align-items:center; justify-content:center; padding:20px;
+  background:rgba(15,23,35,.45);
+}
+.print-guide[hidden]{display:none;}
+.print-guide-card{
+  background:var(--card); color:var(--ink); border:1px solid var(--line);
+  border-radius:14px; box-shadow:0 18px 50px rgba(15,23,35,.35);
+  padding:22px 24px; max-width:520px; width:100%;
+  max-height:calc(100vh - 40px); overflow:auto;
+}
+.print-guide-card h3{margin:0 0 10px; font-size:17px;}
+.print-guide-lead{margin:0 0 12px; font-size:14px; line-height:1.65;}
+.print-guide-steps{margin:0 0 12px; padding-left:20px; font-size:14px; line-height:1.7;}
+.print-guide-steps li + li{margin-top:8px;}
+.print-guide-sub{color:var(--ink-soft); font-size:12.5px;}
+.print-guide-note{
+  margin:0 0 14px; padding:10px 12px; border-radius:8px;
+  background:var(--line-soft); color:var(--ink-soft);
+  font-size:12.5px; line-height:1.6;
+}
+.print-guide-skip{display:inline-flex; align-items:center; gap:6px; font-size:13px;}
+.print-guide-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:16px;}
+@media print{ .print-guide{display:none !important;} }
 
 /* ── 밑줄 ──
    브라우저 기본값 text-decoration-skip-ink:auto 는 g·p·y 같은 디센더와 겹치는
