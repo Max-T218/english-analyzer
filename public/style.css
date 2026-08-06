@@ -343,8 +343,13 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
   display:flex; flex-wrap:wrap; align-items:baseline; gap:10px;
   padding:12px 16px; margin-bottom:14px; border-radius:10px;
   background:var(--accent-soft); border:1px solid var(--line);
-  /* 제목은 뒤따르는 첫 단계와 절대 떨어지지 않게 (앞 지문 끝에 홀로 남는 것 방지) */
-  break-after:avoid; page-break-after:avoid;
+  /* 영문·국문 두 줄이 쪽 경계에서 쪼개지지 않게 한 덩어리로 묶는다.
+     break-after:avoid는 쓰지 않는다 — 뒤따르는 STEP 표는 거의 늘 한 쪽을 넘기는데,
+     그때 Chrome이 '제목을 다음 것과 붙여 두라'는 요구를 지키려고 제목을 통째로
+     다음 쪽으로 밀어내 제목만 덩그러니 남은 빈 쪽이 생긴다.
+     지문은 .wb-passage의 break-before:page 덕분에 이미 늘 쪽 맨 위에서 시작하므로
+     제목이 앞 지문 끝에 홀로 남을 일도 없다. */
+  break-inside:avoid; page-break-inside:avoid;
 }
 .wb-titlebar b{font-family:var(--font); font-size:16px; color:var(--ink);}
 .wb-titlebar span{font-size:13px; color:var(--ink-soft);}
@@ -455,6 +460,12 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
      지문의 첫 단계만 예외 — 지문 제목 바로 아래에 이어져야 하므로. */
   table.wb-page{break-before:page; page-break-before:always; margin-top:0;}
   .wb-passage > table.wb-page:first-of-type{break-before:auto; page-break-before:auto;}
+  /* 아래쪽 공통 인쇄 규칙의 tr{break-inside:avoid}는 지문분석 표(행이 짧다)를 위한
+     것인데, 워크북은 한 단계 전체가 tbody의 tr 하나여서 그것까지 걸린다. 그러면
+     쪽에 남은 자리에 안 들어간다고 단계를 통째로 다음 쪽으로 밀어내, 지문 제목만
+     덩그러니 남은 빈 쪽이 생긴다. 이 표는 쪽 넘김을 허용해야 한다. */
+  table.wb-page > tbody > tr,
+  table.wb-page > tbody > tr > td{break-inside:auto; page-break-inside:auto;}
   .wb-cover{break-after:page; page-break-after:always; box-shadow:none;}
   .wb-titlebar{margin-bottom:10px;}
   /* 정답 모음은 별지 — 새 쪽에서 시작하고 2단으로 촘촘하게 */
