@@ -278,6 +278,10 @@
           <label for="wbTitle">워크북 제목 (선택)</label>
           <input type="text" id="wbTitle" placeholder="예: 공통영어2 1과 본문 워크북">
         </div>
+        <div class="field">
+          <label for="wbExam">쪽 머리말 · 시험명 (선택)</label>
+          <input type="text" id="wbExam" placeholder="예: 2026년 7월 학력평가┃고3">
+        </div>
       </div>
 
       <div class="actions">
@@ -288,6 +292,9 @@
                 title="문제 내용은 빼고 번호와 정답만 인쇄합니다. '정답 표시' 설정과 무관하게 항상 정답이 나옵니다.">🔑 답지만 인쇄</button>
         <label class="chk" title="켜면 정답이 지면에 함께 인쇄됩니다(교사용). 끄면 학생용 문제지가 됩니다.">
           <input type="checkbox" id="wbAnswerChk"> 정답 표시 <span class="chk-sub">(교사용)</span>
+        </label>
+        <label class="chk" title="참고 자료처럼 문제지 뒤쪽에 단계별 정답을 한데 모아 붙입니다.">
+          <input type="checkbox" id="wbAnswerBookChk" checked> 뒤에 정답 모음 <span class="chk-sub">(별지)</span>
         </label>
       </div>
       <div class="error" id="wbError"></div>

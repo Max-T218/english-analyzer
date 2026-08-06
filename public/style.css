@@ -336,24 +336,36 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
   margin-bottom:16px; background:var(--card);
 }
 .wb-cover h1{font-family:var(--font); font-size:28px; margin:0 0 10px;}
+.wb-cover .wb-exam{font-size:14px; color:var(--ink); margin-bottom:6px;}
 .wb-cover .wb-date{color:var(--ink-soft); font-size:13px;}
 
 .wb-titlebar{
   display:flex; flex-wrap:wrap; align-items:baseline; gap:10px;
   padding:12px 16px; margin-bottom:14px; border-radius:10px;
   background:var(--accent-soft); border:1px solid var(--line);
+  /* 제목은 뒤따르는 첫 단계와 절대 떨어지지 않게 (앞 지문 끝에 홀로 남는 것 방지) */
+  break-after:avoid; page-break-after:avoid;
 }
 .wb-titlebar b{font-family:var(--font); font-size:16px; color:var(--ink);}
 .wb-titlebar span{font-size:13px; color:var(--ink-soft);}
 
-.wb-stage-head{margin-top:26px;}
-.wb-stage-head .num{
-  background:var(--accent); color:#fff; font-size:12px; font-weight:700;
-  padding:3px 10px; border-radius:20px;
+/* 한 단계 = 표 하나. <thead>를 쓰는 이유는 인쇄할 때 브라우저가 쪽이 넘어갈 때마다
+   머리글 행을 자동으로 다시 그려 주기 때문 — 참고 자료의 '쪽 머리말'이 그렇게 나온다. */
+table.wb-page{width:100%; border-collapse:collapse; margin-top:26px;}
+table.wb-page > thead{display:table-header-group;}
+table.wb-page > thead td,
+table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
+.wb-run{
+  display:flex; align-items:baseline; justify-content:space-between; gap:12px;
+  padding:7px 12px; margin-bottom:10px; border-radius:8px;
+  background:var(--accent-soft); border:1px solid var(--line);
 }
+.wb-run-l{font-family:var(--font); font-weight:800; font-size:14px; color:var(--accent);}
+.wb-run-r{font-size:11.5px; color:var(--ink-soft); white-space:nowrap;}
+
 .wb-guide{
   font-size:13px; font-weight:600; color:var(--accent);
-  margin:-4px 0 14px; padding-left:2px;
+  margin:0 0 14px; padding-left:2px;
 }
 .wb-q{
   border-bottom:1px dashed var(--line); padding:12px 0;
@@ -370,9 +382,12 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
 .wb-heading{font-weight:700; color:var(--ink); font-size:14px; margin:6px 0 8px;}
 .wb-ko{font-size:13.5px; color:var(--ink-soft); line-height:1.7; margin-bottom:6px; word-break:keep-all;}
 .wb-en{font-size:15px; line-height:2.1; color:var(--ink);}
-.wb-para{font-size:14.5px; line-height:2; color:var(--ink); margin-bottom:12px;}
-.wb-para u{text-decoration-color:var(--accent); text-decoration-thickness:2px; text-underline-offset:3px;}
-.wb-scramble{font-size:14.5px; line-height:1.9; color:var(--ink); margin:4px 0;}
+/* 영작 — 밑줄이 촘촘히 늘어서므로 줄 간격을 더 준다 */
+.wb-en.wb-write{line-height:2.5;}
+.wb-para{font-size:14.5px; line-height:2.1; color:var(--ink); margin-bottom:12px;}
+.wb-para u{text-decoration-color:var(--ink); text-decoration-thickness:1px; text-underline-offset:4px;}
+.wb-scramble{font-size:14.5px; line-height:1.95; color:var(--ink); margin:4px 0;}
+.wb-scramble-grp{font-weight:400;}
 .wb-keys{
   display:inline-block; font-size:12.5px; font-weight:600; color:var(--gv);
   background:rgba(122,63,160,.08); border-radius:6px; padding:3px 9px; margin:4px 0;
@@ -386,44 +401,67 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
 .wb-writeline{
   border-bottom:1px solid var(--line); height:1.9em; margin-top:6px;
 }
-.wb-fixline{font-size:14px; margin-top:8px; color:var(--ink);}
+.wb-fixline{font-size:14px; margin-top:10px; color:var(--ink);}
+
+/* 문단 배열 (A)(B)(C) */
+.wb-para-head{margin-bottom:8px;}
+.wb-para-tail{margin-top:10px;}
+.wb-parablock{
+  font-size:14px; line-height:1.95; color:var(--ink); margin:0 0 10px;
+  padding-left:26px; text-indent:-26px;
+}
+.wb-parablock b{color:var(--accent); font-weight:800;}
+.wb-orderline{margin-top:14px; font-size:15px; color:var(--ink-soft); text-align:center;}
+
 /* 정답 — '정답 표시'가 켜졌을 때만 노출 (화면·인쇄 공통) */
 .wb-ans{display:none; margin-top:7px; font-size:13px; font-weight:700; color:var(--g);}
 .wb-ans::before{content:"정답  "; font-weight:700; color:var(--accent);}
 #workbookDoc.show-answers .wb-ans{display:block;}
 
-/* ── 답지만 인쇄 ──
-   문제 내용을 감추고 '번호 + 정답'만 남긴다. '정답 표시' 체크와 무관하게 항상 노출.
-   인쇄 직전에만 .answers-only가 붙었다가 인쇄가 끝나면 떨어진다. */
-#workbookDoc.answers-only::before{
-  content:"답지 (정답)"; display:block; margin:0 0 14px; padding-bottom:6px;
-  font-weight:800; font-size:15px; color:var(--accent);
-  border-bottom:2px solid var(--accent);
+/* ── 뒤쪽 '정답' 모음 (참고 자료의 별지 정답) ── */
+.wb-answerbook{margin-top:30px;}
+.wb-answerbook-head{
+  font-family:var(--font); font-size:20px; margin:0 0 14px; padding-bottom:8px;
+  color:var(--accent); border-bottom:2px solid var(--accent);
 }
-#workbookDoc.answers-only .wb-guide,
-#workbookDoc.answers-only .wb-heading,
-#workbookDoc.answers-only .wb-ko,
-#workbookDoc.answers-only .wb-en,
-#workbookDoc.answers-only .wb-para,
-#workbookDoc.answers-only .wb-scramble,
-#workbookDoc.answers-only .wb-keys,
-#workbookDoc.answers-only .wb-fixline,
-#workbookDoc.answers-only .wb-writeline{display:none !important;}
-#workbookDoc.answers-only .wb-ans{display:block; margin-top:0;}
-#workbookDoc.answers-only .wb-ans::before{content:none;}
-#workbookDoc.answers-only .wb-q{padding:5px 0; border-bottom:none;}
-/* 정답이 비어 있는 문항(예: 해석이 없는 문장)은 답지에서 뺀다 */
-#workbookDoc.answers-only .wb-q:not(:has(.wb-ans:not(:empty))){display:none;}
+.wb-ab-label{
+  font-weight:800; font-size:13px; color:var(--accent);
+  margin:14px 0 8px; break-after:avoid; page-break-after:avoid;
+}
+.wb-ab-stage{margin-bottom:12px; break-inside:avoid; page-break-inside:avoid;}
+.wb-ab-stage h3{
+  font-size:12.5px; font-weight:800; color:var(--ink); margin:0 0 4px;
+}
+.wb-ab-stage ol{margin:0; padding-left:24px;}
+.wb-ab-stage li{
+  font-size:12px; line-height:1.65; color:var(--ink-soft);
+  word-break:break-word; margin-bottom:2px;
+}
+
+/* ── 답지만 인쇄 ──
+   문제지를 통째로 감추고 뒤쪽 '정답' 모음만 남긴다.
+   '정답 표시' 체크와 무관하게 항상 노출되며, 인쇄가 끝나면 .answers-only가 떨어진다. */
+#workbookDoc.answers-only .wb-passage,
+#workbookDoc.answers-only .wb-cover,
+#workbookDoc.answers-only > footer{display:none !important;}
+#workbookDoc.answers-only .wb-answerbook{margin-top:0;}
 
 @media print{
-  .wb-stage{break-before:page; page-break-before:always;}
-  .wb-passage > .wb-stage:first-of-type{break-before:auto; page-break-before:auto;}
+  /* 새 지문은 늘 새 쪽에서 시작 — 지문 제목이 앞 지문 마지막 쪽 아래에 붙는 것을 막는다.
+     첫 지문만 예외로 두어야 (표지가 없을 때) 맨 앞에 빈 쪽이 생기지 않는다. */
+  .wb-passage{break-before:page; page-break-before:always;}
+  #workbookDoc > .wb-passage:first-of-type{break-before:auto; page-break-before:auto;}
+  /* 단계마다 새 쪽에서 시작 (참고 자료와 같은 조판).
+     지문의 첫 단계만 예외 — 지문 제목 바로 아래에 이어져야 하므로. */
+  table.wb-page{break-before:page; page-break-before:always; margin-top:0;}
+  .wb-passage > table.wb-page:first-of-type{break-before:auto; page-break-before:auto;}
   .wb-cover{break-after:page; page-break-after:always; box-shadow:none;}
-  /* 답지는 단계마다 쪽을 넘기지 않고 이어서 촘촘하게 (몇 장 안 나오도록) */
-  #workbookDoc.answers-only .wb-stage{
-    break-before:auto; page-break-before:auto; margin-top:16px;
-  }
-  #workbookDoc.answers-only .wb-stage-head{margin-top:12px;}
+  .wb-titlebar{margin-bottom:10px;}
+  /* 정답 모음은 별지 — 새 쪽에서 시작하고 2단으로 촘촘하게 */
+  .wb-answerbook{break-before:page; page-break-before:always; margin-top:0;}
+  .wb-answerbook-head{break-after:avoid; page-break-after:avoid;}
+  .wb-ab-passage{column-count:2; column-gap:8mm; column-rule:1px solid var(--line-soft);}
+  #workbookDoc.answers-only .wb-answerbook{break-before:auto; page-break-before:auto;}
 }
 
 /* ── 여러 지문 입력 (지문 추가/삭제) ── */

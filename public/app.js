@@ -1965,22 +1965,24 @@ document.addEventListener("click", (e) => {
 
 /* ══════════════════════════ 워크북 제작 탭 (단계별 학습지) ══════════════════════════ */
 
-// 지원 단계 — 참고 자료(10단계 워크북)의 번호·명칭을 그대로 사용
+// 지원 단계 — 참고 자료(10단계 WORKBOOK)의 번호·명칭·지시문을 그대로 쓰되,
+// 1(지문 연습하기)·2(빈칸 완성하기·우리말)는 제외한 3~10단계만 만든다.
 const WB_STAGES = [
-  { id: 3, name: "빈칸 연습 (영문)", guide: "우리말 해석을 보고 영문을 완성하시오.", def: true },
-  { id: 4, name: "해석 연습", guide: "영어 문장을 읽고 우리말 해석을 쓰시오.", def: true },
-  { id: 5, name: "동사형 연습", guide: "괄호 안에 주어진 단어를 알맞게 고쳐 쓰시오.", def: true },
-  { id: 6, name: "어법 선택형 연습", guide: "괄호 안에서 어법상 알맞은 것을 고르시오.", def: true },
-  { id: 7, name: "어색한 곳 찾기 연습", guide: "밑줄 친 부분 중 문맥상 어색한 것을 찾아 바르게 고쳐 쓰시오.", def: true },
-  { id: 8, name: "순서배열 연습 (문장)", guide: "우리말과 같은 뜻이 되도록 주어진 단어를 알맞게 배열하시오.", def: true },
-  { id: 9, name: "영작 연습", guide: "우리말과 같은 뜻이 되도록 주어진 단어를 사용하여 영작하시오.", def: true },
+  { id: 3,  name: "빈칸 완성하기(영문)",   guide: "우리말 해석을 읽고 영문의 빈칸을 완성해 보세요.", def: true },
+  { id: 4,  name: "해석 연습하기",         guide: "문장 전체의 자연스러운 해석을 써 보세요.", def: true },
+  { id: 5,  name: "동사형 연습하기",       guide: "괄호 안에 주어진 단어를 알맞게 고쳐 쓰세요.", def: true },
+  { id: 6,  name: "어법·어휘 고르기",      guide: "괄호 안에서 옳은 어법과 어휘를 골라 보세요.", def: true },
+  { id: 7,  name: "어색한 곳 찾기",        guide: "밑줄 친 부분 중 어법상 어색한 것을 세 개 찾아 알맞게 고쳐 쓰세요.", def: true },
+  { id: 8,  name: "순서 배열하기",         guide: "우리말과 같은 뜻이 되도록 주어진 단어를 바르게 배열해 보세요.", def: true },
+  { id: 9,  name: "문단 배열하기",         guide: "다음 문단을 흐름상 알맞게 배열해 보세요.", def: true },
+  { id: 10, name: "영작 연습하기",         guide: "우리말과 같은 뜻이 되도록 주어진 단어를 순서대로 사용하여 영작하세요.", def: true },
 ];
 
 const wbStageGridEl = $("wbStageGrid");
 WB_STAGES.forEach((s) => {
   const label = document.createElement("label");
-  // 빈칸 연습(영문)만 괄호 설명을 아래 줄로 내려 표시한다
-  const split = s.id === 3 ? s.name.match(/^(.*?)\s*(\([^)]*\))$/) : null;
+  // '빈칸 완성하기(우리말)'처럼 괄호 설명이 붙은 이름은 설명을 아래 줄로 내려 표시한다
+  const split = s.name.match(/^(.*?)\s*(\([^)]*\))$/);
   const nameHtml = split
     ? `<span class="opt-text">${esc(split[1])}<span class="opt-sub">${esc(split[2])}</span></span>`
     : `<span>${esc(s.name)}</span>`;
@@ -1991,8 +1993,8 @@ WB_STAGES.forEach((s) => {
   wbStageGridEl.appendChild(label);
 });
 
-// 체크한 단계에만 1번부터 번호를 붙인다. WB_STAGES의 id(3·5·6…)는 렌더 분기를 고르는
-// 내부 키일 뿐이고, 화면·인쇄물에 찍히는 번호는 여기서 매기는 '선택 순서'다.
+// 체크한 단계에만 1번부터 번호를 붙인다. WB_STAGES의 id는 렌더 분기를 고르는
+// 내부 키이자 참고 자료의 단계 번호이고, 화면·인쇄물에 찍히는 번호는 '선택 순서'다.
 function renumberWbStages() {
   let n = 0;
   wbStageGridEl.querySelectorAll("label").forEach((label) => {
@@ -2027,12 +2029,22 @@ const wbErrorEl = $("wbError");
 const wbLoadingEl = $("wbLoading");
 const wbLoadingTextEl = $("wbLoadingText");
 const wbTitleEl = $("wbTitle");
+const wbExamEl = $("wbExam");
 const wbAnswerChk = $("wbAnswerChk");
+const wbAnswerBookChk = $("wbAnswerBookChk");
 const workbookDocEl = $("workbookDoc");
 const workbookPrintBtn = $("workbookPrintBtn");
 const workbookPdfBtn = $("workbookPdfBtn");
 const wbAnswerPrintBtn = $("wbAnswerPrintBtn");
 
+// 머리말(시험명)은 다음에 열 때도 그대로 쓰도록 기억해 둔다
+const WB_EXAM_STORE = "gemini_wb_exam";
+if (wbExamEl) {
+  wbExamEl.value = localStorage.getItem(WB_EXAM_STORE) || "";
+  wbExamEl.addEventListener("change", () =>
+    localStorage.setItem(WB_EXAM_STORE, wbExamEl.value.trim())
+  );
+}
 
 // 정답 표시 토글 — 다시 그리지 않고 클래스만 바꿔서 (섞인 보기·순서가 유지되도록)
 const WB_ANSWER_STORE = "gemini_wb_answer";
@@ -2049,7 +2061,7 @@ wbBtn.addEventListener("click", generateWorkbook);
 workbookPrintBtn.addEventListener("click", () => window.print());
 workbookPdfBtn.addEventListener("click", () => pdfPrint(() => titledName("워크북", "wbTitle")));
 
-// 답지만 인쇄 — 문제 내용을 감추고 번호와 정답만 지면에 올린다.
+// 답지만 인쇄 — 문제 내용을 감추고 뒤쪽 '정답' 모음만 지면에 올린다.
 // 다시 그리지 않고 클래스만 바꾸므로, 섞인 보기·순서가 학생용 문제지와 정확히 일치한다.
 // '정답 표시' 체크와 무관하게 항상 정답이 나오고, 인쇄가 끝나면 원래 화면으로 돌아온다.
 function printWorkbookAnswers() {
@@ -2097,14 +2109,16 @@ async function generateWorkbook() {
   syncFloatPrint();
 
   const total = jobs.length;
-  const usedModel = modelEl.value;
   let okCount = 0;
   const htmlParts = [];
+  const answerParts = [];
   const title = wbTitleEl.value.trim();
+  const exam = wbExamEl ? wbExamEl.value.trim() : "";
   if (title) {
     htmlParts.push(`
       <div class="wb-cover">
         <h1>${esc(title)}</h1>
+        ${exam ? `<div class="wb-exam">${esc(exam)}</div>` : ""}
         <div class="wb-date">${esc(new Date().toLocaleDateString("ko-KR"))}</div>
       </div>`);
   }
@@ -2114,7 +2128,7 @@ async function generateWorkbook() {
     wbLoadingTextEl.textContent =
       total > 1
         ? `${job.name} 워크북 만드는 중… (${i + 1}/${total})`
-        : "AI가 워크북을 만들고 있습니다… (지문 길이에 따라 30~90초 걸릴 수 있어요)";
+        : "AI가 워크북을 만들고 있습니다… (지문 길이에 따라 40~120초 걸릴 수 있어요)";
 
     if (job.text.length < 20) {
       htmlParts.push(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
@@ -2127,7 +2141,9 @@ async function generateWorkbook() {
         { passage: job.text, model: modelEl.value, apiKey },
         "워크북 생성에 실패했습니다."
       );
-      htmlParts.push(buildWorkbookHtml(data, stages, job, total));
+      const built = buildWorkbookHtml(data, stages, job, total, exam);
+      htmlParts.push(built.html);
+      answerParts.push(built.answerHtml);
       okCount++;
     } catch (err) {
       const msg = err.message || String(err);
@@ -2141,13 +2157,27 @@ async function generateWorkbook() {
     }
   }
 
-  if (okCount) htmlParts.push(`<footer>단계별 워크북 · 자동 생성</footer>`);
+  // 참고 자료처럼 문제지 뒤에 '정답'을 한데 모아 붙인다
+  let hasAnswerBook = false;
+  if (okCount && (!wbAnswerBookChk || wbAnswerBookChk.checked)) {
+    const body = answerParts.filter((p) => p && p.trim()).join("");
+    if (body) {
+      hasAnswerBook = true;
+      htmlParts.push(`
+        <section class="wb-answerbook">
+          <h2 class="wb-answerbook-head">정답</h2>
+          ${body}
+        </section>`);
+    }
+  }
+  if (okCount) htmlParts.push(`<footer>단계별 WORKBOOK · 자동 생성</footer>`);
   workbookDocEl.innerHTML = htmlParts.join("");
   applyAnswerVisibility();
   if (okCount) {
     workbookPrintBtn.style.display = "inline-flex";
     workbookPdfBtn.style.display = "inline-flex";
-    wbAnswerPrintBtn.style.display = "inline-flex";
+    // '답지만 인쇄'는 뒤쪽 정답 모음을 지면에 올리는 기능이라, 그게 없으면 쓸 수 없다
+    wbAnswerPrintBtn.style.display = hasAnswerBook ? "inline-flex" : "none";
   }
   syncFloatPrint();
   wbLoadingEl.classList.remove("on");
@@ -2168,6 +2198,16 @@ function seededRand(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+// 문자열에서 안정적인 정수 시드를 뽑는다 (같은 지문 → 같은 배열)
+function strSeed(str) {
+  let h = 2166136261;
+  const s = String(str || "");
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
 function seededShuffle(arr, seed) {
   const a = arr.slice();
   const rnd = seededRand(seed);
@@ -2181,17 +2221,21 @@ function seededShuffle(arr, seed) {
 const wbBlank = (w) => `<span class="wb-blank" style="min-width:${w || 90}px"></span>`;
 const wbAns = (t) => `<span class="wb-ans">${esc(t)}</span>`;
 
+// 빈칸 폭은 답의 길이에 맞춰 잡는다 (너무 길어지지 않게 상한을 둔다)
+const blankWidth = (s) => Math.min(230, Math.max(70, s.length * 9));
+
 // {{정답}} → 빈칸 + 정답 목록
 function renderBraceBlanks(text) {
   const answers = [];
   const html = esc(text).replace(/\{\{([^{}]*)\}\}/g, (_, a) => {
-    answers.push(a.trim());
-    return wbBlank(Math.max(70, a.trim().length * 9));
+    const v = a.trim();
+    answers.push(v);
+    return wbBlank(blankWidth(v));
   });
   return { html, answers };
 }
 
-// (기본형|정답) → (기본형) 표시 + 정답 목록
+// (기본형|정답) → (기본형) 표시 + 정답 목록. 기본형은 "have, be, dump"처럼 여럿일 수 있다.
 function renderVerbForms(text) {
   const answers = [];
   const html = esc(text).replace(/\(([^()|]*)\|([^()|]*)\)/g, (_, base, ans) => {
@@ -2215,7 +2259,7 @@ function renderChoices(text, seed) {
   return { html, answers };
 }
 
-// 영어 문장을 단어 단위로 섞어 순서배열 문제로 만든다.
+// 영어 문장을 낱말 단위로 섞어 배열 문제로 만든다 (문제 제작 탭의 서술형 배열도 이걸 쓴다).
 // 참고 자료처럼 ① 끝 마침표는 떼고 ② 첫 단어는 소문자로 바꿔
 // 문장의 시작·끝이 드러나지 않게 한다(고유명사처럼 보이는 말은 그대로 둔다).
 function scrambleSentence(en, seed) {
@@ -2231,16 +2275,63 @@ function scrambleSentence(en, seed) {
   return esc(shuffled.join(" / "));
 }
 
+// 워크북8 — 구(청크) 단위로 섞는다.
+// AI가 준 chunks에서 '='로 시작하는 것은 고정(제자리에 그대로 인쇄)이고,
+// 고정 청크 사이에 낀 나머지 묶음마다 따로 섞어 ( a / b / c ) 로 낸다.
+// 참고 자료의 "To (growing / fix / problem / this), I (…)" 모양이 이렇게 나온다.
+function renderChunkOrder(chunks, en, seed) {
+  let list = (chunks || []).map((c) => String(c == null ? "" : c)).filter((c) => c.trim());
+  // 청크가 없거나 너무 적으면 낱말 단위로 쪼개 대신 쓴다 (참고 자료의 보조 형태)
+  if (list.length < 3) {
+    const words = String(en || "").trim().split(/\s+/).filter(Boolean);
+    if (words.length < 3) return "";
+    list = words;
+  }
+  const out = [];
+  let run = [];
+  const flush = () => {
+    if (!run.length) return;
+    const mixed = run.length > 1 ? seededShuffle(run, seed * 31 + out.length) : run;
+    out.push(`<b class="wb-scramble-grp">(${esc(mixed.join(" / "))})</b>`);
+    run = [];
+  };
+  list.forEach((c) => {
+    if (c.startsWith("=")) {
+      flush();
+      out.push(esc(c.slice(1).trim()));
+    } else {
+      run.push(c.trim());
+    }
+  });
+  flush();
+  return out.join(" ");
+}
+
+// 워크북10 — {{쓸 부분}}의 단어 수만큼 밑줄을 깔아 준다 (참고 자료와 같은 모양)
+function renderWriteMask(mask, en) {
+  const src = String(mask || "").indexOf("{{") >= 0 ? mask : `{{${en || ""}}}`;
+  let any = false;
+  const html = esc(src).replace(/\{\{([^{}]*)\}\}/g, (_, a) => {
+    const words = a.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return "";
+    any = true;
+    return words.map((w) => wbBlank(blankWidth(w))).join(" ");
+  });
+  return any ? html : "";
+}
+
 function wbHeading(h) {
   return h && h.trim() ? `<div class="wb-heading">${esc(h.trim())}</div>` : "";
 }
 
-/* ── 단계별 렌더 ── */
+/* ── 단계 조립 ── */
 
-function buildWorkbookHtml(d, stages, job, total) {
+function buildWorkbookHtml(d, stages, job, total, exam) {
   const parts = [];
+  const answerStages = [];
+  const label = job && (job.named || total > 1) ? job.name : "";
+
   parts.push(`<section class="wb-passage">`);
-  parts.push(passageBanner(job, total));
   if (d.englishTitle || d.koreanTitle) {
     parts.push(`
       <div class="wb-titlebar">
@@ -2251,117 +2342,254 @@ function buildWorkbookHtml(d, stages, job, total) {
 
   const sentences = (d.sentences || []).filter((s) => s && s.en);
   // 지면에 찍히는 번호는 1부터 연속. 내용이 없어 건너뛴 단계는 번호를 쓰지 않으므로
-  // '워크북1, 워크북2 …' 사이에 빈 번호가 생기지 않는다.
+  // 'STEP 1, STEP 2 …' 사이에 빈 번호가 생기지 않는다.
   let stageNo = 0;
   stages.forEach((stageId) => {
     const meta = WB_STAGES.find((s) => s.id === stageId);
     if (!meta) return;
-    let inner = "";
-    if (stageId === 7) inner = renderStage7(d.oddParagraphs || []);
-    else inner = sentences.map((s) => renderStageSentence(stageId, s)).join("");
-    if (!inner.trim()) return;
+    const built = buildStage(stageId, d, sentences);
+    if (!built || !built.html.trim()) return;
     stageNo++;
+    const head = `STEP ${stageNo} ${meta.name}`;
+    // 표의 <thead>는 브라우저가 쪽마다 다시 그려 준다 — 참고 자료의 '쪽 머리말'이 된다
     parts.push(`
-      <section class="wb-stage">
-        <h3 class="section wb-stage-head"><span class="num">워크북${stageNo}</span> ${esc(meta.name)}</h3>
-        <div class="wb-guide">◗ ${esc(meta.guide)}</div>
-        ${inner}
-      </section>`);
+      <table class="wb-page">
+        <thead><tr><td>
+          <div class="wb-run">
+            <span class="wb-run-l">${esc(head)}</span>
+            <span class="wb-run-r">${esc([label, exam].filter(Boolean).join(" ┃ "))}</span>
+          </div>
+        </td></tr></thead>
+        <tbody><tr><td>
+          <div class="wb-guide">${esc(meta.guide)}</div>
+          ${built.html}
+        </td></tr></tbody>
+      </table>`);
+    if (built.answers && built.answers.length) {
+      answerStages.push({ head, items: built.answers });
+    }
   });
 
   parts.push(`</section>`);
-  return parts.join("");
+
+  // 뒤쪽 '정답' 모음에 들어갈 조각
+  let answerHtml = "";
+  if (answerStages.length) {
+    answerHtml = `
+      <div class="wb-ab-passage">
+        ${label ? `<div class="wb-ab-label">${esc(label)}</div>` : ""}
+        ${answerStages
+          .map(
+            (st) => `
+          <div class="wb-ab-stage">
+            <h3>${esc(st.head)}</h3>
+            <ol>${st.items
+              .map((it) => `<li value="${Number(it.no) || 1}">${esc(it.text)}</li>`)
+              .join("")}</ol>
+          </div>`
+          )
+          .join("")}
+      </div>`;
+  }
+
+  return { html: parts.join(""), answerHtml };
+}
+
+// 한 단계를 통째로 만든다 → { html, answers:[{no, text}] }
+function buildStage(stageId, d, sentences) {
+  if (stageId === 7) return buildStage7(d.grammarFix);
+  if (stageId === 9) return buildStage9(d.paraOrder, sentences);
+
+  const html = [];
+  const answers = [];
+  sentences.forEach((s) => {
+    const one = renderStageSentence(stageId, s);
+    if (!one) return;
+    html.push(one.html);
+    if (one.answer) answers.push({ no: s.no, text: one.answer });
+  });
+  return { html: html.join(""), answers };
 }
 
 function renderStageSentence(stageId, s) {
   const noBadge = `<span class="wb-no">${esc(s.no)}</span>`;
   const head = wbHeading(s.heading);
   let body = "";
+  let answer = "";
 
   if (stageId === 3) {
-    // 빈칸 연습(영문) — 해석을 보고 영어 빈칸 채우기
-    const { html, answers } = renderBraceBlanks(s.enBlank || s.en);
-    if (!answers.length) return "";
+    // 빈칸 완성하기(영문) — 해석을 보고 영문의 빈칸 채우기
+    const { html, answers } = renderBraceBlanks(s.enBlank || "");
+    if (!answers.length) return null;
     body = `
-      <div class="wb-ko">${esc(s.ko)}</div>
+      <div class="wb-ko">${esc(s.ko || "")}</div>
       <div class="wb-en">${html}</div>
       ${wbAns(answers.join(" / "))}`;
+    answer = answers.join(" / ");
   } else if (stageId === 4) {
-    // 해석 연습 — 영문 보고 해석 쓰기
+    // 해석 연습하기 — 영문 보고 해석 쓰기
     body = `
       <div class="wb-en">${esc(s.en)}</div>
       <div class="wb-writeline"></div>
+      <div class="wb-writeline"></div>
       ${wbAns(s.ko || "")}`;
+    answer = s.ko || "";
   } else if (stageId === 5) {
-    // 동사형 연습
+    // 동사형 연습하기
     const { html, answers } = renderVerbForms(s.verbForm || "");
-    if (!answers.length) return "";
+    if (!answers.length) return null;
     body = `
-      <div class="wb-ko">${esc(s.ko)}</div>
+      <div class="wb-ko">${esc(s.ko || "")}</div>
       <div class="wb-en">${html}</div>
       ${wbAns(answers.join(" / "))}`;
+    answer = answers.join(" / ");
   } else if (stageId === 6) {
-    // 어법 선택형
+    // 어법·어휘 고르기
     const { html, answers } = renderChoices(s.grammarChoice || "", s.no || 1);
-    if (!answers.length) return "";
+    if (!answers.length) return null;
     body = `
-      <div class="wb-ko">${esc(s.ko)}</div>
+      <div class="wb-ko">${esc(s.ko || "")}</div>
       <div class="wb-en">${html}</div>
       ${wbAns(answers.join(" / "))}`;
+    answer = answers.join(" / ");
   } else if (stageId === 8) {
-    // 순서배열
+    // 순서 배열하기 — 구(청크) 단위
+    const scr = renderChunkOrder(s.chunks, s.en, s.no || 1);
+    if (!scr) return null;
     body = `
-      <div class="wb-ko">${esc(s.ko)}</div>
-      <div class="wb-scramble">( ${scrambleSentence(s.en, s.no || 1)} )</div>
+      <div class="wb-ko">${esc(s.ko || "")}</div>
+      <div class="wb-scramble">${scr}</div>
       <div class="wb-writeline"></div>
       ${wbAns(s.en || "")}`;
-  } else if (stageId === 9) {
-    // 영작 연습
+    answer = s.en || "";
+  } else if (stageId === 10) {
+    // 영작 연습하기 — 키워드 + 단어 수만큼의 밑줄
     const keys = (s.writeKeys || []).filter(Boolean);
+    const masked = renderWriteMask(s.writeMask, s.en);
+    if (!masked) return null;
     body = `
-      <div class="wb-ko">${esc(s.ko)}</div>
+      <div class="wb-ko">${esc(s.ko || "")}</div>
       ${keys.length ? `<div class="wb-keys">${esc(keys.join(", "))}</div>` : ""}
-      <div class="wb-writeline"></div>
+      <div class="wb-en wb-write">${masked}</div>
       ${wbAns(s.en || "")}`;
+    answer = s.en || "";
   }
 
-  if (!body) return "";
-  return `<div class="wb-q">${head}<div class="wb-q-body">${noBadge}<div class="wb-q-main">${body}</div></div></div>`;
+  if (!body) return null;
+  return {
+    html: `<div class="wb-q">${head}<div class="wb-q-body">${noBadge}<div class="wb-q-main">${body}</div></div></div>`,
+    answer,
+  };
 }
 
-function renderStage7(paras) {
-  return (paras || [])
-    .filter((p) => p && p.text)
-    .map((p) => {
-      const fixes = (p.fixes || []).filter((f) => f && f.wrong);
-      // 어색한 단어에 밑줄 표시 (본문에서 해당 단어를 찾아 <u>로 감싼다)
-      let text = esc(p.text);
-      fixes.forEach((f) => {
-        const w = esc(f.wrong);
-        const re = new RegExp(`(^|[^\\w<>])(${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})(?![\\w>])`);
-        text = text.replace(re, (m, pre, word) => `${pre}<u>${word}</u>`);
-      });
-      const lines = fixes
-        .map(
-          (_, i) =>
-            `<div class="wb-fixline">(${i + 1}) ${wbBlank(150)} → ${wbBlank(150)}</div>`
-        )
-        .join("");
-      const ansText = fixes.map((f, i) => `(${i + 1}) ${f.wrong} → ${f.right}`).join("   ");
-      return `
-        <div class="wb-q">
-          ${wbHeading(p.heading)}
-          <div class="wb-q-body">
-            <span class="wb-no">${esc(p.no)}</span>
-            <div class="wb-q-main">
-              <div class="wb-para">${text}</div>
-              ${lines}
-              ${wbAns(ansText)}
-            </div>
-          </div>
-        </div>`;
-    })
+// 워크북7 — 지문 전체에서 어법상 어색한 세 곳 찾아 고치기
+function buildStage7(gf) {
+  if (!gf || !gf.text) return { html: "", answers: [] };
+  const fixes = (gf.fixes || []).filter((f) => f && f.wrong && f.right);
+  if (!fixes.length) return { html: "", answers: [] };
+
+  // 밑줄 — AI가 준 구간을 본문에서 찾아 <u>로 감싼다. 앞에서부터 한 번씩만 쓴다.
+  let text = String(gf.text);
+  const marks = [];
+  (gf.spans || []).forEach((sp) => {
+    const t = String(sp || "").trim();
+    if (!t) return;
+    const at = text.indexOf(t, marks.length ? marks[marks.length - 1].end : 0);
+    if (at < 0) return;
+    marks.push({ start: at, end: at + t.length });
+  });
+  // 밑줄 구간과 그 사이 본문을 조각으로 갈라 놓는다 (겹치는 구간은 버린다)
+  let cur = 0;
+  const pieces = [];
+  marks.forEach((m) => {
+    if (m.start < cur) return;
+    if (m.start > cur) pieces.push({ u: false, t: text.slice(cur, m.start) });
+    pieces.push({ u: true, t: text.slice(m.start, m.end) });
+    cur = m.end;
+  });
+  if (cur < text.length) pieces.push({ u: false, t: text.slice(cur) });
+  const bodyHtml = pieces.length
+    ? pieces
+        .map((p) => {
+          const h = esc(p.t).replace(/\n{2,}/g, "<br><br>").replace(/\n/g, " ");
+          return p.u ? `<u>${h}</u>` : h;
+        })
+        .join("")
+    : esc(text).replace(/\n{2,}/g, "<br><br>").replace(/\n/g, " ");
+
+  const lines = fixes
+    .map((_, i) => `<div class="wb-fixline">(${i + 1}) ${wbBlank(200)} → ${wbBlank(200)}</div>`)
     .join("");
+  const answers = fixes.map((f, i) => ({
+    no: i + 1,
+    text: `${f.wrong} → ${f.right}`,
+  }));
+  const ansText = answers.map((a) => `(${a.no}) ${a.text}`).join("   ");
+
+  return {
+    html: `
+      <div class="wb-q">
+        <div class="wb-para">${bodyHtml}</div>
+        ${lines}
+        ${wbAns(ansText)}
+      </div>`,
+    answers,
+  };
+}
+
+// 워크북9 — 문단 (A)(B)(C) 순서 배열
+function buildStage9(po, sentences) {
+  let head = "";
+  let tail = "";
+  let paras = [];
+  if (po && Array.isArray(po.paragraphs) && po.paragraphs.filter((p) => p && p.trim()).length >= 2) {
+    head = String(po.head || "").trim();
+    tail = String(po.tail || "").trim();
+    paras = po.paragraphs.map((p) => String(p).trim()).filter(Boolean);
+  } else {
+    // AI가 문단을 못 줬으면 문장을 3덩이로 나눠 만든다
+    const list = sentences.map((s) => s.en).filter(Boolean);
+    if (list.length < 3) return { html: "", answers: [] };
+    const size = Math.ceil(list.length / 3);
+    for (let i = 0; i < list.length; i += size) paras.push(list.slice(i, i + size).join(" "));
+  }
+  if (paras.length < 2) return { html: "", answers: [] };
+
+  const letters = ["A", "B", "C", "D", "E"];
+  // 원문 순서 i가 화면에서 letters[j]로 보이도록 섞는다.
+  // 시드는 본문에서 뽑으므로 지문마다 배열이 달라지고, 같은 지문은 늘 같게 나온다.
+  const seed = strSeed(paras.join(" ~ "));
+  let order = paras.map((_, i) => i);
+  for (let k = 0; k < 8; k++) {
+    order = seededShuffle(order, seed + k);
+    // 원문 그대로 (A)(B)(C)가 나오면 답이 드러나므로 다시 섞는다
+    if (order.some((v, i) => v !== i)) break;
+  }
+  const shown = order.map((origIdx, j) => ({ letter: letters[j], origIdx, text: paras[origIdx] }));
+  // 정답 = 원문 순서대로 읽었을 때의 글자 나열
+  const answerSeq = paras
+    .map((_, origIdx) => shown.find((x) => x.origIdx === origIdx).letter)
+    .join(" → ");
+
+  const blocks = shown
+    .map(
+      (x) =>
+        `<div class="wb-parablock"><b>(${x.letter})</b> <span>${esc(x.text).replace(/\n+/g, " ")}</span></div>`
+    )
+    .join("");
+  const slots = paras.map(() => `<span class="wb-blank" style="min-width:70px"></span>`).join(" → ");
+
+  return {
+    html: `
+      <div class="wb-q">
+        ${head ? `<div class="wb-en wb-para-head">${esc(head).replace(/\n+/g, " ")}</div>` : ""}
+        ${blocks}
+        ${tail ? `<div class="wb-en wb-para-tail">${esc(tail).replace(/\n+/g, "<br>")}</div>` : ""}
+        <div class="wb-orderline">${slots}</div>
+        ${wbAns(answerSeq)}
+      </div>`,
+    answers: [{ no: 1, text: answerSeq }],
+  };
 }
 
 /* ══════════════════════════ 단어장 탭 ══════════════════════════ */

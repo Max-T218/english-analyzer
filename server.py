@@ -938,8 +938,8 @@ def call_gemini_ocr(file, api_key, model, partial=False):
     return {"text": text, "note": note}
 
 
-# ── 워크북(10단계 통합 학습지) 스키마 ──
-# 한 번의 호출로 10단계 전부를 만들 수 있는 재료를 받아, 서버/클라이언트가 단계별로 조립한다.
+# ── 워크북(단계별 학습지) 스키마 ──
+# 한 번의 호출로 모든 단계의 재료를 받아, 서버/클라이언트가 단계별로 조립한다.
 WORKBOOK_SCHEMA = {
     "type": "OBJECT",
     "properties": {
@@ -957,104 +957,188 @@ WORKBOOK_SCHEMA = {
                     "enBlank": {"type": "STRING"},
                     "verbForm": {"type": "STRING"},
                     "grammarChoice": {"type": "STRING"},
+                    "chunks": {"type": "ARRAY", "items": {"type": "STRING"}},
                     "writeKeys": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "writeMask": {"type": "STRING"},
                 },
                 "required": ["no", "heading", "en", "ko", "enBlank",
-                             "verbForm", "grammarChoice", "writeKeys"],
+                             "verbForm", "grammarChoice", "chunks",
+                             "writeKeys", "writeMask"],
                 "propertyOrdering": ["no", "heading", "en", "ko", "enBlank",
-                                     "verbForm", "grammarChoice", "writeKeys"],
+                                     "verbForm", "grammarChoice", "chunks",
+                                     "writeKeys", "writeMask"],
             },
         },
-        "oddParagraphs": {
-            "type": "ARRAY",
-            "items": {
-                "type": "OBJECT",
-                "properties": {
-                    "no": {"type": "INTEGER"},
-                    "heading": {"type": "STRING"},
-                    "text": {"type": "STRING"},
-                    "fixes": {
-                        "type": "ARRAY",
-                        "items": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "wrong": {"type": "STRING"},
-                                "right": {"type": "STRING"},
-                            },
-                            "required": ["wrong", "right"],
-                            "propertyOrdering": ["wrong", "right"],
+        # 워크북 7 — 지문 전체를 통으로 주고 어법 오류 3개를 심는다
+        "grammarFix": {
+            "type": "OBJECT",
+            "properties": {
+                "text": {"type": "STRING"},
+                "spans": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "fixes": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "wrong": {"type": "STRING"},
+                            "right": {"type": "STRING"},
                         },
+                        "required": ["wrong", "right"],
+                        "propertyOrdering": ["wrong", "right"],
                     },
                 },
-                "required": ["no", "heading", "text", "fixes"],
-                "propertyOrdering": ["no", "heading", "text", "fixes"],
             },
+            "required": ["text", "spans", "fixes"],
+            "propertyOrdering": ["text", "spans", "fixes"],
+        },
+        # 워크북 9 — 문단 배열
+        "paraOrder": {
+            "type": "OBJECT",
+            "properties": {
+                "head": {"type": "STRING"},
+                "tail": {"type": "STRING"},
+                "paragraphs": {"type": "ARRAY", "items": {"type": "STRING"}},
+            },
+            "required": ["head", "tail", "paragraphs"],
+            "propertyOrdering": ["head", "tail", "paragraphs"],
         },
     },
-    "required": ["englishTitle", "koreanTitle", "sentences", "oddParagraphs"],
-    "propertyOrdering": ["englishTitle", "koreanTitle", "sentences", "oddParagraphs"],
+    "required": ["englishTitle", "koreanTitle", "sentences", "grammarFix", "paraOrder"],
+    "propertyOrdering": ["englishTitle", "koreanTitle", "sentences",
+                         "grammarFix", "paraOrder"],
 }
 
+
 WORKBOOK_SYSTEM_PROMPT = r"""You are an expert Korean high-school English teacher who builds
-'10단계 워크북' (10-stage workbook) worksheets from a textbook passage — the kind Korean
-schools use for 내신 대비. Return ONLY the structured JSON described by the schema.
+'단계별 WORKBOOK' worksheets from an exam passage (수능·모의고사·내신 대비) — the exact format
+Korean 학력평가 workbooks use. Return ONLY the structured JSON described by the schema.
 
 You will receive ONE English passage. Split it into sentences and, for EACH sentence, provide
-the raw materials the workbook stages need. The app assembles the printable stages from your
-data, so accuracy of the MARKUP FORMAT below is critical.
+the raw materials the stages need. The app assembles the printable pages from your data,
+so the MARKUP FORMAT below must be followed to the letter.
+
+(The reference workbook has 10 stages; stages 1~2 are not produced here, so the numbering
+below starts at 3 — it is the reference material's numbering, not a gap.)
+
+The stages the app builds from your data:
+  3 빈칸 완성하기(영문)   해석 보고 영문 빈칸 채우기   ← enBlank
+  4 해석 연습하기        영문 보고 해석 쓰기         ← en (정답 ko)
+  5 동사형 연습하기      괄호 안 동사 고쳐 쓰기      ← verbForm
+  6 어법·어휘 고르기     [A / B] 중 옳은 것 고르기   ← grammarChoice
+  7 어색한 곳 찾기       어법 오류 3개 찾아 고치기    ← grammarFix
+  8 순서 배열하기        주어진 말 배열해 문장 완성   ← chunks
+  9 문단 배열하기        문단 (A)(B)(C) 순서 정하기  ← paraOrder
+ 10 영작 연습하기        키워드로 문장 영작하기       ← writeKeys, writeMask
 
 ## sentences[] — one entry per sentence of the passage
 - `no`: 1, 2, 3 … with no gaps, in original order. EVERY sentence of the passage must appear
   EXACTLY ONCE. Never stop partway — completeness is mandatory.
-- `heading`: if a section heading/subtitle appears in the passage immediately BEFORE this
-  sentence (e.g. "Discover Yourself"), put it here. Otherwise "".
-- `en`: the sentence's original English, verbatim, plain text (no markup at all).
-- `ko`: a natural, complete Korean translation of that sentence (존댓말 문어체, 교과서 지도서 톤).
+- `heading`: a section heading/subtitle appearing in the passage immediately BEFORE this
+  sentence (e.g. "Discover Yourself"). Otherwise "".
+- `en`: the sentence's original English, VERBATIM, plain text, no markup.
+  · Salutations/closings that belong to the sentence (e.g. "To Whom It May Concern:",
+    "Sincerely, Julia Morgan") stay attached to their sentence, exactly as in the passage.
+- `ko`: a natural, complete Korean translation (문어체; 편지·기사면 존댓말, 이야기면 평서체 —
+  글의 어조를 따른다). This is the answer key for stage 4, so it must read naturally on its own.
 
-### `enBlank` — 워크북3 재료 (해석 보고 영어 빈칸 채우기)
-Copy `en` exactly, but wrap 1~4 KEY English words/phrases in {{ }}.
-Choose words worth memorizing (핵심 어휘·숙어), keeping the sentence solvable from `ko`.
-Example: "Many students are either {{unsure of}} what they know or {{confused}} about ..."
+### `enBlank` — 워크북3 재료 (해석 보고 영문 완성)
+Copy `en` exactly, then wrap 2~8 KEY English words/phrases in {{ }}.
+Choose words worth memorizing (핵심 어휘·숙어·파생형), keeping the sentence solvable from `ko`.
+Do NOT blank articles, be동사, or prepositions on their own.
+Example: "People have been {{dumping}} their {{waste}} in areas of our {{neighborhood}} where
+it's not {{permitted}}."
 
 ### `verbForm` — 워크북5 재료 (동사형 고쳐 쓰기)
-Copy `en`, but replace each notable VERB (and only verbs/verbals) with (기본형|정답):
-  · left of `|` = the plain base form shown to the student in parentheses
-  · right of `|` = the correct inflected form that belongs there
-Cover tense/agreement/passive/to-infinitive/gerund/participle. 2~5 per sentence.
-Example: "It (be|is) hard (climb|to climb) a mountain, and (design|designing) a path (require|requires) it."
+Copy `en`, but replace each notable VERB GROUP with (힌트|정답):
+  · LEFT of `|`  = the base words the student sees, comma-separated, in the order they combine.
+    A verb group made of several words lists them all: 조동사·be·have + 본동사.
+  · RIGHT of `|` = the exact inflected string that belongs there (what the passage actually has).
+Cover 시제·상·수일치·태·to부정사·동명사·분사. 2~6 per sentence. Include verbals, not just 정동사.
+Examples (left = shown, right = answer):
+  "People (have, be, dump|have been dumping) their waste in areas of our neighborhood where
+   it (not, permit|is not permitted)."
+  "(Fix|To fix) this (grow|growing) problem, I (urge|urge) the city (strengthen|to strengthen)
+   management."
+RULES: no nested parentheses; the left side never contains `|`; the right side is a verbatim
+slice of `en`. Capitalize the left side only when it starts the sentence.
 
-### `grammarChoice` — 워크북6 재료 (어법 선택형)
-Copy `en`, but replace 2~4 grammar points with [정답|오답]:
-  · left of `|` = the CORRECT form (as it appears in the passage)
-  · right of `|` = a plausible WRONG alternative testing a real grammar point
-    (수일치, 태, 준동사, 관계사, 대명사, 병렬 등). The app shuffles the display order.
-Example: "Begin your map by [taking|take] a paper and [drawing|draw] some dots on [it|them]."
+### `grammarChoice` — 워크북6 재료 (어법·어휘 고르기)
+Copy `en`, but replace 3~6 points with [정답|오답]:
+  · LEFT of `|`  = the CORRECT form, exactly as it appears in the passage.
+  · RIGHT of `|` = a plausible WRONG alternative. The app shuffles the two on the page.
+Mix BOTH kinds of points in every sentence:
+  · 어법: 수일치, 태, 시제, 준동사, 관계사(where/which/that), 접속사, 대명사, 병렬, 형용사/부사
+  · 어휘: 문맥상 맞는 낱말 vs 반의어·혼동어 (permitted/prevented, illegal/legal,
+          more and more/less and less, strengthen/weaken, garbage/garage, worse/better)
+Example: "People have [been dumping|been dumped] their waste in areas of our neighborhood
+[where|that] it's not [permitted|prevented]."
+RULES: no nested brackets; both sides are short (1~3 words); everything outside [ ] is
+identical to `en`.
 
-### `writeKeys` — 워크북9 재료 (영작 키워드)
-3~8 short English keywords (base forms) that guide writing this sentence, in the order they
-appear. Example: ["either", "unsure", "what", "confuse", "how", "find", "career"]
+### `chunks` — 워크북8 재료 (순서 배열)
+Break `en` into 5~10 meaning units (구·절 단위: 주어부, 동사구, 전치사구, 관계절, 부사절).
+Joining the chunks in order with single spaces must reproduce `en` exactly (punctuation
+included; keep a comma at the end of the chunk it follows).
+- The app SHUFFLES the chunks and prints them as ( a / b / c … ).
+- Prefix a chunk with `=` to PIN it — pinned chunks are printed in place, unshuffled, and the
+  runs of unpinned chunks around them become separate shuffled groups. Pin the parts that
+  would give the answer away or that must anchor the sentence: 인사말·맺음말, 문두 연결어,
+  "To", "recently", and short fixed tails.
+Example for "To fix this growing problem, I urge the city to strengthen management ... in the
+community.":
+  ["=To", "fix", "this growing problem,", "=I", "urge", "the city", "to strengthen",
+   "management and supervision", "of illegal dumping", "=in the community."]
 
-## oddParagraphs[] — 워크북7 재료 (문맥상 어색한 곳 찾기)
-Group the passage into 2~5 paragraphs (follow the passage's own paragraph/heading structure).
-For EACH paragraph:
-- `no`: 1, 2, 3 …
-- `heading`: the section heading if the paragraph starts one, else "".
-- `text`: the paragraph's full English text, BUT with exactly 2~3 words replaced by a
-  CONTEXTUALLY WRONG word (usually a near-antonym) so students must spot them.
-  Keep everything else identical to the passage.
-- `fixes`: one {wrong, right} per replaced word — `wrong` = the word you put in `text`,
-  `right` = the original correct word. `wrong` MUST appear verbatim in `text`.
-Example: original "are either unsure of" → text has "are either sure of",
-         fixes: [{"wrong": "sure", "right": "unsure"}]
+### `writeKeys` / `writeMask` — 워크북10 재료 (영작)
+- `writeKeys`: 3~7 short English keywords shown to the student, IN THE ORDER they appear in the
+  sentence, given in BASE form (dump, waste, neighborhood, permit). Nouns may keep an article
+  when that is the natural cue ("the recipe", "a ritual"). These are hints, not the answer.
+- `writeMask`: copy `en` and wrap in {{ }} every span the student must write. Leave OUTSIDE the
+  braces only the scaffolding that should stay printed: 짧은 기능어(in, of, and, where, that,
+  it's), 고유명사, 인사말·맺음말. Aim to blank 60~80% of the words.
+  Each word inside {{ }} becomes ONE underline on the page, so wrap real word spans.
+  Everything outside {{ }} must be identical to `en`.
+  Example: "People {{have been dumping their waste}} in areas of {{our neighborhood}} where
+  it's {{not permitted}}."
 
-## HARD RULES (most common failures — check before returning)
-1. `en` must be the passage's sentence VERBATIM. Never paraphrase or drop words.
-2. `enBlank`/`verbForm`/`grammarChoice` must each equal `en` except for their own markup.
-   Do not rewrite or paraphrase the sentence.
-3. Use ONLY these markers: {{answer}}, (base|answer), [correct|wrong]. No other symbols,
-   no HTML, no numbering inside the text.
-4. `|` separates two parts — never use `|` for anything else.
-5. Every sentence of the passage appears exactly once, in order.
+## grammarFix — 워크북7 재료 (밑줄 친 부분 중 어법상 어색한 것 3개)
+- `text`: the WHOLE passage as one block of running text (paragraph breaks with a blank line),
+  identical to the original EXCEPT that you introduce EXACTLY 3 grammatical errors.
+  The errors must be 어법 errors a Korean exam tests — 관계사(where→which), 수일치,
+  태(be p.p.→능동), 준동사(to부정사↔동명사), 접속사, 병렬, 대명사 — NOT spelling or vocabulary.
+- `spans`: 6~10 substrings of `text` to be underlined on the page, listed in the order they
+  appear. They must be verbatim slices of `text`, clause-sized (5~15 words), non-overlapping.
+  ALL 3 errors must fall inside one of these spans; the rest are correct spans (distractors).
+- `fixes`: exactly 3 items, in the order the errors appear.
+  · `wrong` = the erroneous words as they appear in `text` (short — just the wrong part).
+  · `right` = what the original passage has.
+Example: original "in areas of our neighborhood where it's not permitted" → text has
+"... neighborhood which it's not permitted", span "which it's not permitted.",
+fix {"wrong": "which", "right": "where"}.
+
+## paraOrder — 워크북9 재료 (문단 배열)
+- `paragraphs`: split the passage into 3 (occasionally 4) chunks of consecutive sentences that
+  each form a coherent block, IN THE ORIGINAL ORDER. Their text must be the passage verbatim.
+  The app shuffles them into (A)(B)(C) and the answer is the original order.
+  Make the blocks roughly equal in length, and split where the flow turns (도입 / 전개 / 결론).
+- `head`: text that must stay ABOVE the shuffled blocks because it is not part of the flow —
+  a salutation ("To Whom It May Concern:"), a title, or an opening line that always comes
+  first. "" if none.
+- `tail`: likewise for the closing ("Sincerely,\nJulia Morgan"). "" if none.
+  head/tail text must NOT also appear inside `paragraphs`.
+
+## HARD RULES (the most common failures — verify each before returning)
+1. `en` is the passage's sentence VERBATIM. Never paraphrase, never drop or add words.
+2. `enBlank`, `writeMask` = `en` + braces only.
+   `verbForm` = `en` with (…|…) only. `grammarChoice` = `en` with […|…] only.
+   Strip the markup and you must get the original string back, character for character.
+3. Use ONLY these markers: {{answer}}, (hint|answer), [correct|wrong], "=" as a chunk prefix.
+   No HTML, no numbering inside the text, no other symbols.
+4. `|` separates two parts and is used for nothing else. Never nest ( ) inside ( ) or
+   [ ] inside [ ].
+5. `chunks` joined with spaces == `en`. `grammarFix.spans` are verbatim slices of
+   `grammarFix.text`. `grammarFix.fixes` has exactly 3 items.
+6. Every sentence of the passage appears exactly once, in order, in `sentences`.
 
 Return valid JSON only. No markdown fences, no prose."""
 
