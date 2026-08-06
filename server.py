@@ -22,7 +22,6 @@ import smtplib
 import socket
 import ssl
 import sys
-import threading
 import time
 import traceback
 import urllib.request
@@ -40,6 +39,10 @@ from google.oauth2 import service_account
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8000"))
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+# 정확도가 더 필요한 일부 작업(객관식·지문변형형, 지문변형 '5개 이상')에만 쓰는 Pro
+# 모델. 사용자가 더 이상 모델을 직접 고르지 않고, 기능마다 서버가 이 중 하나를 고정해
+# 쓴다 — 정찰 요금과 실제 원가가 어긋나지 않도록 하기 위해서다.
+MODEL_PRO = os.environ.get("GEMINI_MODEL_PRO", "gemini-3.1-pro-preview")
 # 모델명은 URL 경로에 들어가므로 안전한 형식만 허용 (하드코딩 목록 대신 형식 검증)
 _MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]+$")
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
@@ -47,16 +50,43 @@ PUBLIC_DIR = Path(__file__).resolve().parent / "public"
 # --- 로그인(구글 OAuth + 이메일/비밀번호) + Firestore -----------------------
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 세션 유지 기간(초) — 30일
-# 계정을 새로 만들 때 지급하는 토큰. 필요에 맞게 환경변수로 조정하고, 특정 사용자에게
-# 더 주고 싶으면 관리자 페이지(/admin.html)에서 충전하거나 Firestore 콘솔에서
-# users/<id> 문서의 tokens_remaining 값을 직접 고치면 된다.
-DEFAULT_USER_TOKENS = int(os.environ.get("DEFAULT_USER_TOKENS", "10000"))
-# Gemini는 출력 토큰이 입력 토큰보다 훨씬 비싸다(모델마다 다르지만 보통 3~5배).
-# 입력·출력을 그냥 더한 수(totalTokenCount)를 그대로 깎으면 실제 청구 비용과
-# 안 맞으므로, 출력 토큰에 이 배율을 곱해서 '비용에 가까운 가중치 토큰'을 깎는다.
-# 실제 요금표(https://ai.google.dev/pricing)에서 쓰는 모델의 출력가/입력가 비율로
-# 맞춰서 조정하면 더 정확해진다.
-OUTPUT_TOKEN_WEIGHT = float(os.environ.get("OUTPUT_TOKEN_WEIGHT", "4"))
+# 계정을 새로 만들 때 지급하는 잔액(원). 필요에 맞게 환경변수로 조정하고, 특정
+# 사용자에게 더 주고 싶으면 관리자 페이지(/admin.html)에서 충전하거나 Firestore
+# 콘솔에서 users/<id> 문서의 krw_remaining 값을 직접 고치면 된다.
+DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "3000"))
+
+# --- 요금제: 실제 Gemini 사용량이 아니라, 행동 하나당 고정 가격(원)을 매긴다 ----
+# 실사용 토큰을 그때그때 재는 대신 정찰제로 가는 이유: 사용자 입장에서 예측 가능하고,
+# 관리자 입장에서도 "이 버튼 한 번 = 얼마"가 분명해진다. 실제 Gemini 비용과의 차액은
+# 관리자가 마진으로 흡수한다. 값은 전부 원(KRW) 단위이며 환경변수로 조정 가능하다.
+PRICE_ANALYZE_KRW = int(os.environ.get("PRICE_ANALYZE_KRW", "300"))        # 지문분석, 지문 1개당
+PRICE_MCQ_PLAIN_KRW = int(os.environ.get("PRICE_MCQ_PLAIN_KRW", "250"))    # 객관식·지문유지, (지문×유형) 1개당
+PRICE_MCQ_TRANSFORM_KRW = int(os.environ.get("PRICE_MCQ_TRANSFORM_KRW", "250"))  # 객관식·지문변형, (지문×유형) 1개당
+PRICE_SAQ_KRW = int(os.environ.get("PRICE_SAQ_KRW", "200"))                # 주관식, (지문×유형) 1개당 (그대로형·가공형 구분 없음)
+PRICE_WORKBOOK_KRW = int(os.environ.get("PRICE_WORKBOOK_KRW", "200"))      # 워크북, 지문 1개당 (선택 단계 수와 무관)
+# 아직 가격이 정해지지 않은 기능 — 정해질 때까지 무료(0원)로 둔다. 로그인은 그대로 필요.
+PRICE_REWORD_KRW = int(os.environ.get("PRICE_REWORD_KRW", "0"))            # 지문 변형(문제 생성 전 재작성)
+PRICE_OCR_KRW = int(os.environ.get("PRICE_OCR_KRW", "0"))                  # 사진에서 지문 옮기기
+
+# 객관식 전용 유형 12개 — public/app.js의 MCQ_TYPES와 반드시 같은 목록을 유지한다.
+# 이 집합에 없는 유형은 전부 주관식으로 보고 PRICE_SAQ_KRW를 매긴다(객관식·주관식
+# 유형 이름은 서로 겹치지 않는다).
+MCQ_ONLY_TYPES = {
+    "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입",
+    "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
+}
+
+
+def _quiz_action_cost(types):
+    """/api/quiz 요청의 유형 목록으로 이번 호출의 정찰 가격(원)을 계산한다.
+    객관식 유형은 그대로형/지문변형형으로 갈리고, 주관식 유형은 전부 동일가다."""
+    total = 0
+    for t in types or []:
+        if t in MCQ_ONLY_TYPES:
+            total += PRICE_MCQ_PLAIN_KRW if t in QUIZ_PLAIN_PASSAGE_TYPES else PRICE_MCQ_TRANSFORM_KRW
+        else:
+            total += PRICE_SAQ_KRW
+    return total
 
 # --- 관리자 페이지(public/admin.html) — 회원 목록·토큰 조회/충전 --------------
 # 일반 회원 로그인(이메일 정규식 검증 등)과 완전히 분리된, 아이디 하나짜리 단일
@@ -224,7 +254,7 @@ def complete_signup(email, code):
         "password_hash": d["password_hash"],
         "provider": "password",
         "created_at": _now_iso(),
-        "tokens_remaining": DEFAULT_USER_TOKENS,
+        "krw_remaining": DEFAULT_USER_KRW,
     })
     ref.delete()
     return user_id
@@ -2191,13 +2221,6 @@ def _gemini_json(payload, api_key, model, trunc_msg):
             payload.setdefault("generationConfig", {})["temperature"] = temp
         data = json.dumps(payload).encode("utf-8")
         body = _gemini_call_with_retry(data, api_key, model)
-        # 이 호출이 이후에 실패(RECITATION 등)로 버려지더라도 구글에는 이미 청구됐으므로
-        # 그대로 누적한다. 입력·출력 토큰을 그냥 더하지 않고, 더 비싼 출력 토큰에
-        # OUTPUT_TOKEN_WEIGHT를 곱해 실제 비용에 가깝게 만든다.
-        usage = body.get("usageMetadata") or {}
-        prompt_tokens = usage.get("promptTokenCount", 0) or 0
-        output_tokens = usage.get("candidatesTokenCount", 0) or 0
-        _add_call_tokens(round(prompt_tokens + output_tokens * OUTPUT_TOKEN_WEIGHT))
         try:
             return _extract_gemini_json(body, trunc_msg)
         except Recitation as e:
@@ -2396,69 +2419,49 @@ def upsert_user(sub, email, name):
     if not ref.get().exists:
         ref.set({
             "email": email, "name": name, "created_at": _now_iso(),
-            "tokens_remaining": DEFAULT_USER_TOKENS,
+            "krw_remaining": DEFAULT_USER_KRW,
         })
     else:
         ref.set({"email": email, "name": name}, merge=True)
 
 
-def get_user_tokens(user_id):
+def get_user_krw(user_id):
     _require_db()
     snap = DB.collection("users").document(user_id).get()
     if not snap.exists:
         return 0
     try:
-        return int(snap.to_dict().get("tokens_remaining", 0))
+        return int(snap.to_dict().get("krw_remaining", 0))
     except (TypeError, ValueError):
         return 0
 
 
 def _account_payload(user_id):
-    """/api/me와 로그인·회원가입 성공 응답이 공유하는 계정 정보 — 화면이 이름·잔여
-    토큰을 표시하는 데 쓴다."""
+    """/api/me와 로그인·회원가입 성공 응답이 공유하는 계정 정보 — 화면이 이름·잔액을
+    표시하는 데 쓴다."""
     _require_db()
     info = DB.collection("users").document(user_id).get().to_dict() or {}
     try:
-        tokens = int(info.get("tokens_remaining", 0))
+        krw = int(info.get("krw_remaining", 0))
     except (TypeError, ValueError):
-        tokens = 0
+        krw = 0
     return {
         "loggedIn": True,
         "email": info.get("email"),
         "name": info.get("name"),
-        "tokensRemaining": tokens,
+        "krwRemaining": krw,
     }
 
 
-def deduct_tokens(user_id, amount):
-    """이번 요청에서 실제로 쓴 Gemini 토큰만큼 사용자 잔여량에서 뺀다. 호출을 이미
-    시작한 뒤라 잔여량이 음수로 내려갈 수 있는데, 막지 않는다 — 한도 안에서 시작한
-    호출은 끝까지 완료시켜 주는 게 맞고, 다음 요청부터 막힌다."""
+def charge_krw(user_id, amount):
+    """생성이 성공했을 때만 부른다 — 정찰 가격제라 실패한 시도에는 과금하지 않는다
+    (Gemini 실제 사용량과 무관하게 고정가라, 실패 시 청구하지 않는 게 정당하다)."""
     if amount <= 0:
         return
     _require_db()
     DB.collection("users").document(user_id).update({
-        "tokens_remaining": firestore.Increment(-amount)
+        "krw_remaining": firestore.Increment(-amount)
     })
-
-
-# 이번 요청에서 실제로 쓴 Gemini 토큰 수를 세어 두는 스레드별 저장소.
-# ThreadingHTTPServer라 요청마다 별도 스레드에서 처리되므로, 전역 변수 하나를
-# 공유하면 동시 요청끼리 값이 섞인다 — 요청(스레드)마다 독립된 값을 쓰기 위해
-# threading.local()을 쓴다.
-_token_ctx = threading.local()
-
-
-def _reset_call_tokens():
-    _token_ctx.total = 0
-
-
-def _add_call_tokens(n):
-    _token_ctx.total = getattr(_token_ctx, "total", 0) + (n or 0)
-
-
-def _get_call_tokens():
-    return getattr(_token_ctx, "total", 0)
 
 
 def create_session(sub):
@@ -2590,35 +2593,35 @@ def delete_admin_session(token):
 
 
 def list_all_users():
-    """회원 목록 — 이메일·이름·가입방식·잔여 토큰·가입일. 가입일 최신순."""
+    """회원 목록 — 이메일·이름·가입방식·잔액·가입일. 가입일 최신순."""
     _require_db()
     rows = []
     for doc in DB.collection("users").stream():
         d = doc.to_dict() or {}
         try:
-            tokens = int(d.get("tokens_remaining", 0))
+            krw = int(d.get("krw_remaining", 0))
         except (TypeError, ValueError):
-            tokens = 0
+            krw = 0
         rows.append({
             "id": doc.id,
             "email": d.get("email", ""),
             "name": d.get("name", ""),
             "provider": "password" if d.get("password_hash") else "google",
-            "tokensRemaining": tokens,
+            "krwRemaining": krw,
             "createdAt": d.get("created_at", ""),
         })
     rows.sort(key=lambda r: r["createdAt"], reverse=True)
     return rows
 
 
-def recharge_user_tokens(user_id, amount):
-    """관리자가 임의로 토큰을 더하거나(양수) 뺀다(음수). 계정이 실제로 있는지 먼저 확인한다."""
+def recharge_user_krw(user_id, amount):
+    """관리자가 임의로 잔액을 더하거나(양수) 뺀다(음수). 계정이 실제로 있는지 먼저 확인한다."""
     _require_db()
     ref = DB.collection("users").document(user_id)
     if not ref.get().exists:
         raise ValueError("해당 회원을 찾을 수 없습니다.")
-    ref.update({"tokens_remaining": firestore.Increment(int(amount))})
-    return get_user_tokens(user_id)
+    ref.update({"krw_remaining": firestore.Increment(int(amount))})
+    return get_user_krw(user_id)
 
 
 def list_saved_items(user_id):
@@ -2730,6 +2733,20 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_get(self):
         path = self.path.split("?", 1)[0]
 
+        if path == "/api/pricing":
+            # 비밀값이 아니다 — 화면이 '만들기' 누르기 전에 예상 비용을 보여주는 데 쓴다.
+            # 로그인 여부와 무관하게 조회 가능(가격표일 뿐 실제 과금은 아니다).
+            self._send_json({
+                "analyze": PRICE_ANALYZE_KRW,
+                "mcqPlain": PRICE_MCQ_PLAIN_KRW,
+                "mcqTransform": PRICE_MCQ_TRANSFORM_KRW,
+                "saq": PRICE_SAQ_KRW,
+                "workbook": PRICE_WORKBOOK_KRW,
+                "reword": PRICE_REWORD_KRW,
+                "ocr": PRICE_OCR_KRW,
+            })
+            return
+
         if path == "/api/me":
             user_id = _session_user(self)
             if not user_id:
@@ -2831,26 +2848,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"서버 내부 오류입니다: {e}"}, 500)
             except Exception:
                 pass
-        finally:
-            # 이번 요청에서 Gemini에 실제로 청구된 토큰만큼 사용자 잔액을 깎는다.
-            # 요청이 도중에 실패했더라도(RECITATION 재시도, 완성도 보정 재시도 등)
-            # 이미 나간 호출은 구글에 청구됐으므로 그만큼은 반드시 차감한다.
-            # 응답은 이미 위에서 다 보낸 뒤라, 여기서 실패해도 사용자에게는 영향 없다.
-            used = _get_call_tokens()
-            user_id = getattr(self, "_auth_user_id", None)
-            if used and user_id:
-                try:
-                    deduct_tokens(user_id, used)
-                except Exception:
-                    traceback.print_exc()
-
     def _handle_post(self):
         # keep-alive 연결에서는 같은 핸들러 인스턴스(=같은 스레드)가 요청을 여러 번
         # 처리할 수 있다 — 지난 요청의 흔적이 이번 요청으로 새어 들어오지 않도록
-        # 요청마다 맨 먼저 초기화한다(안 하면 토큰이 이중으로 깎이거나 엉뚱한 사용자
-        # 이름으로 깎일 수 있다).
+        # 요청마다 맨 먼저 초기화한다(안 하면 엉뚱한 사용자·가격이 새어 들어올 수 있다).
         self._auth_user_id = None
-        _reset_call_tokens()
+        self._pending_charge = 0
 
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
@@ -2885,8 +2888,8 @@ class Handler(BaseHTTPRequestHandler):
         # AI를 실제로 호출하는 엔드포인트는 전부 로그인이 있어야 쓸 수 있다 —
         # 이제 사용자가 자기 Gemini 키를 내지 않고 관리자 키 하나를 같이 쓰므로,
         # 로그인이 곧 '누가 관리자 키를 쓰는지' 구분하는 유일한 장치다.
-        # 그중 실제로 콘텐츠를 생성하는(=토큰을 쓰는) 다섯 개는 토큰 잔액도 확인한다
-        # (/api/models는 모델 목록만 조회할 뿐 토큰을 쓰지 않으므로 잔액 0이어도 된다).
+        # 그중 실제로 콘텐츠를 생성하는 다섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
+        # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/quiz", "/api/workbook",
                            "/api/reword", "/api/ocr")
         if path in GENERATE_PATHS + ("/api/models",):
@@ -2901,14 +2904,28 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._auth_user_id = user_id
             if path in GENERATE_PATHS:
-                remaining = get_user_tokens(user_id)
-                if remaining <= 0:
+                if path == "/api/analyze":
+                    cost = PRICE_ANALYZE_KRW
+                elif path == "/api/quiz":
+                    cost = _quiz_action_cost(req.get("types"))
+                elif path == "/api/workbook":
+                    cost = PRICE_WORKBOOK_KRW
+                elif path == "/api/reword":
+                    cost = PRICE_REWORD_KRW
+                else:  # /api/ocr
+                    cost = PRICE_OCR_KRW
+                remaining = get_user_krw(user_id)
+                if remaining < cost:
                     self._send_json(
-                        {"error": "토큰을 모두 사용했습니다. 관리자에게 문의하세요.", "code": "no_tokens"},
+                        {
+                            "error": f"잔액이 부족합니다 (필요 {cost:,}원 / 보유 {remaining:,}원). "
+                                     "관리자에게 충전을 요청하세요.",
+                            "code": "no_tokens",
+                        },
                         402,
                     )
                     return
-                _reset_call_tokens()
+                self._pending_charge = cost
 
         if path == "/api/auth/google":
             credential = req.get("credential") or ""
@@ -3043,14 +3060,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "회원과 충전량을 지정하세요."}, 400)
                 return
             try:
-                new_balance = recharge_user_tokens(user_id, amount)
+                new_balance = recharge_user_krw(user_id, amount)
             except ValueError as e:
                 self._send_json({"error": str(e)}, 404)
                 return
             except Exception as e:
                 self._send_json({"error": f"충전에 실패했습니다: {e}"}, 500)
                 return
-            self._send_json({"tokensRemaining": new_balance})
+            self._send_json({"krwRemaining": new_balance})
             return
 
         if path == "/api/saved":
@@ -3114,7 +3131,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "워크북을 만들 영어 지문을 입력하세요 (20자 이상)."}, 400)
                 return
             api_key = req.get("apiKey") or ""
-            model = req.get("model") or MODEL
+            model = MODEL  # 워크북은 항상 Flash — 사용자가 모델을 고르지 않는다
             t0 = time.monotonic()
             try:
                 result = call_gemini_workbook(passage, api_key, model)
@@ -3140,6 +3157,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
+            charge_krw(self._auth_user_id, self._pending_charge)
             self._send_json(result)
             return
 
@@ -3154,10 +3172,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "올릴 사진을 선택하세요."}, 400)
                 return
             api_key = req.get("apiKey") or ""
-            model = req.get("model") or MODEL
+            model = MODEL  # OCR은 항상 Flash — 사용자가 모델을 고르지 않는다
             partial = bool(req.get("partial"))
             try:
-                self._send_json(call_gemini_ocr(file, api_key, model, partial))
+                ocr_result = call_gemini_ocr(file, api_key, model, partial)
+                charge_krw(self._auth_user_id, self._pending_charge)
+                self._send_json(ocr_result)
             except Recitation as e:
                 # 화면이 '사진을 조각내어 다시 시도'로 넘어갈 수 있게 식별자를 붙인다
                 self._send_json({"error": str(e), "code": "recitation"}, 502)
@@ -3178,9 +3198,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             variation = req.get("variation") or "light"
             api_key = req.get("apiKey") or ""
-            model = req.get("model") or MODEL
+            # '5개 이상 변형'만 Pro — 사용자가 모델을 고르지 않고 서버가 자동으로 정한다.
+            model = MODEL_PRO if variation == "heavy" else MODEL
             try:
                 reworded = call_gemini_reword(passage, variation, api_key, model)
+                charge_krw(self._auth_user_id, self._pending_charge)
                 # 바뀐 낱말 목록을 함께 돌려준다 — 화면이 지문에서 그 낱말을 표시하고
                 # 해설지에 '원문 → 변형' 표를 싣는 데 쓴다.
                 self._send_json({
@@ -3206,7 +3228,12 @@ class Handler(BaseHTTPRequestHandler):
             types = req.get("types") or []
             count = req.get("count") or 5
             api_key = req.get("apiKey") or ""
-            model = req.get("model") or MODEL
+            # 객관식 '지문변형형'(빈칸·어휘·어법·순서·문장삽입) 유형이 하나라도 섞여 있으면
+            # 그 호출 전체를 Pro로 올린다 — 화면이 이미 이런 유형끼리, 저런 유형끼리
+            # 묶어서 보내므로(chunkTypes 참고) 한 호출 안에서 실제로 섞이는 일은 드물다.
+            model = MODEL_PRO if any(
+                t in MCQ_ONLY_TYPES and t not in QUIZ_PLAIN_PASSAGE_TYPES for t in types
+            ) else MODEL
             variation = req.get("variation") or "verbatim"
             t0 = time.monotonic()
             try:
@@ -3262,6 +3289,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
+            charge_krw(self._auth_user_id, self._pending_charge)
             self._send_json(result)
             return
 
@@ -3272,7 +3300,7 @@ class Handler(BaseHTTPRequestHandler):
         target_grammar = req.get("targetGrammar") or ""
         mode = req.get("mode") or "teacher"
         api_key = req.get("apiKey") or ""
-        model = req.get("model") or MODEL
+        model = MODEL  # 지문 분석은 항상 Flash — 사용자가 모델을 고르지 않는다
         review = bool(req.get("review"))
 
         t0 = time.monotonic()
@@ -3333,6 +3361,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e)}, 502)
             return
+        charge_krw(self._auth_user_id, self._pending_charge)
         self._send_json(result)
 
 

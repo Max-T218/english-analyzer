@@ -21,7 +21,6 @@ const addPassageBtn = $("addPassageBtn");
 const clearPassagesBtn = $("clearPassagesBtn");
 const passageCountEl = $("passageCount");
 const grammarEl = $("targetGrammar");
-const modelEl = $("model");
 const analyzeBtn = $("analyzeBtn");
 const printBtn = $("printBtn");
 const floatPrintGroup = $("floatPrintGroup");
@@ -133,8 +132,6 @@ function printDoc(nameFn, opts) {
   showPrintGuide(() => runPrint(nameFn, opts && opts.before, opts && opts.after));
 }
 
-const modelStatusEl = $("modelStatus");
-
 // 서버 API 호출 공통 헬퍼.
 // 배포 환경(Render 등)의 프록시는 요청이 길어지면 JSON이 아니라 HTML 에러 페이지를
 // 돌려준다. 그대로 res.json()을 부르면 'Unexpected token <' 같은 메시지가 떠서
@@ -180,7 +177,7 @@ function isNeedsProError(err) {
   return !!(err && err.code === "needs_pro");
 }
 
-// 로그인 계정의 잔여 토큰이 0인 경우 — Gemini 한도와는 별개로, 이 계정이 더 쓸 수
+// 로그인 계정의 잔액이 부족한 경우 — Gemini 한도와는 별개로, 이 계정이 더 쓸 수
 // 없는 상태다. 다시 시도해도 똑같이 실패하므로 한도 소진과 같은 방식(즉시 중단)으로 다룬다.
 function isNoTokensError(err) {
   return !!(err && err.code === "no_tokens");
@@ -216,8 +213,8 @@ function quotaStopHtml(left, err, unit = "지문") {
   }
   if (isNoTokensError(err)) {
     return `<section class="passage-block"><div class="passage-error">
-      <b>토큰을 모두 사용해 중단했습니다</b>
-      남은 ${unit} ${left}개는 시도하지 않았습니다. 관리자에게 문의해 토큰을 더 받으세요.
+      <b>잔액이 부족해 중단했습니다</b>
+      남은 ${unit} ${left}개는 시도하지 않았습니다. 관리자에게 문의해 잔액을 충전받으세요.
     </div></section>`;
   }
   return `<section class="passage-block"><div class="passage-error">
@@ -290,7 +287,6 @@ function enterWorkspace() {
   workspaceEl.hidden = false;
   closeAllModals();
   window.scrollTo({ top: 0 });
-  loadModels();
 }
 
 /* ══════════ 로그인 상태 / 계정 표시 ══════════
@@ -306,6 +302,45 @@ async function getJson(url, fallbackMsg) {
   return data;
 }
 
+/* ══════════ 정찰 가격표 + '만들기' 전 비용 확인 ══════════
+   서버가 실제로 매기는 가격(server.py의 PRICE_* 값)을 그대로 보여줘야 하므로,
+   화면에 하드코딩하지 않고 /api/pricing으로 받아 온다. 로그인 여부와 무관한
+   값이라 로그인 전에도 미리 받아 둔다. */
+let PRICING = null;
+async function loadPricing() {
+  try {
+    PRICING = await getJson("/api/pricing", "");
+  } catch (_) {
+    PRICING = null; // 못 받아 오면 비용 확인 없이 그냥 진행시킨다(아래 costConfirmed 참고)
+  }
+}
+loadPricing();
+
+// 지금 입력된 지문 중 실제로 과금 대상이 될 만큼 긴 것만 센다(20자 미만은 서버가
+// 애초에 거부하므로 비용 예측에서도 빼는 게 맞다).
+function billableJobCount() {
+  return passageMgr.getJobs().filter((j) => j.text && j.text.length >= 20).length;
+}
+
+// renderAccount()가 /api/me를 받을 때마다 갱신해 두는 현재 잔액 — 비용 확인창에
+// "예상 비용" 옆에 "지금 잔액"도 같이 보여주는 데 쓴다.
+let currentKrw = null;
+
+// 예상 비용(+지금 잔액)을 보여주고 진행 여부를 묻는다. 가격표를 못 받아 왔으면
+// (네트워크 문제 등) 확인 없이 그냥 진행시킨다 — 비용 확인은 편의 기능이지,
+// 이것 때문에 정작 필요한 기능 자체가 막히면 안 된다. krw가 0이면(무료 기능이거나
+// 지문이 없으면) 그냥 진행한다.
+function costConfirmed(krw, label) {
+  if (PRICING === null) return true;
+  if (!Number.isFinite(krw) || krw <= 0) return true;
+  const balanceLine = Number.isFinite(currentKrw)
+    ? `지금 잔액: ${currentKrw.toLocaleString()}원 → 진행 후 약 ${(currentKrw - krw).toLocaleString()}원\n`
+    : "";
+  return confirm(
+    `${label}\n\n예상 비용: ${krw.toLocaleString()}원\n${balanceLine}\n진행하시겠습니까?`
+  );
+}
+
 // 탭마다 자신을 등록해 두는 저장/불러오기 레지스트리. 각 항목:
 //   saveBtn: 저장 버튼 엘리먼트, getPayload(): 지금 상태를 저장용 객체로,
 //   applyPayload(payload): 불러온 값으로 화면을 되살림
@@ -318,10 +353,14 @@ let isLoggedIn = false; // 저장/불러오기 버튼들이 이 값으로 로그
 
 function renderAccount(info) {
   isLoggedIn = !!(info && info.loggedIn);
-  if (!isLoggedIn) return;
-  const tokens = Number(info.tokensRemaining);
-  const tokenText = Number.isFinite(tokens) ? ` · 잔여 토큰 ${tokens.toLocaleString()}개` : "";
-  accountNameEl.textContent = `${info.name || info.email || "로그인됨"}님${tokenText}`;
+  if (!isLoggedIn) {
+    currentKrw = null;
+    return;
+  }
+  const krw = Number(info.krwRemaining);
+  currentKrw = Number.isFinite(krw) ? krw : null;
+  const krwText = currentKrw !== null ? ` · 잔액 ${currentKrw.toLocaleString()}원` : "";
+  accountNameEl.textContent = `${info.name || info.email || "로그인됨"}님${krwText}`;
 }
 
 async function refreshAccount() {
@@ -338,7 +377,7 @@ async function refreshAccount() {
 }
 refreshAccount();
 
-// 생성 작업이 끝난 뒤 잔여 토큰 표시만 갱신한다 — refreshAccount()와 달리 게이트/작업
+// 생성 작업이 끝난 뒤 잔액 표시만 갱신한다 — refreshAccount()와 달리 게이트/작업
 // 화면을 오가지 않는다(방금 결과를 만든 화면에서 로그인 화면으로 튕겨 나가면 안 되므로).
 async function refreshTokenDisplay() {
   try {
@@ -462,87 +501,6 @@ verifyPanelEl.addEventListener("submit", async (e) => {
   }
 });
 $("verifyBackBtn").addEventListener("click", () => showSignupStep("form"));
-
-// 로그인 후 관리자 키로 실제 쓸 수 있는 모델 목록을 불러와 드롭다운을 채움
-async function loadModels() {
-  if (!isLoggedIn) return;
-  modelStatusEl.textContent = "· 모델 목록 불러오는 중…";
-  try {
-    const data = await postJson("/api/models", {}, "모델 목록을 불러오지 못했습니다.");
-    if (!data.models || !data.models.length) {
-      modelStatusEl.textContent = "";
-      return;
-    }
-    const saved = localStorage.getItem(MODEL_STORE);
-    modelEl.innerHTML = "";
-    for (const m of data.models) {
-      const opt = document.createElement("option");
-      opt.value = m.id;
-      opt.textContent = `${m.label} (${m.id})`;
-      modelEl.appendChild(opt);
-    }
-    let pick = "";
-    if (saved && data.models.some((m) => m.id === saved)) pick = saved;
-    if (!pick) {
-      const flash = data.models.find((m) => /flash/i.test(m.id));
-      pick = flash ? flash.id : data.models[0].id;
-    }
-    modelEl.value = pick;
-    modelStatusEl.textContent = `· 사용 가능 ${data.models.length}개`;
-    syncModelAvailability();
-  } catch (_) {
-    modelStatusEl.textContent = "";
-  }
-}
-
-/* ── Pro 모델은 문제 제작(객관식·주관식) 탭에서만 선택 가능 ──
-   오답 선지 설계·어법 오류 심기처럼 실제 추론이 필요한 작업에만 Pro가 값어치를 하고,
-   분석·워크북은 서술·기계적 변환이라 이득이 작다(+비용은 더 든다). 그래서 그 두 탭에
-   있을 때만 Pro 옵션을 고를 수 있게 열어 두고, 다른 탭으로 가면 잠그고 Flash로 되돌린다. */
-const modelProHintEl = $("modelProHint");
-const isProModelId = (id) => /pro/i.test(id || "");
-const QUIZ_TABS = new Set(["mcq", "saq"]);
-const activeTabName = () =>
-  (tabBtns.find((b) => b.classList.contains("active")) || {}).dataset?.tab || "";
-
-function syncModelAvailability() {
-  const allowPro = QUIZ_TABS.has(activeTabName());
-  let switchedAway = false;
-  [...modelEl.options].forEach((opt) => {
-    if (isProModelId(opt.value)) opt.disabled = !allowPro;
-  });
-  if (!allowPro && isProModelId(modelEl.value)) {
-    const flash = [...modelEl.options].find((o) => !isProModelId(o.value));
-    if (flash) {
-      modelEl.value = flash.value;
-      localStorage.setItem(MODEL_STORE, flash.value);
-      switchedAway = true;
-      // 속성만 바꾸면 'change' 이벤트가 안 나가 다른 리스너(예: '5개 이상 변형' 잠금)가
-      // 이 전환을 못 보고 지나친다. 실제 change로 알려서 다 같이 다시 맞추게 한다.
-      modelEl.dispatchEvent(new Event("change"));
-    }
-  }
-  if (!modelProHintEl) return;
-  const hasPro = [...modelEl.options].some((o) => isProModelId(o.value));
-  if (!hasPro) {
-    modelProHintEl.textContent = "";
-  } else if (allowPro) {
-    modelProHintEl.textContent =
-      "이 탭에서는 Pro를 선택할 수 있습니다. Pro는 결제(billing)가 설정된 키에서만 동작합니다.";
-  } else {
-    modelProHintEl.textContent =
-      "Pro는 문제 제작(객관식·주관식) 탭에서만 선택할 수 있습니다." +
-      (switchedAway ? " 지금은 Flash로 전환했습니다." : "");
-  }
-}
-
-// 모델 선택 기억
-const MODEL_STORE = "gemini_model";
-const savedModel = localStorage.getItem(MODEL_STORE);
-if (savedModel) modelEl.value = savedModel;
-modelEl.addEventListener("change", () => {
-  localStorage.setItem(MODEL_STORE, modelEl.value);
-});
 
 // ── 학원 마크(로고) — 고정 파일 대신 사용자가 업로드해 이 브라우저에 저장 ──
 const BRAND_IMG_STORE = "brand_mark_img";   // data URL
@@ -1069,7 +1027,7 @@ async function ocrBySlices(file, who, onProgress) {
         const part = slices[i];
         const data = await postJson(
           "/api/ocr",
-          { file: part, partial: true, model: modelEl.value },
+          { file: part, partial: true },
           "조각을 옮기지 못했습니다."
         );
         text = joinOverlap(text, data.text || "");
@@ -1128,7 +1086,7 @@ async function runOcr(fileList) {
       try {
         data = await postJson(
           "/api/ocr",
-          { file: part, model: modelEl.value },
+          { file: part },
           "사진에서 지문을 옮기지 못했습니다."
         );
       } catch (err) {
@@ -1226,10 +1184,8 @@ tabBtns.forEach((btn) => {
     tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
     tabPages.forEach((p) => p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
     syncFloatPrint();
-    syncModelAvailability();
   });
 });
-syncModelAvailability(); // 초기 탭(지문 분석) 기준으로 Pro 잠금 상태를 맞춰 둔다
 
 // '꼼꼼 검토' 체크 상태 기억
 const REVIEW_STORE = "gemini_review";
@@ -1292,6 +1248,9 @@ async function analyze() {
     errorEl.textContent = "분석할 영어 지문을 입력하세요.";
     return;
   }
+  if (!costConfirmed(billableJobCount() * (PRICING ? PRICING.analyze : 0), "지문 분석을 시작합니다.")) {
+    return;
+  }
 
   analyzeBtn.disabled = true;
   addPassageBtn.disabled = true;
@@ -1305,7 +1264,6 @@ async function analyze() {
   syncFloatPrint();
 
   const total = jobs.length;
-  const usedModel = modelEl.value;
   const reviewOn = !!(reviewChk && reviewChk.checked);
   let okCount = 0;
   const htmlParts = []; // 결과를 모아뒀다가 모두 끝난 뒤 한 번에 렌더
@@ -1330,7 +1288,6 @@ async function analyze() {
         {
           passage: job.text,
           targetGrammar: grammarEl.value,
-          model: modelEl.value,
           review: reviewOn,
         },
         "분석에 실패했습니다."
@@ -1369,7 +1326,7 @@ async function analyze() {
   addPassageBtn.disabled = false;
   clearPassagesBtn.disabled = false;
   resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
-  refreshTokenDisplay(); // 방금 쓴 만큼 잔여 토큰 표시를 갱신 (실패했어도 일부 소모됐을 수 있음)
+  refreshTokenDisplay(); // 성공한 만큼 차감됐을 잔액 표시를 갱신
 }
 
 // "내 저장함"에서 불러온 분석 결과를 화면에 되살린다 — API를 다시 부르지 않고,
@@ -1630,9 +1587,19 @@ const VARIATION_DESC = {
 // 호출당 시간이 짧아지고, 하나가 실패해도 그 4문항만 잃는다.
 const QUIZ_TYPES_PER_CALL = 4;
 
+// 객관식 '지문변형형' — 정찰 가격도, 실제로 쓰는 모델(Pro)도 다른 유형들.
+// server.py의 MCQ_ONLY_TYPES 중 QUIZ_PLAIN_PASSAGE_TYPES에 없는 5개와 반드시 같아야 한다.
+const MCQ_TRANSFORM_TYPES = new Set(["빈칸", "어휘", "어법", "순서", "문장삽입"]);
+
+// 유형을 호출 묶음으로 나눈다 — 이때 '지문변형형'(Pro로 처리)과 나머지(Flash로 처리)를
+// 먼저 갈라서 각각 따로 4개씩 묶는다. 한 호출 안에 두 모델이 섞이면 서버가 어느
+// 모델로 부를지 정할 수 없으므로, 애초에 섞이지 않게 여기서 나눈다.
 function chunkTypes(types, size = QUIZ_TYPES_PER_CALL) {
+  const flashGroup = types.filter((t) => !MCQ_TRANSFORM_TYPES.has(t));
+  const proGroup = types.filter((t) => MCQ_TRANSFORM_TYPES.has(t));
   const out = [];
-  for (let i = 0; i < types.length; i += size) out.push(types.slice(i, i + size));
+  for (let i = 0; i < flashGroup.length; i += size) out.push(flashGroup.slice(i, i + size));
+  for (let i = 0; i < proGroup.length; i += size) out.push(proGroup.slice(i, i + size));
   return out;
 }
 
@@ -1725,30 +1692,11 @@ function setupQuizTab({ prefix, types, footer }) {
       // 호출해도 모든 문항이 같은 지문을 쓴다.
       parts.push("변형본은 먼저 한 번 만들어 확정한 뒤, 그 지문으로 모든 문항을 출제합니다.");
     }
-    if (!isProModelId(modelEl.value)) {
-      parts.push("'5개 이상 변형'은 모델을 Pro로 선택해야 고를 수 있습니다.");
-    }
     variationHintEl.innerHTML = parts.filter(Boolean).join(" ");
   }
   if (variationEl) {
-    // '5개 이상 변형'은 Pro에서만 고를 수 있다 — 사실·순서·난이도는 그대로 두면서 지문
-    // 전체를 대량으로 바꿔 쓰는 건 Flash보다 Pro가 훨씬 안정적으로 해내는 작업이라,
-    // 여기서만 모델 선택과 지문 변형 설정을 서로 묶는다.
-    const heavyBox = variationEl.input("heavy");
-    function applyHeavyLock() {
-      if (!heavyBox) return;
-      const proOk = isProModelId(modelEl.value);
-      heavyBox.disabled = !proOk;
-      heavyBox.closest("label").classList.toggle("disabled", !proOk);
-      // Pro에서 Flash로 바뀌는 순간 '5개 이상'은 더 못 쓰므로 체크를 풀어 준다.
-      // (라디오와 달리 다른 단계로 '내려줄' 필요 없이 그 세트만 빠진다)
-      if (!proOk && heavyBox.checked) {
-        heavyBox.checked = false;
-        syncPicked(prefix + "Variation");
-        saveVariations();
-      }
-      updateVariationHint();
-    }
+    // '5개 이상 변형'은 서버가 자동으로 Pro 모델을 골라 처리한다 — 화면에서
+    // 모델을 고를 필요가 없으므로 잠금 없이 항상 선택할 수 있다.
     function saveVariations() {
       localStorage.setItem(VARIATION_STORE, variationEl.values.join(","));
     }
@@ -1760,8 +1708,6 @@ function setupQuizTab({ prefix, types, footer }) {
       saveVariations();
       updateVariationHint();
     });
-    modelEl.addEventListener("change", applyHeavyLock);
-    applyHeavyLock();
   }
 
   // 전체 선택 / 전체 해제 (일부만 선택된 상태는 '중간' 표시)
@@ -1805,6 +1751,17 @@ function setupQuizTab({ prefix, types, footer }) {
     if (!vars.length) {
       errorEl.textContent = "지문 변형을 하나 이상 선택하세요.";
       return;
+    }
+    if (PRICING) {
+      // 유형마다 그대로형/변형형(또는 주관식 균일가)으로 단가가 갈리고, 지문변형
+      // 세트를 여러 개 고르면 세트 수만큼 문제 생성이 통째로 반복된다.
+      const perSet = picked.reduce((sum, t) => {
+        if (prefix === "mcq") return sum + (MCQ_TRANSFORM_TYPES.has(t) ? PRICING.mcqTransform : PRICING.mcqPlain);
+        return sum + PRICING.saq;
+      }, 0);
+      const rewordSets = vars.filter((v) => v !== "verbatim").length;
+      const cost = billableJobCount() * (vars.length * perSet + rewordSets * PRICING.reword);
+      if (!costConfirmed(cost, `${docName}를 만듭니다.`)) return;
     }
 
     btn.disabled = true;
@@ -1865,7 +1822,7 @@ function setupQuizTab({ prefix, types, footer }) {
           try {
             const r = await postJson(
               "/api/reword",
-              { passage: job.text, variation, model: modelEl.value },
+              { passage: job.text, variation },
               "지문 변형에 실패했습니다."
             );
             source = (r.passage || "").trim() || job.text;
@@ -1899,7 +1856,6 @@ function setupQuizTab({ prefix, types, footer }) {
                 passage: source,
                 types: group,
                 count: group.length,   // 유형 1개당 1문항
-                model: modelEl.value,
                 variation: "verbatim",
               },
               "문제 생성에 실패했습니다."
@@ -2371,6 +2327,9 @@ async function generateWorkbook() {
     wbErrorEl.textContent = "포함할 단계를 하나 이상 선택하세요.";
     return;
   }
+  if (!costConfirmed(billableJobCount() * (PRICING ? PRICING.workbook : 0), "워크북을 만듭니다.")) {
+    return;
+  }
 
   wbBtn.disabled = true;
   addPassageBtn.disabled = true;
@@ -2413,7 +2372,7 @@ async function generateWorkbook() {
     try {
       const data = await postJson(
         "/api/workbook",
-        { passage: job.text, model: modelEl.value },
+        { passage: job.text },
         "워크북 생성에 실패했습니다."
       );
       const built = buildWorkbookHtml(data, stages, job, total, exam);
