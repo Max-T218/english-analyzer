@@ -14,13 +14,19 @@ import difflib
 import json
 import os
 import re
+import secrets
 import sys
 import time
 import traceback
 import urllib.request
 import urllib.error
+import urllib.parse
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+from google.cloud import firestore
+from google.oauth2 import service_account
 
 # 배포(Render 등)에서는 0.0.0.0 바인딩이 필요. 로컬에서도 localhost로 접속됨.
 HOST = os.environ.get("HOST", "0.0.0.0")
@@ -29,6 +35,30 @@ MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 # 모델명은 URL 경로에 들어가므로 안전한 형식만 허용 (하드코딩 목록 대신 형식 검증)
 _MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]+$")
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
+
+# --- 저장/불러오기(구글 로그인 + Firestore) -------------------------------
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 세션 유지 기간(초) — 30일
+
+
+def _load_firestore():
+    """서비스 계정 키로 Firestore 클라이언트를 만든다. 로컬은 파일 경로
+    (GOOGLE_APPLICATION_CREDENTIALS)를, Render 등 배포 환경은 JSON 내용을 통째로 담은
+    환경변수(GOOGLE_APPLICATION_CREDENTIALS_JSON)를 지원한다 — 배포 환경엔 영구 디스크가
+    없어 키 파일을 둘 곳이 없으므로 값 자체를 환경변수로 넣는 쪽이 더 간단하다.
+    둘 다 없으면 None을 돌려주고, 로그인/저장 기능만 비활성화된 채로 나머지 앱은
+    그대로 동작한다(설정 전에도 분석·문제 제작 기능은 써야 하므로)."""
+    raw = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if raw:
+        info = json.loads(raw)
+        creds = service_account.Credentials.from_service_account_info(info)
+        return firestore.Client(credentials=creds, project=info.get("project_id"))
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return firestore.Client()
+    return None
+
+
+DB = _load_firestore()
 
 GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000"
 
@@ -2123,22 +2153,234 @@ CONTENT_TYPES = {
 }
 
 
+# --- 저장/불러오기: 구글 로그인 검증 + Firestore 읽고쓰기 ---------------------
+
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _require_db():
+    if DB is None:
+        raise RuntimeError(
+            "로그인/저장 기능이 아직 설정되지 않았습니다 (관리자에게 문의하세요)."
+        )
+
+
+def verify_google_id_token(credential):
+    """구글이 이미 서명을 검증한 결과를 그대로 받아온다 — 우리가 JWT 서명 검증
+    라이브러리를 따로 둘 필요가 없다. aud(발급 대상)가 우리 클라이언트 ID인지만
+    서버에서 추가로 확인한다."""
+    url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + urllib.parse.quote(credential)
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            claims = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError:
+        raise ValueError("구글 로그인 확인에 실패했습니다. 다시 시도하세요.")
+    if not GOOGLE_CLIENT_ID or claims.get("aud") != GOOGLE_CLIENT_ID:
+        raise ValueError("이 사이트용으로 발급된 로그인 정보가 아닙니다.")
+    return claims
+
+
+def upsert_user(sub, email, name):
+    _require_db()
+    ref = DB.collection("users").document(sub)
+    if not ref.get().exists:
+        ref.set({"email": email, "name": name, "created_at": _now_iso()})
+    else:
+        ref.set({"email": email, "name": name}, merge=True)
+
+
+def create_session(sub):
+    _require_db()
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(seconds=SESSION_MAX_AGE)
+    DB.collection("sessions").document(token).set({
+        "user_id": sub,
+        "created_at": _now_iso(),
+        "expires_at": expires.isoformat(),
+    })
+    return token
+
+
+def delete_session(token):
+    if DB is None or not token:
+        return
+    DB.collection("sessions").document(token).delete()
+
+
+def _parse_cookies(header):
+    cookies = {}
+    for part in (header or "").split(";"):
+        if "=" in part:
+            k, v = part.strip().split("=", 1)
+            cookies[k] = v
+    return cookies
+
+
+def _session_user(handler):
+    """세션 쿠키로 로그인한 사용자(구글 sub)를 찾는다. 없거나 만료됐으면 None."""
+    if DB is None:
+        return None
+    token = _parse_cookies(handler.headers.get("Cookie", "")).get("session")
+    if not token:
+        return None
+    ref = DB.collection("sessions").document(token)
+    snap = ref.get()
+    if not snap.exists:
+        return None
+    sess = snap.to_dict()
+    try:
+        expires = datetime.fromisoformat(sess["expires_at"])
+    except Exception:
+        return None
+    if datetime.now(timezone.utc) >= expires:
+        ref.delete()
+        return None
+    return sess.get("user_id")
+
+
+def list_saved_items(user_id):
+    _require_db()
+    q = (
+        DB.collection("saved_items")
+        .where("user_id", "==", user_id)
+        .order_by("updated_at", direction=firestore.Query.DESCENDING)
+    )
+    return [
+        {
+            "id": doc.id,
+            "tab": doc.get("tab"),
+            "title": doc.get("title"),
+            "updated_at": doc.get("updated_at"),
+        }
+        for doc in q.stream()
+    ]
+
+
+def get_saved_item(item_id, user_id):
+    _require_db()
+    snap = DB.collection("saved_items").document(item_id).get()
+    if not snap.exists:
+        return None
+    d = snap.to_dict()
+    if d.get("user_id") != user_id:
+        return None
+    return d
+
+
+def save_item(item_id, user_id, tab, title, payload):
+    """item_id가 있으면 그 항목을 덮어쓰고(소유자 확인), 없으면 새로 만든다."""
+    _require_db()
+    now = _now_iso()
+    if item_id:
+        ref = DB.collection("saved_items").document(item_id)
+        snap = ref.get()
+        if not snap.exists or snap.to_dict().get("user_id") != user_id:
+            raise PermissionError("저장 항목을 찾을 수 없습니다.")
+        ref.set({"tab": tab, "title": title, "payload": payload, "updated_at": now}, merge=True)
+        return item_id
+    ref = DB.collection("saved_items").document()
+    ref.set({
+        "user_id": user_id, "tab": tab, "title": title, "payload": payload,
+        "created_at": now, "updated_at": now,
+    })
+    return ref.id
+
+
+def delete_saved_item(item_id, user_id):
+    _require_db()
+    ref = DB.collection("saved_items").document(item_id)
+    snap = ref.get()
+    if not snap.exists or snap.to_dict().get("user_id") != user_id:
+        return False
+    ref.delete()
+    return True
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "PassageAnalyzer/1.0"
 
     def log_message(self, fmt, *args):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
-    def _send_json(self, obj, status=200):
+    def _send_json(self, obj, status=200, cookies=None):
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("content-type", "application/json; charset=utf-8")
         self.send_header("content-length", str(len(data)))
+        for c in cookies or ():
+            self.send_header("Set-Cookie", c)
         self.end_headers()
         self.wfile.write(data)
 
+    def _session_cookie(self, token, max_age):
+        # Render 등 https 뒤에 있을 때만 Secure를 붙인다(로컬 http에서도 로그인이 되게).
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return f"session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}"
+
+    def _cleared_session_cookie(self):
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return f"session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"
+
     def do_GET(self):
+        """/api/*는 Firestore를 호출하므로, do_POST처럼 예상 못 한 예외에도
+        연결을 끊지 않고 JSON 오류로 답한다(정적 파일 서빙은 예외가 날 일이 거의
+        없지만 같은 안전망을 함께 태워도 손해가 없다)."""
+        try:
+            self._handle_get()
+        except Exception as e:
+            traceback.print_exc()
+            try:
+                self._send_json({"error": f"서버 내부 오류입니다: {e}"}, 500)
+            except Exception:
+                pass
+
+    def _handle_get(self):
         path = self.path.split("?", 1)[0]
+
+        if path == "/api/me":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"loggedIn": False})
+                return
+            info = (DB.collection("users").document(user_id).get().to_dict() or {})
+            self._send_json({"loggedIn": True, "email": info.get("email"), "name": info.get("name")})
+            return
+
+        if path == "/api/saved":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                self._send_json({"items": list_saved_items(user_id)})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+            return
+
+        if path.startswith("/api/saved/"):
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            item_id = path[len("/api/saved/"):]
+            try:
+                item = get_saved_item(item_id, user_id)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            if not item:
+                self._send_json({"error": "저장한 항목을 찾을 수 없습니다."}, 404)
+                return
+            self._send_json({
+                "id": item_id,
+                "tab": item.get("tab"),
+                "title": item.get("title"),
+                "payload": item.get("payload"),
+                "updated_at": item.get("updated_at"),
+            })
+            return
+
         if path == "/":
             path = "/index.html"
         target = (PUBLIC_DIR / path.lstrip("/")).resolve()
@@ -2147,6 +2389,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         ctype = CONTENT_TYPES.get(target.suffix, "application/octet-stream")
         body = target.read_bytes()
+        if target.name == "index.html":
+            # 클라이언트 ID는 비밀값이 아니라 화면(구글 로그인 버튼)에 그대로 넣어도 된다.
+            body = body.replace(b"%%GOOGLE_CLIENT_ID%%", GOOGLE_CLIENT_ID.encode("utf-8"))
         self.send_response(200)
         self.send_header("content-type", ctype)
         self.send_header("content-length", str(len(body)))
@@ -2185,7 +2430,8 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_post(self):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
-                        "/api/reword", "/api/ocr"):
+                        "/api/reword", "/api/ocr",
+                        "/api/auth/google", "/api/logout", "/api/saved", "/api/saved/delete"):
             self.send_error(404, "Not found")
             return
         try:
@@ -2208,6 +2454,74 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(raw.decode("utf-8"))
         except (ValueError, json.JSONDecodeError):
             self._send_json({"error": "잘못된 요청입니다."}, 400)
+            return
+
+        if path == "/api/auth/google":
+            credential = req.get("credential") or ""
+            if not credential:
+                self._send_json({"error": "구글 로그인 정보가 없습니다."}, 400)
+                return
+            try:
+                claims = verify_google_id_token(credential)
+                sub = claims["sub"]
+                upsert_user(sub, claims.get("email", ""), claims.get("name", ""))
+                token = create_session(sub)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 401)
+                return
+            except Exception as e:
+                self._send_json({"error": f"로그인에 실패했습니다: {e}"}, 500)
+                return
+            self._send_json(
+                {"loggedIn": True, "email": claims.get("email"), "name": claims.get("name")},
+                cookies=[self._session_cookie(token, SESSION_MAX_AGE)],
+            )
+            return
+
+        if path == "/api/logout":
+            token = _parse_cookies(self.headers.get("Cookie", "")).get("session")
+            delete_session(token)
+            self._send_json({"loggedIn": False}, cookies=[self._cleared_session_cookie()])
+            return
+
+        if path == "/api/saved":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            tab = (req.get("tab") or "").strip()
+            title = (req.get("title") or "").strip() or "제목 없음"
+            payload = req.get("payload")
+            item_id = req.get("id") or None
+            if not tab or payload is None:
+                self._send_json({"error": "저장할 내용이 없습니다."}, 400)
+                return
+            try:
+                new_id = save_item(item_id, user_id, tab, title, payload)
+            except PermissionError as e:
+                self._send_json({"error": str(e)}, 404)
+                return
+            except Exception as e:
+                self._send_json({"error": f"저장에 실패했습니다: {e}"}, 500)
+                return
+            self._send_json({"id": new_id})
+            return
+
+        if path == "/api/saved/delete":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            item_id = req.get("id") or ""
+            try:
+                ok = delete_saved_item(item_id, user_id)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            if not ok:
+                self._send_json({"error": "저장한 항목을 찾을 수 없습니다."}, 404)
+                return
+            self._send_json({"ok": True})
             return
 
         if path == "/api/models":
@@ -2462,6 +2776,8 @@ def main():
     print(f"  주소     : http://{HOST}:{PORT}")
     print(f"  모델     : {MODEL}")
     print(f"  API 키   : {key_set}")
+    login_set = "설정됨" if (GOOGLE_CLIENT_ID and DB is not None) else "미설정 (저장/불러오기 비활성화)"
+    print(f"  저장 기능 : {login_set}")
     print("  종료     : Ctrl+C")
     try:
         server.serve_forever()

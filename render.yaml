@@ -23,3 +23,11 @@ services:
       # 지금은 '선생님마다 본인 키 입력' 방식이라 설정하지 않습니다.
       # - key: GEMINI_API_KEY
       #   sync: false
+      # 저장/불러오기(구글 로그인) 기능 — Render 대시보드의 Environment 탭에서
+      # 아래 두 값을 직접 입력하세요(비밀값이라 이 파일에는 적지 않습니다).
+      # GOOGLE_CLIENT_ID                  : Google Cloud OAuth 클라이언트 ID
+      # GOOGLE_APPLICATION_CREDENTIALS_JSON: Firestore 서비스 계정 키 JSON 전체 내용
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        sync: false

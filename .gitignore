@@ -13,6 +13,9 @@ __pycache__/
 .env
 .env.*
 
+# 구글 서비스 계정 키 (Firestore 접속용 비밀 파일 — 절대 커밋하지 않음)
+service-account*.json
+
 # OS
 Thumbs.db
 desktop.ini

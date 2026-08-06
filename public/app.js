@@ -6,8 +6,22 @@
 // 먼저 실행되어야 하므로 파일 맨 위에 둔다.
 // (한 세션 안에서의 저장은 그대로 동작한다 — 예: 지문 분석 결과의 어휘를 단어장
 //  탭이 이어받는 흐름. 다만 새로고침하면 함께 사라진다.)
+//
+// 예외 하나: 구글 로그인 상태에서는 API 키만 지우지 않는다(로그인은 유지되는데
+// 키를 매번 새로 입력해야 하면 이상하므로). "gemini_keep_key" 플래그는 로그인 성공
+// 직후에만 세워지고 로그아웃하면 지워진다 — 로그인한 채로 로그아웃 없이 브라우저만
+// 닫으면 다음 사람이 이 브라우저에서 API 키를 볼 수 있으므로, 공용 PC라면 반드시
+// 로그아웃하라고 화면에 안내한다.
 try {
+  const KEEP_KEY_FLAG = "gemini_keep_key";
+  const API_KEY_STORE = "gemini_api_key";
+  const keepKey = localStorage.getItem(KEEP_KEY_FLAG) === "1";
+  const savedApiKey = keepKey ? localStorage.getItem(API_KEY_STORE) : null;
   localStorage.clear();
+  if (keepKey) {
+    localStorage.setItem(KEEP_KEY_FLAG, "1");
+    if (savedApiKey) localStorage.setItem(API_KEY_STORE, savedApiKey);
+  }
 } catch (_) {
   /* 사생활 보호 모드 등에서 접근이 막혀도 앱은 그대로 동작 */
 }
@@ -214,6 +228,74 @@ function quotaStopHtml(left, err, unit = "지문") {
     시간만 걸리기 때문입니다. 한도가 리셋된 뒤 이어서 진행하세요.
   </div></section>`;
 }
+
+/* ══════════ 구글 로그인 / 저장·불러오기 ══════════
+   서버는 구글이 이미 검증한 로그인 토큰만 확인하고 세션 쿠키(HttpOnly)를 내려준다 —
+   여기서는 쿠키 값을 볼 수 없다. 그래서 로그인 여부는 항상 /api/me로 서버에 물어서
+   판단하고, 브라우저 쪽에 별도의 "로그인함" 상태를 두지 않는다. */
+async function getJson(url, fallbackMsg) {
+  const res = await fetch(url);
+  const text = await res.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch {}
+  if (!data) throw new Error(fallbackMsg || "서버 응답을 읽을 수 없습니다.");
+  if (!res.ok) throw new Error(data.error || fallbackMsg);
+  return data;
+}
+
+const KEEP_KEY_FLAG = "gemini_keep_key"; // 파일 맨 위 초기화 예외와 같은 플래그
+// 탭마다 자신을 등록해 두는 저장/불러오기 레지스트리. 각 항목:
+//   saveBtn: 저장 버튼 엘리먼트, getPayload(): 지금 상태를 저장용 객체로,
+//   applyPayload(payload): 불러온 값으로 화면을 되살림
+const TAB_SAVE = {};
+const accountLoggedOutEl = $("accountLoggedOut");
+const accountLoggedInEl = $("accountLoggedIn");
+const accountNameEl = $("accountName");
+const myLibraryBtn = $("myLibraryBtn");
+const logoutBtn = $("logoutBtn");
+
+let isLoggedIn = false; // 저장/불러오기 버튼들이 이 값으로 로그인 여부를 판단한다
+
+function renderAccount(info) {
+  isLoggedIn = !!(info && info.loggedIn);
+  accountLoggedOutEl.hidden = isLoggedIn;
+  accountLoggedInEl.hidden = !isLoggedIn;
+  if (isLoggedIn) accountNameEl.textContent = `${info.name || info.email || "로그인됨"}님`;
+}
+
+async function refreshAccount() {
+  try {
+    renderAccount(await getJson("/api/me", "로그인 상태를 확인하지 못했습니다."));
+  } catch (_) {
+    renderAccount({ loggedIn: false });
+  }
+}
+refreshAccount();
+
+// index.html의 data-callback="handleGoogleCredential"이 로그인 성공 시 이 함수를 부른다.
+window.handleGoogleCredential = async function (response) {
+  try {
+    const info = await postJson(
+      "/api/auth/google",
+      { credential: response.credential },
+      "구글 로그인에 실패했습니다."
+    );
+    localStorage.setItem(KEEP_KEY_FLAG, "1"); // 다음부터는 새로 열어도 API 키를 지우지 않음
+    renderAccount(info);
+  } catch (err) {
+    alert(err.message || "구글 로그인에 실패했습니다.");
+  }
+};
+
+logoutBtn.addEventListener("click", async () => {
+  try {
+    await postJson("/api/logout", {}, "로그아웃에 실패했습니다.");
+  } catch (_) {
+    /* 실패해도 화면은 로그아웃 상태로 되돌린다 — 세션 쿠키는 만료되면 어차피 무효 */
+  }
+  localStorage.removeItem(KEEP_KEY_FLAG);
+  renderAccount({ loggedIn: false });
+});
 
 // 저장된 키 불러오기
 apiKeyEl.value = localStorage.getItem(KEY_STORE) || "";
@@ -712,6 +794,24 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
     return jobs;
   }
 
+  // 저장해 둔 지문 목록으로 입력칸을 통째로 되살린다("불러오기"에서만 쓰인다 —
+  // 평소 입력은 저장하지 않는다는 원칙과는 별개로, 사용자가 직접 누른 "저장" 결과를
+  // 불러올 때만 예외적으로 지문을 채운다).
+  function setJobs(jobs) {
+    listEl.innerHTML = "";
+    const list = Array.isArray(jobs) && jobs.length ? jobs : [null];
+    list.forEach((job) => {
+      const ta = addRow(false);
+      if (!ta || !job) return; // 상한(MAX_PASSAGES)에 걸리면 나머지는 건너뜀
+      ta.value = job.text || "";
+      if (job.named && job.name) {
+        ta.closest(".passage-item").querySelector(".passage-name").value = job.name;
+      }
+      updatePassageCount(ta);
+    });
+    renumber();
+  }
+
   // 사진에서 옮겨 온 지문을 입력칸에 채운다. 빈 칸부터 쓰고, 없으면 칸을 늘린다.
   // 사진 1장 = 지문 1개이므로 텍스트 하나가 칸 하나를 차지한다.
   // 반환: 실제로 채웠으면 true (상한 MAX_PASSAGES에 걸리면 false)
@@ -729,7 +829,7 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
     return true;
   }
 
-  return { addRow, getJobs, renumber, clearAll, fillText };
+  return { addRow, getJobs, setJobs, renumber, clearAll, fillText };
 }
 
 // 모든 탭이 공유하는 지문 입력 (탭 밖 공통 패널) — 별도 저장소 없이 화면 하나로 공유
@@ -1070,6 +1170,8 @@ if (reviewChk) {
    인쇄도 고친 내용 그대로 나간다. 편집 표시(점선 테두리)는 인쇄에서 제외된다. */
 const editBtn = $("editBtn");
 const editHintEl = $("editHint");
+const saveBtn = $("saveBtn");
+let lastAnalyzeEntries = []; // 저장/불러오기용 — {job, data} 성공한 것만, 순서 유지
 
 // 고칠 수 있는 구역만 연다 — 루비(영어 위 한글), 한글 해석, 우측 해설.
 // 영어 원문·제목·범례·번호·태그는 잠가 둔다(잘못 건드리면 분석본이 망가진다).
@@ -1129,6 +1231,7 @@ async function analyze() {
   resultEl.innerHTML = "";
   printBtn.style.display = "none";
   editBtn.style.display = "none";
+  saveBtn.style.display = "none";
   syncFloatPrint();
 
   const total = jobs.length;
@@ -1137,6 +1240,7 @@ async function analyze() {
   let okCount = 0;
   const htmlParts = []; // 결과를 모아뒀다가 모두 끝난 뒤 한 번에 렌더
   const vocabSets = []; // 단어장 탭이 쓸 지문별 핵심 어휘
+  const entries = []; // 저장 기능이 쓸 {job, data} — 성공한 것만
   for (let i = 0; i < total; i++) {
     const job = jobs[i];
     const stage = reviewOn ? "분석·검토 중" : "분석 중";
@@ -1163,6 +1267,7 @@ async function analyze() {
         "분석에 실패했습니다."
       );
       htmlParts.push(buildAnalysisHtml(data, job, total));
+      entries.push({ job, data });
       if (Array.isArray(data.vocab) && data.vocab.length) {
         vocabSets.push({ name: job.name, vocab: data.vocab });
       }
@@ -1181,11 +1286,13 @@ async function analyze() {
 
   if (okCount) htmlParts.push(`<footer>구문 단위 직독직해 분석본 · 자동 생성</footer>`);
   if (vocabSets.length) saveVocabSets(vocabSets); // 단어장 탭에서 재사용
+  lastAnalyzeEntries = entries; // 저장 버튼이 이 값을 그대로 payload로 보낸다
   // 모든 지문 분석이 끝난 뒤 한 번에 렌더 (중간에 화면이 바뀌지 않도록)
   resultEl.innerHTML = htmlParts.join("");
   if (okCount) {
     printBtn.style.display = "inline-flex";
     editBtn.style.display = "inline-flex";
+    saveBtn.style.display = "inline-flex";
   }
   syncFloatPrint();
   loadingEl.classList.remove("on");
@@ -1194,6 +1301,37 @@ async function analyze() {
   clearPassagesBtn.disabled = false;
   resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
+
+// "내 저장함"에서 불러온 분석 결과를 화면에 되살린다 — API를 다시 부르지 않고,
+// 저장해 둔 원본 data를 그때와 같은 buildAnalysisHtml로 다시 그리기만 한다.
+function renderAnalyzeEntries(entries) {
+  const total = entries.length;
+  const htmlParts = entries.map(({ job, data }) => buildAnalysisHtml(data, job, total));
+  if (total) htmlParts.push(`<footer>구문 단위 직독직해 분석본 · 자동 생성</footer>`);
+  setEditMode(false);
+  resultEl.innerHTML = htmlParts.join("");
+  printBtn.style.display = total ? "inline-flex" : "none";
+  editBtn.style.display = total ? "inline-flex" : "none";
+  saveBtn.style.display = total ? "inline-flex" : "none";
+  lastAnalyzeEntries = entries;
+  syncFloatPrint();
+  resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+TAB_SAVE.analyze = {
+  saveBtn,
+  getPayload: () => ({
+    passages: passageMgr.getJobs(),
+    settings: { targetGrammar: grammarEl.value, review: !!(reviewChk && reviewChk.checked) },
+    entries: lastAnalyzeEntries,
+  }),
+  applyPayload: (payload) => {
+    passageMgr.setJobs(payload.passages || []);
+    grammarEl.value = (payload.settings && payload.settings.targetGrammar) || "";
+    if (reviewChk) reviewChk.checked = !!(payload.settings && payload.settings.review);
+    renderAnalyzeEntries(payload.entries || []);
+  },
+};
 
 function esc(s) {
   return String(s == null ? "" : s)
@@ -1434,6 +1572,8 @@ function setupQuizTab({ prefix, types, footer }) {
   const allEl = $(prefix + "TypeAll");
   const btn = $(prefix + "Btn");
   const printBtn = $(prefix + "PrintBtn");
+  const saveBtn = $(prefix + "SaveBtn");
+  let lastEntries = []; // 저장/불러오기용 — {job, label, set, total}
   const docName = prefix === "mcq" ? "객관식문제" : "주관식문제";
   const errorEl = $(prefix + "Error");
   const loadingEl = $(prefix + "Loading");
@@ -1609,6 +1749,7 @@ function setupQuizTab({ prefix, types, footer }) {
     loadingEl.classList.add("on");
     resultEl.innerHTML = "";
     printBtn.style.display = "none";
+    saveBtn.style.display = "none";
     syncFloatPrint();
 
     // 완성될 때마다 화면에 붙인다. 도중에 멈추거나 창을 닫아도 그때까지 만든
@@ -1618,6 +1759,7 @@ function setupQuizTab({ prefix, types, footer }) {
         resultEl.insertAdjacentHTML("beforeend", `<footer class="qz-footer">${esc(footer)} · 자동 생성</footer>`);
       }
       printBtn.style.display = "inline-flex";
+      saveBtn.style.display = "inline-flex";
       syncFloatPrint();
     };
     const append = (html) => {
@@ -1634,6 +1776,7 @@ function setupQuizTab({ prefix, types, footer }) {
     let okCount = 0;
     let stopped = false;
     let stopErr = null;
+    const entries = []; // 저장 기능이 쓸 {job, label, set, total} — 성공한 세트만
 
     for (let i = 0; i < total && !stopped; i++) {
       const job = jobs[i];
@@ -1719,6 +1862,7 @@ function setupQuizTab({ prefix, types, footer }) {
             set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
           }
           append(buildQuizHtml(set, job, total, prefix, label));
+          entries.push({ job, label, set, total });
           okCount++;
           showFooter();
         }
@@ -1733,6 +1877,7 @@ function setupQuizTab({ prefix, types, footer }) {
     }
 
     if (okCount) showFooter();
+    lastEntries = entries; // 저장 버튼이 이 값을 그대로 payload로 보낸다
     syncFloatPrint();
     loadingEl.classList.remove("on");
     btn.disabled = false;
@@ -1740,6 +1885,60 @@ function setupQuizTab({ prefix, types, footer }) {
     clearPassagesBtn.disabled = false;
     resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
+  // "내 저장함"에서 불러온 문제 세트를 다시 그린다 — API를 다시 부르지 않고
+  // 저장해 둔 원본 set(질문·변형 정보)을 그때와 같은 buildQuizHtml로 재사용한다.
+  function renderQuizEntries(entries) {
+    resultEl.innerHTML = "";
+    entries.forEach(({ job, label, set, total }) => {
+      resultEl.insertAdjacentHTML("beforeend", buildQuizHtml(set, job, total, prefix, label));
+    });
+    if (entries.length) {
+      resultEl.insertAdjacentHTML("beforeend", `<footer class="qz-footer">${esc(footer)} · 자동 생성</footer>`);
+    }
+    printBtn.style.display = entries.length ? "inline-flex" : "none";
+    saveBtn.style.display = entries.length ? "inline-flex" : "none";
+    lastEntries = entries;
+    syncFloatPrint();
+    resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function getQuizSettings() {
+    return {
+      types: [...gridEl.querySelectorAll("input:checked")].map((i) => i.value),
+      order: orderEl.value,
+      variation: variationEl ? variationEl.values : [],
+    };
+  }
+  function applyQuizSettings(settings) {
+    if (!settings) return;
+    const wanted = new Set(settings.types || []);
+    gridEl.querySelectorAll("input").forEach((b) => { b.checked = wanted.has(b.value); });
+    syncAll();
+    renumberTypes();
+    if (settings.order) {
+      orderEl.value = settings.order;
+      updateOrderHint();
+    }
+    if (variationEl && Array.isArray(settings.variation) && settings.variation.length) {
+      variationEl.values = settings.variation;
+      updateVariationHint();
+    }
+  }
+
+  TAB_SAVE[prefix] = {
+    saveBtn,
+    getPayload: () => ({
+      passages: passageMgr.getJobs(),
+      settings: getQuizSettings(),
+      entries: lastEntries,
+    }),
+    applyPayload: (payload) => {
+      passageMgr.setJobs(payload.passages || []);
+      applyQuizSettings(payload.settings);
+      renderQuizEntries(payload.entries || []);
+    },
+  };
 
   btn.addEventListener("click", generate);
   printBtn.addEventListener("click", () => printDoc(() => passageBasedName(docName)));
@@ -2060,6 +2259,8 @@ const wbAnswerBookChk = $("wbAnswerBookChk");
 const workbookDocEl = $("workbookDoc");
 const workbookPrintBtn = $("workbookPrintBtn");
 const wbAnswerPrintBtn = $("wbAnswerPrintBtn");
+const workbookSaveBtn = $("workbookSaveBtn");
+let lastWorkbookEntries = []; // 저장/불러오기용 — {job, data} 성공한 것만
 
 // 머리말(시험명)은 다음에 열 때도 그대로 쓰도록 기억해 둔다
 const WB_EXAM_STORE = "gemini_wb_exam";
@@ -2120,12 +2321,14 @@ async function generateWorkbook() {
   workbookDocEl.innerHTML = "";
   workbookPrintBtn.style.display = "none";
   wbAnswerPrintBtn.style.display = "none";
+  workbookSaveBtn.style.display = "none";
   syncFloatPrint();
 
   const total = jobs.length;
   let okCount = 0;
   const htmlParts = [];
   const answerParts = [];
+  const entries = []; // 저장 기능이 쓸 {job, data} — 성공한 것만
   const title = wbTitleEl.value.trim();
   const exam = wbExamEl ? wbExamEl.value.trim() : "";
   if (title) {
@@ -2158,6 +2361,7 @@ async function generateWorkbook() {
       const built = buildWorkbookHtml(data, stages, job, total, exam);
       htmlParts.push(built.html);
       answerParts.push(built.answerHtml);
+      entries.push({ job, data });
       okCount++;
     } catch (err) {
       const msg = err.message || String(err);
@@ -2191,7 +2395,9 @@ async function generateWorkbook() {
     workbookPrintBtn.style.display = "inline-flex";
     // '답지만'은 뒤쪽 정답 모음을 지면에 올리는 기능이라, 그게 없으면 쓸 수 없다
     wbAnswerPrintBtn.style.display = hasAnswerBook ? "inline-flex" : "none";
+    workbookSaveBtn.style.display = "inline-flex";
   }
+  lastWorkbookEntries = entries; // 저장 버튼이 이 값을 그대로 payload로 보낸다
   syncFloatPrint();
   wbLoadingEl.classList.remove("on");
   wbBtn.disabled = false;
@@ -2199,6 +2405,88 @@ async function generateWorkbook() {
   clearPassagesBtn.disabled = false;
   workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
+
+// "내 저장함"에서 불러온 워크북을 다시 그린다 — API를 다시 부르지 않고, 저장해 둔
+// 원본 data를 지금 화면의 단계 선택(stages)·제목·머리말로 buildWorkbookHtml에 넘긴다.
+function renderWorkbookEntries(entries) {
+  const total = entries.length;
+  const htmlParts = [];
+  const answerParts = [];
+  const title = wbTitleEl.value.trim();
+  const exam = wbExamEl ? wbExamEl.value.trim() : "";
+  const stages = [...wbStageGridEl.querySelectorAll("input:checked")].map((i) => parseInt(i.value, 10));
+  if (title) {
+    htmlParts.push(`
+      <div class="wb-cover">
+        <h1>${esc(title)}</h1>
+        ${exam ? `<div class="wb-exam">${esc(exam)}</div>` : ""}
+        <div class="wb-date">${esc(new Date().toLocaleDateString("ko-KR"))}</div>
+      </div>`);
+  }
+  entries.forEach(({ job, data }) => {
+    const built = buildWorkbookHtml(data, stages, job, total, exam);
+    htmlParts.push(built.html);
+    answerParts.push(built.answerHtml);
+  });
+  let hasAnswerBook = false;
+  if (total && (!wbAnswerBookChk || wbAnswerBookChk.checked)) {
+    const body = answerParts.filter((p) => p && p.trim()).join("");
+    if (body) {
+      hasAnswerBook = true;
+      htmlParts.push(`
+        <section class="wb-answerbook">
+          <h2 class="wb-answerbook-head">정답</h2>
+          ${body}
+        </section>`);
+    }
+  }
+  if (total) htmlParts.push(`<footer>단계별 WORKBOOK · 자동 생성</footer>`);
+  workbookDocEl.innerHTML = htmlParts.join("");
+  applyAnswerVisibility();
+  workbookPrintBtn.style.display = total ? "inline-flex" : "none";
+  wbAnswerPrintBtn.style.display = total && hasAnswerBook ? "inline-flex" : "none";
+  workbookSaveBtn.style.display = total ? "inline-flex" : "none";
+  lastWorkbookEntries = entries;
+  syncFloatPrint();
+  workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function getWorkbookSettings() {
+  return {
+    stages: [...wbStageGridEl.querySelectorAll("input:checked")].map((i) => parseInt(i.value, 10)),
+    title: wbTitleEl.value,
+    exam: wbExamEl ? wbExamEl.value : "",
+    answer: wbAnswerChk.checked,
+    answerBook: wbAnswerBookChk ? wbAnswerBookChk.checked : true,
+  };
+}
+function applyWorkbookSettings(settings) {
+  if (!settings) return;
+  const wanted = new Set(settings.stages || []);
+  wbStageGridEl.querySelectorAll("input").forEach((b) => {
+    b.checked = wanted.has(parseInt(b.value, 10));
+  });
+  syncWbAll();
+  renumberWbStages();
+  wbTitleEl.value = settings.title || "";
+  if (wbExamEl) wbExamEl.value = settings.exam || "";
+  wbAnswerChk.checked = !!settings.answer;
+  if (wbAnswerBookChk) wbAnswerBookChk.checked = settings.answerBook !== false;
+}
+
+TAB_SAVE.workbook = {
+  saveBtn: workbookSaveBtn,
+  getPayload: () => ({
+    passages: passageMgr.getJobs(),
+    settings: getWorkbookSettings(),
+    entries: lastWorkbookEntries,
+  }),
+  applyPayload: (payload) => {
+    passageMgr.setJobs(payload.passages || []);
+    applyWorkbookSettings(payload.settings);
+    renderWorkbookEntries(payload.entries || []);
+  },
+};
 
 /* ── 워크북 마크업 파서 & 렌더 도우미 ── */
 
@@ -2623,6 +2911,7 @@ const vocabDedupEl = $("vocabDedup");
 const vocabAnswerChk = $("vocabAnswerChk");
 const vocabBtn = $("vocabBtn");
 const vocabPrintBtn = $("vocabPrintBtn");
+const vocabSaveBtn = $("vocabSaveBtn");
 const vocabErrorEl = $("vocabError");
 const vocabDocEl = $("vocabDoc");
 
@@ -2756,6 +3045,194 @@ function buildVocab() {
   vocabDocEl.innerHTML = parts.join("");
   applyVocabAnswer();
   vocabPrintBtn.style.display = "inline-flex";
+  vocabSaveBtn.style.display = "inline-flex";
   syncFloatPrint();
   vocabDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
+
+// 단어장은 API 호출이 없어 저장할 때 지문 분석 결과(vocabSets)와 설정만 담으면
+// 되고, 불러올 때도 buildVocab()을 그대로 다시 호출하면 똑같이 재현된다.
+TAB_SAVE.vocab = {
+  saveBtn: vocabSaveBtn,
+  getPayload: () => ({
+    vocabSets: getVocabSets(),
+    settings: {
+      format: vocabFormatEl.value,
+      sort: vocabSortEl.value,
+      title: vocabTitleEl.value,
+      dedup: vocabDedupEl.checked,
+      answer: vocabAnswerChk.checked,
+    },
+  }),
+  applyPayload: (payload) => {
+    saveVocabSets(payload.vocabSets || []);
+    const s = payload.settings || {};
+    if (s.format) {
+      vocabFormatEl.value = s.format;
+      syncPicked("vocabFormat");
+    }
+    if (s.sort) {
+      vocabSortEl.value = s.sort;
+      syncPicked("vocabSort");
+    }
+    vocabTitleEl.value = s.title || "";
+    vocabDedupEl.checked = !!s.dedup;
+    vocabAnswerChk.checked = !!s.answer;
+    applyVocabAnswer();
+    buildVocab();
+  },
+};
+
+/* ══════════════════════════ 저장/불러오기 배선 ══════════════════════════
+   각 탭이 위에서 TAB_SAVE[탭]에 자신의 getPayload/applyPayload를 등록해 뒀다.
+   여기서는 그 등록을 그대로 이용해 "저장" 버튼 → 제목 입력 모달 → POST, 그리고
+   "내 저장함" → 목록 조회 → 불러오기/삭제만 배선한다. 탭마다 다른 로직은 몰라도 된다. */
+
+const TAB_LABELS = {
+  analyze: "📖 지문 분석",
+  mcq: "📝 객관식 문제",
+  saq: "✍️ 주관식 문제",
+  workbook: "📚 워크북",
+  vocab: "📒 단어장",
+};
+// 저장 제목 기본값 — 기존 인쇄 파일명 규칙을 재사용하고, 밑줄만 보기 좋게 공백으로 바꾼다
+const SAVE_TITLE_SUGGEST = {
+  analyze: () => passageBasedName("지문분석"),
+  mcq: () => passageBasedName("객관식문제"),
+  saq: () => passageBasedName("주관식문제"),
+  workbook: () => titledName("워크북", "wbTitle"),
+  vocab: () => titledName("단어장", "vocabTitle"),
+};
+
+const saveDialogEl = $("saveDialog");
+const saveTitleInputEl = $("saveTitleInput");
+const saveDialogErrorEl = $("saveDialogError");
+const saveDialogCancelBtn = $("saveDialogCancel");
+const saveDialogConfirmBtn = $("saveDialogConfirm");
+const savedListModalEl = $("savedListModal");
+const savedListBodyEl = $("savedListBody");
+const savedListCloseBtn = $("savedListClose");
+
+let pendingSaveTab = null;
+
+function openSaveDialog(tab) {
+  pendingSaveTab = tab;
+  saveDialogErrorEl.textContent = "";
+  if (!isLoggedIn) {
+    saveDialogErrorEl.textContent = "저장하려면 먼저 구글 로그인을 해주세요.";
+    saveTitleInputEl.value = "";
+    saveDialogConfirmBtn.disabled = true;
+  } else {
+    saveDialogConfirmBtn.disabled = false;
+    const suggest = SAVE_TITLE_SUGGEST[tab];
+    saveTitleInputEl.value = (suggest ? suggest() : "").replace(/_/g, " ");
+  }
+  saveDialogEl.hidden = false;
+  saveTitleInputEl.focus();
+}
+function closeSaveDialog() {
+  saveDialogEl.hidden = true;
+  pendingSaveTab = null;
+}
+saveDialogCancelBtn.addEventListener("click", closeSaveDialog);
+saveDialogEl.addEventListener("click", (e) => {
+  if (e.target === saveDialogEl) closeSaveDialog();
+});
+
+saveDialogConfirmBtn.addEventListener("click", async () => {
+  const tab = pendingSaveTab;
+  if (!tab || !TAB_SAVE[tab]) return;
+  const title = saveTitleInputEl.value.trim() || "제목 없음";
+  saveDialogErrorEl.textContent = "";
+  saveDialogConfirmBtn.disabled = true;
+  try {
+    const payload = TAB_SAVE[tab].getPayload();
+    await postJson("/api/saved", { tab, title, payload }, "저장에 실패했습니다.");
+    closeSaveDialog();
+  } catch (err) {
+    saveDialogErrorEl.textContent = err.message || "저장에 실패했습니다.";
+  } finally {
+    saveDialogConfirmBtn.disabled = false;
+  }
+});
+
+Object.keys(TAB_SAVE).forEach((tab) => {
+  const entry = TAB_SAVE[tab];
+  if (entry && entry.saveBtn) entry.saveBtn.addEventListener("click", () => openSaveDialog(tab));
+});
+
+function savedItemRowHtml(item) {
+  const label = TAB_LABELS[item.tab] || item.tab;
+  const date = item.updated_at ? new Date(item.updated_at).toLocaleString("ko-KR") : "";
+  return `
+    <div class="saved-list-item" data-id="${esc(item.id)}">
+      <span class="saved-list-tag">${esc(label)}</span>
+      <div class="saved-list-info">
+        <div class="saved-list-title">${esc(item.title || "제목 없음")}</div>
+        <div class="saved-list-date">${esc(date)}</div>
+      </div>
+      <div class="saved-list-actions">
+        <button type="button" class="btn ghost small saved-list-load">불러오기</button>
+        <button type="button" class="btn ghost small danger saved-list-delete">삭제</button>
+      </div>
+    </div>`;
+}
+
+async function openSavedList() {
+  savedListModalEl.hidden = false;
+  savedListBodyEl.innerHTML = `<p class="saved-list-empty">불러오는 중…</p>`;
+  try {
+    const data = await getJson("/api/saved", "저장 목록을 불러오지 못했습니다.");
+    const items = data.items || [];
+    savedListBodyEl.innerHTML = items.length
+      ? items.map(savedItemRowHtml).join("")
+      : `<p class="saved-list-empty">아직 저장한 자료가 없습니다.</p>`;
+  } catch (err) {
+    savedListBodyEl.innerHTML = `<p class="saved-list-empty">${esc(err.message || "저장 목록을 불러오지 못했습니다.")}</p>`;
+  }
+}
+
+savedListBodyEl.addEventListener("click", async (e) => {
+  const row = e.target.closest(".saved-list-item");
+  if (!row) return;
+  const id = row.dataset.id;
+
+  if (e.target.closest(".saved-list-load")) {
+    try {
+      const item = await getJson(`/api/saved/${encodeURIComponent(id)}`, "불러오기에 실패했습니다.");
+      const tab = item.tab;
+      if (!TAB_SAVE[tab]) return;
+      savedListModalEl.hidden = true;
+      const tabBtn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+      if (tabBtn) tabBtn.click();
+      TAB_SAVE[tab].applyPayload(item.payload || {});
+    } catch (err) {
+      alert(err.message || "불러오기에 실패했습니다.");
+    }
+    return;
+  }
+
+  if (e.target.closest(".saved-list-delete")) {
+    if (!confirm("이 저장 항목을 삭제하시겠습니까?\n되돌릴 수 없습니다.")) return;
+    try {
+      await postJson("/api/saved/delete", { id }, "삭제에 실패했습니다.");
+      row.remove();
+      if (!savedListBodyEl.querySelector(".saved-list-item")) {
+        savedListBodyEl.innerHTML = `<p class="saved-list-empty">아직 저장한 자료가 없습니다.</p>`;
+      }
+    } catch (err) {
+      alert(err.message || "삭제에 실패했습니다.");
+    }
+  }
+});
+
+myLibraryBtn.addEventListener("click", openSavedList);
+savedListCloseBtn.addEventListener("click", () => { savedListModalEl.hidden = true; });
+savedListModalEl.addEventListener("click", (e) => {
+  if (e.target === savedListModalEl) savedListModalEl.hidden = true;
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!saveDialogEl.hidden) closeSaveDialog();
+  if (!savedListModalEl.hidden) savedListModalEl.hidden = true;
+});

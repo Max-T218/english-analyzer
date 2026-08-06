@@ -128,7 +128,27 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 .key-bar{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
 
 .key-bar-ok{font-size:13px; font-weight:600; color:var(--ink-soft);}
-@media print{ .gate, .key-bar{display:none !important;} }
+@media print{ .gate, .key-bar, .account-bar{display:none !important;} }
+
+/* ── 저장/불러오기 계정 바 ── */
+.account-bar{margin-top:10px; padding-top:10px; border-top:1px dashed var(--line);}
+.account-state{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+.account-state[hidden]{display:none;}
+.account-name{font-size:13px; font-weight:600; color:var(--ink-soft);}
+
+/* ── 저장 목록 (내 저장함 모달) ── */
+.saved-list{max-height:min(50vh, 420px); overflow:auto; margin:4px 0 0;}
+.saved-list-empty{color:var(--ink-soft); font-size:13.5px; padding:10px 0;}
+.saved-list-item{
+  display:flex; align-items:center; gap:10px; padding:10px 4px;
+  border-bottom:1px solid var(--line);
+}
+.saved-list-item:last-child{border-bottom:none;}
+.saved-list-tag{font-size:12px; padding:2px 7px; border-radius:6px; background:var(--line-soft); color:var(--ink-soft); white-space:nowrap;}
+.saved-list-info{flex:1 1 auto; min-width:0;}
+.saved-list-title{font-size:14px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.saved-list-date{font-size:12px; color:var(--ink-soft);}
+.saved-list-actions{display:flex; gap:6px; flex-shrink:0;}
 
 /* 모든 탭이 공유하는 지문 패널 */
 .passage-panel{border-color:var(--accent); border-width:1px; transition:background .12s, box-shadow .12s;}
