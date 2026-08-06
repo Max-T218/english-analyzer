@@ -1,0 +1,19 @@
+# 파이썬 캐시
+__pycache__/
+*.py[cod]
+
+# 구글 드라이브 동기화 임시 폴더
+.tmp.drivedownload/
+.tmp.driveupload/
+
+# 로컬 도구 설정
+.claude/
+
+# 환경 변수 (API 키가 들어갈 수 있음)
+.env
+.env.*
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
