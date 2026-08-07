@@ -1845,38 +1845,46 @@ function setupQuizTab({ prefix, types, footer }) {
       `<span class="type-name">${esc(t.id)}</span></label>` +
       `<div class="type-count" title="${esc(typeMaxNote(t.id))}">` +
       `<button type="button" class="type-step" data-step="-1" aria-label="${esc(t.id)} 문항 수 줄이기">−</button>` +
-      `<span class="type-n" aria-live="polite">1</span>` +
+      `<span class="type-n" aria-live="polite" data-n="1"></span>` +
       `<button type="button" class="type-step" data-step="1" aria-label="${esc(t.id)} 문항 수 늘리기">+</button>` +
       `</div>`;
     chip.querySelector(".type-n").dataset.max = max;
     gridEl.appendChild(chip);
   });
 
-  // 유형별 문항 수. 체크를 껐다 켜도 값이 남도록 칩에 담아 두고 여기서 읽는다
-  // (실수로 껐을 때 다시 세팅하게 만들지 않기 위해).
+  /* 유형별 문항 수. 값은 data-n에 두고 화면 글자는 syncTypeChips가 그린다 —
+     체크가 꺼진 유형은 숫자를 비워 둔다. 만들지 않을 유형에 숫자가 남아 있으면
+     무엇을 몇 개 만드는지 헷갈리기 때문. 체크를 켜면 언제나 1부터 시작한다. */
   const chipOf = (id) => gridEl.querySelector(`.type-chip[data-id="${CSS.escape(id)}"]`);
   const countOf = (id) => {
     const el = chipOf(id);
-    return el ? Number(el.querySelector(".type-n").textContent) || 1 : 1;
+    return el ? Math.max(1, Number(el.querySelector(".type-n").dataset.n) || 1) : 1;
   };
+  function setCount(chip, n) {
+    const nEl = chip.querySelector(".type-n");
+    const max = Number(nEl.dataset.max) || 1;
+    nEl.dataset.n = Math.min(max, Math.max(1, n));
+  }
   // 체크한 유형을 화면 순서대로 [{id, count}]로 —— 요청·가격 계산이 모두 이 값을 쓴다
   const pickedItems = () =>
     [...gridEl.querySelectorAll(".type-chip")]
       .filter((c) => c.querySelector("input").checked)
       .map((c) => ({ id: c.dataset.id, count: countOf(c.dataset.id) }));
 
-  // 스테퍼 — 라벨 밖이라 체크 상태를 건드리지 않는다. 체크가 꺼져 있으면 켜 준다
-  // (개수를 조절한다는 건 그 유형을 쓰겠다는 뜻이므로).
+  // 스테퍼 — 라벨 밖이라 체크 상태를 건드리지 않는다.
+  // 체크가 꺼진 유형에서 +를 누르는 것은 '이 유형을 쓰겠다'는 뜻이므로, 켜고 1부터 시작한다.
   gridEl.addEventListener("click", (e) => {
     const step = e.target.closest(".type-step");
     if (!step) return;
     const chip = step.closest(".type-chip");
-    const nEl = chip.querySelector(".type-n");
-    const max = Number(nEl.dataset.max) || 1;
-    const next = Math.min(max, Math.max(1, Number(nEl.textContent) + Number(step.dataset.step)));
-    nEl.textContent = next;
     const box = chip.querySelector("input");
-    if (!box.checked && next > 1) box.checked = true;
+    if (!box.checked) {
+      if (Number(step.dataset.step) < 0) return; // 꺼진 유형에서 −는 할 일이 없다
+      box.checked = true;
+      setCount(chip, 1);
+    } else {
+      setCount(chip, countOf(chip.dataset.id) + Number(step.dataset.step));
+    }
     syncAll();
     syncTypeChips();
   });
@@ -1892,14 +1900,18 @@ function setupQuizTab({ prefix, types, footer }) {
     gridEl.querySelectorAll(".type-chip").forEach((chip) => {
       const on = chip.querySelector("input").checked;
       chip.classList.toggle("picked", on);
-      // 체크가 꺼진 유형은 개수를 흐리게 — 값은 남겨 두고 조작만 막지 않는다
-      // (스테퍼를 누르면 그 유형을 켜 주므로 비활성화하지 않는다).
       chip.querySelector(".type-count").classList.toggle("off", !on);
-      // 상한에 닿으면 + 를, 1이면 − 를 잠근다
+      const nEl = chip.querySelector(".type-n");
+      // 체크가 꺼진 유형은 숫자를 비우고 값도 1로 되돌린다 — 만들지 않을 유형에 숫자가
+      // 남아 있으면 무엇을 몇 개 만드는지 헷갈린다. 켜는 순간 1부터 다시 센다.
+      if (!on) nEl.dataset.n = "1";
       const cur = countOf(chip.dataset.id);
-      const max = Number(chip.querySelector(".type-n").dataset.max) || 1;
-      chip.querySelector('.type-step[data-step="1"]').disabled = cur >= max;
-      chip.querySelector('.type-step[data-step="-1"]').disabled = cur <= 1;
+      const max = Number(nEl.dataset.max) || 1;
+      nEl.textContent = on ? String(cur) : "";
+      // 상한에 닿으면 + 를 잠근다. 꺼진 유형의 +는 '켜고 1로'라서 열어 둔다.
+      chip.querySelector('.type-step[data-step="1"]').disabled = on && cur >= max;
+      // − 는 켜져 있고 2 이상일 때만 쓸 일이 있다
+      chip.querySelector('.type-step[data-step="-1"]').disabled = !on || cur <= 1;
     });
     updateCostHint();
   }
@@ -2009,11 +2021,18 @@ function setupQuizTab({ prefix, types, footer }) {
   }
   allEl.addEventListener("change", () => {
     const check = allEl.checked;
-    gridEl.querySelectorAll("input").forEach((b) => (b.checked = check));
+    gridEl.querySelectorAll(".type-chip").forEach((chip) => {
+      chip.querySelector("input").checked = check;
+      if (check) setCount(chip, 1); // 켤 때는 언제나 1부터
+    });
     syncAll();
     syncTypeChips();
   });
-  gridEl.addEventListener("change", () => {
+  gridEl.addEventListener("change", (e) => {
+    // 체크를 켜면 문항 수는 1로 되돌린다 — 껐다 켰는데 예전 숫자가 살아 있으면
+    // 몇 개를 만드는지 화면만 보고 알 수 없다.
+    const chip = e.target.closest && e.target.closest(".type-chip");
+    if (chip && e.target.checked) setCount(chip, 1);
     syncAll();
     syncTypeChips();
   });
@@ -2245,9 +2264,9 @@ function setupQuizTab({ prefix, types, footer }) {
     gridEl.querySelectorAll(".type-chip").forEach((chip) => {
       const id = chip.dataset.id;
       chip.querySelector("input").checked = wanted.has(id);
-      const nEl = chip.querySelector(".type-n");
-      const max = Number(nEl.dataset.max) || 1;
-      nEl.textContent = Math.min(max, Math.max(1, Number(counts[id]) || 1));
+      // 불러오기는 저장해 둔 개수를 그대로 되살린다. checked를 직접 넣어 change가
+      // 안 나므로 위의 '켜면 1로' 규칙이 끼어들지 않는다.
+      setCount(chip, Number(counts[id]) || 1);
     });
     syncAll();
     syncTypeChips();
