@@ -1694,6 +1694,11 @@ Find and mark ALL notable grammar structures with a "g" ann. Scan for every occu
   · -ed가 명사를 뒤에서 꾸미면 → "과거분사". be동사 뒤면 수동태 또는 보어.
   · become/get/grow + p.p. → "수동 의미 보어"로 쓰고, 능동 수동태(be+p.p.)와 구분한다.
   · to부정사는 자리에 따라 "명사적/형용사적/부사적 용법"까지 적는다. 그냥 "to부정사"는 정보가 없다.
+  · **가주어 it은 진주어(to부정사구·that절)를 실제로 받을 때만** 그렇게 부른다.
+    <It is time to V>, <It is no use V-ing>처럼 뒤의 to부정사가 앞 명사(time 등)를
+    수식하는 구문의 it은 가주어가 아니라 **비인칭 주어**다. 시간·날씨·거리의 it도 마찬가지.
+    "it은 가주어인데 to부정사는 time을 수식한다"는 그 자체로 앞뒤가 안 맞는 설명이다
+    — 가주어라고 썼으면 무엇이 진주어인지 말할 수 있어야 한다.
   판단이 애매하면 그 자리에는 아예 ann을 달지 마라 — 틀린 용어를 다는 것보다 낫다.
 
 ### VOCABULARY COVERAGE (role "v"/"gv") — do NOT omit, 문장당 평균 1~3개 목표
@@ -1851,6 +1856,22 @@ _CLASS_ATTR_RE = re.compile(r'class\s*=\s*"([^"]*)"')
 _ANY_TAG_RE = re.compile(r"</?([a-zA-Z0-9]+)([^>]*)>")
 
 
+def _drop_dangling_tag(html):
+    """닫히지 않은 채 끝난 태그 조각을 잘라 낸다.
+
+    모델이 해설을 '<code class=' 처럼 태그 도중에 끝내는 일이 실제로 관찰됐다
+    (JSON 문자열 안의 따옴표를 잘못 이스케이프하면 그 자리에서 값이 끊긴다).
+    그대로 innerHTML에 넣으면 브라우저가 미완성 태그로 보고 뒤 내용을 삼켜
+    해설이 통째로 사라지거나 레이아웃이 깨진다. 마지막 '>' 뒤에 '<'가 남아 있으면
+    거기서부터 버린다."""
+    if not html or "<" not in html:
+        return html
+    cut = html.rfind("<")
+    if cut > html.rfind(">"):
+        return html[:cut].rstrip()
+    return html
+
+
 def sanitize_inline(html):
     """<div>, <table>, <script> 등 구조/위험 태그를 제거하고
     ruby·rt·span·sup·code·br 만 남긴다. 허용 태그는 class 속성만 유지."""
@@ -1867,7 +1888,7 @@ def sanitize_inline(html):
         cls = f' class="{cm.group(1)}"' if cm else ""
         return f"<{tag}{cls}>"
 
-    return _ANY_TAG_RE.sub(repl, html)
+    return _drop_dangling_tag(_ANY_TAG_RE.sub(repl, html))
 
 
 # 종결부호 뒤에 닫는 따옴표·괄호가 붙는 경우까지 문장 끝으로 인정한다.
@@ -2494,7 +2515,9 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
         if s.get("note"):
             s["note"] = _fix_known_typos(sanitize_inline(clean_note(s["note"])))
         if s.get("examNote"):
-            s["examNote"] = _fix_known_typos(s["examNote"])
+            # examNote는 원래 태그 없는 한국어라 sanitize까지 걸지 않지만,
+            # 태그 도중에 끝난 조각만은 잘라 낸다(note와 같은 이유).
+            s["examNote"] = _drop_dangling_tag(_fix_known_typos(s["examNote"]))
     # 요약 content 도 정화 (표/구조 태그가 레이아웃을 깨는 것을 서버에서도 차단)
     for item in result.get("summary", []):
         if isinstance(item, dict) and item.get("content"):
