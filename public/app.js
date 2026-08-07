@@ -1774,7 +1774,7 @@ function setupQuizTab({ prefix, types, footer }) {
     chip.dataset.id = t.id;
     chip.innerHTML =
       `<label><input type="checkbox" value="${esc(t.id)}" ${t.def ? "checked" : ""}>` +
-      `<span class="type-no"></span><span class="type-name">${esc(t.id)}</span></label>` +
+      `<span class="type-name">${esc(t.id)}</span></label>` +
       `<div class="type-count" title="${esc(typeMaxNote(t.id))}">` +
       `<button type="button" class="type-step" data-step="-1" aria-label="${esc(t.id)} 문항 수 줄이기">−</button>` +
       `<span class="type-n" aria-live="polite">1</span>` +
@@ -1810,32 +1810,19 @@ function setupQuizTab({ prefix, types, footer }) {
     const box = chip.querySelector("input");
     if (!box.checked && next > 1) box.checked = true;
     syncAll();
-    renumberTypes();
+    syncTypeChips();
   });
 
   // 출제 순서 — "type"(유형 순서대로) / "random"(무작위로 섞기)
   const isRandom = () => orderEl.value === "random";
 
-  // 체크한 유형에 출제 순서 번호를 매긴다.
-  // 문항을 서버에 보낼 때도 이 순서(DOM 순서)로 보내고, 서버가 같은 순서로 출제하도록
-  // 프롬프트에 명시했으므로 여기 번호 = 문제지에 나오는 순서.
-  // 2문항 이상이면 그 유형이 번호를 여러 개 차지하므로 '1–2.'처럼 범위로 찍는다.
-  // 무작위 모드에서는 번호가 실제 순서와 달라지므로 아예 붙이지 않는다.
-  function renumberTypes() {
-    const rnd = isRandom();
-    let n = 0;
+  // 칩의 선택 표시와 스테퍼 상태를 지금 값에 맞춘다.
+  // 출제 순서는 화면에 나열된 순서(DOM 순서) 그대로이고 서버에도 그 순서로 보내지만,
+  // 칩에 문항 번호까지 찍지는 않는다 — 유형 이름·개수와 함께 놓기엔 정보가 많고,
+  // 문항이 여러 개면 '1–2.'처럼 범위가 되어 정작 유형 이름이 잘렸다.
+  function syncTypeChips() {
     gridEl.querySelectorAll(".type-chip").forEach((chip) => {
       const on = chip.querySelector("input").checked;
-      const cnt = countOf(chip.dataset.id);
-      const noEl = chip.querySelector(".type-no");
-      if (on && !rnd) {
-        const from = n + 1;
-        n += cnt;
-        noEl.textContent = cnt > 1 ? `${from}–${n}.` : `${from}.`;
-      } else {
-        noEl.textContent = "";
-        if (on) n += cnt;
-      }
       chip.classList.toggle("picked", on);
       // 체크가 꺼진 유형은 개수를 흐리게 — 값은 남겨 두고 조작만 막지 않는다
       // (스테퍼를 누르면 그 유형을 켜 주므로 비활성화하지 않는다).
@@ -1889,13 +1876,13 @@ function setupQuizTab({ prefix, types, footer }) {
   function updateOrderHint() {
     orderHintEl.innerHTML = isRandom()
       ? "유형과 상관없이 문항이 <b>무작위로 섞여</b> 출제됩니다. 문제지 번호는 섞인 순서대로 1번부터 매겨집니다."
-      : "체크한 유형 앞의 <b>번호가 출제 순서</b>입니다. 문제지도 이 순서대로 만들어집니다.";
+      : "위 <b>유형 칸에 놓인 순서대로</b> 출제됩니다. 문제지도 이 순서대로 만들어집니다.";
   }
 
   orderEl.value = localStorage.getItem(ORDER_STORE) === "random" ? "random" : "type";
   orderEl.addEventListener("change", () => {
     localStorage.setItem(ORDER_STORE, orderEl.value);
-    renumberTypes();
+    syncTypeChips();
     updateOrderHint();
   });
   updateOrderHint();
@@ -1956,14 +1943,14 @@ function setupQuizTab({ prefix, types, footer }) {
     const check = allEl.checked;
     gridEl.querySelectorAll("input").forEach((b) => (b.checked = check));
     syncAll();
-    renumberTypes();
+    syncTypeChips();
   });
   gridEl.addEventListener("change", () => {
     syncAll();
-    renumberTypes();
+    syncTypeChips();
   });
   syncAll();
-  renumberTypes();
+  syncTypeChips();
 
   async function generate() {
     errorEl.textContent = "";
@@ -2189,7 +2176,7 @@ function setupQuizTab({ prefix, types, footer }) {
       nEl.textContent = Math.min(max, Math.max(1, Number(counts[id]) || 1));
     });
     syncAll();
-    renumberTypes();
+    syncTypeChips();
     if (settings.order) {
       orderEl.value = settings.order;
       updateOrderHint();
