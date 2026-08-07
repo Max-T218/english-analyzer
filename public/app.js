@@ -349,7 +349,8 @@ function costConfirmed(krw, label) {
 //   applyPayload(payload): 불러온 값으로 화면을 되살림
 const TAB_SAVE = {};
 const accountNameEl = $("accountName");
-const myLibraryBtn = $("myLibraryBtn");
+const passageLibraryBtn = $("passageLibraryBtn");
+const materialLibraryBtn = $("materialLibraryBtn");
 const logoutBtn = $("logoutBtn");
 
 let isLoggedIn = false; // 저장/불러오기 버튼들이 이 값으로 로그인 여부를 판단한다
@@ -957,6 +958,20 @@ clearPassagesBtn.addEventListener("click", () => {
     passageMgr.clearAll();
   }
 });
+
+/* 입력한 지문만 따로 저장한다 — 제작 결과물과는 별개의 저장 종류.
+   아직 아무것도 만들지 않았어도(분석·문제 실행 전에도) 타이핑한 지문을 넣어 둘 수 있게
+   해서, 다음에 와서 불러온 뒤 원하는 탭을 돌리면 되도록 한다. 다른 탭 저장과 같은
+   TAB_SAVE 레지스트리에 얹으므로 저장 모달·목록·삭제 배선은 그대로 재사용된다. */
+TAB_SAVE.passage = {
+  saveBtn: $("passageSaveBtn"),
+  canSave: () => (passageMgr.getJobs().length ? "" : "저장할 지문이 없습니다. 지문을 먼저 입력해 주세요."),
+  getPayload: () => ({ passages: passageMgr.getJobs() }),
+  applyPayload: (payload) => {
+    passageMgr.setJobs(payload.passages || []);
+    passageListEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  },
+};
 
 /* ══════════════ 사진에서 지문 가져오기 (OCR) ══════════════
    Gemini가 멀티모달이라 지금 쓰는 API 키·엔드포인트를 그대로 쓴다 (별도 OCR 서비스 없음).
@@ -3171,14 +3186,18 @@ TAB_SAVE.vocab = {
    "내 저장함" → 목록 조회 → 불러오기/삭제만 배선한다. 탭마다 다른 로직은 몰라도 된다. */
 
 const TAB_LABELS = {
+  passage: "📄 지문",
   analyze: "📖 지문 분석",
   mcq: "📝 객관식 문제",
   saq: "✍️ 주관식 문제",
   workbook: "📚 워크북",
   vocab: "📒 단어장",
 };
+// 저장 종류 — "지문"만 따로 두고 나머지(제작 결과물)는 한 묶음으로 본다
+const PASSAGE_TAB = "passage";
 // 저장 제목 기본값 — 기존 인쇄 파일명 규칙을 재사용하고, 밑줄만 보기 좋게 공백으로 바꾼다
 const SAVE_TITLE_SUGGEST = {
+  passage: () => passageBasedName("지문"),
   analyze: () => passageBasedName("지문분석"),
   mcq: () => passageBasedName("객관식문제"),
   saq: () => passageBasedName("주관식문제"),
@@ -3187,12 +3206,16 @@ const SAVE_TITLE_SUGGEST = {
 };
 
 const saveDialogEl = $("saveDialog");
+const saveDialogTitleEl = $("saveDialogTitle");
+const saveDialogLeadEl = $("saveDialogLead");
 const saveTitleInputEl = $("saveTitleInput");
 const saveDialogErrorEl = $("saveDialogError");
 const saveDialogCancelBtn = $("saveDialogCancel");
 const saveDialogConfirmBtn = $("saveDialogConfirm");
 const savedListModalEl = $("savedListModal");
 const savedListBodyEl = $("savedListBody");
+const savedListTitleEl = $("savedListTitle");
+const savedListLeadEl = $("savedListLead");
 const savedListCloseBtn = $("savedListClose");
 
 let pendingSaveTab = null;
@@ -3200,8 +3223,18 @@ let pendingSaveTab = null;
 function openSaveDialog(tab) {
   pendingSaveTab = tab;
   saveDialogErrorEl.textContent = "";
+  saveDialogTitleEl.textContent = tab === PASSAGE_TAB ? "💾 지문 저장" : "💾 제작 자료 저장";
+  // 지문 저장은 입력칸만 담으므로, 무엇이 저장되는지 문구로 분명히 해 둔다
+  saveDialogLeadEl.textContent = tab === PASSAGE_TAB
+    ? "지금 입력칸에 있는 지문만 저장합니다. 나중에 \"📄 지문 저장함\"에서 그대로 되불러올 수 있습니다."
+    : "지문과 만든 결과를 함께 저장합니다. 나중에 \"📦 제작 자료 저장함\"에서 이 제목으로 다시 찾을 수 있습니다.";
+  const blocked = TAB_SAVE[tab] && TAB_SAVE[tab].canSave ? TAB_SAVE[tab].canSave() : "";
   if (!isLoggedIn) {
     saveDialogErrorEl.textContent = "저장하려면 먼저 구글 로그인을 해주세요.";
+    saveTitleInputEl.value = "";
+    saveDialogConfirmBtn.disabled = true;
+  } else if (blocked) {
+    saveDialogErrorEl.textContent = blocked;
     saveTitleInputEl.value = "";
     saveDialogConfirmBtn.disabled = true;
   } else {
@@ -3260,16 +3293,49 @@ function savedItemRowHtml(item) {
     </div>`;
 }
 
-async function openSavedList() {
+/* 저장함은 "지문"과 "제작 자료" 둘로 나눠 연다 — 저장은 한 컬렉션에 들어가지만,
+   찾을 때는 무엇을 찾는지가 이미 정해져 있어서(지문을 다시 쓰려는 것 / 만든 자료를
+   다시 뽑으려는 것) 섞어 보여 주는 것보다 따로 여는 편이 헤매지 않는다. */
+const LIBRARY = {
+  passage: {
+    title: "📄 지문 저장함",
+    lead: "저장해 둔 지문입니다. 불러오면 지문 입력칸에 그대로 되돌아옵니다.",
+    empty: "아직 저장한 지문이 없습니다. 지문을 입력한 뒤 “💾 지문 저장”을 눌러 보세요.",
+    match: (item) => item.tab === PASSAGE_TAB,
+  },
+  material: {
+    title: "📦 제작 자료 저장함",
+    lead: "저장해 둔 분석본·문제·워크북·단어장입니다. 불러오면 지문·설정과 결과가 함께 되돌아와 다시 인쇄하거나 수정할 수 있습니다.",
+    empty: "아직 저장한 제작 자료가 없습니다. 자료를 만든 뒤 각 탭의 “💾 저장”을 눌러 보세요.",
+    match: (item) => item.tab !== PASSAGE_TAB,
+  },
+};
+
+// 목록은 열 때마다 통째로 받아 두고, 어느 저장함인지는 화면에서만 걸러 낸다
+let savedItemsCache = [];
+let openLibrary = "passage";
+
+function renderSavedList() {
+  const lib = LIBRARY[openLibrary];
+  const items = savedItemsCache.filter(lib.match);
+  savedListBodyEl.innerHTML = items.length
+    ? items.map(savedItemRowHtml).join("")
+    : `<p class="saved-list-empty">${esc(lib.empty)}</p>`;
+}
+
+async function openSavedList(kind) {
+  openLibrary = LIBRARY[kind] ? kind : "passage";
+  const lib = LIBRARY[openLibrary];
+  savedListTitleEl.textContent = lib.title;
+  savedListLeadEl.textContent = lib.lead;
   savedListModalEl.hidden = false;
   savedListBodyEl.innerHTML = `<p class="saved-list-empty">불러오는 중…</p>`;
   try {
     const data = await getJson("/api/saved", "저장 목록을 불러오지 못했습니다.");
-    const items = data.items || [];
-    savedListBodyEl.innerHTML = items.length
-      ? items.map(savedItemRowHtml).join("")
-      : `<p class="saved-list-empty">아직 저장한 자료가 없습니다.</p>`;
+    savedItemsCache = data.items || [];
+    renderSavedList();
   } catch (err) {
+    savedItemsCache = [];
     savedListBodyEl.innerHTML = `<p class="saved-list-empty">${esc(err.message || "저장 목록을 불러오지 못했습니다.")}</p>`;
   }
 }
@@ -3298,17 +3364,16 @@ savedListBodyEl.addEventListener("click", async (e) => {
     if (!confirm("이 저장 항목을 삭제하시겠습니까?\n되돌릴 수 없습니다.")) return;
     try {
       await postJson("/api/saved/delete", { id }, "삭제에 실패했습니다.");
-      row.remove();
-      if (!savedListBodyEl.querySelector(".saved-list-item")) {
-        savedListBodyEl.innerHTML = `<p class="saved-list-empty">아직 저장한 자료가 없습니다.</p>`;
-      }
+      savedItemsCache = savedItemsCache.filter((it) => it.id !== id);
+      renderSavedList();
     } catch (err) {
       alert(err.message || "삭제에 실패했습니다.");
     }
   }
 });
 
-myLibraryBtn.addEventListener("click", openSavedList);
+passageLibraryBtn.addEventListener("click", () => openSavedList("passage"));
+materialLibraryBtn.addEventListener("click", () => openSavedList("material"));
 savedListCloseBtn.addEventListener("click", () => { savedListModalEl.hidden = true; });
 savedListModalEl.addEventListener("click", (e) => {
   if (e.target === savedListModalEl) savedListModalEl.hidden = true;

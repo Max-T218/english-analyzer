@@ -160,7 +160,8 @@
     <div class="account-bar" id="accountBar">
       <div id="accountLoggedIn" class="account-state">
         <span class="account-name" id="accountName"></span>
-        <button type="button" class="btn ghost small" id="myLibraryBtn">📂 내 저장함</button>
+        <button type="button" class="btn ghost small" id="passageLibraryBtn">📄 지문 저장함</button>
+        <button type="button" class="btn ghost small" id="materialLibraryBtn">📦 제작 자료 저장함</button>
         <button type="button" class="btn small" id="openRechargeBtn">💳 충전</button>
         <button type="button" class="btn ghost small" id="logoutBtn">로그아웃</button>
         <button type="button" class="btn ghost small danger" id="deleteAccountBtn">회원 탈퇴</button>
@@ -202,6 +203,7 @@
     <div class="passage-add-row">
       <button type="button" class="btn ghost small" id="addPassageBtn">＋ 지문 추가</button>
       <button type="button" class="btn ghost small" id="ocrBtn">📷 사진에서 가져오기</button>
+      <button type="button" class="btn ghost small" id="passageSaveBtn">💾 지문 저장</button>
       <button type="button" class="btn ghost small danger" id="clearPassagesBtn">🗑️ 지문 전체 지우기</button>
       <span class="passage-max-note" id="passageMaxNote" role="status" aria-live="polite"></span>
     </div>
@@ -480,7 +482,7 @@
 <div class="print-guide" id="saveDialog" hidden>
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="saveDialogTitle">
     <h3 id="saveDialogTitle">💾 저장</h3>
-    <p class="print-guide-lead">나중에 "내 저장함"에서 이 제목으로 다시 찾을 수 있습니다.</p>
+    <p class="print-guide-lead" id="saveDialogLead">나중에 저장함에서 이 제목으로 다시 찾을 수 있습니다.</p>
     <div class="field">
       <label for="saveTitleInput">제목</label>
       <input type="text" id="saveTitleInput" placeholder="예: 3월 모의고사 1번 지문 분석">
@@ -493,11 +495,11 @@
   </div>
 </div>
 
-<!-- 내 저장함 -->
+<!-- 저장함 (지문 / 제작 자료 — 어느 쪽으로 열렸는지에 따라 제목·설명·목록이 바뀐다) -->
 <div class="print-guide" id="savedListModal" hidden>
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="savedListTitle">
-    <h3 id="savedListTitle">📂 내 저장함</h3>
-    <p class="print-guide-lead">불러오면 지문과 결과가 그대로 되돌아와 다시 인쇄하거나 수정할 수 있습니다.</p>
+    <h3 id="savedListTitle">📄 지문 저장함</h3>
+    <p class="print-guide-lead" id="savedListLead"></p>
     <div id="savedListBody" class="saved-list"></div>
     <div class="print-guide-actions">
       <button type="button" class="btn ghost" id="savedListClose">닫기</button>
