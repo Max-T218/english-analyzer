@@ -2128,6 +2128,113 @@ def unmarked_conjunctions(result, limit=10):
     return out
 
 
+# 보라(gv) 루비의 rt로 쓰면 안 되는 '문법 범주 이름'.
+# 보라색이라는 것 자체가 어법+어휘를 뜻하므로 범주 이름을 또 적으면 학생이 얻는 정보가 0이다.
+# 여기 있는 말"만"으로 이루어진 rt는 뜻이 아니라 분류라, 기계적으로 걸러 되돌려 보낸다.
+_GV_CATEGORY_ONLY = {
+    "숙어", "관용구", "관용어", "관용표현", "관용 표현", "전치사구", "구동사",
+    "상관표현", "상관 표현", "상관접속사", "명사구", "동사구", "형용사구", "부사구",
+    "분사구", "고정표현", "고정 표현", "표현", "보어 구문", "숙어 표현", "이디엄",
+}
+
+# 같은 단어를 두고 왼쪽 루비와 오른쪽 해설이 서로 다르게 부르면 모순인 용어 묶음.
+# 한 묶음 안의 용어는 동시에 참일 수 없다 — 하나가 맞으면 나머지는 틀린 설명이다.
+_CONFUSABLE_TERMS = (
+    {"동명사", "현재분사"},
+    {"가주어", "비인칭 주어", "지시대명사"},
+    {"과거분사", "과거시제", "수동태"},
+    {"주격 관계대명사", "목적격 관계대명사", "소유격 관계대명사", "관계부사"},
+    {"관계대명사", "명사절 접속사", "부사절 접속사", "동격 접속사"},
+    {"명사적 용법", "형용사적 용법", "부사적 용법"},
+)
+
+
+def ruby_term_problems(result, limit=10):
+    """루비(rt)가 규칙을 어긴 자리를 찾는다 — 지금은 보라(gv)만 본다.
+
+    사용자가 가장 먼저 지적한 오류가 'give up the ghost → 관용구'처럼 뜻 대신 분류를
+    적는 것이었다. 프롬프트로도 막지만 규칙은 확률이라, 확실히 판정되는 두 가지
+    (범주 이름만 적음 / 한 단어에 gv)는 서버가 직접 세어 되돌려 보낸다."""
+    out = []
+    for s in result.get("sentences", []) or []:
+        if not isinstance(s, dict):
+            continue
+        no = s.get("no")
+        for c in s.get("chunks", []) or []:
+            if not isinstance(c, dict):
+                continue
+            for a in c.get("anns", []) or []:
+                if not isinstance(a, dict):
+                    continue
+                if (a.get("role") or "").strip() != "gv":
+                    continue
+                t = str(a.get("t") or "").strip()
+                rt = str(a.get("rt") or "").strip()
+                if rt in _GV_CATEGORY_ONLY:
+                    out.append(
+                        f'{no}번 문장 "{t}" → 설명이 "{rt}"입니다. '
+                        f"분류 이름 말고 이 문맥에서의 우리말 뜻을 적으세요."
+                    )
+                elif len(t.split()) < 2:
+                    out.append(
+                        f'{no}번 문장 "{t}"는 한 단어인데 보라(gv)로 표시했습니다. '
+                        f'뜻을 보여 주려면 "v", 문법이면 "g"로 바꾸세요.'
+                    )
+                if len(out) >= limit:
+                    return out
+    return out
+
+
+def term_conflicts(result, limit=10):
+    """같은 단어를 왼쪽 루비와 오른쪽 해설이 다르게 부르는 자리를 찾는다.
+
+    화면이 둘을 나란히 붙여 보여 주므로, 한 단어를 왼쪽에서 "현재분사",
+    오른쪽에서 "동명사"라고 하면 학생은 어느 쪽이 맞는지 알 수 없다.
+
+    오판(불필요한 재요청)을 피하려고 조건을 좁게 잡는다 — 해설이 그 단어를 실제로
+    언급하고, 같은 묶음의 다른 용어를 쓰면서, 루비가 쓴 용어는 한 번도 쓰지 않은
+    경우만 모순으로 본다. 한 문장에 동명사와 현재분사가 둘 다 있어 해설이 양쪽을
+    모두 설명하는 경우는 걸러진다."""
+    out = []
+    for s in result.get("sentences", []) or []:
+        if not isinstance(s, dict):
+            continue
+        no = s.get("no")
+        note = _TAG_STRIP_RE.sub("", str(s.get("note") or "")) + " " + \
+               _TAG_STRIP_RE.sub("", str(s.get("examNote") or ""))
+        note = note.strip()
+        if not note:
+            continue
+        for c in s.get("chunks", []) or []:
+            if not isinstance(c, dict):
+                continue
+            for a in c.get("anns", []) or []:
+                if not isinstance(a, dict):
+                    continue
+                if (a.get("role") or "").strip() not in ("g", "gv", "tg"):
+                    continue
+                t = str(a.get("t") or "").strip()
+                rt = str(a.get("rt") or "").strip()
+                if not t or not rt or t not in note:
+                    continue  # 해설이 그 단어를 언급하지 않으면 대조할 수 없다
+                for group in _CONFUSABLE_TERMS:
+                    mine = [x for x in group if x in rt]
+                    if len(mine) != 1:
+                        continue
+                    if mine[0] in note:
+                        continue  # 해설도 같은 용어를 쓴다 — 모순 아님
+                    others = [x for x in group if x != mine[0] and x in note]
+                    if not others:
+                        continue
+                    out.append(
+                        f'{no}번 문장 "{t}" — 루비는 "{mine[0]}", '
+                        f'해설은 "{others[0]}"이라고 합니다. 둘 중 맞는 쪽으로 통일하세요.'
+                    )
+                    if len(out) >= limit:
+                        return out
+    return out
+
+
 def broken_parallel_numbers(result, limit=10):
     """병렬 번호가 1부터 이어지지 않는 문장을 찾는다.
 
@@ -2186,8 +2293,23 @@ def english_incomplete(result, passage):
     return dropped or got < src * 0.6
 
 
+def _analysis_regressed(retry, current, passage):
+    """재요청 결과가 기존보다 나빠졌는지 본다.
+
+    한 가지를 고쳐 오라고 다시 부르면 모델이 엉뚱하게 다른 것을 잃고 오는 일이 있다
+    (문장이 줄거나, 영어가 빠지거나, 이미 잘 달려 있던 접속사·번호 표시를 지우거나).
+    그런 결과는 채택하지 않고 기존 것을 유지한다."""
+    return (
+        len(retry.get("sentences") or []) < len(current.get("sentences") or [])
+        or len(retry.get("_conjMiss") or []) > len(current.get("_conjMiss") or [])
+        or len(retry.get("_numBroken") or []) > len(current.get("_numBroken") or [])
+        or english_incomplete(retry, passage)
+    )
+
+
 def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=None,
-                      english_fix=False, conj_hint=None, num_hint=None):
+                      english_fix=False, conj_hint=None, num_hint=None,
+                      ruby_hint=None, conflict_hint=None):
     lines = []
     if mode == "student":
         lines.append("대상: 학생 자기주도 학습용. 해설은 이해하기 쉽게 쓰되 정확하게.")
@@ -2225,6 +2347,21 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
             "붙어 있는 번호와 conj 표시를 모두 지우세요."
         )
         for h in num_hint:
+            lines.append("  · " + h)
+    if ruby_hint:
+        lines.append(
+            "⚠️ 아래 루비(rt)가 규칙을 어겼습니다. 해당 ann만 고치고 나머지는 그대로 두세요."
+        )
+        for h in ruby_hint:
+            lines.append("  · " + h)
+    if conflict_hint:
+        lines.append(
+            "⚠️ 아래는 같은 단어를 왼쪽 루비와 오른쪽 해설이 서로 다르게 부르고 있습니다. "
+            "화면이 둘을 나란히 보여 주므로 학생이 어느 쪽이 맞는지 알 수 없습니다. "
+            "문장에서의 역할로 다시 판정해 맞는 용어 하나로 통일하세요 — 해설 문장을 "
+            "적당히 바꾸는 것이 아니라, 틀린 쪽(대개 루비)을 고쳐야 합니다."
+        )
+        for h in conflict_hint:
             lines.append("  · " + h)
     if english_fix:
         lines.append(
@@ -2456,7 +2593,8 @@ _ANALYZE_TRUNC_MSG = (
 
 
 def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, complete_hint=None,
-                english_fix=False, conj_hint=None, num_hint=None):
+                english_fix=False, conj_hint=None, num_hint=None,
+                ruby_hint=None, conflict_hint=None):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -2482,7 +2620,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
                 "role": "user",
                 "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior,
                                                      complete_hint, english_fix, conj_hint,
-                                                     num_hint)}],
+                                                     num_hint, ruby_hint, conflict_hint)}],
             }
         ],
         "generationConfig": {
@@ -2497,6 +2635,9 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
     # 결과는 비공개 키로 얹어 두고, 핸들러가 재요청 판단에 쓴 뒤 응답 전에 지운다.
     missed = unmarked_conjunctions(result)
     broken_nums = broken_parallel_numbers(result)
+    # 루비 규칙 위반·좌우 용어 모순도 조립 '전'에 검사한다(아래 루프가 anns를 버린다)
+    ruby_bad = ruby_term_problems(result)
+    conflicts = term_conflicts(result)
     # AI 마크업 정화 + 한국어 루비 제거 (레이아웃 붕괴/오류 방어)
     for s in result.get("sentences", []):
         if not isinstance(s, dict):
@@ -2524,6 +2665,8 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
             item["content"] = _fix_known_typos(sanitize_inline(item["content"]))
     result["_conjMiss"] = missed
     result["_numBroken"] = broken_nums
+    result["_rubyBad"] = ruby_bad
+    result["_conflicts"] = conflicts
     return result
 
 
@@ -3672,8 +3815,37 @@ class Handler(BaseHTTPRequestHandler):
                 if not better:
                     break
                 result = retry
+            # 루비 설명 방어 — 보라(gv)에 뜻 대신 분류 이름을 적은 자리를 고쳐 오게 한다.
+            for _ in range(2):
+                bad = result.get("_rubyBad") or []
+                if not bad or _over_budget(t0):
+                    break
+                retry = call_gemini(
+                    passage, target_grammar, mode, api_key, model, ruby_hint=bad
+                )
+                if _analysis_regressed(retry, result, passage):
+                    break
+                if len(retry.get("_rubyBad") or []) >= len(bad):
+                    break
+                result = retry
+            # 좌우 용어 모순 방어 — 같은 단어를 왼쪽 루비와 오른쪽 해설이 다르게 부르는 것.
+            # 루비를 고친 뒤에 검사한다(위 재요청이 rt를 바꾸므로).
+            for _ in range(2):
+                bad = result.get("_conflicts") or []
+                if not bad or _over_budget(t0):
+                    break
+                retry = call_gemini(
+                    passage, target_grammar, mode, api_key, model, conflict_hint=bad
+                )
+                if _analysis_regressed(retry, result, passage):
+                    break
+                if len(retry.get("_conflicts") or []) >= len(bad):
+                    break
+                result = retry
             result.pop("_conjMiss", None)
             result.pop("_numBroken", None)
+            result.pop("_rubyBad", None)
+            result.pop("_conflicts", None)
         except ProUnavailable as e:
             self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
             return
