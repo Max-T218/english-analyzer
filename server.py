@@ -1584,12 +1584,27 @@ words. So for English your only job is: give the plain text, then list what to m
       · 문법 포인트(관계사·접속사·조동사·전치사, 시제/태/준동사 형태: were cultivated, to grow) → "g".
         rt = 문법 기능만. 예: that→"명사절 접속사".
       · 내용어(명사·동사·형용사·부사)의 뜻이 포인트 → "v". rt = 짧은 뜻. 예: cultivate→"재배하다".
-      · 한 단어는 절대 "gv"(보라) 금지.
+      · 기능어라도 **뜻을 몰라서 해석이 막히는** 부류(despite, notwithstanding, whereas,
+        albeit, thereby, hence …)는 "g"가 아니라 "v"로 주고 rt에 뜻을 적는다.
+        이런 단어에 "전치사"라고만 적으면 학생이 얻는 게 없다.
+        예: despite→"~에도 불구하고", whereas→"~인 반면".
+      · 한 단어는 절대 "gv"(보라) 금지 — 뜻을 보여 주고 싶으면 위처럼 "v"를 쓴다.
   ▸ 2단어 이상 고정표현(숙어·구동사·전치사구 관용구·상관표현: regardless of, in order to,
-    be likely to, so ~ that …) → "gv". rt = 문법 기능만(뜻 금지). 예: regardless of→"전치사구".
+    be likely to, so ~ that …) → "gv". **rt = 우리말 뜻**. 예: regardless of→"~에 상관없이".
+    ⚠️ 여기서 문법 범주 이름("숙어", "관용구", "전치사구", "구동사", "상관표현")을 rt로 쓰지 마라.
+    보라색이라는 것 자체가 이미 '어법+어휘'임을 알려 주므로, 범주 이름을 또 적으면 학생이
+    얻는 정보가 0이다. 학생이 정말 모르는 것은 그 덩어리의 **뜻**이다.
+      WRONG  give up the ghost→"관용구"      RIGHT  give up the ghost→"낡은 관념을 버리다"
+      WRONG  be responsible for→"숙어"        RIGHT  be responsible for→"~을 담당하다"
+      WRONG  unique to→"전치사구"             RIGHT  unique to→"~에만 있는"
+    뜻이 문맥에 따라 달라지는 표현은 **이 문맥에서의 뜻**을 쓴다.
+    구조 자체가 포인트라 뜻을 우리말로 옮기기 어려운 틀(so ~ that, not only A but B,
+    the 비교급 ~ the 비교급)만 예외로 "너무 ~해서 …하다"처럼 **뜻이 담긴 해석 틀**을 쓴다.
+    이때도 "상관접속사"처럼 범주 이름만 적는 것은 금지.
   ▸ 연결어(However, Therefore, In addition …) → "hl". rt = 역접/대조/첨가 등 기능.
   ▸ 목표 어법이 지정되면 그 구조만 "tg"(주황), 나머지 어법은 "g".
-  HARD LIMITS: "g" rt=문법용어만(뜻 0%) / "v" rt=뜻만 / "gv"=2단어 이상만 / rt는 해석 아님·아주 짧게.
+  HARD LIMITS: "g" rt=문법용어만(뜻 0%) / "v" rt=뜻만 / "gv" rt=뜻(문법 범주 이름 금지)
+              / "gv"는 2단어 이상만 / rt는 문장 해석이 아니라 아주 짧게.
   WRONG rt <재배하다(과거 수동태)>  →  RIGHT rt <과거 수동태>.
 
 ### 등위·상관접속사 병렬 (MANDATORY — 가장 자주 빠뜨리는 항목, 기계 검사로 대조된다)
@@ -1602,6 +1617,19 @@ For EACH such conjunction:
   · 그 접속사가 잇는 **모든** 병렬 요소에 번호 ann: num = 1, 2, 3…
       {t:"influence", role:"num", rt:"", num:1}, {t:"invest", role:"num", rt:"", num:2}
     (그 요소가 색도 받을 만하면 role을 "num" 대신 "g"/"v"/"gv"로 주고 num만 붙인다.)
+  · ⚠️ 번호는 **반드시 1부터** 시작해 빠짐없이 이어져야 한다. 2를 붙였는데 1이 없으면
+    화면에 위첨자 ²만 덩그러니 뜨고 짝이 보이지 않아, 학생은 무엇과 무엇이 병렬인지 알 수 없다.
+    가장 흔한 실수: **앞쪽 요소에 이미 색 ann이 있어서** 거기에 num 붙이는 걸 잊는 것.
+      WRONG  {t:"flexible", role:"v", rt:"유연한", num:0} … {t:"the ability", role:"num", num:2}
+      RIGHT  {t:"flexible", role:"v", rt:"유연한", num:1} … {t:"the ability", role:"num", num:2}
+    같은 요소에 ann을 두 개 만들지 말고, 이미 있는 ann의 num만 0에서 1로 바꿔라.
+    서버가 1 없이 2가 있는 문장을 기계로 찾아 되돌려 보낸다.
+  · **앞말을 바꿔 말하는 or**(= '즉/다시 말해', 동격)도 두 명사구를 잇는 등위접속사이므로
+    conj와 병렬 번호를 똑같이 붙인다. 번호가 '무엇과 무엇이 같은 말인지' 짚어 주기 때문이다.
+    대신 kor은 '또는'이 아니라 **'즉'**으로 옮기고, note에서도 '동격'이라고 설명해
+    왼쪽 번호와 오른쪽 해설이 같은 것을 가리키게 하라.
+      예: <flexible behavior, or the ability to change their behavior>
+          → ¹flexible behavior, or ²the ability… / kor "즉 …" / note "…와 동격인 명사구"
   · 상관접속사는 **두 짝을 모두** "conj"로 표시한다:
       both…and / either…or / neither…nor / not only…but (also) / not…but /
       between A and B — "both"와 "and" 각각에 conj ann.
@@ -1633,6 +1661,18 @@ Find and mark ALL notable grammar structures with a "g" ann. Scan for every occu
   - 특수구문: 가정법, 도치, it~that 강조, 가주어/진주어, 부분/전체 부정, 비교급·최상급, 생략
   - 목적격보어(원형/현재분사/과거분사), 사역·지각동사
 분명한 문법 포인트는 빠뜨리지 말고 표시하라. 매칭할 `t`는 반드시 `text` 안의 실제 문자열이어야 한다.
+
+▸ 용어를 틀리기 쉬운 자리 — 아래는 **문장에서의 역할**로 판정한다. 모양(-ing/-ed)만 보고
+  고르지 마라. 여기서 틀리면 왼쪽 루비와 오른쪽 해설이 서로 다른 말을 하게 된다.
+  · -ing가 **주어·목적어·보어·전치사의 목적어** 자리 → "동명사". 앞에 의미상 주어(명사·소유격)가
+    붙어 있어도 동명사다. 예: <scientists attributing consciousness to any animal is …>
+    에서 attributing은 **동명사**(주어), 현재분사가 아니다.
+  · -ing가 **명사를 꾸미거나** 분사구문을 이끌면 → "현재분사".
+  · spend/waste + 시간·돈 + -ing 의 -ing → "동명사" (spend ~ (in) -ing 구문).
+  · -ed가 명사를 뒤에서 꾸미면 → "과거분사". be동사 뒤면 수동태 또는 보어.
+  · become/get/grow + p.p. → "수동 의미 보어"로 쓰고, 능동 수동태(be+p.p.)와 구분한다.
+  · to부정사는 자리에 따라 "명사적/형용사적/부사적 용법"까지 적는다. 그냥 "to부정사"는 정보가 없다.
+  판단이 애매하면 그 자리에는 아예 ann을 달지 마라 — 틀린 용어를 다는 것보다 낫다.
 
 ### VOCABULARY COVERAGE (role "v"/"gv") — do NOT omit, 문장당 평균 1~3개 목표
 Grammar만큼 어휘도 빠짐없이 스캔하라. 한 문장을 다 훑었는데 표시된 "g"를 빼고 아무 "v"/"gv"도
@@ -1677,6 +1717,12 @@ Only return JSON after all six checks.
   * 목표 어법:         <code class="tg">to find</code>       (orange)
   Choose the class consistently with the role you gave that word in `anns`.
 - The `note` may use <code> only. NEVER put <ruby>, <rt>, or over-tag markup in `note`.
+- ⚠️ 왼쪽 루비와 **같은 말**을 해야 한다. 화면은 왼쪽(청크의 rt)과 오른쪽(note·examNote)을
+  나란히 붙여 보여 주므로, 같은 단어를 왼쪽에서 "현재분사", 오른쪽에서 "동명사구 주어"라고
+  하면 학생은 어느 쪽이 맞는지 알 수 없다.
+  note·examNote에서 어떤 단어의 문법 용어를 쓸 때는, 그 단어의 `anns` rt에 쓴 용어를
+  **그대로** 쓴다. 쓰다가 rt가 틀렸다는 걸 알아차렸으면 note를 고치지 말고 **rt를 고쳐라**.
+  note에 등장하지 않는 문법 포인트를 새로 지어내지도 말 것.
 
 ## summary (주제 & 흐름 요약)
 - First item: {label:"주제", content: an English topic sentence, then <br>, then the
@@ -2032,6 +2078,45 @@ def unmarked_conjunctions(result, limit=10):
     return out
 
 
+def broken_parallel_numbers(result, limit=10):
+    """병렬 번호가 1부터 이어지지 않는 문장을 찾는다.
+
+    2는 붙였는데 1이 없으면 화면에 위첨자 ²만 뜨고 짝이 없어, 무엇과 무엇이 병렬인지
+    보이지 않는다. 앞쪽 요소에 이미 색 주석이 있을 때 거기에 num 붙이는 걸 잊어서
+    생기는 실수라, 성실성에 맡기지 않고 기계로 한 번 더 센다.
+    번호는 한 문장 안에서 1,2,3…으로 매겨지므로 문장 단위로 검사한다."""
+    out = []
+    for s in result.get("sentences", []) or []:
+        if not isinstance(s, dict):
+            continue
+        nums = set()
+        for c in s.get("chunks", []) or []:
+            if not isinstance(c, dict):
+                continue
+            for a in c.get("anns", []) or []:
+                if not isinstance(a, dict):
+                    continue
+                n = a.get("num")
+                if isinstance(n, (int, float)) and int(n) > 0:
+                    nums.add(int(n))
+        if not nums:
+            continue
+        missing = [n for n in range(1, max(nums) + 1) if n not in nums]
+        if missing:
+            eng = " ".join(
+                _TAG_STRIP_RE.sub("", (c.get("text") or ""))
+                for c in (s.get("chunks") or [])
+                if isinstance(c, dict)
+            ).strip()
+            out.append(
+                f'{s.get("no")}번 문장: 병렬 번호 {sorted(nums)}만 있고 '
+                f'{missing}이(가) 빠졌습니다 — "{eng[:90]}"'
+            )
+            if len(out) >= limit:
+                break
+    return out
+
+
 def english_incomplete(result, passage):
     """영어 원문 누락 감지: 한글은 있는데 영어가 빈 chunk가 있거나,
     전체 영어량이 원문의 60% 미만이면 True (재요청 필요)."""
@@ -2052,7 +2137,7 @@ def english_incomplete(result, passage):
 
 
 def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=None,
-                      english_fix=False, conj_hint=None):
+                      english_fix=False, conj_hint=None, num_hint=None):
     lines = []
     if mode == "student":
         lines.append("대상: 학생 자기주도 학습용. 해설은 이해하기 쉽게 쓰되 정확하게.")
@@ -2079,6 +2164,17 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
             "이미 올바른 표시는 절대 지우지 마세요."
         )
         for h in conj_hint:
+            lines.append("  · " + h)
+    if num_hint:
+        # 1 없이 2만 붙은 자리 — 화면에 짝 없는 위첨자가 뜨는 것을 막는다
+        lines.append(
+            "⚠️ 아래 문장은 병렬 번호가 1부터 이어지지 않습니다. 빠진 번호를 채우세요. "
+            "대개 앞쪽 병렬 요소에 이미 색 ann이 있어서 거기에 num을 붙이는 걸 잊은 경우입니다 "
+            "— 새 ann을 만들지 말고 그 ann의 num을 0에서 1로 바꾸세요. "
+            "다시 보니 병렬이 아니었다면(앞말을 바꿔 말하는 동격의 or 등) "
+            "붙어 있는 번호와 conj 표시를 모두 지우세요."
+        )
+        for h in num_hint:
             lines.append("  · " + h)
     if english_fix:
         lines.append(
@@ -2310,7 +2406,7 @@ _ANALYZE_TRUNC_MSG = (
 
 
 def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, complete_hint=None,
-                english_fix=False, conj_hint=None):
+                english_fix=False, conj_hint=None, num_hint=None):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -2335,7 +2431,8 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
             {
                 "role": "user",
                 "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior,
-                                                     complete_hint, english_fix, conj_hint)}],
+                                                     complete_hint, english_fix, conj_hint,
+                                                     num_hint)}],
             }
         ],
         "generationConfig": {
@@ -2349,6 +2446,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
     # 등위접속사 누락 검사는 조립 '전'에 해야 한다 — 아래 루프가 anns를 버리기 때문.
     # 결과는 비공개 키로 얹어 두고, 핸들러가 재요청 판단에 쓴 뒤 응답 전에 지운다.
     missed = unmarked_conjunctions(result)
+    broken_nums = broken_parallel_numbers(result)
     # AI 마크업 정화 + 한국어 루비 제거 (레이아웃 붕괴/오류 방어)
     for s in result.get("sentences", []):
         if not isinstance(s, dict):
@@ -2373,6 +2471,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
         if isinstance(item, dict) and item.get("content"):
             item["content"] = _fix_known_typos(sanitize_inline(item["content"]))
     result["_conjMiss"] = missed
+    result["_numBroken"] = broken_nums
     return result
 
 
@@ -3502,7 +3601,27 @@ class Handler(BaseHTTPRequestHandler):
                 if not better:
                     break
                 result = retry
+            # 병렬 번호 방어 — 1 없이 2만 붙어 짝 없는 위첨자가 뜨는 것을 막는다.
+            # 접속사 보강이 끝난 뒤에 검사한다(위 재요청이 번호를 새로 붙이기도 하므로).
+            for _ in range(2):
+                broken = result.get("_numBroken") or []
+                if not broken or _over_budget(t0):
+                    break
+                retry = call_gemini(
+                    passage, target_grammar, mode, api_key, model, num_hint=broken
+                )
+                better = (
+                    len(retry.get("_numBroken") or []) < len(broken)
+                    # 번호를 고쳤더라도 문장·영어·접속사 표시를 잃었으면 채택하지 않는다
+                    and len(retry.get("sentences") or []) >= len(result.get("sentences") or [])
+                    and len(retry.get("_conjMiss") or []) <= len(result.get("_conjMiss") or [])
+                    and not english_incomplete(retry, passage)
+                )
+                if not better:
+                    break
+                result = retry
             result.pop("_conjMiss", None)
+            result.pop("_numBroken", None)
         except ProUnavailable as e:
             self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
             return
