@@ -235,10 +235,46 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
   background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:8px 10px; cursor:pointer;
 }
 .quiz-type-grid input{accent-color:var(--accent); cursor:pointer;}
-/* 출제 순서 번호 — 체크한 유형에만 붙고, 체크를 바꾸면 즉시 다시 매겨진다 */
+
+/* ── 유형 칩 (출제 유형 + 문항 수 스테퍼) ──
+   스테퍼가 <label> 밖에 있어야 +/− 를 눌러도 체크박스가 토글되지 않는다. 그래서 칩이
+   테두리·배경을 맡고, 안쪽 label은 배경 없이 체크박스와 이름만 감싼다. */
+/* 칸 너비는 최악의 경우로 잡는다 — 이름이 가장 긴 '내용불일치(영)'에 범위 번호
+   '46–50.'과 스테퍼까지 한 줄에 들어가야 한다. 이름이 잘리면 내용일치(영)/(한)을
+   구분하지 못하게 되므로, 밀도보다 이름이 다 보이는 쪽을 택했다. */
+#mcqTypeGrid, #saqTypeGrid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));}
+.type-chip{
+  display:flex; align-items:center; gap:5px;
+  background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:4px 6px 4px 9px;
+}
+.type-chip > label{
+  flex:1 1 auto; min-width:0; background:none; border:none; padding:0; border-radius:0;
+}
+.type-chip .type-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.type-chip.picked{border-color:var(--accent); background:var(--accent-soft);}
+/* 문항 수 스테퍼 */
+.type-count{display:flex; align-items:center; gap:1px; flex-shrink:0;}
+.type-count.off{opacity:.4;} /* 체크가 꺼진 유형 — 값은 남기고 흐리게만 */
+.type-step{
+  width:20px; height:20px; padding:0; line-height:1; cursor:pointer;
+  border:1px solid var(--line); border-radius:5px; background:var(--paper);
+  color:var(--ink-soft); font-size:13px; font-weight:800;
+}
+.type-step:hover:not(:disabled){border-color:var(--accent); color:var(--accent);}
+.type-step:disabled{opacity:.3; cursor:not-allowed;}
+.type-n{
+  min-width:16px; text-align:center; font-size:13px; font-weight:800; color:var(--accent);
+  font-variant-numeric:tabular-nums;
+}
+/* 유형 선택 칸 아래 실시간 요약 (총 문항 수 · 예상 금액) */
+.cost-hint{margin-top:8px;}
+/* 출제 순서 번호 — 체크한 유형에만 붙고, 체크를 바꾸면 즉시 다시 매겨진다.
+   문항이 2개 이상인 유형은 '46–50.'처럼 범위로 찍히는데, nowrap이 없으면 en대시에서
+   줄이 바뀌어 칩 하나가 두 줄이 되고 그 줄 전체가 같이 높아진다. */
 .quiz-type-grid .type-no{
   font-size:12px; font-weight:800; color:var(--accent);
   min-width:15px; text-align:right; font-variant-numeric:tabular-nums;
+  white-space:nowrap; flex-shrink:0;
 }
 .quiz-type-grid .type-no:empty{display:none;}
 .quiz-type-grid label.picked{border-color:var(--accent); background:var(--accent-soft);}

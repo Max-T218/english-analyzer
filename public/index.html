@@ -269,6 +269,7 @@
             <label class="chk toggle-all"><input type="checkbox" id="mcqTypeAll"> 전체 선택 / 해제</label>
           </div>
           <div class="quiz-type-grid" id="mcqTypeGrid"></div>
+          <div class="hint cost-hint" id="mcqCostHint" role="status" aria-live="polite"></div>
 
           <label class="group-label">출제 순서</label>
           <div class="quiz-type-grid radio-grid">
@@ -293,7 +294,7 @@
                 title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
         <button class="btn ghost" id="mcqSaveBtn" style="display:none"
                 title="로그인한 계정에 이 문제 세트와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 저장</button>
-        <span class="hint">유형 1개당 1문항씩 만들어집니다. 순서·문장삽입이 섞이면 시간이 더 걸릴 수 있어요.</span>
+        <span class="hint">유형마다 <b>− +</b> 로 문항 수를 정할 수 있습니다. 순서·문장삽입이 섞이면 시간이 더 걸릴 수 있어요.</span>
       </div>
       <div class="error" id="mcqError"></div>
     </section>
@@ -316,6 +317,7 @@
             <label class="chk toggle-all"><input type="checkbox" id="saqTypeAll"> 전체 선택 / 해제</label>
           </div>
           <div class="quiz-type-grid" id="saqTypeGrid"></div>
+          <div class="hint cost-hint" id="saqCostHint" role="status" aria-live="polite"></div>
 
           <label class="group-label">출제 순서</label>
           <div class="quiz-type-grid radio-grid">
@@ -332,7 +334,7 @@
                 title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
         <button class="btn ghost" id="saqSaveBtn" style="display:none"
                 title="로그인한 계정에 이 문제 세트와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 저장</button>
-        <span class="hint">유형 1개당 1문항씩, 학생이 직접 쓰는 서술형·단답형 문제를 만듭니다.</span>
+        <span class="hint">유형마다 <b>− +</b> 로 문항 수를 정할 수 있습니다. 학생이 직접 쓰는 서술형·단답형 문제를 만듭니다.</span>
       </div>
       <div class="error" id="saqError"></div>
     </section>

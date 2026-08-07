@@ -1660,25 +1660,83 @@ const VARIATION_DESC = {
   heavy: "지문 전체에서 5개보다 많은 단어·표현을 바꿉니다.",
 };
 
-// 한 번의 호출에 넣을 최대 유형 수.
-// 유형마다 지문이 통째로 실려 나오므로 한 번에 12유형을 요청하면 출력이 커져
-// 배포 환경의 프록시 제한(약 100초)에 걸린다. 4개씩 끊어 여러 번 부르면
-// 호출당 시간이 짧아지고, 하나가 실패해도 그 4문항만 잃는다.
-const QUIZ_TYPES_PER_CALL = 4;
+/* 한 지문에서 유형별로 뽑을 수 있는 최대 문항 수.
+   server.py의 QUIZ_TYPE_MAX와 반드시 같은 값을 유지한다 — 여기서는 +버튼을 막는 데
+   쓰고, 서버는 화면을 우회한 요청을 같은 값으로 잘라낸다(가격이 개수에 걸린다). */
+const TYPE_MAX = {
+  // 객관식
+  주제: 5, 제목: 5, 요지: 5,
+  "내용일치(영)": 5, "내용일치(한)": 5, "내용불일치(영)": 5, "내용불일치(한)": 5,
+  빈칸: 6, 어휘: 6, 어법: 4,
+  순서: 2, 문장삽입: 2,
+  // 주관식
+  "OX진위(영)": 8, "OX진위(한)": 8,
+  서술형배열: 6, "어휘 선택형": 6,
+  "틀린 어휘 찾기": 5, "어법 선택형": 5, "틀린 어법 찾기": 3,
+};
+// +버튼이 막혔을 때 왜 막혔는지 알려 준다 — 유형마다 상한이 다른 이유가 다르다.
+const TYPE_MAX_REASON = {
+  순서: "지문의 문장 수에 묶여 있어",
+  문장삽입: "지문의 문장 수에 묶여 있어",
+  어법: "지문에 실제로 있는 문법 포인트 수 때문에",
+  "어법 선택형": "지문에 실제로 있는 문법 포인트 수 때문에",
+  "틀린 어법 찾기": "지문에 실제로 있는 문법 포인트 수 때문에",
+};
+function typeMaxNote(id) {
+  const max = TYPE_MAX[id] || 1;
+  const why = TYPE_MAX_REASON[id];
+  return why
+    ? `${why} ${max}문항까지만 만들 수 있습니다.`
+    : `이 유형은 ${max}문항까지 만들 수 있습니다.`;
+}
+
+// 한 번의 호출에 넣을 최대 '문항 수'.
+// 문항마다 지문이 통째로 실려 나오는 유형이 있어, 한 호출의 출력이 커지면 배포
+// 환경의 프록시 제한(약 100초)에 걸린다. 문항 수로 끊으면 유형을 몇 개 골랐든
+// 호출당 출력량이 비슷하게 유지되고, 하나가 실패해도 그 몇 문항만 잃는다.
+const QUIZ_QUESTIONS_PER_CALL = 6;
+
+// '문제 만들기' 한 번에 만들 수 있는 총 문항 수 상한 = 지문 수 × 변형 세트 수 × 문항 수.
+// 유형별 상한만으로는 이 폭발을 막지 못한다 — 객관식 최대는 지문 1개당 55문항이지만,
+// 지문 10개 × 변형 3세트면 1,650문항이 되어 실행 시간도 요금도 감당이 안 된다.
+// 지문 수는 이 탭 밖에서 바뀌므로 만들기를 누르는 시점에만 확인한다.
+const QUIZ_MAX_QUESTIONS_PER_RUN = 200;
 
 // 객관식 '지문변형형' — 정찰 가격도, 실제로 쓰는 모델(Pro)도 다른 유형들.
 // server.py의 MCQ_ONLY_TYPES 중 QUIZ_PLAIN_PASSAGE_TYPES에 없는 5개와 반드시 같아야 한다.
 const MCQ_TRANSFORM_TYPES = new Set(["빈칸", "어휘", "어법", "순서", "문장삽입"]);
 
-// 유형을 호출 묶음으로 나눈다 — 이때 '지문변형형'(Pro로 처리)과 나머지(Flash로 처리)를
-// 먼저 갈라서 각각 따로 4개씩 묶는다. 한 호출 안에 두 모델이 섞이면 서버가 어느
-// 모델로 부를지 정할 수 없으므로, 애초에 섞이지 않게 여기서 나눈다.
-function chunkTypes(types, size = QUIZ_TYPES_PER_CALL) {
-  const flashGroup = types.filter((t) => !MCQ_TRANSFORM_TYPES.has(t));
-  const proGroup = types.filter((t) => MCQ_TRANSFORM_TYPES.has(t));
+/* 유형을 호출 묶음으로 나눈다. 규칙 세 가지:
+   ① '지문변형형'(Pro로 처리)과 나머지(Flash로 처리)를 먼저 가른다 — 한 호출 안에 두
+      모델이 섞이면 서버가 어느 모델로 부를지 정할 수 없다.
+   ② 같은 유형은 절대 쪼개지 않는다 — 호출끼리는 서로 무엇을 만들었는지 모르므로,
+      한 유형의 문항이 두 호출로 갈리면 같은 문제가 중복으로 나온다.
+   ③ 그 안에서 문항 수 합계가 상한을 넘지 않게 묶는다. 단, 유형 하나가 이미 상한보다
+      크면(예: OX진위 8문항) ②가 우선이라 그 유형만으로 한 묶음을 만든다.
+   items = [{id, count}] 를 받아 같은 모양의 배열들로 돌려준다. */
+// 진행 표시·오류 메시지에 쓸 묶음 이름 — 2문항 이상인 유형만 개수를 덧붙인다
+function groupLabel(group) {
+  return group.map((it) => (it.count > 1 ? `${it.id} ${it.count}문항` : it.id)).join(", ");
+}
+
+function chunkTypes(items, size = QUIZ_QUESTIONS_PER_CALL) {
   const out = [];
-  for (let i = 0; i < flashGroup.length; i += size) out.push(flashGroup.slice(i, i + size));
-  for (let i = 0; i < proGroup.length; i += size) out.push(proGroup.slice(i, i + size));
+  const pack = (list) => {
+    let cur = [];
+    let n = 0;
+    for (const it of list) {
+      if (cur.length && n + it.count > size) {
+        out.push(cur);
+        cur = [];
+        n = 0;
+      }
+      cur.push(it);
+      n += it.count;
+    }
+    if (cur.length) out.push(cur);
+  };
+  pack(items.filter((it) => !MCQ_TRANSFORM_TYPES.has(it.id)));
+  pack(items.filter((it) => MCQ_TRANSFORM_TYPES.has(it.id)));
   return out;
 }
 
@@ -1704,14 +1762,55 @@ function setupQuizTab({ prefix, types, footer }) {
   const variationEl = checkGroup(prefix + "Variation");
   const variationHintEl = $(prefix + "VariationHint");
   const VARIATION_STORE = "gemini_" + prefix + "_variation";
+  const costHintEl = $(prefix + "CostHint");
 
-  // 유형 체크박스 생성
+  /* 유형 칩 생성 — 체크박스(선택)와 스테퍼(문항 수)를 형제로 둔다.
+     스테퍼를 <label> 안에 넣으면 +/− 를 누를 때마다 라벨이 체크박스를 토글해 버리므로,
+     라벨은 '체크박스 + 유형 이름'까지만 감싼다. */
   types.forEach((t) => {
-    const label = document.createElement("label");
-    label.innerHTML =
-      `<input type="checkbox" value="${esc(t.id)}" ${t.def ? "checked" : ""}>` +
-      `<span class="type-no"></span><span>${esc(t.id)}</span>`;
-    gridEl.appendChild(label);
+    const max = TYPE_MAX[t.id] || 1;
+    const chip = document.createElement("div");
+    chip.className = "type-chip";
+    chip.dataset.id = t.id;
+    chip.innerHTML =
+      `<label><input type="checkbox" value="${esc(t.id)}" ${t.def ? "checked" : ""}>` +
+      `<span class="type-no"></span><span class="type-name">${esc(t.id)}</span></label>` +
+      `<div class="type-count" title="${esc(typeMaxNote(t.id))}">` +
+      `<button type="button" class="type-step" data-step="-1" aria-label="${esc(t.id)} 문항 수 줄이기">−</button>` +
+      `<span class="type-n" aria-live="polite">1</span>` +
+      `<button type="button" class="type-step" data-step="1" aria-label="${esc(t.id)} 문항 수 늘리기">+</button>` +
+      `</div>`;
+    chip.querySelector(".type-n").dataset.max = max;
+    gridEl.appendChild(chip);
+  });
+
+  // 유형별 문항 수. 체크를 껐다 켜도 값이 남도록 칩에 담아 두고 여기서 읽는다
+  // (실수로 껐을 때 다시 세팅하게 만들지 않기 위해).
+  const chipOf = (id) => gridEl.querySelector(`.type-chip[data-id="${CSS.escape(id)}"]`);
+  const countOf = (id) => {
+    const el = chipOf(id);
+    return el ? Number(el.querySelector(".type-n").textContent) || 1 : 1;
+  };
+  // 체크한 유형을 화면 순서대로 [{id, count}]로 —— 요청·가격 계산이 모두 이 값을 쓴다
+  const pickedItems = () =>
+    [...gridEl.querySelectorAll(".type-chip")]
+      .filter((c) => c.querySelector("input").checked)
+      .map((c) => ({ id: c.dataset.id, count: countOf(c.dataset.id) }));
+
+  // 스테퍼 — 라벨 밖이라 체크 상태를 건드리지 않는다. 체크가 꺼져 있으면 켜 준다
+  // (개수를 조절한다는 건 그 유형을 쓰겠다는 뜻이므로).
+  gridEl.addEventListener("click", (e) => {
+    const step = e.target.closest(".type-step");
+    if (!step) return;
+    const chip = step.closest(".type-chip");
+    const nEl = chip.querySelector(".type-n");
+    const max = Number(nEl.dataset.max) || 1;
+    const next = Math.min(max, Math.max(1, Number(nEl.textContent) + Number(step.dataset.step)));
+    nEl.textContent = next;
+    const box = chip.querySelector("input");
+    if (!box.checked && next > 1) box.checked = true;
+    syncAll();
+    renumberTypes();
   });
 
   // 출제 순서 — "type"(유형 순서대로) / "random"(무작위로 섞기)
@@ -1720,15 +1819,71 @@ function setupQuizTab({ prefix, types, footer }) {
   // 체크한 유형에 출제 순서 번호를 매긴다.
   // 문항을 서버에 보낼 때도 이 순서(DOM 순서)로 보내고, 서버가 같은 순서로 출제하도록
   // 프롬프트에 명시했으므로 여기 번호 = 문제지에 나오는 순서.
+  // 2문항 이상이면 그 유형이 번호를 여러 개 차지하므로 '1–2.'처럼 범위로 찍는다.
   // 무작위 모드에서는 번호가 실제 순서와 달라지므로 아예 붙이지 않는다.
   function renumberTypes() {
     const rnd = isRandom();
     let n = 0;
-    gridEl.querySelectorAll("label").forEach((label) => {
-      const on = label.querySelector("input").checked;
-      label.querySelector(".type-no").textContent = on && !rnd ? `${++n}.` : "";
-      label.classList.toggle("picked", on);
+    gridEl.querySelectorAll(".type-chip").forEach((chip) => {
+      const on = chip.querySelector("input").checked;
+      const cnt = countOf(chip.dataset.id);
+      const noEl = chip.querySelector(".type-no");
+      if (on && !rnd) {
+        const from = n + 1;
+        n += cnt;
+        noEl.textContent = cnt > 1 ? `${from}–${n}.` : `${from}.`;
+      } else {
+        noEl.textContent = "";
+        if (on) n += cnt;
+      }
+      chip.classList.toggle("picked", on);
+      // 체크가 꺼진 유형은 개수를 흐리게 — 값은 남겨 두고 조작만 막지 않는다
+      // (스테퍼를 누르면 그 유형을 켜 주므로 비활성화하지 않는다).
+      chip.querySelector(".type-count").classList.toggle("off", !on);
+      // 상한에 닿으면 + 를, 1이면 − 를 잠근다
+      const cur = countOf(chip.dataset.id);
+      const max = Number(chip.querySelector(".type-n").dataset.max) || 1;
+      chip.querySelector('.type-step[data-step="1"]').disabled = cur >= max;
+      chip.querySelector('.type-step[data-step="-1"]').disabled = cur <= 1;
     });
+    updateCostHint();
+  }
+
+  /* 지문 1개 · 변형 1세트를 만드는 값. server.py의 _quiz_action_cost와 같은 식이다
+     — 유형 기본 단가 + 추가 문항 × PRICE_EXTRA_QUESTION_KRW.
+     실제 청구는 언제나 서버가 다시 계산하고, 여기 값은 미리 보여 주기 위한 것이다. */
+  function costPerSet(items) {
+    if (!PRICING) return 0;
+    const extra = PRICING.extraQuestion || 0;
+    return items.reduce((sum, it) => {
+      const base =
+        prefix === "mcq"
+          ? MCQ_TRANSFORM_TYPES.has(it.id)
+            ? PRICING.mcqTransform
+            : PRICING.mcqPlain
+          : PRICING.saq;
+      return sum + base + extra * (it.count - 1);
+    }, 0);
+  }
+
+  // 유형·개수·변형을 바꿀 때마다 총 문항 수와 예상 금액을 즉시 보여 준다.
+  // 지문 수는 이 탭 밖(공통 지문 패널)에서 바뀌므로 '지문 1개당'으로 표시하고,
+  // 지문 수까지 곱한 최종 금액은 만들기를 누를 때 확인창이 보여 준다.
+  function updateCostHint() {
+    if (!costHintEl) return;
+    const items = pickedItems();
+    if (!items.length) {
+      costHintEl.textContent = "";
+      return;
+    }
+    const total = items.reduce((s, it) => s + it.count, 0);
+    const sets = variationEl ? Math.max(1, variationEl.values.length) : 1;
+    const parts = [`선택 <b>${items.length}유형</b> · <b>${total}문항</b>`];
+    if (sets > 1) parts.push(`× 변형 ${sets}세트 = <b>${total * sets}문항</b>`);
+    if (PRICING) {
+      parts.push(`— 지문 1개당 <b>${(costPerSet(items) * sets).toLocaleString()}원</b>`);
+    }
+    costHintEl.innerHTML = parts.join(" ");
   }
 
   function updateOrderHint() {
@@ -1786,6 +1941,7 @@ function setupQuizTab({ prefix, types, footer }) {
     variationEl.addEventListener("change", () => {
       saveVariations();
       updateVariationHint();
+      updateCostHint(); // 세트 수가 바뀌면 총 문항 수·금액도 바뀐다
     });
   }
 
@@ -1796,11 +1952,6 @@ function setupQuizTab({ prefix, types, footer }) {
     allEl.checked = on === boxes.length;
     allEl.indeterminate = on > 0 && on < boxes.length;
   }
-  // 문항 수는 '체크한 유형 수'로 고정한다 — 유형 1개당 정확히 1문항.
-  // 같은 유형을 여러 문항 뽑으면 지문의 같은 자리를 두 번 묻게 되어 품질이 떨어지고,
-  // 더 필요할 때는 '지문 변형'을 하나 더 골라 세트를 늘리는 편이 낫다.
-  const typeCount = () => gridEl.querySelectorAll("input:checked").length;
-
   allEl.addEventListener("change", () => {
     const check = allEl.checked;
     gridEl.querySelectorAll("input").forEach((b) => (b.checked = check));
@@ -1821,26 +1972,40 @@ function setupQuizTab({ prefix, types, footer }) {
       errorEl.textContent = "문제를 만들 영어 지문을 입력하세요.";
       return;
     }
-    const picked = [...gridEl.querySelectorAll("input:checked")].map((i) => i.value);
+    const picked = pickedItems();
     if (!picked.length) {
       errorEl.textContent = "출제 유형을 하나 이상 선택하세요.";
       return;
     }
+    const perSetQuestions = picked.reduce((s, it) => s + it.count, 0);
     const vars = variationEl && !variationEl.values.length ? [] : variations();
     if (!vars.length) {
       errorEl.textContent = "지문 변형을 하나 이상 선택하세요.";
       return;
     }
+    // 지문 수까지 곱한 실제 총량을 여기서 확인한다 — 지문은 이 탭 밖에서 바뀌므로
+    // 유형 칸의 실시간 요약만으로는 잡히지 않는다.
+    const runQuestions = billableJobCount() * perSetQuestions * vars.length;
+    if (runQuestions > QUIZ_MAX_QUESTIONS_PER_RUN) {
+      errorEl.textContent =
+        `한 번에 ${QUIZ_MAX_QUESTIONS_PER_RUN}문항까지만 만들 수 있습니다 ` +
+        `(지금 지문 ${billableJobCount()}개 × ${perSetQuestions}문항` +
+        (vars.length > 1 ? ` × 변형 ${vars.length}세트` : "") +
+        ` = ${runQuestions}문항). 지문·유형·문항 수 중 하나를 줄여 주세요.`;
+      return;
+    }
     if (PRICING) {
-      // 유형마다 그대로형/변형형(또는 주관식 균일가)으로 단가가 갈리고, 지문변형
-      // 세트를 여러 개 고르면 세트 수만큼 문제 생성이 통째로 반복된다.
-      const perSet = picked.reduce((sum, t) => {
-        if (prefix === "mcq") return sum + (MCQ_TRANSFORM_TYPES.has(t) ? PRICING.mcqTransform : PRICING.mcqPlain);
-        return sum + PRICING.saq;
-      }, 0);
+      // 유형마다 단가가 갈리고 추가 문항은 따로 매겨진다(costPerSet). 지문변형 세트를
+      // 여러 개 고르면 세트 수만큼 문제 생성이 통째로 반복된다.
       const rewordSets = vars.filter((v) => v !== "verbatim").length;
-      const cost = billableJobCount() * (vars.length * perSet + rewordSets * PRICING.reword);
-      if (!costConfirmed(cost, `${docName}를 만듭니다.`)) return;
+      const cost =
+        billableJobCount() * (vars.length * costPerSet(picked) + rewordSets * PRICING.reword);
+      const label =
+        `${docName}를 만듭니다.\n` +
+        `지문 ${billableJobCount()}개 × ${perSetQuestions}문항` +
+        (vars.length > 1 ? ` × 변형 ${vars.length}세트` : "") +
+        ` = 총 ${billableJobCount() * perSetQuestions * vars.length}문항`;
+      if (!costConfirmed(cost, label)) return;
     }
 
     btn.disabled = true;
@@ -1926,15 +2091,14 @@ function setupQuizTab({ prefix, types, footer }) {
           step++;
           loadingTextEl.textContent =
             steps > 1
-              ? `${tag} 문제 만드는 중… (${step}/${steps}) — ${group.join(", ")}`
+              ? `${tag} 문제 만드는 중… (${step}/${steps}) — ${groupLabel(group)}`
               : "AI가 문제를 만들고 있습니다…";
           try {
             const data = await postJson(
               "/api/quiz",
               {
                 passage: source,
-                types: group,
-                count: group.length,   // 유형 1개당 1문항
+                types: group,   // [{id, count}] — 유형별 문항 수가 그대로 실린다
                 variation: "verbatim",
               },
               "문제 생성에 실패했습니다."
@@ -1965,7 +2129,7 @@ function setupQuizTab({ prefix, types, footer }) {
           showFooter();
         }
         failed.forEach((f) => {
-          append(buildErrorHtml(job, total, `${f.group.join(", ")} — ${f.msg}`, label, prefix));
+          append(buildErrorHtml(job, total, `${groupLabel(f.group)} — ${f.msg}`, label, prefix));
         });
         if (stopped && stopErr) {
           const left = steps - step;
@@ -2003,8 +2167,12 @@ function setupQuizTab({ prefix, types, footer }) {
   }
 
   function getQuizSettings() {
+    const items = pickedItems();
     return {
-      types: [...gridEl.querySelectorAll("input:checked")].map((i) => i.value),
+      // types는 예전 저장본과 같은 모양(유형 이름 배열)으로 계속 남긴다 —
+      // 개수는 counts에 따로 담아, 옛 저장본을 불러와도 그대로 동작하게 한다.
+      types: items.map((it) => it.id),
+      counts: Object.fromEntries(items.map((it) => [it.id, it.count])),
       order: orderEl.value,
       variation: variationEl ? variationEl.values : [],
     };
@@ -2012,7 +2180,14 @@ function setupQuizTab({ prefix, types, footer }) {
   function applyQuizSettings(settings) {
     if (!settings) return;
     const wanted = new Set(settings.types || []);
-    gridEl.querySelectorAll("input").forEach((b) => { b.checked = wanted.has(b.value); });
+    const counts = settings.counts || {}; // 옛 저장본에는 없다 → 전부 1문항
+    gridEl.querySelectorAll(".type-chip").forEach((chip) => {
+      const id = chip.dataset.id;
+      chip.querySelector("input").checked = wanted.has(id);
+      const nEl = chip.querySelector(".type-n");
+      const max = Number(nEl.dataset.max) || 1;
+      nEl.textContent = Math.min(max, Math.max(1, Number(counts[id]) || 1));
+    });
     syncAll();
     renumberTypes();
     if (settings.order) {

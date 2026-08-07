@@ -27,6 +27,7 @@ import traceback
 import urllib.request
 import urllib.error
 import urllib.parse
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -64,6 +65,10 @@ PRICE_MCQ_PLAIN_KRW = int(os.environ.get("PRICE_MCQ_PLAIN_KRW", "250"))    # 객
 PRICE_MCQ_TRANSFORM_KRW = int(os.environ.get("PRICE_MCQ_TRANSFORM_KRW", "250"))  # 객관식·지문변형, (지문×유형) 1개당
 PRICE_SAQ_KRW = int(os.environ.get("PRICE_SAQ_KRW", "200"))                # 주관식, (지문×유형) 1개당 (그대로형·가공형 구분 없음)
 PRICE_WORKBOOK_KRW = int(os.environ.get("PRICE_WORKBOOK_KRW", "200"))      # 워크북, 지문 1개당 (선택 단계 수와 무관)
+# 같은 유형에서 2문항째부터 추가되는 금액. 한 번의 호출에서 지문과 시스템 프롬프트는
+# 문항 수와 무관하게 한 번만 입력되므로(= 입력 토큰을 나눠 쓴다), 추가 문항은 출력
+# 비용만 든다. 그래서 첫 문항(유형 단가)보다 싸게 매긴다.
+PRICE_EXTRA_QUESTION_KRW = int(os.environ.get("PRICE_EXTRA_QUESTION_KRW", "100"))
 # 아직 가격이 정해지지 않은 기능 — 정해질 때까지 무료(0원)로 둔다. 로그인은 그대로 필요.
 PRICE_REWORD_KRW = int(os.environ.get("PRICE_REWORD_KRW", "0"))            # 지문 변형(문제 생성 전 재작성)
 PRICE_OCR_KRW = int(os.environ.get("PRICE_OCR_KRW", "0"))                  # 사진에서 지문 옮기기
@@ -77,15 +82,21 @@ MCQ_ONLY_TYPES = {
 }
 
 
-def _quiz_action_cost(types):
-    """/api/quiz 요청의 유형 목록으로 이번 호출의 정찰 가격(원)을 계산한다.
-    객관식 유형은 그대로형/지문변형형으로 갈리고, 주관식 유형은 전부 동일가다."""
+def _quiz_type_base_price(t):
+    """유형 1개의 기본 단가(첫 문항 값)."""
+    if t in MCQ_ONLY_TYPES:
+        return PRICE_MCQ_PLAIN_KRW if t in QUIZ_PLAIN_PASSAGE_TYPES else PRICE_MCQ_TRANSFORM_KRW
+    return PRICE_SAQ_KRW
+
+
+def _quiz_action_cost(items):
+    """/api/quiz 요청의 (유형, 문항수) 목록으로 이번 호출의 정찰 가격(원)을 계산한다.
+    유형마다 '기본 단가 + 추가문항 × PRICE_EXTRA_QUESTION_KRW'로 매긴다.
+    화면도 같은 식으로 예상 비용을 보여 주지만, 실제 청구는 언제나 여기서 다시 계산한
+    값을 쓴다 — 화면을 우회해 개수를 부풀린 요청에 그대로 과금되면 안 되기 때문이다."""
     total = 0
-    for t in types or []:
-        if t in MCQ_ONLY_TYPES:
-            total += PRICE_MCQ_PLAIN_KRW if t in QUIZ_PLAIN_PASSAGE_TYPES else PRICE_MCQ_TRANSFORM_KRW
-        else:
-            total += PRICE_SAQ_KRW
+    for t, n in items or ():
+        total += _quiz_type_base_price(t) + PRICE_EXTRA_QUESTION_KRW * max(0, n - 1)
     return total
 
 # --- 관리자 페이지(public/admin.html) — 회원 목록·토큰 조회/충전 --------------
@@ -524,6 +535,69 @@ QUIZ_PLAIN_PASSAGE_TYPES = {
     "OX진위(영)", "OX진위(한)",
 }
 
+# 한 지문에서 유형별로 뽑을 수 있는 최대 문항 수.
+# public/app.js의 TYPE_MAX와 반드시 같은 값을 유지한다(화면은 이 값으로 +버튼을 막고,
+# 서버는 화면을 우회한 요청을 여기서 잘라낸다 — 가격이 개수에 걸리므로 필수).
+#
+# 값이 유형마다 다른 이유:
+#  · 지문 재사용 유형(위 QUIZ_PLAIN_PASSAGE_TYPES)은 문항이 늘어도 출력이 거의 안 커져
+#    넉넉하다. 반대 유형은 문항마다 지문이 통째로 실려 프록시 제한(약 100초)에 걸린다.
+#  · 어법 계열은 지문에 '실제로 있는' 문법 포인트 수가 한계다. 그보다 많이 시키면
+#    틀리지 않은 형태를 틀렸다고 하는 정답 시비가 난다.
+#  · 순서·문장삽입은 지문의 문장 수에 물리적으로 묶여 모델을 바꿔도 늘지 않는다.
+QUIZ_TYPE_MAX = {
+    # 객관식
+    "주제": 5, "제목": 5, "요지": 5,
+    "내용일치(영)": 5, "내용일치(한)": 5, "내용불일치(영)": 5, "내용불일치(한)": 5,
+    "빈칸": 6, "어휘": 6, "어법": 4,
+    "순서": 2, "문장삽입": 2,
+    # 주관식 (전부 Flash로 처리되므로 어법 계열은 객관식보다 더 보수적으로 잡는다)
+    "OX진위(영)": 8, "OX진위(한)": 8,
+    "서술형배열": 6, "어휘 선택형": 6,
+    "틀린 어휘 찾기": 5, "어법 선택형": 5, "틀린 어법 찾기": 3,
+}
+# 한 번의 /api/quiz 호출에 넣을 수 있는 총 문항 수 상한.
+# 화면은 문항 수로 끊어 보내므로(app.js의 QUIZ_QUESTIONS_PER_CALL=6, 한 유형이 그보다
+# 크면 그 유형만 최대 8) 정상 요청은 8문항을 넘지 않는다. 여기 값은 화면을 우회해
+# 19유형을 상한까지 한 호출에 몰아넣는 요청(=96문항)을 막는 안전망이다 — 그런 호출은
+# 프록시 제한에 걸려 어차피 실패하면서 관리자 키의 토큰만 태운다.
+QUIZ_MAX_QUESTIONS_PER_CALL = int(os.environ.get("QUIZ_MAX_QUESTIONS_PER_CALL", "30"))
+
+
+def parse_quiz_items(raw):
+    """요청의 types를 [(유형, 문항수)] 로 정규화한다.
+
+    화면은 [{"id": "주제", "count": 2}, ...] 형태로 보낸다. 모르는 유형은 버리고,
+    개수는 1 이상 유형별 상한 이하로 자른다 — 화면에서도 막지만 화면을 우회한
+    요청이 그대로 통과하면 안 된다(가격이 개수에 걸린다).
+    같은 유형이 두 번 들어오면 뒤엣것을 무시한다."""
+    items = []
+    seen = set()
+    for it in raw or ():
+        if isinstance(it, dict):
+            tid, n = it.get("id"), it.get("count", 1)
+        else:  # 문자열만 온 경우 = 1문항으로 본다
+            tid, n = it, 1
+        if tid not in QUIZ_TYPE_LABELS or tid in seen:
+            continue
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            n = 1
+        seen.add(tid)
+        items.append((tid, max(1, min(n, QUIZ_TYPE_MAX.get(tid, 1)))))
+    # 호출 하나의 총 문항 수도 막는다 — 상한을 넘으면 넘는 지점에서 잘라낸다.
+    total = 0
+    capped = []
+    for tid, n in items:
+        if total + n > QUIZ_MAX_QUESTIONS_PER_CALL:
+            n = QUIZ_MAX_QUESTIONS_PER_CALL - total
+            if n <= 0:
+                break
+        capped.append((tid, n))
+        total += n
+    return capped
+
 
 def passage_to_html(passage):
     """지문 원문을 문항용 HTML로 바꾼다 — 모델이 만들어 주던 것과 같은 형태.
@@ -724,10 +798,14 @@ QUIZ_VARIATIONS = {
 }
 
 
-def build_quiz_user_prompt(passage, types, count, short_hint=None, explain_hint=None, variation="verbatim"):
+def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None, variation="verbatim"):
+    """items = [(유형, 문항수)] — 유형마다 몇 문항인지가 요청에 그대로 들어 있다."""
+    types = [t for t, _ in items]
+    count = sum(n for _, n in items)
     lines = [
         f"지문 변형 정도: {QUIZ_VARIATIONS.get(variation, QUIZ_VARIATIONS['verbatim'])}",
-        f"허용된 문제 유형: {', '.join(types)}",
+        "허용된 문제 유형과 유형별 문항 수: "
+        + ", ".join(f"{t} {n}문항" for t, n in items),
         f"총 문항 수: {count}개 (정확히 이 개수만큼 생성)",
     ]
     # 지문 재사용(passageHtml 생략)은 '원문 그대로'일 때만 켠다.
@@ -744,33 +822,28 @@ def build_quiz_user_prompt(passage, types, count, short_hint=None, explain_hint=
     lines += [
         # 화면의 유형 선택 칸에 '출제 순서' 번호를 보여 주므로, 그 순서와 실제
         # 출제 순서가 반드시 일치해야 한다.
-        "⚠️ 문항 순서: 위 '허용된 문제 유형'에 나열된 순서 그대로 questions 배열에 담으세요. "
+        "⚠️ 문항 순서: 위 목록에 나열된 유형 순서 그대로 questions 배열에 담으세요. "
         "같은 유형을 여러 문항 낼 때는 그 유형의 문항들을 연달아 배치하세요.",
+        "⚠️ 유형별 문항 수를 정확히 지키세요. 어느 유형도 빠뜨리거나 더 만들지 마세요.",
     ]
-    n = len(types)
-    if n == count:
-        lines.append("각 유형을 정확히 1문항씩, 위 목록의 모든 유형을 빠짐없이 출제하세요.")
-    elif count > n:
-        per, extra = divmod(count, n)
-        detail = f"각 유형을 최소 {per}문항씩"
-        if extra:
-            detail += f", 그중 {extra}개 유형은 {per + 1}문항씩"
+    if any(n > 1 for _, n in items):
+        # 같은 유형을 여러 문항 낼 때가 품질이 제일 잘 무너지는 지점이다 — 선지만
+        # 조금 바꾼 사실상 같은 문제가 나오기 쉬우므로 무엇을 다르게 해야 하는지
+        # 유형 성격별로 구체적으로 지시한다.
         lines.append(
-            detail + " 출제해 총 " + str(count) + "문항을 채우세요. "
-            "모든 유형이 최소 1문항은 나와야 하며, 같은 유형을 여러 번 낼 때는 "
-            "지문의 서로 다른 부분·다른 정답을 다루어 문항이 겹치지 않게 하세요."
-        )
-    else:
-        lines.append(
-            f"허용된 유형 중 {count}개를 골라 서로 다른 유형으로 1문항씩 출제하세요."
+            "⚠️ 같은 유형을 2문항 이상 낼 때는 서로 확실히 다른 문제여야 합니다. "
+            "정답의 근거가 되는 지문의 부분이 서로 달라야 하고, 정답 선지의 표현도 "
+            "매번 새로 쓰세요. 주제·제목·요지처럼 정답 내용이 하나로 정해지는 유형은 "
+            "정답을 다른 말로 바꿔 쓰고 오답 선지를 완전히 새로 구성하세요. "
+            "빈칸·어휘·어법은 지문의 서로 다른 위치를 고르세요. "
+            "내용일치·OX진위는 매번 다른 사실을 다루세요."
         )
     if short_hint is not None:
-        # 유형별 1문항 고정이므로, 몇 개가 모자랐는지보다 '어떤 유형이 빠졌는지'를
-        # 알려 주는 편이 재요청 한 번에 채워질 확률이 높다.
+        # 어떤 유형이 몇 문항 모자랐는지 짚어 주는 편이 재요청 한 번에 채워질 확률이 높다.
         if isinstance(short_hint, (list, tuple, set)) and short_hint:
             lines.append(
-                f"⚠️ 이전 시도는 {', '.join(short_hint)} 유형을 빠뜨렸습니다. "
-                f"이번에는 빠진 유형을 반드시 포함해 {count}문항을 끝까지 모두 생성하세요."
+                f"⚠️ 이전 시도는 {', '.join(short_hint)}이(가) 모자랐습니다. "
+                f"이번에는 유형별 문항 수를 지켜 {count}문항을 끝까지 모두 생성하세요."
             )
         else:
             lines.append(
@@ -828,8 +901,9 @@ def fix_underline_bounds(html):
     return html
 
 
-def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None,
+def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
                       explain_hint=None, variation="verbatim"):
+    """items = [(유형, 문항수)]. 개수 상한은 parse_quiz_items가 이미 적용해 둔다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -837,8 +911,7 @@ def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None,
             "관리자에게 문의하세요."
         )
     model = model if (model and _MODEL_RE.match(model)) else MODEL
-    types = [t for t in (types or []) if t in QUIZ_TYPE_LABELS] or ["주제", "제목", "요지"]
-    count = max(1, min(int(count or 5), 30))
+    items = list(items or ()) or [("주제", 1), ("제목", 1), ("요지", 1)]
     variation = variation if variation in QUIZ_VARIATIONS else "verbatim"
     # 화면에서 이미 막지만, 화면을 우회해도 서버가 최종 방어한다(다른 검증들과 같은 원칙).
     # '5개 이상 변형'은 지문 전체를 사실·순서·난이도는 그대로 두고 대량으로 바꿔 쓰는
@@ -854,7 +927,7 @@ def call_gemini_quiz(passage, types, count, api_key, model, short_hint=None,
         "contents": [
             {"role": "user", "parts": [
                 {"text": build_quiz_user_prompt(
-                    passage, types, count, short_hint, explain_hint, variation
+                    passage, items, short_hint, explain_hint, variation
                 )}
             ]}
         ],
@@ -2767,6 +2840,7 @@ class Handler(BaseHTTPRequestHandler):
                 "mcqPlain": PRICE_MCQ_PLAIN_KRW,
                 "mcqTransform": PRICE_MCQ_TRANSFORM_KRW,
                 "saq": PRICE_SAQ_KRW,
+                "extraQuestion": PRICE_EXTRA_QUESTION_KRW,
                 "workbook": PRICE_WORKBOOK_KRW,
                 "reword": PRICE_REWORD_KRW,
                 "ocr": PRICE_OCR_KRW,
@@ -2935,7 +3009,7 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/api/analyze":
                     cost = PRICE_ANALYZE_KRW
                 elif path == "/api/quiz":
-                    cost = _quiz_action_cost(req.get("types"))
+                    cost = _quiz_action_cost(parse_quiz_items(req.get("types")))
                 elif path == "/api/workbook":
                     cost = PRICE_WORKBOOK_KRW
                 elif path == "/api/reword":
@@ -3298,33 +3372,37 @@ class Handler(BaseHTTPRequestHandler):
             if len(passage) < 20:
                 self._send_json({"error": "문제를 만들 영어 지문을 입력하세요 (20자 이상)."}, 400)
                 return
-            types = req.get("types") or []
-            count = req.get("count") or 5
+            items = parse_quiz_items(req.get("types"))
+            if not items:
+                self._send_json({"error": "출제 유형을 하나 이상 선택하세요."}, 400)
+                return
             api_key = req.get("apiKey") or ""
             # 객관식 '지문변형형'(빈칸·어휘·어법·순서·문장삽입) 유형이 하나라도 섞여 있으면
             # 그 호출 전체를 Pro로 올린다 — 화면이 이미 이런 유형끼리, 저런 유형끼리
             # 묶어서 보내므로(chunkTypes 참고) 한 호출 안에서 실제로 섞이는 일은 드물다.
             model = MODEL_PRO if any(
-                t in MCQ_ONLY_TYPES and t not in QUIZ_PLAIN_PASSAGE_TYPES for t in types
+                t in MCQ_ONLY_TYPES and t not in QUIZ_PLAIN_PASSAGE_TYPES for t, _ in items
             ) else MODEL
             variation = req.get("variation") or "verbatim"
             t0 = time.monotonic()
             try:
-                result = call_gemini_quiz(passage, types, count, api_key, model, variation=variation)
+                result = call_gemini_quiz(passage, items, api_key, model, variation=variation)
                 # 문항 누락 방어 — 요청한 개수보다 적게 오면 한 번 더 요청해 채운다
-                want = max(1, min(int(count or 5), 30))
+                want = sum(n for _, n in items)
                 for _ in range(2):
                     got = len(result.get("questions", []))
                     if got >= want:
                         break
                     if _over_budget(t0):  # 프록시가 끊기 전에 현재 결과라도 돌려준다
                         break
-                    # 유형별 1문항이 기본이므로, 개수 대신 '빠진 유형'을 알려 주면
-                    # 재요청 한 번으로 채워질 확률이 높다.
-                    made = {q.get("type") for q in result.get("questions", []) if isinstance(q, dict)}
-                    missing = [t for t in types if t not in made]
+                    # 어떤 유형이 몇 문항 모자랐는지 짚어 주면 재요청 한 번에 채워질
+                    # 확률이 높다 (유형당 여러 문항이 가능하므로 개수까지 함께 알린다).
+                    made = Counter(
+                        q.get("type") for q in result.get("questions", []) if isinstance(q, dict)
+                    )
+                    missing = [f"{t} {n - made[t]}문항" for t, n in items if made[t] < n]
                     retry = call_gemini_quiz(
-                        passage, types, count, api_key, model,
+                        passage, items, api_key, model,
                         short_hint=(missing or got), variation=variation
                     )
                     # 더 많이 만들어 온 결과만 채택 (재시도가 더 나쁘면 기존 유지)
@@ -3340,7 +3418,7 @@ class Handler(BaseHTTPRequestHandler):
                     if _over_budget(t0):
                         break
                     retry = call_gemini_quiz(
-                        passage, types, count, api_key, model, explain_hint=missing, variation=variation
+                        passage, items, api_key, model, explain_hint=missing, variation=variation
                     )
                     # 문항 수가 줄지 않고 해설이 더 잘 채워진 결과만 채택
                     if (
