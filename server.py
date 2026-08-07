@@ -1565,10 +1565,32 @@ words. So for English your only job is: give the plain text, then list what to m
 - Break the sentence into meaning units (chunks: phrases/clauses), IN ORDER, in `chunks`.
   Chunk size = a natural phrase/clause (주어부, 동사구, 전치사구, 관계절, 부사절 등); not a
   single article, not a whole long sentence.
+
+### 청크를 자르는 자리 (직독직해 품질을 결정하는 곳 — 여기서 틀리면 한국어가 깨진다)
+▸ 판정 기준은 단 하나: **그 청크의 `kor`만 따로 읽어도 우리말이 되는가.**
+  안 되면 자른 자리가 틀린 것이다. 영어 길이가 아니라 한국어가 기준이다.
+▸ 후치수식어(분사구·전치사구·관계절·to부정사구)를 떼어 낼 때는 **수식어의 첫 단어부터**
+  새 청크를 시작한다. 수식어의 머리(spent, watching, that, of, to …)를 앞 청크 꼬리에
+  남기면 앞 청크의 한국어가 반드시 깨진다.
+    WRONG  <after a lifetime spent> / <watching those creatures>
+           → "이제, 보낸 평생 후에" / "그 생물들을 관찰하는 데"   ← 앞이 말이 안 됨
+    RIGHT  <after a lifetime> / <spent watching those creatures>
+           → "평생을 보낸 후에" / "그 생물들을 관찰하며"
+▸ 절대 가르지 않는 덩어리: 조동사+본동사, be+p.p.(수동태), have+p.p.(완료),
+  to+동사원형, 전치사+그 목적어, 관사·소유격+명사, 구동사(give up, account for),
+  상관어구의 한쪽(so ~ that의 so만, not only만).
+▸ 한 청크가 두 줄을 넘길 만큼 길면 자를 자리를 다시 찾되, 위 규칙을 어기면서까지 자르지 마라.
+  자를 자리가 없으면 길게 두는 편이 낫다.
+
 - For EACH chunk provide {text, kor, anns}:
   * `text` = the chunk's ORIGINAL ENGLISH words, PLAIN — verbatim, in order, NO markup at all.
     Every English word of the passage MUST appear across the chunks' `text`. Drop nothing.
   * `kor` = the PLAIN Korean 직독직해 of THAT chunk only (no markup).
+    · 그 조각만 읽어도 뜻이 통해야 하고, 청크를 순서대로 이어 읽으면 문장 전체가 되어야 한다.
+    · 영어 어순을 따라간다(직독직해). 뒤 청크의 내용을 앞으로 당겨 오지 말고, 앞 청크의
+      내용을 뒤에서 되풀이하지도 마라.
+    · 조사·어미로 다음 청크와 자연스럽게 이어 준다("~하는", "~해서", "~인데", "~을").
+    · 원문에 없는 말을 더하지 마라. 다만 우리말로 꼭 필요한 조사·주어 생략 보충은 허용한다.
   * `anns` = list of things to mark INSIDE this chunk's `text`. Each item = {t, role, rt, num}:
       · `t`    = the EXACT substring of `text` to mark (copy it verbatim, letter for letter).
       · `role` = one of:
@@ -1703,8 +1725,15 @@ Grammar만큼 어휘도 빠짐없이 스캔하라. 한 문장을 다 훑었는�
    (d) M < N' 이면 반드시 누락이다. 어느 것을 빠뜨렸는지 찾아 conj ann과 번호를 추가한 뒤
        다시 세어 M = N' 이 될 때까지 반복한다. 상관접속사(both…and 등)는 짝마다 1개씩 센다.
 6. 병렬 번호: 모든 "conj" ann에는 그것이 잇는 요소들의 num ann이 최소 2개 딸려 있어야 한다.
-   conj만 있고 번호가 없으면 미완성이다.
-Only return JSON after all six checks.
+   conj만 있고 번호가 없으면 미완성이다. 번호는 1부터 시작해 빠진 숫자가 없어야 한다
+   (2가 있는데 1이 없으면 화면에 짝 없는 위첨자가 뜬다 — 서버가 이것도 기계로 검사한다).
+7. 한국어 청크: 각 chunk의 `kor`을 **하나씩 따로** 소리 내어 읽어 본다. 그 조각만으로
+   우리말이 안 되는 것이 하나라도 있으면 청크를 자른 자리가 틀린 것이다 — 자리를 다시
+   잡아라(수식어의 머리를 앞 청크에 남기지 않았는지부터 확인). 그런 다음 순서대로
+   이어 읽어 문장 전체가 자연스러운 우리말이 되는지 확인한다.
+8. 용어 일치: 같은 단어를 두고 왼쪽 rt와 오른쪽 note·examNote가 다른 문법 용어를 쓰고
+   있지 않은지 대조한다. 다르면 rt 쪽을 옳은 것으로 고치고 note를 거기에 맞춘다.
+Only return JSON after all eight checks.
 
 ## note — per-sentence commentary
 - One or two sentences of objective, written-style Korean explaining the main grammar

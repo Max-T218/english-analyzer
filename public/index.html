@@ -497,6 +497,23 @@
   </div>
 </div>
 
+<!-- 제작 완료 안내 — 만들기가 끝나면 뜬다. 내용은 탭마다 app.js가 채운다.
+     AI가 만든 결과를 그대로 인쇄하지 말고 화면에서 먼저 검토하게 하는 것이 목적이다. -->
+<div class="print-guide" id="doneGuide" hidden>
+  <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="doneGuideTitle">
+    <h3 id="doneGuideTitle">✅ 제작 완료</h3>
+    <p class="print-guide-lead" id="doneGuideLead"></p>
+    <ul class="print-guide-steps" id="doneGuideSteps"></ul>
+    <p class="print-guide-note" id="doneGuideNote"></p>
+    <label class="chk print-guide-skip">
+      <input type="checkbox" id="doneGuideSkip"> 이 안내 다시 보지 않기 <span class="chk-sub">(창을 닫으면 초기화)</span>
+    </label>
+    <div class="print-guide-actions">
+      <button type="button" class="btn" id="doneGuideClose">결과 보기</button>
+    </div>
+  </div>
+</div>
+
 <!-- 저장함 (지문 / 제작 자료 — 어느 쪽으로 열렸는지에 따라 제목·설명·목록이 바뀐다) -->
 <div class="print-guide" id="savedListModal" hidden>
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="savedListTitle">

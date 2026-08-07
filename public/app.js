@@ -132,6 +132,72 @@ function printDoc(nameFn, opts) {
   showPrintGuide(() => runPrint(nameFn, opts && opts.before, opts && opts.after));
 }
 
+/* ── 제작 완료 안내 ──
+   만들기가 끝나면 뜬다. AI가 만든 결과를 그대로 인쇄해 학생에게 나눠 주기 전에,
+   화면에서 한 번 검토하게 하는 것이 목적이다.
+   '✏️ 직접 수정'은 지문 분석 탭에만 있으므로(다른 탭은 편집 기능이 없다) 고치는
+   방법 안내가 탭마다 달라진다 — canEdit로 가른다.
+   '다시 보지 않기'는 인쇄 안내와 같은 방식으로 이번 세션 동안만 유지된다
+   (창을 새로 열면 파일 맨 위의 localStorage.clear()로 함께 지워진다). */
+const DONE_GUIDE_SKIP = "gemini_done_guide_skip";
+const doneGuideEl = $("doneGuide");
+const doneGuideTitleEl = $("doneGuideTitle");
+const doneGuideLeadEl = $("doneGuideLead");
+const doneGuideStepsEl = $("doneGuideSteps");
+const doneGuideNoteEl = $("doneGuideNote");
+const doneGuideSkipEl = $("doneGuideSkip");
+const doneGuideCloseBtn = $("doneGuideClose");
+
+// 받침 유무로 조사를 고른다 — "8문항이/세트가"처럼 자연스럽게. 한글이 아닌 글자로
+// 끝나면(숫자·영문) 판단할 수 없으므로 받침 없는 쪽을 쓴다.
+function josa(word, withBatchim, withoutBatchim) {
+  const last = String(word || "").trim().slice(-1);
+  const code = last.charCodeAt(0);
+  if (!(code >= 0xac00 && code <= 0xd7a3)) return withoutBatchim;
+  return (code - 0xac00) % 28 ? withBatchim : withoutBatchim;
+}
+
+function closeDoneGuide() {
+  if (doneGuideSkipEl.checked) localStorage.setItem(DONE_GUIDE_SKIP, "1");
+  doneGuideEl.hidden = true;
+}
+doneGuideCloseBtn.addEventListener("click", closeDoneGuide);
+doneGuideEl.addEventListener("click", (e) => {
+  if (e.target === doneGuideEl) closeDoneGuide();
+});
+
+// what: 무엇을 몇 개 만들었는지 (예: "지문 3개의 분석본")
+// canEdit: 그 탭에 '직접 수정' 버튼이 있는지
+function showDoneGuide(what, canEdit) {
+  if (localStorage.getItem(DONE_GUIDE_SKIP) === "1") return;
+  doneGuideTitleEl.textContent = "✅ 제작 완료";
+  doneGuideLeadEl.innerHTML =
+    `${esc(what)}${josa(what, "이", "가")} 만들어졌습니다. ` +
+    `<b>인쇄하기 전에 화면에서 먼저 확인해 주세요.</b>`;
+  const steps = [
+    "<b>내용을 훑어보세요</b> — AI가 만든 결과라 해석·해설·정답이 틀릴 수 있습니다.",
+  ];
+  if (canEdit) {
+    steps.push(
+      "<b>고칠 곳이 있으면</b> 결과 위의 <b>✏️ 직접 수정</b> 버튼을 누르세요. " +
+        "한글 해석·루비·해설을 그 자리에서 고칠 수 있고, 고친 그대로 인쇄됩니다."
+    );
+  } else {
+    steps.push(
+      "<b>고칠 곳이 있으면</b> 유형·문항 수·지문을 바꿔 <b>다시 만들어</b> 주세요. " +
+        "이 탭은 화면에서 직접 고치는 기능이 아직 없습니다."
+    );
+  }
+  steps.push("확인이 끝나면 <b>🖨️ 인쇄 / PDF 저장</b>, 나중에 다시 쓰려면 <b>💾 저장</b>.");
+  doneGuideStepsEl.innerHTML = steps.map((s) => `<li>${s}</li>`).join("");
+  doneGuideNoteEl.textContent = canEdit
+    ? "수정한 내용은 저장·인쇄에 그대로 반영됩니다."
+    : "";
+  doneGuideSkipEl.checked = false;
+  doneGuideEl.hidden = false;
+  doneGuideCloseBtn.focus();
+}
+
 // 서버 API 호출 공통 헬퍼.
 // 배포 환경(Render 등)의 프록시는 요청이 길어지면 JSON이 아니라 HTML 에러 페이지를
 // 돌려준다. 그대로 res.json()을 부르면 'Unexpected token <' 같은 메시지가 떠서
@@ -1406,6 +1472,8 @@ async function analyze() {
   clearPassagesBtn.disabled = false;
   resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
   refreshTokenDisplay(); // 성공한 만큼 차감됐을 잔액 표시를 갱신
+  // 지문 분석은 '직접 수정'이 있는 유일한 탭이라 고치는 방법까지 안내한다
+  if (okCount) showDoneGuide(`지문 ${okCount}개의 분석본`, true);
 }
 
 // "내 저장함"에서 불러온 분석 결과를 화면에 되살린다 — API를 다시 부르지 않고,
@@ -2134,6 +2202,12 @@ function setupQuizTab({ prefix, types, footer }) {
     clearPassagesBtn.disabled = false;
     resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
     refreshTokenDisplay();
+    // 문제 탭에는 '직접 수정'이 없다 — 고칠 곳이 있으면 다시 만들라고 안내한다
+    if (okCount) {
+      const made = resultEl.querySelectorAll(".qz-card").length;
+      const kind = prefix === "mcq" ? "객관식 문제" : "주관식 문제";
+      showDoneGuide(`${kind} ${made}문항`, false);
+    }
   }
 
   // "내 저장함"에서 불러온 문제 세트를 다시 그린다 — API를 다시 부르지 않고
@@ -2663,6 +2737,8 @@ async function generateWorkbook() {
   clearPassagesBtn.disabled = false;
   workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
   refreshTokenDisplay();
+  // 워크북에도 '직접 수정'은 없다
+  if (okCount) showDoneGuide(`지문 ${okCount}개의 워크북`, false);
 }
 
 // "내 저장함"에서 불러온 워크북을 다시 그린다 — API를 다시 부르지 않고, 저장해 둔
@@ -3544,4 +3620,5 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!saveDialogEl.hidden) closeSaveDialog();
   if (!savedListModalEl.hidden) savedListModalEl.hidden = true;
+  if (!doneGuideEl.hidden) closeDoneGuide();
 });
