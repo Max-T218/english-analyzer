@@ -1,7 +1,20 @@
-# Render 배포 설정 (Blueprint). Render가 이 파일을 읽어 자동으로 웹 서비스를 만듭니다.
+# Render 배포 설정 (Blueprint) — 서비스를 '새로 만들 때' 쓰는 설계도입니다.
+#
+# ⚠️ 지금 돌아가는 서비스(ara-analyzer)는 이 파일이 아니라 대시보드에서 직접 만들어졌고,
+#    그래서 아래 envVars는 그 서비스에 적용되지 않습니다. 이 파일을 고쳐도 사이트의
+#    설정은 바뀌지 않습니다. 실제 설정을 바꾸려면 Render 대시보드 → Environment 탭에
+#    직접 넣어야 합니다.
+#
+#    지금 무엇이 적용돼 있는지는 배포 로그에서 '[설정]'을 찾으면 한 줄로 나옵니다.
+#    예) [설정] 보정예산 86400초(기본값) | ... | 모델 gemini-3.6-flash(기본값)
+#    '기본값'이라고 적혀 있으면 그 항목은 환경변수가 아니라 server.py의 값을 쓰는 중입니다.
+#
+#    이 파일과 실제 서비스가 어긋난 채로 두면, 파일만 보고 설정을 짐작하다 엉뚱한
+#    원인을 짚게 됩니다(실제로 여러 번 그랬습니다). 아래 이름도 실제 서비스에 맞춰
+#    둡니다.
 services:
   - type: web
-    name: eng-passage-analyzer
+    name: ara-analyzer
     runtime: python
     plan: free
     buildCommand: "pip install -r requirements.txt"

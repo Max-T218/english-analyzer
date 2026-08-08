@@ -37,14 +37,42 @@ from pathlib import Path
 from google.cloud import firestore
 from google.oauth2 import service_account
 
+# --- 설정값을 어디서 읽었는지 함께 기록한다 --------------------------------
+# render.yaml에 적어 둔 값이 실제로는 적용되지 않는 일이 반복됐다. 대시보드에서 직접
+# 만든 서비스는 그 파일을 읽지 않기 때문인데, 파일만 보고 "지금 예산은 40초"라고 믿은
+# 채 진단하면 엉뚱한 결론에 이른다(실제로 그렇게 헛다리를 짚은 적이 있다).
+#
+# 그래서 값과 '그 값이 어디서 왔는지'를 함께 들고 다니다가 시작할 때 찍는다.
+# 로그의 [설정] 줄 하나만 보면 지금 무엇이 적용돼 있는지 바로 알 수 있어야 한다.
+CONFIG_SOURCE = {}
+
+
+def _env(name, default, cast=str):
+    """환경변수를 읽고 출처를 CONFIG_SOURCE에 남긴다.
+
+    값이 이상해서 못 읽으면 기본값으로 돌아가되 그 사실도 출처에 남긴다 —
+    조용히 기본값으로 돌아가면 '왜 안 먹지'를 또 처음부터 뒤지게 된다."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        CONFIG_SOURCE[name] = "기본값"
+        return default
+    try:
+        value = cast(raw)
+    except (TypeError, ValueError):
+        CONFIG_SOURCE[name] = f"기본값 (환경변수 '{raw}'를 읽을 수 없음)"
+        return default
+    CONFIG_SOURCE[name] = "환경변수"
+    return value
+
+
 # 배포(Render 등)에서는 0.0.0.0 바인딩이 필요. 로컬에서도 localhost로 접속됨.
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8000"))
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+MODEL = _env("GEMINI_MODEL", "gemini-3.6-flash")
 # 정확도가 더 필요한 일부 작업(객관식·지문변형형, 지문변형 '5개 이상')에만 쓰는 Pro
 # 모델. 사용자가 더 이상 모델을 직접 고르지 않고, 기능마다 서버가 이 중 하나를 고정해
 # 쓴다 — 정찰 요금과 실제 원가가 어긋나지 않도록 하기 위해서다.
-MODEL_PRO = os.environ.get("GEMINI_MODEL_PRO", "gemini-3.1-pro-preview")
+MODEL_PRO = _env("GEMINI_MODEL_PRO", "gemini-3.1-pro-preview")
 # 모델명은 URL 경로에 들어가므로 안전한 형식만 허용 (하드코딩 목록 대신 형식 검증)
 _MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]+$")
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
@@ -310,17 +338,16 @@ RETRY_MAX_WAIT = 60      # 한 번 대기의 상한(초)
 # 아래 기본값은 '로컬 실행' 기준으로, 끊는 프록시가 없으므로 넉넉하게 둔다.
 # (Gemini가 503 과부하를 내도 오래 기다려 결국 성공시키는 쪽이 유리하다)
 #
-# 반면 Render 등 PaaS의 프록시는 응답 바이트가 나가지 않는 요청을 100초 안팎에서
-# 끊고 JSON 대신 HTML 에러 페이지를 반환한다. 그러면 아래의 친절한 한국어 오류
-# 메시지조차 사용자에게 도달하지 못한다. 그래서 배포 환경에서만 값을 줄이며,
-# 그 설정은 render.yaml의 envVars에 들어 있다.
-MAX_RETRY_TOTAL = float(os.environ.get("MAX_RETRY_TOTAL", "150"))
+# 배포 환경에서 값을 줄이고 싶으면 render.yaml이 아니라 Render 대시보드의
+# Environment 탭에 직접 넣어야 한다. 적용됐는지는 시작 로그의 [설정] 줄로 확인한다.
+MAX_RETRY_TOTAL = _env("MAX_RETRY_TOTAL", 150.0, float)
                          # 누적 재시도 대기가 이 시간(초)을 넘으면 포기하고 명확히 안내
-GEMINI_TIMEOUT = float(os.environ.get("GEMINI_TIMEOUT", "300"))
+                         # (호출 1건마다 따로 적용된다)
+GEMINI_TIMEOUT = _env("GEMINI_TIMEOUT", 300.0, float)
                          # Gemini 호출 1회의 소켓 타임아웃(초)
-REFINE_BUDGET = float(os.environ.get("REFINE_BUDGET", "86400"))
+REFINE_BUDGET = _env("REFINE_BUDGET", 86400.0, float)
                          # 이 시간(초)을 이미 쓴 뒤에는 보정 재요청을 시작하지 않는다
-                         # (로컬 기본값은 사실상 무제한 = 원래 동작 그대로)
+                         # (기본값은 사실상 무제한 = 검사를 끝까지 다 돌린다)
 
 # 429(할당량) 빠른 실패 기준.
 # 분당 한도라면 구글이 응답에 짧은 retryDelay를 실어 보내므로 그만큼만 기다렸다
@@ -4195,6 +4222,22 @@ def main():
     login_set = "설정됨" if DB is not None else "미설정 (로그인·AI 기능 전체가 막힘)"
     google_set = "설정됨" if GOOGLE_CLIENT_ID else "미설정 (구글 로그인 버튼 비활성)"
     smtp_set = "설정됨" if (SMTP_USER and SMTP_PASSWORD) else "미설정 (인증코드가 서버 로그에만 출력됨)"
+    # 지금 '실제로' 적용된 설정을 값과 출처까지 한 줄로 남긴다. render.yaml에 적힌
+    # 값이 서비스에 적용되지 않는 일이 반복돼(대시보드에서 만든 서비스는 그 파일을
+    # 읽지 않는다), 파일만 보고 설정을 짐작하다 엉뚱한 진단을 하는 것을 막기 위해서다.
+    # 배포 로그에서 '[설정]'로 찾으면 된다.
+    def _src(name):
+        return CONFIG_SOURCE.get(name, "기본값")
+
+    print(
+        "[설정] "
+        f"보정예산 {REFINE_BUDGET:.0f}초({_src('REFINE_BUDGET')}) | "
+        f"재시도상한 {MAX_RETRY_TOTAL:.0f}초({_src('MAX_RETRY_TOTAL')}) | "
+        f"호출타임아웃 {GEMINI_TIMEOUT:.0f}초({_src('GEMINI_TIMEOUT')}) | "
+        f"모델 {MODEL}({_src('GEMINI_MODEL')}) | "
+        f"Pro {MODEL_PRO}({_src('GEMINI_MODEL_PRO')})",
+        file=sys.stderr,
+    )
     print("영어 지문 분석본 웹앱 실행 중 (Google Gemini)")
     print(f"  주소       : http://{HOST}:{PORT}")
     print(f"  모델       : {MODEL}")
