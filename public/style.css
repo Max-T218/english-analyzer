@@ -4,7 +4,14 @@
   --line:#e3e7ec; --line-soft:#eef1f4; --accent:#1f4e6b; --accent-soft:#e8eef3;
   /* 어법(빨강) + 어휘(파랑) = 어법+어휘(보라) 로 색이 맞물려 있으므로 이 셋은 건드리지 않는다.
      병렬구조는 원래 하늘색(#1f9dd0)이라 어휘의 파랑과 구분이 잘 안 돼 초록으로 바꿨다. */
-  --g:#cf2e2e; --v:#1f6fb2; --gv:#7a3fa0; --conj:#15803d; --hl:#fff1a8; --conj-bg:#d7f0de;
+  --g:#cf2e2e; --v:#1f6fb2; --gv:#7a3fa0; --conj:#15803d; --hl:#fff1a8; --conj-bg:#a9e3bb;
+  /* 한 문장에 등위접속사가 둘 이상일 때 묶음별로 색을 달리한다. 접속사 표시는 늘
+     '배경(형광)'이 있어 어법·어휘 같은 '색 글자'와는 애초에 구분되므로, 이 색들은
+     서로만 구분되면 된다. 노랑(--hl)·주황(--target-hl)과도 겹치지 않게 골랐다.
+     처음에 2번을 청록으로 뒀더니 1번 초록과 색 거리가 27밖에 안 나와(0~441 척도)
+     사실상 구분이 되지 않았다. 색상환에서 충분히 벌어지도록 초록·보라·자홍으로 잡는다. */
+  --conj2:#5b21b6; --conj2-bg:#b09bde;   /* 2번 묶음: 보라 */
+  --conj3:#a3196b; --conj3-bg:#f3bcd6;   /* 3번 묶음: 자홍 */
   --target-hl:#ffd8a8; --target-ink:#c2410c;
   /* 학원 마크 패널 전용 강조색 — 위쪽 설정 항목들과 뚜렷이 구분되도록 따뜻한 색으로 */
   --brand:#b45309; --brand-soft:#fdf1e0;
@@ -748,6 +755,9 @@ u{
 .legend .legend-title{width:100%; font-weight:700; color:var(--accent); font-size:11px; letter-spacing:.04em; margin-bottom:2px;}
 .legend b{display:inline-flex; align-items:center; gap:5px; font-weight:700;}
 .dot{width:11px; height:11px; border-radius:3px; display:inline-block; border:1px solid rgba(0,0,0,.12);}
+/* 병렬구조 항목의 보조 설명 — 색이 여러 개인 이유를 한 마디로 알려 준다 */
+.legend .legend-note{font-weight:600; font-size:11px; color:var(--ink-soft); margin-left:1px;}
+.legend b .dot + .dot{margin-left:-3px;}
 
 .result-tools{display:flex; justify-content:flex-end; margin:8px 0 18px;}
 
@@ -858,7 +868,18 @@ ruby.theme-rt rt{color:var(--gv);}
    위의 한글 설명까지 나눠 붙여('예시' → '예' + '시') 뜻을 알 수 없게 되기 때문.
    긴 대상에는 서버가 이 클래스를 붙이지 않으므로 화면 밖으로 넘칠 일은 없다. */
 .nobreak{white-space:nowrap;}
-sup.conj-num-top{color:var(--conj); font-weight:700; font-size:9px; vertical-align:super;}
+/* 병렬 번호 — 파란 어휘 글자 옆에 붙는 일이 많아, 작고 옅으면 묻힌다.
+   본문(16.5px) 대비 충분히 읽히도록 키우고 옅은 배지를 깔아 분리한다. */
+sup.conj-num-top{
+  color:var(--conj); font-weight:800; font-size:11.5px; vertical-align:super;
+  background:var(--conj-bg); border-radius:3px; padding:0 2.5px; margin-right:1px;
+}
+/* 묶음별 색 — 접속사(형광)와 그 접속사가 잇는 요소의 번호가 같은 색을 갖는다.
+   한 문장에 접속사가 하나뿐이면 cg1만 쓰이므로 화면은 지금까지와 똑같다. */
+.conj-hl.cg2{background:var(--conj2-bg);}
+.conj-hl.cg3{background:var(--conj3-bg);}
+sup.conj-num-top.cg2{color:var(--conj2); background:var(--conj2-bg);}
+sup.conj-num-top.cg3{color:var(--conj3); background:var(--conj3-bg);}
 ruby.hl-rt .hl{background:var(--hl); border-radius:3px; padding:0 2px; font-weight:600;}
 ruby.hl-rt rt{color:var(--ink-soft);}
 /* 목표 어법(주황 형광펜) */
@@ -911,7 +932,8 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
     color-scheme:light !important;
     --paper:#ffffff; --card:#ffffff; --ink:#1b2430; --ink-soft:#42505f;
     --line:#c9d0d8; --line-soft:#eef1f4; --accent:#1f4e6b; --accent-soft:#eaf0f5;
-    --g:#c62828; --v:#1565a8; --gv:#6d329a; --conj:#12692f; --hl:#ffec99; --conj-bg:#d7f0de;
+    --g:#c62828; --v:#1565a8; --gv:#6d329a; --conj:#12692f; --hl:#ffec99; --conj-bg:#a9e3bb;
+    --conj2:#4c1d95; --conj2-bg:#b09bde; --conj3:#8f1259; --conj3-bg:#f3bcd6;
     --target-hl:#ffd8a8; --target-ink:#c2410c;
   }
   /* 모든 색/배경을 강제로 인쇄 (형광펜·범례 스와치·루비 색상 포함) */

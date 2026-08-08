@@ -1568,7 +1568,7 @@ function buildAnalysisHtml(d, job, total) {
         <b><span class="dot" style="background:var(--g)"></span><span class="g">어법</span></b>
         <b><span class="dot" style="background:var(--v)"></span><span class="v">어휘</span></b>
         <b><span class="dot" style="background:var(--gv)"></span><span class="gv">어법+어휘</span></b>
-        <b><span class="dot" style="background:var(--conj)"></span><span class="conj-hl">병렬구조</span></b>
+        <b><span class="dot" style="background:var(--conj)"></span><span class="dot" style="background:var(--conj2)"></span><span class="dot" style="background:var(--conj3)"></span><span class="conj-hl">병렬구조</span><span class="legend-note">같은 색끼리 한 묶음</span></b>
         <b><span class="dot" style="background:var(--hl)"></span><span class="hl" style="padding:0 3px;border-radius:3px">강조·연결어</span></b>
         ${grammarEl.value.trim() ? `<b><span class="dot" style="background:var(--target-hl)"></span><span class="tg" style="padding:0 3px;border-radius:3px">목표 어법</span></b>` : ""}
         <b><span class="sep">/</span> 의미 단위 끊어읽기</b>

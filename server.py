@@ -364,6 +364,58 @@ def _over_budget(t0):
     return (time.monotonic() - t0) >= REFINE_BUDGET
 
 
+class RefineTrace:
+    """분석 1건이 실제로 어떻게 보정됐는지 기록한다 — 지문 하나에 모델을 몇 번
+    불렀는지, 어느 보정 단계까지 돌았는지, 시간 예산(REFINE_BUDGET)에 걸려 어디서
+    멈췄는지. 배포 환경은 예산이 40초라 뒤쪽 단계가 아예 실행되지 않을 수 있는데,
+    그 사실이 지금은 아무 데도 남지 않아 눈에 띄지 않는다.
+
+    요청을 처리하는 스레드 안에서만 쓰므로 잠금이 필요 없다."""
+
+    def __init__(self, t0):
+        self.t0 = t0
+        self.calls = 1       # 1차 호출은 조건 없이 일어난다
+        self.first = None    # 1차 호출에 걸린 시간(초)
+        self.done = []       # 실제로 재요청까지 간 단계
+        self.cut = None      # 예산이 없어 시작조차 못 한 첫 단계
+
+    def first_done(self):
+        """1차 호출이 끝난 시점을 기록한다(모델을 바꿔도 되는지 판단하는 근거)."""
+        self.first = time.monotonic() - self.t0
+
+    def blocked(self, stage):
+        """이 단계를 시작할 여유가 없으면 True. 겸사겸사 어디서 잘렸는지 남긴다."""
+        if _over_budget(self.t0):
+            if self.cut is None:
+                self.cut = stage
+            return True
+        return False
+
+    def retry(self, stage):
+        """이 단계가 재요청을 한 번 보냈다."""
+        self.calls += 1
+        if stage not in self.done:
+            self.done.append(stage)
+
+    def log(self, model, passage, error=None):
+        """한 줄로 남긴다. Render 로그에서 '[분석]'으로 걸러 보면 된다.
+        진단용 기록이 본 작업을 망치면 안 되므로, 출력이 실패해도 넘어간다
+        (콘솔 인코딩이 한글을 못 쓰는 환경 등)."""
+        total = time.monotonic() - self.t0
+        first = f"{self.first:.1f}초" if self.first is not None else "-"
+        try:
+            print(
+                f"[분석] 호출 {self.calls}회 | 1차 {first} | 총 {total:.1f}초"
+                f" | 보정 {','.join(self.done) or '없음'}"
+                f" | 중단 {self.cut or '없음'}"
+                f" | 예산 {REFINE_BUDGET:.0f}초 | {model} | 지문 {len(passage)}자"
+                + (f" | 실패 {error}" if error else ""),
+                file=sys.stderr,
+            )
+        except Exception:
+            pass
+
+
 def _parse_retry_delay(detail):
     """Gemini 429 오류 본문에서 권장 대기시간(초)을 뽑는다. 없으면 None.
     형식 예: error.details[].retryDelay = "17s"."""
@@ -409,9 +461,10 @@ GEMINI_SCHEMA = {
                                             "role": {"type": "STRING"},
                                             "rt": {"type": "STRING"},
                                             "num": {"type": "INTEGER"},
+                                            "grp": {"type": "INTEGER"},
                                         },
-                                        "required": ["t", "role", "rt", "num"],
-                                        "propertyOrdering": ["t", "role", "rt", "num"],
+                                        "required": ["t", "role", "rt", "num", "grp"],
+                                        "propertyOrdering": ["t", "role", "rt", "num", "grp"],
                                     },
                                 },
                             },
@@ -1591,14 +1644,15 @@ words. So for English your only job is: give the plain text, then list what to m
       내용을 뒤에서 되풀이하지도 마라.
     · 조사·어미로 다음 청크와 자연스럽게 이어 준다("~하는", "~해서", "~인데", "~을").
     · 원문에 없는 말을 더하지 마라. 다만 우리말로 꼭 필요한 조사·주어 생략 보충은 허용한다.
-  * `anns` = list of things to mark INSIDE this chunk's `text`. Each item = {t, role, rt, num}:
+  * `anns` = list of things to mark INSIDE this chunk's `text`. Each item = {t, role, rt, num, grp}:
       · `t`    = the EXACT substring of `text` to mark (copy it verbatim, letter for letter).
       · `role` = one of:
             "g"    어법(빨강)          "v"  어휘(파랑)        "gv" 어법+어휘(보라)
             "hl"   강조·연결어(노랑)    "tg" 목표 어법(주황, 목표 어법이 지정된 경우만)
-            "conj" 등위·상관접속사(하늘 형광)   "num" 색 없이 병렬 번호만
+            "conj" 등위·상관접속사(형광)     "num" 색 없이 병렬 번호만
       · `rt`   = short Korean explanation shown above the word (for "conj"/"num" use "").
       · `num`  = 0 normally. For parallel numbering use 1,2,3… (adds a small superscript number).
+      · `grp`  = 0 normally. 병렬 표시(conj/num)에만 쓰는 **묶음 번호** — 아래 설명 참고.
     If nothing to mark, `anns` = [].
 
 ### COLOR DECISION RULE (role 고르기 — 기계적으로 적용, 가장 실수 잦은 곳)
@@ -1624,6 +1678,8 @@ words. So for English your only job is: give the plain text, then list what to m
     the 비교급 ~ the 비교급)만 예외로 "너무 ~해서 …하다"처럼 **뜻이 담긴 해석 틀**을 쓴다.
     이때도 "상관접속사"처럼 범주 이름만 적는 것은 금지.
   ▸ 연결어(However, Therefore, In addition …) → "hl". rt = 역접/대조/첨가 등 기능.
+    예외: 상관접속사의 일부인 말은 "hl"이 아니라 "conj"다. 특히 **not only A but also B**의
+    "also"는 첨가 연결어처럼 보여도 상관접속사 구문의 일부이므로 "conj"로 표시한다(아래 병렬 규칙).
   ▸ 목표 어법이 지정되면 그 구조만 "tg"(주황), 나머지 어법은 "g".
   HARD LIMITS: "g" rt=문법용어만(뜻 0%) / "v" rt=뜻만 / "gv" rt=뜻(문법 범주 이름 금지)
               / "gv"는 2단어 이상만 / rt는 문장 해석이 아니라 아주 짧게.
@@ -1634,27 +1690,48 @@ DEFAULT = MARK IT. 지문에 나오는 "and / or / but / nor / yet"은 아래 '�
 않는 한 **전부** 등위접속사로 보고 표시하라. "이건 굳이 병렬이라 할 것까진…" 하고 넘기지 말 것.
 빠뜨린 접속사는 서버가 기계적으로 세어 되돌려 보내므로, 처음부터 빠짐없이 표시하는 편이 낫다.
 
+▸ **묶음 번호 `grp` — 한 문장에 접속사가 둘 이상일 때 반드시 필요하다.**
+  한 문장에 등위접속사가 여러 개면 각 접속사가 잇는 짝이 서로 다르다. 그런데 번호를
+  전부 1,2로만 매기면 화면에 ¹…²…¹…² 가 뒤섞여 **어느 ¹이 어느 ²와 짝인지 알 수 없다.**
+  그래서 접속사마다 묶음 번호를 준다. 서버가 묶음별로 색을 달리 칠해 구분해 준다.
+    · 한 문장 안에서 등위접속사가 나오는 **순서대로** grp = 1, 2, 3… 을 매긴다.
+    · 접속사 ann과 그 접속사가 잇는 요소 ann이 **모두 같은 grp** 값을 갖는다.
+    · `num`은 그 묶음 **안에서만** 1,2,3…으로 매긴다(묶음이 바뀌면 다시 1부터).
+    · 병렬과 무관한 ann(어법·어휘 등)은 grp = 0.
+  예: "everyone ¹accesses the news through the ¹Internet or ²social media,
+       and ²takes the information that suits their ¹tastes or ²beliefs."
+    → or(Internet/social media)가 첫 접속사   grp=1: Internet num=1, social media num=2
+      and(accesses/takes)가 두 번째 접속사    grp=2: accesses num=1, takes num=2
+      or(tastes/beliefs)가 세 번째 접속사     grp=3: tastes num=1, beliefs num=2
+    문장에 접속사가 하나뿐이면 그 하나가 grp=1이다(지금까지와 똑같다).
+
 For EACH such conjunction:
-  · 접속사 자체에 ann: {t:"and", role:"conj", rt:"", num:0}
-  · 그 접속사가 잇는 **모든** 병렬 요소에 번호 ann: num = 1, 2, 3…
-      {t:"influence", role:"num", rt:"", num:1}, {t:"invest", role:"num", rt:"", num:2}
-    (그 요소가 색도 받을 만하면 role을 "num" 대신 "g"/"v"/"gv"로 주고 num만 붙인다.)
-  · ⚠️ 번호는 **반드시 1부터** 시작해 빠짐없이 이어져야 한다. 2를 붙였는데 1이 없으면
+  · 접속사 자체에 ann: {t:"and", role:"conj", rt:"", num:0, grp:<이 접속사의 묶음 번호>}
+  · 그 접속사가 잇는 **모든** 병렬 요소에 번호 ann: num = 1, 2, 3… (grp은 접속사와 같게)
+      {t:"influence", role:"num", rt:"", num:1, grp:1}, {t:"invest", role:"num", rt:"", num:2, grp:1}
+    (그 요소가 색도 받을 만하면 role을 "num" 대신 "g"/"v"/"gv"로 주고 num·grp만 붙인다.)
+  · ⚠️ 번호는 **각 묶음(grp)마다 1부터** 시작해 빠짐없이 이어져야 한다. 2를 붙였는데 1이 없으면
     화면에 위첨자 ²만 덩그러니 뜨고 짝이 보이지 않아, 학생은 무엇과 무엇이 병렬인지 알 수 없다.
     가장 흔한 실수: **앞쪽 요소에 이미 색 ann이 있어서** 거기에 num 붙이는 걸 잊는 것.
-      WRONG  {t:"flexible", role:"v", rt:"유연한", num:0} … {t:"the ability", role:"num", num:2}
-      RIGHT  {t:"flexible", role:"v", rt:"유연한", num:1} … {t:"the ability", role:"num", num:2}
-    같은 요소에 ann을 두 개 만들지 말고, 이미 있는 ann의 num만 0에서 1로 바꿔라.
-    서버가 1 없이 2가 있는 문장을 기계로 찾아 되돌려 보낸다.
+      WRONG  {t:"flexible", role:"v", rt:"유연한", num:0, grp:0} … {t:"the ability", role:"num", num:2, grp:1}
+      RIGHT  {t:"flexible", role:"v", rt:"유연한", num:1, grp:1} … {t:"the ability", role:"num", num:2, grp:1}
+    같은 요소에 ann을 두 개 만들지 말고, 이미 있는 ann의 num·grp만 채워라.
+    서버가 묶음별로 1 없이 2가 있는 문장을 기계로 찾아 되돌려 보낸다.
   · **앞말을 바꿔 말하는 or**(= '즉/다시 말해', 동격)도 두 명사구를 잇는 등위접속사이므로
     conj와 병렬 번호를 똑같이 붙인다. 번호가 '무엇과 무엇이 같은 말인지' 짚어 주기 때문이다.
     대신 kor은 '또는'이 아니라 **'즉'**으로 옮기고, note에서도 '동격'이라고 설명해
     왼쪽 번호와 오른쪽 해설이 같은 것을 가리키게 하라.
       예: <flexible behavior, or the ability to change their behavior>
           → ¹flexible behavior, or ²the ability… / kor "즉 …" / note "…와 동격인 명사구"
-  · 상관접속사는 **두 짝을 모두** "conj"로 표시한다:
+  · 상관접속사는 **짝을 이루는 말을 모두** "conj"로 표시하고 **같은 grp**를 준다:
       both…and / either…or / neither…nor / not only…but (also) / not…but /
       between A and B — "both"와 "and" 각각에 conj ann.
+    ⚠️ **not only A but also B 의 "also"도 conj로 표시하라**(같은 grp, num:0).
+      오른쪽 해설에서는 이 구문을 "not only A but (also) B"라고 한 덩어리로 부르는데,
+      왼쪽에서 "also"만 노란 강조(hl)로 칠하면 좌우가 어긋나 학생이 헷갈린다.
+      "but"과 "also"가 떨어져 있어도( "but they also want" ) 각각 conj ann을 만든다
+      — 붙어 있지 않으므로 하나의 t로 묶으려 하지 말 것.
+      단, 상관접속사와 무관한 그냥 부사 "also"는 여기 해당하지 않는다.
 
 ▸ 놓치기 쉬운 병렬 — 이 목록을 한 항목씩 짚어 가며 지문을 훑어라:
   1. 3개 이상 나열: "A, B, and C" → 쉼표로 이어진 앞의 것들까지 전부 num 부여 (1,2,3).
@@ -1730,8 +1807,11 @@ Grammar만큼 어휘도 빠짐없이 스캔하라. 한 문장을 다 훑었는�
    (d) M < N' 이면 반드시 누락이다. 어느 것을 빠뜨렸는지 찾아 conj ann과 번호를 추가한 뒤
        다시 세어 M = N' 이 될 때까지 반복한다. 상관접속사(both…and 등)는 짝마다 1개씩 센다.
 6. 병렬 번호: 모든 "conj" ann에는 그것이 잇는 요소들의 num ann이 최소 2개 딸려 있어야 한다.
-   conj만 있고 번호가 없으면 미완성이다. 번호는 1부터 시작해 빠진 숫자가 없어야 한다
-   (2가 있는데 1이 없으면 화면에 짝 없는 위첨자가 뜬다 — 서버가 이것도 기계로 검사한다).
+   conj만 있고 번호가 없으면 미완성이다. 번호는 **묶음(grp)마다** 1부터 시작해 빠진 숫자가
+   없어야 한다 (2가 있는데 1이 없으면 화면에 짝 없는 위첨자가 뜬다 — 서버가 기계로 검사한다).
+   그리고 한 문장에 접속사가 둘 이상이면 grp를 순서대로 1,2,3…으로 서로 다르게 매겼는지,
+   각 요소가 **자기 접속사와 같은 grp**를 갖는지 다시 확인하라. 여기가 틀리면 화면에서
+   엉뚱한 것끼리 같은 색으로 묶여 학생이 잘못 배운다.
 7. 한국어 청크: 각 chunk의 `kor`을 **하나씩 따로** 소리 내어 읽어 본다. 그 조각만으로
    우리말이 안 되는 것이 하나라도 있으면 청크를 자른 자리가 틀린 것이다 — 자리를 다시
    잡아라(수식어의 머리를 앞 청크에 남기지 않았는지부터 확인). 그런 다음 순서대로
@@ -1968,6 +2048,25 @@ def _nobreak(word):
     return len(word) <= _NOBREAK_MAX and word.count(" ") <= 4
 
 
+# 병렬 묶음에 준비된 색의 개수. 한 문장에 접속사가 이보다 많으면 첫 색으로 돌아간다
+# (그렇게까지 접속사가 많은 문장은 드물고, 색을 더 늘리면 다른 표시와 헷갈린다).
+_CONJ_GROUP_COLORS = 3
+
+
+def _conj_group_class(grp):
+    """묶음 번호 → CSS 클래스(cg1/cg2/cg3).
+
+    값이 없거나 이상하면 1번(초록)으로 본다. 모델이 grp를 빠뜨려도 예전과 똑같이
+    보이게 하려는 것 — 새 필드 때문에 화면이 깨지는 일은 없어야 한다."""
+    try:
+        n = int(grp)
+    except (TypeError, ValueError):
+        n = 1
+    if n < 1:
+        n = 1
+    return f"cg{(n - 1) % _CONJ_GROUP_COLORS + 1}"
+
+
 def _wrap_ann(word, a):
     """평문 영어 조각 word 에 역할(role)에 맞는 루비/색상/병렬번호를 입힌다."""
     role = (a.get("role") or "g").strip()
@@ -1975,11 +2074,12 @@ def _wrap_ann(word, a):
     w = _esc_html(word)
     num = a.get("num")
     numhtml = ""
+    cg = _conj_group_class(a.get("grp"))
     if isinstance(num, (int, float)) and int(num) > 0:
-        numhtml = f'<sup class="conj-num-top">{int(num)}</sup>'
+        numhtml = f'<sup class="conj-num-top {cg}">{int(num)}</sup>'
     nb = " nobreak" if _nobreak(word) else ""
     if role == "conj":
-        return numhtml + f'<span class="conj-hl{nb}">{w}</span>'
+        return numhtml + f'<span class="conj-hl {cg}{nb}">{w}</span>'
     if role in _ROLE_RUBY:
         return (numhtml + f'<ruby class="{_ROLE_RUBY[role]}{nb}">'
                 f'<span class="{role}">{w}</span><rt>{rt}</rt></ruby>')
@@ -2241,12 +2341,13 @@ def broken_parallel_numbers(result, limit=10):
     2는 붙였는데 1이 없으면 화면에 위첨자 ²만 뜨고 짝이 없어, 무엇과 무엇이 병렬인지
     보이지 않는다. 앞쪽 요소에 이미 색 주석이 있을 때 거기에 num 붙이는 걸 잊어서
     생기는 실수라, 성실성에 맡기지 않고 기계로 한 번 더 센다.
-    번호는 한 문장 안에서 1,2,3…으로 매겨지므로 문장 단위로 검사한다."""
+    번호는 묶음(grp)마다 1,2,3…으로 매겨지므로 문장 안에서 묶음별로 나눠 검사한다.
+    grp가 없으면 1번 묶음으로 본다(_conj_group_class와 같은 규칙)."""
     out = []
     for s in result.get("sentences", []) or []:
         if not isinstance(s, dict):
             continue
-        nums = set()
+        groups = {}
         for c in s.get("chunks", []) or []:
             if not isinstance(c, dict):
                 continue
@@ -2254,23 +2355,42 @@ def broken_parallel_numbers(result, limit=10):
                 if not isinstance(a, dict):
                     continue
                 n = a.get("num")
-                if isinstance(n, (int, float)) and int(n) > 0:
-                    nums.add(int(n))
-        if not nums:
+                if not (isinstance(n, (int, float)) and int(n) > 0):
+                    continue
+                try:
+                    g = int(a.get("grp"))
+                except (TypeError, ValueError):
+                    g = 1
+                groups.setdefault(max(g, 1), set()).add(int(n))
+        if not groups:
             continue
-        missing = [n for n in range(1, max(nums) + 1) if n not in nums]
-        if missing:
-            eng = " ".join(
-                _TAG_STRIP_RE.sub("", (c.get("text") or ""))
-                for c in (s.get("chunks") or [])
-                if isinstance(c, dict)
-            ).strip()
-            out.append(
-                f'{s.get("no")}번 문장: 병렬 번호 {sorted(nums)}만 있고 '
-                f'{missing}이(가) 빠졌습니다 — "{eng[:90]}"'
-            )
+        eng = None
+        for g in sorted(groups):
+            nums = groups[g]
+            missing = [n for n in range(1, max(nums) + 1) if n not in nums]
+            # 접속사는 둘 이상을 잇는다 — 한 묶음에 번호가 하나뿐이면 짝을 못 찾은 것이다
+            # (grp를 잘못 매겨 짝이 서로 다른 묶음으로 흩어졌을 때 이렇게 나타난다).
+            lonely = not missing and len(nums) < 2
+            if not missing and not lonely:
+                continue
+            if eng is None:
+                eng = " ".join(
+                    _TAG_STRIP_RE.sub("", (c.get("text") or ""))
+                    for c in (s.get("chunks") or [])
+                    if isinstance(c, dict)
+                ).strip()
+            if lonely:
+                out.append(
+                    f'{s.get("no")}번 문장 {g}번 묶음: 병렬 번호가 {sorted(nums)} 하나뿐입니다 '
+                    f'— 짝이 되는 요소에도 같은 grp({g})로 번호를 붙이세요 "{eng[:90]}"'
+                )
+            else:
+                out.append(
+                    f'{s.get("no")}번 문장 {g}번 묶음: 병렬 번호 {sorted(nums)}만 있고 '
+                    f'{missing}이(가) 빠졌습니다 — "{eng[:90]}"'
+                )
             if len(out) >= limit:
-                break
+                return out
     return out
 
 
@@ -2340,9 +2460,11 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
     if num_hint:
         # 1 없이 2만 붙은 자리 — 화면에 짝 없는 위첨자가 뜨는 것을 막는다
         lines.append(
-            "⚠️ 아래 문장은 병렬 번호가 1부터 이어지지 않습니다. 빠진 번호를 채우세요. "
-            "대개 앞쪽 병렬 요소에 이미 색 ann이 있어서 거기에 num을 붙이는 걸 잊은 경우입니다 "
-            "— 새 ann을 만들지 말고 그 ann의 num을 0에서 1로 바꾸세요. "
+            "⚠️ 아래 문장은 병렬 번호(묶음 grp 기준)가 1부터 이어지지 않습니다. 빠진 번호를 "
+            "채우세요. 대개 앞쪽 병렬 요소에 이미 색 ann이 있어서 거기에 num을 붙이는 걸 잊은 "
+            "경우입니다 — 새 ann을 만들지 말고 그 ann의 num·grp를 채우세요. "
+            "'번호가 하나뿐'이라고 나온 묶음은 짝이 다른 grp로 잘못 흩어진 것이니, "
+            "같은 접속사가 잇는 요소들이 모두 같은 grp를 갖도록 맞추세요. "
             "다시 보니 병렬이 아니었다면(앞말을 바꿔 말하는 동격의 or 등) "
             "붙어 있는 번호와 conj 표시를 모두 지우세요."
         )
@@ -3749,16 +3871,19 @@ class Handler(BaseHTTPRequestHandler):
         review = bool(req.get("review"))
 
         t0 = time.monotonic()
+        trace = RefineTrace(t0)
         try:
             result = call_gemini(passage, target_grammar, mode, api_key, model)
+            trace.first_done()
             # 문장 누락 방어 — 실제 문장 수보다 분석이 많이 부족하면 자동 보정 재요청
             expected = rough_sentence_count(passage)
             for _ in range(2):
                 got = len(result.get("sentences", []))
                 if got >= expected - 2:  # 약어로 인한 과다추정 대비 허용오차
                     break
-                if _over_budget(t0):  # 프록시가 끊기 전에 현재 결과라도 돌려준다
+                if trace.blocked("문장"):  # 프록시가 끊기 전에 현재 결과라도 돌려준다
                     break
+                trace.retry("문장")
                 result = call_gemini(
                     passage, target_grammar, mode, api_key, model,
                     complete_hint=(expected, got),
@@ -3767,13 +3892,15 @@ class Handler(BaseHTTPRequestHandler):
             for _ in range(2):
                 if not english_incomplete(result, passage):
                     break
-                if _over_budget(t0):
+                if trace.blocked("영어"):
                     break
+                trace.retry("영어")
                 result = call_gemini(
                     passage, target_grammar, mode, api_key, model, english_fix=True
                 )
             if review:
                 # 2차 검토 패스 — 1차 결과를 다시 보내 빠진 어법·어휘를 보강
+                trace.retry("검토")
                 result = call_gemini(
                     passage, target_grammar, mode, api_key, model, prior=result
                 )
@@ -3782,8 +3909,11 @@ class Handler(BaseHTTPRequestHandler):
             # 재요청이 오히려 표시를 지우고 오는 경우를 막는다.
             for _ in range(2):
                 missed = result.get("_conjMiss") or []
-                if not missed or _over_budget(t0):
+                if not missed:
                     break
+                if trace.blocked("접속사"):
+                    break
+                trace.retry("접속사")
                 retry = call_gemini(
                     passage, target_grammar, mode, api_key, model, conj_hint=missed
                 )
@@ -3800,8 +3930,11 @@ class Handler(BaseHTTPRequestHandler):
             # 접속사 보강이 끝난 뒤에 검사한다(위 재요청이 번호를 새로 붙이기도 하므로).
             for _ in range(2):
                 broken = result.get("_numBroken") or []
-                if not broken or _over_budget(t0):
+                if not broken:
                     break
+                if trace.blocked("번호"):
+                    break
+                trace.retry("번호")
                 retry = call_gemini(
                     passage, target_grammar, mode, api_key, model, num_hint=broken
                 )
@@ -3818,8 +3951,11 @@ class Handler(BaseHTTPRequestHandler):
             # 루비 설명 방어 — 보라(gv)에 뜻 대신 분류 이름을 적은 자리를 고쳐 오게 한다.
             for _ in range(2):
                 bad = result.get("_rubyBad") or []
-                if not bad or _over_budget(t0):
+                if not bad:
                     break
+                if trace.blocked("루비"):
+                    break
+                trace.retry("루비")
                 retry = call_gemini(
                     passage, target_grammar, mode, api_key, model, ruby_hint=bad
                 )
@@ -3832,8 +3968,11 @@ class Handler(BaseHTTPRequestHandler):
             # 루비를 고친 뒤에 검사한다(위 재요청이 rt를 바꾸므로).
             for _ in range(2):
                 bad = result.get("_conflicts") or []
-                if not bad or _over_budget(t0):
+                if not bad:
                     break
+                if trace.blocked("좌우"):
+                    break
+                trace.retry("좌우")
                 retry = call_gemini(
                     passage, target_grammar, mode, api_key, model, conflict_hint=bad
                 )
@@ -3847,14 +3986,18 @@ class Handler(BaseHTTPRequestHandler):
             result.pop("_rubyBad", None)
             result.pop("_conflicts", None)
         except ProUnavailable as e:
+            trace.log(model, passage, error="pro_unavailable")
             self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
             return
         except QuotaExceeded as e:
+            trace.log(model, passage, error="quota")
             self._send_json({"error": str(e), "code": "quota"}, 429)
             return
         except Exception as e:
+            trace.log(model, passage, error=type(e).__name__)
             self._send_json({"error": str(e)}, 502)
             return
+        trace.log(model, passage)
         charge_krw(self._auth_user_id, self._pending_charge)
         self._send_json(result)
 
