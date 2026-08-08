@@ -1489,7 +1489,8 @@ function renderAnalyzeEntries(entries) {
   saveBtn.style.display = total ? "inline-flex" : "none";
   lastAnalyzeEntries = entries;
   syncFloatPrint();
-  resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  // 비우는 호출(entries가 빈 배열)일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
+  if (total) resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 TAB_SAVE.analyze = {
@@ -1505,6 +1506,7 @@ TAB_SAVE.analyze = {
     if (reviewChk) reviewChk.checked = !!(payload.settings && payload.settings.review);
     renderAnalyzeEntries(payload.entries || []);
   },
+  clearResults: () => renderAnalyzeEntries([]),
 };
 
 function esc(s) {
@@ -2243,7 +2245,8 @@ function setupQuizTab({ prefix, types, footer }) {
     saveBtn.style.display = entries.length ? "inline-flex" : "none";
     lastEntries = entries;
     syncFloatPrint();
-    resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    // 비우는 호출일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
+    if (entries.length) resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function getQuizSettings() {
@@ -2292,6 +2295,7 @@ function setupQuizTab({ prefix, types, footer }) {
       applyQuizSettings(payload.settings);
       renderQuizEntries(payload.entries || []);
     },
+    clearResults: () => renderQuizEntries([]),
   };
 
   btn.addEventListener("click", generate);
@@ -2802,7 +2806,8 @@ function renderWorkbookEntries(entries) {
   workbookSaveBtn.style.display = total ? "inline-flex" : "none";
   lastWorkbookEntries = entries;
   syncFloatPrint();
-  workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  // 비우는 호출일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
+  if (total) workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function getWorkbookSettings() {
@@ -2840,6 +2845,7 @@ TAB_SAVE.workbook = {
     applyWorkbookSettings(payload.settings);
     renderWorkbookEntries(payload.entries || []);
   },
+  clearResults: () => renderWorkbookEntries([]),
 };
 
 /* ── 워크북 마크업 파서 & 렌더 도우미 ── */
@@ -3435,6 +3441,12 @@ TAB_SAVE.vocab = {
     applyVocabAnswer();
     buildVocab();
   },
+  clearResults: () => {
+    vocabDocEl.innerHTML = "";
+    vocabPrintBtn.style.display = "none";
+    vocabSaveBtn.style.display = "none";
+    syncFloatPrint();
+  },
 };
 
 /* ══════════════════════════ 저장/불러오기 배선 ══════════════════════════
@@ -3476,6 +3488,14 @@ const savedListLeadEl = $("savedListLead");
 const savedListCloseBtn = $("savedListClose");
 
 let pendingSaveTab = null;
+
+// 각 탭이 등록해 둔 clearResults()를 모두 불러 화면의 제작 결과물을 비운다.
+// (지문 탭은 결과물이 따로 없으므로 등록하지 않는다)
+function clearAllTabResults() {
+  Object.values(TAB_SAVE).forEach((entry) => {
+    if (entry && typeof entry.clearResults === "function") entry.clearResults();
+  });
+}
 
 function openSaveDialog(tab) {
   pendingSaveTab = tab;
@@ -3610,6 +3630,10 @@ savedListBodyEl.addEventListener("click", async (e) => {
       savedListModalEl.hidden = true;
       const tabBtn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
       if (tabBtn) tabBtn.click();
+      // 불러오면 지문이 통째로 바뀌므로, 화면에 남아 있던 이전 제작 결과물은 모두
+      // 지운다 — 안 그러면 방금 불러온 지문과 맞지 않는 결과물이 그대로 남아
+      // 어느 지문으로 만든 것인지 알 수 없게 된다(지문만 불러온 경우가 특히 그랬다).
+      clearAllTabResults();
       TAB_SAVE[tab].applyPayload(item.payload || {});
     } catch (err) {
       alert(err.message || "불러오기에 실패했습니다.");
