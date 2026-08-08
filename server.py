@@ -3248,30 +3248,6 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_get(self):
         path = self.path.split("?", 1)[0]
 
-        if path == "/api/_probe":
-            # 배포 환경(프록시)이 '응답이 없는 요청'을 몇 초에서 끊는지 재기 위한
-            # 임시 측정용. 그 숫자를 알아야 REFINE_BUDGET을 근거 있게 정할 수 있다.
-            #
-            # 저장소가 공개라 경로를 숨기는 것으로는 보호가 안 되므로, 환경변수
-            # PROBE_ENABLED가 있을 때만 존재한다. 측정이 끝나면 그 변수를 지우고,
-            # 이 블록도 함께 삭제한다. 켜져 있는 동안에도 하는 일은 '기다렸다 답하기'
-            # 뿐이고 상한이 있어 피해가 제한된다.
-            if not os.environ.get("PROBE_ENABLED"):
-                self._send_json({"error": "not found"}, 404)
-                return
-            try:
-                want = float(urllib.parse.parse_qs(
-                    urllib.parse.urlparse(self.path).query).get("sec", ["10"])[0])
-            except (TypeError, ValueError):
-                want = 10.0
-            want = max(0.0, min(want, 300.0))   # 상한 5분
-            t = time.monotonic()
-            time.sleep(want)                    # 분석 호출처럼 '조용히' 기다린다
-            waited = time.monotonic() - t
-            print(f"[측정] {waited:.1f}초 기다린 뒤 응답함", file=sys.stderr)
-            self._send_json({"requested": want, "waited": round(waited, 1)})
-            return
-
         if path == "/api/pricing":
             # 비밀값이 아니다 — 화면이 '만들기' 누르기 전에 예상 비용을 보여주는 데 쓴다.
             # 로그인 여부와 무관하게 조회 가능(가격표일 뿐 실제 과금은 아니다).
