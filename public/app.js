@@ -1880,12 +1880,18 @@ function setupQuizTab({ prefix, types, footer }) {
     if (!step) return;
     const chip = step.closest(".type-chip");
     const box = chip.querySelector("input");
+    const delta = Number(step.dataset.step);
     if (!box.checked) {
-      if (Number(step.dataset.step) < 0) return; // 꺼진 유형에서 −는 할 일이 없다
+      if (delta < 0) return; // 꺼진 유형에서 −는 할 일이 없다
       box.checked = true;
       setCount(chip, 1);
+    } else if (delta < 0 && countOf(chip.dataset.id) <= 1) {
+      // 1에서 −를 누르면 0이 되는 셈이므로 유형 자체를 끈다 —— 체크박스를 따로
+      // 찾아 누르지 않아도 스테퍼만으로 선택을 해제할 수 있다.
+      // (숫자는 syncTypeChips가 1로 되돌리고 비운다)
+      box.checked = false;
     } else {
-      setCount(chip, countOf(chip.dataset.id) + Number(step.dataset.step));
+      setCount(chip, countOf(chip.dataset.id) + delta);
     }
     syncAll();
     syncTypeChips();
@@ -1912,8 +1918,8 @@ function setupQuizTab({ prefix, types, footer }) {
       nEl.textContent = on ? String(cur) : "";
       // 상한에 닿으면 + 를 잠근다. 꺼진 유형의 +는 '켜고 1로'라서 열어 둔다.
       chip.querySelector('.type-step[data-step="1"]').disabled = on && cur >= max;
-      // − 는 켜져 있고 2 이상일 때만 쓸 일이 있다
-      chip.querySelector('.type-step[data-step="-1"]').disabled = !on || cur <= 1;
+      // − 는 켜져 있으면 언제나 열어 둔다 — 1에서 한 번 더 누르면 유형이 꺼진다
+      chip.querySelector('.type-step[data-step="-1"]').disabled = !on;
     });
     updateCostHint();
   }
