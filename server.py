@@ -69,9 +69,10 @@ def _env(name, default, cast=str):
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8000"))
 MODEL = _env("GEMINI_MODEL", "gemini-3.6-flash")
-# 정확도가 더 필요한 일부 작업(객관식·지문변형형, 지문변형 '5개 이상')에만 쓰는 Pro
-# 모델. 사용자가 더 이상 모델을 직접 고르지 않고, 기능마다 서버가 이 중 하나를 고정해
-# 쓴다 — 정찰 요금과 실제 원가가 어긋나지 않도록 하기 위해서다.
+# 정확도가 더 필요한 작업에만 쓰는 Pro 모델. 사용자가 모델을 직접 고르지 않고, 기능마다
+# 서버가 이 중 하나를 고정해 쓴다 — 정찰 요금과 실제 원가가 어긋나지 않도록 하기 위해서다.
+# 지금 Pro로 가는 것: 지문을 변형해 만드는 문제(객관식·주관식 모두), 지문변형 '5개 이상'.
+# 분석본·워크북·사진 옮기기는 Flash다(분석본은 서버가 여섯 가지로 기계 검사해 보완한다).
 MODEL_PRO = _env("GEMINI_MODEL_PRO", "gemini-3.1-pro-preview")
 # 모델명은 URL 경로에 들어가므로 안전한 형식만 허용 (하드코딩 목록 대신 형식 검증)
 _MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]+$")
@@ -92,7 +93,10 @@ DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "50000"))
 PRICE_ANALYZE_KRW = int(os.environ.get("PRICE_ANALYZE_KRW", "300"))        # 지문분석, 지문 1개당
 PRICE_MCQ_PLAIN_KRW = int(os.environ.get("PRICE_MCQ_PLAIN_KRW", "250"))    # 객관식·지문유지, (지문×유형) 1개당
 PRICE_MCQ_TRANSFORM_KRW = int(os.environ.get("PRICE_MCQ_TRANSFORM_KRW", "250"))  # 객관식·지문변형, (지문×유형) 1개당
-PRICE_SAQ_KRW = int(os.environ.get("PRICE_SAQ_KRW", "200"))                # 주관식, (지문×유형) 1개당 (그대로형·가공형 구분 없음)
+# 주관식, (지문×유형) 1개당. 객관식과 같은 250원으로 맞춘다 — 주관식도 일곱 유형 중
+# 다섯이 지문을 변형해 만들고(선택형·오류찾기·배열), 그 유형들은 객관식과 똑같이 Pro로
+# 생성한다. 원가가 같은데 값만 싸게 받을 이유가 없다.
+PRICE_SAQ_KRW = int(os.environ.get("PRICE_SAQ_KRW", "250"))
 PRICE_WORKBOOK_KRW = int(os.environ.get("PRICE_WORKBOOK_KRW", "200"))      # 워크북, 지문 1개당 (선택 단계 수와 무관)
 # 같은 유형에서 2문항째부터 추가되는 금액. 한 번의 호출에서 지문과 시스템 프롬프트는
 # 문항 수와 무관하게 한 번만 입력되므로(= 입력 토큰을 나눠 쓴다), 추가 문항은 출력
@@ -3998,11 +4002,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "출제 유형을 하나 이상 선택하세요."}, 400)
                 return
             api_key = req.get("apiKey") or ""
-            # 객관식 '지문변형형'(빈칸·어휘·어법·순서·문장삽입) 유형이 하나라도 섞여 있으면
-            # 그 호출 전체를 Pro로 올린다 — 화면이 이미 이런 유형끼리, 저런 유형끼리
-            # 묶어서 보내므로(chunkTypes 참고) 한 호출 안에서 실제로 섞이는 일은 드물다.
+            # 지문을 '변형하는' 유형이 하나라도 섞여 있으면 그 호출 전체를 Pro로 올린다.
+            # 화면이 이미 이런 유형끼리, 저런 유형끼리 묶어서 보내므로(chunkTypes 참고)
+            # 한 호출 안에서 실제로 섞이는 일은 드물다.
+            #
+            # 기준은 '지문을 건드리느냐'다. 주제·제목·요지·내용일치·OX진위는 지문을 그대로
+            # 두고 보기만 만들어 Flash로 충분하다. 반면 빈칸·어휘·어법·순서·문장삽입과
+            # 주관식의 선택형·오류찾기·배열은 지문 자체를 고쳐 문제를 만든다. 심어 놓은
+            # 오류가 진짜 오류여야 하고 나머지는 완벽해야 하는데, 이것이 맞는지는 서버가
+            # 기계로 검사할 수 없다(분석본과 달리 첫 출력이 곧 최종본이다).
+            #
+            # 예전에는 이 조건에 '객관식이면서'가 붙어 있어 주관식은 아무리 지문을 변형해도
+            # Flash로 갔다. 어법 선택형·틀린 어법 찾기가 객관식 어법 문제와 같은 난이도인데
+            # 모델만 낮았던 것이라, 조건에서 객관식 제한을 뺐다.
             model = MODEL_PRO if any(
-                t in MCQ_ONLY_TYPES and t not in QUIZ_PLAIN_PASSAGE_TYPES for t, _ in items
+                t not in QUIZ_PLAIN_PASSAGE_TYPES for t, _ in items
             ) else MODEL
             variation = req.get("variation") or "verbatim"
             t0 = time.monotonic()
