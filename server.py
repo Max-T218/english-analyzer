@@ -12,6 +12,7 @@ Gemini API 키는 관리자(운영자)가 환경변수 GEMINI_API_KEY 하나로�
 실행:  python server.py       (기본 http://localhost:8000)
 """
 
+import copy
 import difflib
 import hashlib
 import json
@@ -391,9 +392,14 @@ class RefineTrace:
             return True
         return False
 
-    def retry(self, stage):
-        """이 단계가 재요청을 한 번 보냈다."""
+    def retry(self, stage, partial=None):
+        """이 단계가 재요청을 한 번 보냈다.
+        partial=True면 문장만 고쳐 받은 것, False면 전체를 다시 만든 것."""
         self.calls += 1
+        if partial is True:
+            stage += "(부분)"
+        elif partial is False:
+            stage += "(전체)"
         if stage not in self.done:
             self.done.append(stage)
 
@@ -2713,6 +2719,68 @@ _ANALYZE_TRUNC_MSG = (
     "지문을 두세 문단으로 나눠 각각 따로 분석하세요."
 )
 
+# ── 부분 수정 ────────────────────────────────────────────────────────────────
+# 검사가 문제를 찾으면 원래는 분석본 '전체'를 다시 만들게 했다. 접속사 하나 빠진
+# 것을 고치자고 8,000토큰을 다시 생성하느라 한 번에 30초씩 걸렸고, 그 사이 멀쩡하던
+# 다른 자리가 망가져 재요청 결과를 통째로 버리는 일도 잦았다.
+#
+# 문제가 지목된 문장만 고쳐 받아 원본에 끼워 넣으면 셋이 한꺼번에 해결된다.
+# 출력이 줄어 빨라지고, 값이 싸지고, 손대지 않은 문장은 애초에 바뀔 수가 없다.
+
+# 고쳐 받을 때는 sentences만 돌려받는다. 문장 하나의 모양은 전체 스키마와 같아야
+# 하므로 거기서 그대로 빌려 쓴다(따로 적어 두면 한쪽만 고쳐져 어긋난다).
+SENTENCE_FIX_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {"sentences": GEMINI_SCHEMA["properties"]["sentences"]},
+    "required": ["sentences"],
+    "propertyOrdering": ["sentences"],
+}
+
+_HINT_NO_RE = re.compile(r"^\s*(\d+)\s*번\s*문장")
+
+
+def hint_sentence_nos(*hint_lists):
+    """검사 메시지에서 '몇 번 문장'인지 뽑는다.
+
+    검사 함수들이 만드는 문구가 모두 "N번 문장…"으로 시작하므로 그 앞머리를 읽는다.
+    번호를 못 읽은 항목이 하나라도 있으면 빈 집합을 돌려준다 — 그 경우 어느 문장을
+    고쳐야 할지 확신할 수 없으니, 부분 수정 대신 예전처럼 전체를 다시 만들게 한다."""
+    nos = set()
+    for hints in hint_lists:
+        for h in hints or ():
+            m = _HINT_NO_RE.match(str(h))
+            if not m:
+                return set()
+            nos.add(int(m.group(1)))
+    return nos
+
+
+def splice_sentences(result, fixed, targets):
+    """고쳐 받은 문장을 원본에 끼워 넣은 새 분석본을 만든다.
+
+    targets에 든 번호만 갈아 끼우고 나머지는 원본 그대로 둔다. 모델이 엉뚱한 문장을
+    함께 돌려보내도 무시하고, 부탁한 문장을 안 돌려보냈으면 원본을 남긴다.
+    원본은 건드리지 않는다 — 호출한 쪽이 '고친 게 더 나은지' 비교해야 하기 때문."""
+    by_no = {}
+    for s in (fixed or {}).get("sentences", []) or []:
+        if not isinstance(s, dict):
+            continue
+        try:
+            no = int(s.get("no"))
+        except (TypeError, ValueError):
+            continue
+        if no in targets and s.get("chunks"):
+            by_no[no] = s
+    if not by_no:
+        return None                      # 쓸 만한 게 없으면 실패로 본다
+    out = dict(result)
+    merged = []
+    for s in result.get("sentences", []) or []:
+        no = s.get("no") if isinstance(s, dict) else None
+        merged.append(by_no.get(no, s))
+    out["sentences"] = merged
+    return out
+
 
 def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, complete_hint=None,
                 english_fix=False, conj_hint=None, num_hint=None,
@@ -2753,6 +2821,19 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
         },
     }
     result = _gemini_json(payload, api_key, model, _ANALYZE_TRUNC_MSG)
+    return finalize_analysis(result)
+
+
+def finalize_analysis(result):
+    """모델이 준 날것의 분석본을 화면에 낼 수 있는 형태로 마무리한다.
+
+    검사 → 조립 → 정화 순서가 중요하다. 조립이 anns를 버리므로 검사는 그 전에 끝내야
+    한다. 부분 수정도 고쳐 받은 문장을 날것 상태에서 끼워 넣은 뒤 이 함수를 다시 태워,
+    처음부터 전체를 만든 것과 똑같은 과정을 거치게 한다."""
+    # 고쳐 받을 때 '지금 이 문장이 어떤 상태인지' 보여 주려면 anns가 필요한데 아래
+    # 조립 루프가 그것을 지운다. 그래서 지우기 전에 따로 떠 둔다(핸들러가 응답 전에
+    # 지우는 다른 비공개 키들과 같은 취급이다).
+    result["_rawSents"] = copy.deepcopy(result.get("sentences") or [])
     # 등위접속사 누락 검사는 조립 '전'에 해야 한다 — 아래 루프가 anns를 버리기 때문.
     # 결과는 비공개 키로 얹어 두고, 핸들러가 재요청 판단에 쓴 뒤 응답 전에 지운다.
     missed = unmarked_conjunctions(result)
@@ -2790,6 +2871,103 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
     result["_rubyBad"] = ruby_bad
     result["_conflicts"] = conflicts
     return result
+
+
+FIX_TRUNC_MSG = (
+    "문장 수정본이 잘렸습니다. 잠시 뒤 다시 시도하세요."
+)
+
+# 지목된 문장이 전체의 이 비율을 넘으면 부분 수정의 이점이 없다 — 그냥 전체를 다시
+# 만든다(부분 수정은 '조금만 고쳐 받아 빨리 끝낸다'가 목적이다).
+_FIX_MAX_SHARE = 0.5
+
+
+def call_gemini_fix(passage, result, targets, api_key, model,
+                    conj_hint=None, num_hint=None, ruby_hint=None, conflict_hint=None):
+    """지목된 문장만 고쳐 받아 원본에 끼워 넣은 분석본을 돌려준다.
+
+    전체를 다시 만들지 않으므로 빠르고 싸며, 손대지 않은 문장은 바뀔 수가 없다.
+    고칠 수 없는 상황(원본 주석이 없다, 지목된 문장이 너무 많다, 모델이 쓸 만한 것을
+    안 줬다)이면 None을 돌려준다 — 호출한 쪽이 예전처럼 전체 재요청으로 넘어간다."""
+    raw = result.get("_rawSents") or []
+    if not raw or not targets:
+        return None
+    if len(targets) > max(1, int(len(raw) * _FIX_MAX_SHARE)):
+        return None
+    subset = [s for s in raw if isinstance(s, dict) and s.get("no") in targets]
+    if not subset:
+        return None
+
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+
+    lines = [
+        "아래는 이미 만들어 둔 분석본 중 **문제가 지적된 문장들**입니다.",
+        "지적된 부분만 고쳐서, **그 문장들만** 같은 형식으로 돌려주세요.",
+        "",
+        "지켜야 할 것:",
+        "· 지적되지 않은 것은 무엇도 바꾸지 마세요 — 청크를 나눈 자리, 한국어 해석,",
+        "  이미 올바른 주석, note, examTags, tag, isTopic 모두 그대로 두세요.",
+        "· 문장 번호(no)는 그대로 두세요. 번호가 바뀌면 끼워 넣을 자리를 잃습니다.",
+        "· 요청받은 문장만 돌려주세요. 다른 문장은 넣지 마세요.",
+        "",
+        "원문 지문(맥락 참고용):",
+        passage.strip(),
+        "",
+        "고쳐야 할 문장들의 현재 상태(JSON):",
+        json.dumps({"sentences": subset}, ensure_ascii=False),
+        "",
+        "지적된 문제:",
+    ]
+    for label, hints in (("등위접속사 누락", conj_hint), ("병렬 번호", num_hint),
+                         ("루비 규칙 위반", ruby_hint), ("좌우 용어 모순", conflict_hint)):
+        for h in hints or ():
+            lines.append(f"  · [{label}] {h}")
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": "\n".join(lines)}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 65536,
+            "responseMimeType": "application/json",
+            "responseSchema": SENTENCE_FIX_SCHEMA,
+        },
+    }
+    fixed = _gemini_json(payload, api_key, model, FIX_TRUNC_MSG)
+
+    merged = splice_sentences({"sentences": raw}, fixed, targets)
+    if merged is None:
+        return None
+    # 끼워 넣은 문장은 원본 백업본(_rawSents)과 같은 객체를 가리킨다. 그대로 마무리
+    # 처리에 넘기면 조립 루프가 원본의 anns까지 지워, 이 수정이 거부됐을 때 다음
+    # 부분 수정이 갈 곳을 잃는다. 그래서 통째로 복사한 뒤 손댄다.
+    out = copy.deepcopy({k: v for k, v in result.items() if k != "_rawSents"})
+    out["sentences"] = copy.deepcopy(merged["sentences"])
+    return finalize_analysis(out)
+
+
+def refine_analysis(passage, target_grammar, mode, api_key, model, result, **hints):
+    """검사가 짚은 문제를 고친 분석본을 돌려준다. (새 분석본, 부분수정이었는지) 쌍.
+
+    먼저 지목된 문장만 고쳐 받아 본다. 그게 안 되는 상황이면 예전처럼 전체를 다시
+    만든다 — 부분 수정은 빠르고 안전한 지름길일 뿐, 못 가면 원래 길로 가면 된다."""
+    targets = hint_sentence_nos(*hints.values())
+    if targets:
+        try:
+            fixed = call_gemini_fix(passage, result, targets, api_key, model, **hints)
+        except (ProUnavailable, QuotaExceeded, NeedsPro):
+            raise            # 모델·할당량 문제는 전체 재요청으로도 풀리지 않는다
+        except Exception:
+            fixed = None     # 그 밖의 실패는 전체 재요청에 맡긴다
+        if fixed is not None:
+            return fixed, True
+    return call_gemini(passage, target_grammar, mode, api_key, model, **hints), False
 
 
 def list_models(api_key):
@@ -3913,10 +4091,11 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 if trace.blocked("접속사"):
                     break
-                trace.retry("접속사")
-                retry = call_gemini(
-                    passage, target_grammar, mode, api_key, model, conj_hint=missed
+                retry, part = refine_analysis(
+                    passage, target_grammar, mode, api_key, model, result,
+                    conj_hint=missed,
                 )
+                trace.retry("접속사", part)
                 better = (
                     len(retry.get("_conjMiss") or []) < len(missed)
                     # 접속사를 더 찾아왔더라도 문장이나 영어를 잃었으면 채택하지 않는다
@@ -3934,10 +4113,11 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 if trace.blocked("번호"):
                     break
-                trace.retry("번호")
-                retry = call_gemini(
-                    passage, target_grammar, mode, api_key, model, num_hint=broken
+                retry, part = refine_analysis(
+                    passage, target_grammar, mode, api_key, model, result,
+                    num_hint=broken,
                 )
+                trace.retry("번호", part)
                 better = (
                     len(retry.get("_numBroken") or []) < len(broken)
                     # 번호를 고쳤더라도 문장·영어·접속사 표시를 잃었으면 채택하지 않는다
@@ -3955,10 +4135,11 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 if trace.blocked("루비"):
                     break
-                trace.retry("루비")
-                retry = call_gemini(
-                    passage, target_grammar, mode, api_key, model, ruby_hint=bad
+                retry, part = refine_analysis(
+                    passage, target_grammar, mode, api_key, model, result,
+                    ruby_hint=bad,
                 )
+                trace.retry("루비", part)
                 if _analysis_regressed(retry, result, passage):
                     break
                 if len(retry.get("_rubyBad") or []) >= len(bad):
@@ -3972,15 +4153,19 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 if trace.blocked("좌우"):
                     break
-                trace.retry("좌우")
-                retry = call_gemini(
-                    passage, target_grammar, mode, api_key, model, conflict_hint=bad
+                retry, part = refine_analysis(
+                    passage, target_grammar, mode, api_key, model, result,
+                    conflict_hint=bad,
                 )
+                trace.retry("좌우", part)
                 if _analysis_regressed(retry, result, passage):
                     break
                 if len(retry.get("_conflicts") or []) >= len(bad):
                     break
                 result = retry
+            # 비공개 키는 여기서 전부 턴다. _rawSents는 분석본을 통째로 한 벌 더 담고
+            # 있어, 남겨 두면 화면으로 가는 응답이 두 배가 된다.
+            result.pop("_rawSents", None)
             result.pop("_conjMiss", None)
             result.pop("_numBroken", None)
             result.pop("_rubyBad", None)
