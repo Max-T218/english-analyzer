@@ -1437,7 +1437,7 @@ async function analyze() {
         },
         "분석에 실패했습니다."
       );
-      htmlParts.push(buildAnalysisHtml(data, job, total));
+      htmlParts.push(buildAnalysisHtml(data, job, total, entries.length));
       entries.push({ job, data });
       if (Array.isArray(data.vocab) && data.vocab.length) {
         vocabSets.push({ name: job.name, vocab: data.vocab });
@@ -1480,7 +1480,7 @@ async function analyze() {
 // 저장해 둔 원본 data를 그때와 같은 buildAnalysisHtml로 다시 그리기만 한다.
 function renderAnalyzeEntries(entries) {
   const total = entries.length;
-  const htmlParts = entries.map(({ job, data }) => buildAnalysisHtml(data, job, total));
+  const htmlParts = entries.map(({ job, data }, i) => buildAnalysisHtml(data, job, total, i));
   if (total) htmlParts.push(`<footer>구문 단위 직독직해 분석본 · 자동 생성</footer>`);
   setEditMode(false);
   resultEl.innerHTML = htmlParts.join("");
@@ -1493,12 +1493,69 @@ function renderAnalyzeEntries(entries) {
   if (total) resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+/* ── 직접 수정한 내용을 저장 데이터에 되돌려 넣기 ──
+   '직접 수정'은 화면(DOM)만 고친다. 인쇄는 그 화면을 그대로 뽑으므로 고친 내용이
+   나가지만, 저장은 분석 당시의 원본 data를 보내므로 그냥 두면 고친 내용이 저장에서
+   빠진다(불러오면 수정이 사라진다). 그래서 저장 직전에 화면을 한 번 되읽는다.
+   되읽는 곳은 실제로 고칠 수 있는 세 곳뿐이다(EDITABLE_SEL — 루비·한글 해석·해설).
+   영어 원문·표·제목은 잠겨 있어 화면과 데이터가 어긋날 일이 없다. */
+
+// contenteditable 표시는 화면용이라 저장 데이터에 섞이면 안 된다 — 지운 복사본을 준다
+function editedCopy(el) {
+  const copy = el.cloneNode(true);
+  copy.removeAttribute("contenteditable");
+  copy.querySelectorAll("[contenteditable]").forEach((n) => n.removeAttribute("contenteditable"));
+  return copy;
+}
+
+function collectAnalysisEdits() {
+  lastAnalyzeEntries.forEach((entry, idx) => {
+    const block = resultEl.querySelector(`.passage-block[data-entry="${idx}"]`);
+    if (!block || !entry || !entry.data) return; // 화면이 이미 바뀌었으면 원본을 그대로 둔다
+    const sentEls = block.querySelectorAll(".sent");
+    (entry.data.sentences || []).forEach((s, i) => {
+      const sentEl = sentEls[i];
+      if (!sentEl) return;
+
+      // 청크 — 루비(rt)는 .c-eng 안에 있어서 영문 칸을 통째로 되읽어야 반영된다
+      const chunkEls = sentEl.querySelectorAll(".chunk");
+      (s.chunks || []).forEach((c, j) => {
+        const chunkEl = chunkEls[j];
+        if (!chunkEl) return;
+        const engEl = chunkEl.querySelector(".c-eng");
+        const korEl = chunkEl.querySelector(".c-kor");
+        if (engEl) c.eng = editedCopy(engEl).innerHTML;
+        if (korEl) c.kor = editedCopy(korEl).innerHTML;
+      });
+
+      // 해설 — 자동으로 붙는 제목과 '출제 포인트' 상자는 다시 그릴 때 붙으므로 뺀다
+      const noteEl = sentEl.querySelector(".note");
+      if (!noteEl) return;
+      const noteCopy = editedCopy(noteEl);
+      const whyCopy = noteCopy.querySelector(".exam-why");
+      if (whyCopy) whyCopy.remove();
+      const titleCopy = noteCopy.querySelector(".note-title");
+      if (titleCopy) titleCopy.remove();
+      s.note = noteCopy.innerHTML;
+
+      const whyEl = noteEl.querySelector(".exam-why");
+      if (whyEl) {
+        const whyBody = editedCopy(whyEl);
+        const whyTitle = whyBody.querySelector(".exam-why-title");
+        if (whyTitle) whyTitle.remove();
+        s.examNote = whyBody.innerHTML;
+      }
+    });
+  });
+  return lastAnalyzeEntries;
+}
+
 TAB_SAVE.analyze = {
   saveBtn,
   getPayload: () => ({
     passages: passageMgr.getJobs(),
     settings: { targetGrammar: grammarEl.value, review: !!(reviewChk && reviewChk.checked) },
-    entries: lastAnalyzeEntries,
+    entries: collectAnalysisEdits(),
   }),
   applyPayload: (payload) => {
     passageMgr.setJobs(payload.passages || []);
@@ -1553,9 +1610,13 @@ function passageBanner(job, total, label) {
 }
 
 // 한 지문의 전체 분석본 HTML을 문자열로 만든다 (여러 지문을 이어붙이기 위함)
-function buildAnalysisHtml(d, job, total) {
+// idx: lastAnalyzeEntries에서 이 지문이 몇 번째인지. 저장할 때 화면에서 고친 내용을
+//      어느 entry에 되돌려 넣을지 찾는 표식이다(실패 카드가 섞이면 화면 순서와
+//      entries 순서가 어긋나므로 번호를 직접 박아 둔다).
+function buildAnalysisHtml(d, job, total, idx) {
   const parts = [];
-  parts.push(`<section class="passage-block">`);
+  const mark = Number.isInteger(idx) ? ` data-entry="${idx}"` : "";
+  parts.push(`<section class="passage-block"${mark}>`);
   parts.push(passageBanner(job, total));
 
   // 표지
