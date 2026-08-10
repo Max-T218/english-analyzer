@@ -76,6 +76,9 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
   transition:transform .05s, opacity .15s;
 }
 @media (prefers-color-scheme:dark) and (min-width:999999px){.btn{color:#0f141a;}}
+/* 위의 display:inline-flex가 hidden 속성(브라우저 기본 display:none)을 덮어써서,
+   btn.hidden = true로는 버튼이 숨겨지지 않는다. 다른 요소들과 같은 방식으로 짝을 맞춘다. */
+.btn[hidden]{display:none;}
 .btn:hover{opacity:.92;}
 .btn:active{transform:translateY(1px);}
 .btn:disabled{opacity:.5; cursor:not-allowed;}
