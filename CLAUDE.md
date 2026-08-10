@@ -80,6 +80,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 |---|---|
 | 환경변수·기본값 | 파일 상단 `HOST` ~ `PRICE_OCR_KRW` |
 | 가격 계산 | `_quiz_type_base_price`, `_quiz_action_cost` |
+| 포인트 원장(이용 내역)·유상무상 구분 | `POINT_LEDGER`, `_split_balance`, `charge_krw`, `add_krw`, `list_usage`, `_fold_old_ledger` |
 | Firestore 연결 | `_load_firestore` |
 | 회원가입·인증코드·비밀번호 | `start_signup`, `complete_signup`, `login_with_password`, `_hash_password` |
 | Gemini 호출 공통(재시도·시간 예산) | `RETRY_MIN_WAIT`, `MAX_RETRY_TOTAL`, `_over_budget`, `RefineTrace`, `_parse_retry_delay` |
@@ -116,8 +117,8 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 
 ## API 엔드포인트
 
-**GET** — `/api/pricing` `/api/me` `/api/saved` `/api/saved/<id>` `/api/admin/me`
-`/api/admin/users` `/api/_probe`(임시, 아래 참고)
+**GET** — `/api/pricing` `/api/me` `/api/saved` `/api/saved/<id>` `/api/usage` `/api/admin/me`
+`/api/admin/users` `/api/admin/usage` `/api/_probe`(임시, 아래 참고)
 
 **POST** — `/api/analyze` `/api/quiz` `/api/workbook` `/api/reword` `/api/ocr` `/api/models`
 `/api/auth/google` `/api/auth/signup` `/api/auth/verify` `/api/auth/login` `/api/auth/delete`

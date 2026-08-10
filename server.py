@@ -86,6 +86,23 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 세션 유지 기간(초) — 30일
 # 콘솔에서 users/<id> 문서의 krw_remaining 값을 직접 고치면 된다.
 DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "50000"))
 
+# --- 포인트 원장(이용 내역) ------------------------------------------------
+# 잔액은 숫자 하나로만 남아 있어서 "언제 무엇에 얼마를 썼는지"를 아무도 알 수 없었다.
+# 유료로 전환하면 그게 곧 분쟁이 되므로(실패했는데 차감된 것 같다 / 충전한 만큼 안
+# 들어왔다), 잔액이 움직일 때마다 한 줄씩 남긴다. 이력은 소급해서 만들 수 없어서
+# 유료 전환 전에 미리 쌓아 둔다.
+POINT_LEDGER = "point_ledger"
+# 보관 기간(개월). 지난 것은 지우되, 지우기 전에 '이월' 한 줄로 접어 둔다 — 그래야
+# 포인트에 유효기간이 없는 지금 구조에서도 (지급+충전-사용=잔액) 검산이 유지된다.
+LEDGER_KEEP_MONTHS = int(os.environ.get("LEDGER_KEEP_MONTHS", "18"))
+# 무상 포인트 유효기간(일). 0이면 만료 없음 — 지금은 꺼 둔다.
+# 켜기 전에 반드시 가입 화면과 이용 내역에 소멸 예정일을 먼저 안내해야 한다
+# (고지 없이 소멸시키면 그것 자체가 분쟁이 된다).
+FREE_POINT_EXPIRE_DAYS = int(os.environ.get("FREE_POINT_EXPIRE_DAYS", "0"))
+USAGE_PAGE_SIZE = 50   # 이용 내역 한 쪽에 보여 줄 줄 수
+# 사용자가 보는 날짜라 UTC로 적으면 오전 9시 이전 사용분이 전날로 표시된다
+KST = timezone(timedelta(hours=9))
+
 # --- 요금제: 실제 Gemini 사용량이 아니라, 행동 하나당 고정 가격(원)을 매긴다 ----
 # 실사용 토큰을 그때그때 재는 대신 정찰제로 가는 이유: 사용자 입장에서 예측 가능하고,
 # 관리자 입장에서도 "이 버튼 한 번 = 얼마"가 분명해진다. 실제 Gemini 비용과의 차액은
@@ -300,8 +317,12 @@ def complete_signup(email, code):
         "provider": "password",
         "created_at": _now_iso(),
         "krw_remaining": starting_krw,
+        # 가입 축하금은 돈을 받은 적이 없으므로 전액 무상이다(환불 대상이 아니다)
+        "krw_free": starting_krw,
+        "krw_paid": 0,
     })
     ref.delete()
+    _log_signup_grant(user_id, starting_krw)
     return user_id
 
 
@@ -3127,7 +3148,10 @@ def upsert_user(sub, email, name):
         ref.set({
             "email": email, "name": name, "created_at": _now_iso(),
             "krw_remaining": starting_krw,
+            # 가입 축하금은 돈을 받은 적이 없으므로 전액 무상이다(환불 대상이 아니다)
+            "krw_free": starting_krw, "krw_paid": 0,
         })
+        _log_signup_grant(sub, starting_krw)
     else:
         ref.set({"email": email, "name": name}, merge=True)
 
@@ -3142,6 +3166,10 @@ def delete_user_account(user_id):
     email = (snap.to_dict() or {}).get("email") if snap.exists else None
     for item in DB.collection("saved_items").where("user_id", "==", user_id).stream():
         item.reference.delete()
+    # 이용 내역도 함께 지운다 — 탈퇴하면 다 사라진다고 안내하고 있고,
+    # 계정이 없어진 뒤에도 남아 있을 이유가 없다.
+    for row in DB.collection(POINT_LEDGER).where("user_id", "==", user_id).stream():
+        row.reference.delete()
     DB.collection("users").document(user_id).delete()
     if email:
         DB.collection("deleted_accounts").document(email.strip().lower()).set({
@@ -3165,27 +3193,142 @@ def _account_payload(user_id):
     표시하는 데 쓴다."""
     _require_db()
     info = DB.collection("users").document(user_id).get().to_dict() or {}
-    try:
-        krw = int(info.get("krw_remaining", 0))
-    except (TypeError, ValueError):
-        krw = 0
+    krw, free, paid = _split_balance(info)
     return {
         "loggedIn": True,
         "email": info.get("email"),
         "name": info.get("name"),
         "krwRemaining": krw,
+        # 유상/무상 구분 — 환불 대상은 유상분뿐이라 화면에서도 나눠 보여 준다
+        "krwFree": free,
+        "krwPaid": paid,
     }
 
 
-def charge_krw(user_id, amount):
+def _split_balance(d):
+    """회원 문서에서 (전체, 무상, 유상) 잔액을 꺼낸다.
+
+    유상/무상 구분이 없던 시절의 문서에는 krw_remaining 하나뿐이다. 그 잔액은 전부
+    무상으로 본다 — 유료 전환 전이라 실제로 돈을 낸 사람이 아직 없기 때문이다.
+    (환불 대상은 유상분뿐이므로, 옛 잔액을 유상으로 잡으면 없던 채무가 생긴다.)"""
+    try:
+        total = int(d.get("krw_remaining", 0) or 0)
+    except (TypeError, ValueError):
+        total = 0
+    if "krw_free" not in d and "krw_paid" not in d:
+        return total, total, 0
+    try:
+        free = int(d.get("krw_free", 0) or 0)
+        paid = int(d.get("krw_paid", 0) or 0)
+    except (TypeError, ValueError):
+        free, paid = total, 0
+    return free + paid, free, paid
+
+
+def _ledger_row(user_id, kind, label, amount, paid_delta, free_delta, balance_after,
+                expires_at=None):
+    """원장 한 줄. 지문 원문은 절대 넣지 않는다 — 항목 이름만으로 충분하고,
+    저작권 있는 교재 지문을 영구 보관할 이유가 없다."""
+    now = datetime.now(timezone.utc)
+    return {
+        "user_id": user_id,
+        "kind": kind,                 # use=사용 charge=유상충전 grant=무상지급 carry=이월
+        "label": label,
+        "amount": int(amount),        # 사용은 음수, 충전·지급은 양수
+        "paid_delta": int(paid_delta),
+        "free_delta": int(free_delta),
+        "balance_after": int(balance_after),
+        "created_at": now.isoformat(),
+        "date_kst": now.astimezone(KST).strftime("%Y-%m-%d %H:%M"),
+        # 무상 포인트 소멸 예정일. 지금은 FREE_POINT_EXPIRE_DAYS=0이라 항상 None이고,
+        # 나중에 켜면 이 값을 가진 지급분부터 대상이 된다(이미 준 것은 소급되지 않는다).
+        "expires_at": expires_at,
+    }
+
+
+def _free_expiry():
+    if FREE_POINT_EXPIRE_DAYS <= 0:
+        return None
+    return (datetime.now(timezone.utc) + timedelta(days=FREE_POINT_EXPIRE_DAYS)).isoformat()
+
+
+def _log_signup_grant(user_id, amount):
+    """가입 축하금을 원장에 남긴다. 잔액은 계정 문서를 만들 때 이미 넣었으므로 여기서는
+    기록만 한다. 기록이 실패했다고 가입까지 막을 이유는 없으므로 예외는 삼킨다."""
+    if amount <= 0:
+        return
+    try:
+        DB.collection(POINT_LEDGER).document().set(_ledger_row(
+            user_id, "grant", "가입 축하 지급", amount, 0, amount, amount,
+            expires_at=_free_expiry(),
+        ))
+    except Exception:
+        traceback.print_exc()
+
+
+def charge_krw(user_id, amount, label="사용", kind="use"):
     """생성이 성공했을 때만 부른다 — 정찰 가격제라 실패한 시도에는 과금하지 않는다
-    (Gemini 실제 사용량과 무관하게 고정가라, 실패 시 청구하지 않는 게 정당하다)."""
+    (Gemini 실제 사용량과 무관하게 고정가라, 실패 시 청구하지 않는 게 정당하다).
+
+    잔액 변경과 원장 기록을 한 트랜잭션으로 묶는다. 둘이 어긋나면 그 자체가 분쟁거리라
+    (돈은 빠졌는데 내역이 없다), 따로 쓰면 안 된다.
+    무상분부터 깎는다 — 유상분을 남겨 둬야 환불 요청에 답할 수 있다."""
     if amount <= 0:
         return
     _require_db()
-    DB.collection("users").document(user_id).update({
-        "krw_remaining": firestore.Increment(-amount)
-    })
+    user_ref = DB.collection("users").document(user_id)
+    row_ref = DB.collection(POINT_LEDGER).document()
+
+    @firestore.transactional
+    def _apply(tx):
+        snap = user_ref.get(transaction=tx)
+        if not snap.exists:
+            raise ValueError("해당 회원을 찾을 수 없습니다.")
+        _total, free, paid = _split_balance(snap.to_dict() or {})
+        use_free = min(free, amount)
+        use_paid = amount - use_free
+        new_free, new_paid = free - use_free, paid - use_paid
+        tx.update(user_ref, {
+            "krw_remaining": new_free + new_paid,
+            "krw_free": new_free,
+            "krw_paid": new_paid,
+        })
+        tx.set(row_ref, _ledger_row(
+            user_id, kind, label, -amount, -use_paid, -use_free, new_free + new_paid
+        ))
+
+    _apply(DB.transaction())
+
+
+def add_krw(user_id, amount, kind, label):
+    """잔액을 더한다. kind='charge'면 유상(환불 대상), 'grant'면 무상(소멸 대상).
+    돌려주는 값은 더한 뒤의 전체 잔액."""
+    _require_db()
+    user_ref = DB.collection("users").document(user_id)
+    row_ref = DB.collection(POINT_LEDGER).document()
+    expires_at = _free_expiry() if kind == "grant" else None
+
+    @firestore.transactional
+    def _apply(tx):
+        snap = user_ref.get(transaction=tx)
+        if not snap.exists:
+            raise ValueError("해당 회원을 찾을 수 없습니다.")
+        _total, free, paid = _split_balance(snap.to_dict() or {})
+        add_free = amount if kind == "grant" else 0
+        add_paid = amount if kind != "grant" else 0
+        new_free, new_paid = free + add_free, paid + add_paid
+        tx.update(user_ref, {
+            "krw_remaining": new_free + new_paid,
+            "krw_free": new_free,
+            "krw_paid": new_paid,
+        })
+        tx.set(row_ref, _ledger_row(
+            user_id, kind, label, amount, add_paid, add_free, new_free + new_paid,
+            expires_at=expires_at,
+        ))
+        return new_free + new_paid
+
+    return _apply(DB.transaction())
 
 
 def create_session(sub):
@@ -3338,14 +3481,87 @@ def list_all_users():
     return rows
 
 
-def recharge_user_krw(user_id, amount):
-    """관리자가 임의로 잔액을 더하거나(양수) 뺀다(음수). 계정이 실제로 있는지 먼저 확인한다."""
-    _require_db()
-    ref = DB.collection("users").document(user_id)
-    if not ref.get().exists:
-        raise ValueError("해당 회원을 찾을 수 없습니다.")
-    ref.update({"krw_remaining": firestore.Increment(int(amount))})
+def recharge_user_krw(user_id, amount, kind="grant", label=None):
+    """관리자가 임의로 잔액을 더하거나(양수) 뺀다(음수). 계정이 실제로 있는지는
+    트랜잭션 안에서 확인한다.
+
+    kind는 더할 때만 의미가 있다 — 'charge'는 실제로 돈을 받은 유상 충전(환불 대상),
+    'grant'는 그냥 얹어 주는 무상 지급. 기본값이 무상인 것은, 결제사가 붙기 전까지
+    관리자 충전은 전부 돈을 받지 않은 지급이기 때문이다."""
+    amount = int(amount)
+    if amount == 0:
+        return get_user_krw(user_id)
+    if amount > 0:
+        return add_krw(user_id, amount, kind, label or ("관리자 충전" if kind == "charge" else "관리자 지급"))
+    charge_krw(user_id, -amount, label or "관리자 차감", kind="adjust")
     return get_user_krw(user_id)
+
+
+def _fold_old_ledger(user_id):
+    """보관 기간(LEDGER_KEEP_MONTHS)이 지난 줄을 '이월' 한 줄로 접는다.
+
+    포인트에 유효기간이 없어서 잔액은 몇 년이고 살아 있는데 근거만 사라지면,
+    (지급+충전-사용=잔액) 검산이 영영 깨진다. 그래서 지우기 전에 합계를 한 줄 남긴다.
+
+    정기 실행 장치(cron)가 없으므로 이용 내역을 열 때 겸사겸사 한다. 접을 게 없으면
+    질의 한 번으로 끝나고, 실패해도 조회 자체는 계속되어야 하므로 호출부에서 삼킨다."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30 * LEDGER_KEEP_MONTHS)).isoformat()
+    old = list(
+        DB.collection(POINT_LEDGER)
+        .where("user_id", "==", user_id)
+        .where("created_at", "<", cutoff)
+        .stream()
+    )
+    if len(old) < 2:  # 이월 줄 하나만 남은 상태면 접을 것이 없다
+        return
+    plus = minus = 0
+    balance_after = 0
+    latest = ""
+    for doc in old:
+        d = doc.to_dict() or {}
+        amt = int(d.get("amount", 0) or 0)
+        if amt >= 0:
+            plus += amt
+        else:
+            minus += -amt
+        created = d.get("created_at") or ""
+        if created >= latest:      # 접기 직전 시점의 잔액을 이월 잔액으로 삼는다
+            latest, balance_after = created, int(d.get("balance_after", 0) or 0)
+    batch = DB.batch()
+    row = _ledger_row(user_id, "carry", f"이전 내역 요약 (충전·지급 {plus:,}원 / 사용 {minus:,}원)",
+                      0, 0, 0, balance_after)
+    row["created_at"] = latest     # 목록에서 접힌 구간의 끝자리에 놓이도록
+    batch.set(DB.collection(POINT_LEDGER).document(), row)
+    for doc in old:
+        batch.delete(doc.reference)
+    batch.commit()
+
+
+def list_usage(user_id, limit=50, before=None):
+    """이용 내역 — 최신순. before(created_at)를 주면 그보다 과거만 돌려준다(더 보기)."""
+    _require_db()
+    try:
+        _fold_old_ledger(user_id)
+    except Exception:
+        traceback.print_exc()   # 접기에 실패해도 내역은 보여 준다
+    q = DB.collection(POINT_LEDGER).where("user_id", "==", user_id)
+    if before:
+        q = q.where("created_at", "<", before)
+    q = q.order_by("created_at", direction=firestore.Query.DESCENDING).limit(int(limit))
+    rows = []
+    for doc in q.stream():
+        d = doc.to_dict() or {}
+        rows.append({
+            "id": doc.id,
+            "kind": d.get("kind"),
+            "label": d.get("label"),
+            "amount": int(d.get("amount", 0) or 0),
+            "balanceAfter": int(d.get("balance_after", 0) or 0),
+            "date": d.get("date_kst") or "",
+            "createdAt": d.get("created_at") or "",
+            "expiresAt": d.get("expires_at"),
+        })
+    return rows
 
 
 def list_saved_items(user_id):
@@ -3494,6 +3710,33 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 500)
             return
 
+        # 이용 내역 — 본인 것은 /api/usage, 관리자가 남의 것을 볼 때는 /api/admin/usage.
+        # 세션 종류가 아예 달라서(회원 세션 / 관리자 세션) 경로를 나눈다.
+        if path in ("/api/usage", "/api/admin/usage"):
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            if path == "/api/usage":
+                user_id = _session_user(self)
+                if not user_id:
+                    self._send_json({"error": "로그인이 필요합니다."}, 401)
+                    return
+            else:
+                if not _admin_session_valid(self):
+                    self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
+                    return
+                user_id = (query.get("userId") or [""])[0]
+                if not user_id:
+                    self._send_json({"error": "회원을 지정하세요."}, 400)
+                    return
+            before = (query.get("before") or [""])[0] or None
+            try:
+                rows = list_usage(user_id, limit=USAGE_PAGE_SIZE, before=before)
+            except Exception as e:
+                self._send_json({"error": f"이용 내역을 불러오지 못했습니다: {e}"}, 500)
+                return
+            # more: 한 쪽을 꽉 채웠으면 다음 쪽이 있을 수 있다는 뜻
+            self._send_json({"items": rows, "more": len(rows) == USAGE_PAGE_SIZE})
+            return
+
         if path == "/api/saved":
             user_id = _session_user(self)
             if not user_id:
@@ -3579,6 +3822,7 @@ class Handler(BaseHTTPRequestHandler):
         # 요청마다 맨 먼저 초기화한다(안 하면 엉뚱한 사용자·가격이 새어 들어올 수 있다).
         self._auth_user_id = None
         self._pending_charge = 0
+        self._pending_label = "사용"
 
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
@@ -3631,16 +3875,25 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._auth_user_id = user_id
             if path in GENERATE_PATHS:
+                # 이용 내역에 남길 항목 이름도 여기서 정한다 — 가격을 계산하는 자리가
+                # 무엇을 몇 개 만드는지 아는 유일한 자리다. 지문 원문은 넣지 않는다.
                 if path == "/api/analyze":
                     cost = PRICE_ANALYZE_KRW
+                    self._pending_label = "지문 분석"
                 elif path == "/api/quiz":
-                    cost = _quiz_action_cost(parse_quiz_items(req.get("types")))
+                    quiz_items = parse_quiz_items(req.get("types"))
+                    cost = _quiz_action_cost(quiz_items)
+                    total_q = sum(n for _t, n in quiz_items)
+                    self._pending_label = f"문제 제작 · {total_q}문항"
                 elif path == "/api/workbook":
                     cost = PRICE_WORKBOOK_KRW
+                    self._pending_label = "워크북"
                 elif path == "/api/reword":
                     cost = PRICE_REWORD_KRW
+                    self._pending_label = "지문 변형"
                 else:  # /api/ocr
                     cost = PRICE_OCR_KRW
+                    self._pending_label = "사진에서 지문 옮기기"
                 remaining = get_user_krw(user_id)
                 if remaining < cost:
                     self._send_json(
@@ -3776,8 +4029,10 @@ class Handler(BaseHTTPRequestHandler):
             if amount <= 0 or amount > 10_000_000:
                 self._send_json({"error": "충전 금액이 올바르지 않습니다."}, 400)
                 return
+            # 결제가 실제로 일어나지 않았으므로 무상(grant)으로 남긴다 — 여기서 유상으로
+            # 잡으면 돈을 받은 적 없는 금액이 환불 대상 채무가 되어 버린다.
             try:
-                new_krw = recharge_user_krw(user_id, amount)
+                new_krw = recharge_user_krw(user_id, amount, "grant", "테스트 충전")
             except ValueError as e:
                 self._send_json({"error": str(e)}, 404)
                 return
@@ -3831,8 +4086,11 @@ class Handler(BaseHTTPRequestHandler):
             if not user_id or amount == 0:
                 self._send_json({"error": "회원과 충전량을 지정하세요."}, 400)
                 return
+            # 기본은 무상 지급 — 결제사가 붙기 전까지 관리자 충전은 돈을 받지 않은
+            # 지급이다. 실제로 입금을 확인하고 넣어 주는 경우에만 kind="charge".
+            kind = "charge" if req.get("kind") == "charge" else "grant"
             try:
-                new_balance = recharge_user_krw(user_id, amount)
+                new_balance = recharge_user_krw(user_id, amount, kind)
             except ValueError as e:
                 self._send_json({"error": str(e)}, 404)
                 return
@@ -3929,7 +4187,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
-            charge_krw(self._auth_user_id, self._pending_charge)
+            charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
             self._send_json(result)
             return
 
@@ -3948,7 +4206,7 @@ class Handler(BaseHTTPRequestHandler):
             partial = bool(req.get("partial"))
             try:
                 ocr_result = call_gemini_ocr(file, api_key, model, partial)
-                charge_krw(self._auth_user_id, self._pending_charge)
+                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
                 self._send_json(ocr_result)
             except Recitation as e:
                 # 화면이 '사진을 조각내어 다시 시도'로 넘어갈 수 있게 식별자를 붙인다
@@ -3974,7 +4232,7 @@ class Handler(BaseHTTPRequestHandler):
             model = MODEL_PRO if variation == "heavy" else MODEL
             try:
                 reworded = call_gemini_reword(passage, variation, api_key, model)
-                charge_krw(self._auth_user_id, self._pending_charge)
+                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
                 # 바뀐 낱말 목록을 함께 돌려준다 — 화면이 지문에서 그 낱말을 표시하고
                 # 해설지에 '원문 → 변형' 표를 싣는 데 쓴다.
                 self._send_json({
@@ -4075,7 +4333,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
-            charge_krw(self._auth_user_id, self._pending_charge)
+            charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
             self._send_json(result)
             return
 
@@ -4224,7 +4482,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)}, 502)
             return
         trace.log(model, passage)
-        charge_krw(self._auth_user_id, self._pending_charge)
+        charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
         self._send_json(result)
 
 

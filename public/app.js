@@ -421,15 +421,22 @@ const logoutBtn = $("logoutBtn");
 
 let isLoggedIn = false; // 저장/불러오기 버튼들이 이 값으로 로그인 여부를 판단한다
 let lastAccountLabel = ""; // 이름/이메일 표시용 — 충전 후 잔액만 다시 그릴 때 재사용
+let currentKrwFree = null; // 무상 포인트 — 이용 내역 안내 문구에 쓴다
+let currentKrwPaid = null; // 유상 포인트(환불 대상)
 
 function renderAccount(info) {
   isLoggedIn = !!(info && info.loggedIn);
   if (!isLoggedIn) {
     currentKrw = null;
+    currentKrwFree = currentKrwPaid = null;
     return;
   }
   const krw = Number(info.krwRemaining);
   currentKrw = Number.isFinite(krw) ? krw : null;
+  const free = Number(info.krwFree);
+  const paid = Number(info.krwPaid);
+  currentKrwFree = Number.isFinite(free) ? free : null;
+  currentKrwPaid = Number.isFinite(paid) ? paid : null;
   if (info.name || info.email) lastAccountLabel = info.name || info.email;
   const krwText = currentKrw !== null ? ` · 잔액 ${currentKrw.toLocaleString()}원` : "";
   accountNameEl.textContent = `${lastAccountLabel || "로그인됨"}님${krwText}`;
@@ -3726,9 +3733,106 @@ savedListCloseBtn.addEventListener("click", () => { savedListModalEl.hidden = tr
 savedListModalEl.addEventListener("click", (e) => {
   if (e.target === savedListModalEl) savedListModalEl.hidden = true;
 });
+/* ══════════════════════════ 이용 내역 ══════════════════════════
+   포인트가 언제 무엇에 얼마나 쓰였는지 보여 준다. 만들기 전에는 "예상 비용 900원"을
+   매번 알려 주면서 지나간 것은 확인할 방법이 없었다 — 유료로 바뀌면 그게 곧 문의가 된다.
+   서버가 잔액을 움직일 때마다 원장에 한 줄씩 남기고, 여기서는 그걸 최신순으로 보여 준다. */
+const usageModalEl = $("usageModal");
+const usageBodyEl = $("usageBody");
+const usageLeadEl = $("usageLead");
+const usageMoreBtn = $("usageMoreBtn");
+const usageHistoryBtn = $("usageHistoryBtn");
+
+// 원장 종류 → 화면 표시. 서버의 kind 값과 짝을 이룬다(use/charge/grant/carry/adjust).
+const USAGE_KIND_LABEL = {
+  use: "사용",
+  charge: "충전",
+  grant: "지급",
+  carry: "이월",
+  adjust: "조정",
+};
+
+let usageRows = [];      // 지금까지 받아 둔 줄 (더 보기로 이어 붙인다)
+let usageLoading = false;
+
+function usageRowHtml(row) {
+  const amount = Number(row.amount) || 0;
+  const sign = amount > 0 ? "+" : amount < 0 ? "−" : "";
+  const money = `${sign}${Math.abs(amount).toLocaleString()}원`;
+  const kind = USAGE_KIND_LABEL[row.kind] || row.kind || "";
+  // 이월 줄은 금액이 0이고 잔액만 의미가 있다 — 금액칸을 비워 혼동을 막는다
+  const moneyText = row.kind === "carry" ? "" : money;
+  return `
+    <div class="saved-list-item">
+      <span class="saved-list-tag">${esc(kind)}</span>
+      <div class="saved-list-info">
+        <div class="saved-list-title">${esc(row.label || "")}</div>
+        <div class="saved-list-date">${esc(row.date || "")}</div>
+      </div>
+      <div class="saved-list-actions" style="display:block; text-align:right;">
+        <div style="font-weight:700;">${esc(moneyText)}</div>
+        <div class="saved-list-date">잔액 ${Number(row.balanceAfter || 0).toLocaleString()}원</div>
+      </div>
+    </div>`;
+}
+
+function renderUsageList() {
+  usageBodyEl.innerHTML = usageRows.length
+    ? usageRows.map(usageRowHtml).join("")
+    : `<p class="saved-list-empty">아직 이용 내역이 없습니다.</p>`;
+}
+
+async function loadUsage(more) {
+  if (usageLoading) return;
+  usageLoading = true;
+  usageMoreBtn.disabled = true;
+  try {
+    // 더 보기는 마지막 줄보다 과거만 요청한다 (createdAt 기준 커서)
+    const last = usageRows[usageRows.length - 1];
+    const qs = more && last ? `?before=${encodeURIComponent(last.createdAt)}` : "";
+    const data = await getJson(`/api/usage${qs}`, "이용 내역을 불러오지 못했습니다.");
+    usageRows = more ? usageRows.concat(data.items || []) : (data.items || []);
+    renderUsageList();
+    usageMoreBtn.hidden = !data.more;
+  } catch (err) {
+    if (!more) usageBodyEl.innerHTML = `<p class="saved-list-empty">${esc(err.message || "이용 내역을 불러오지 못했습니다.")}</p>`;
+    else alert(err.message || "이용 내역을 불러오지 못했습니다.");
+  } finally {
+    usageLoading = false;
+    usageMoreBtn.disabled = false;
+  }
+}
+
+function openUsageModal() {
+  usageModalEl.hidden = false;
+  usageMoreBtn.hidden = true;
+  usageRows = [];
+  // 유상/무상을 나눠 알려 준다 — 환불 대상은 유상분뿐이라 미리 구분해 두는 편이 낫다
+  const parts = [];
+  if (currentKrw !== null) parts.push(`잔액 ${currentKrw.toLocaleString()}원`);
+  if (currentKrwPaid !== null && currentKrwFree !== null) {
+    parts.push(`충전분 ${currentKrwPaid.toLocaleString()}원 · 무료 지급분 ${currentKrwFree.toLocaleString()}원`);
+  }
+  usageLeadEl.textContent = parts.join(" (") + (parts.length > 1 ? ")" : "");
+  if (!isLoggedIn) {
+    usageBodyEl.innerHTML = `<p class="saved-list-empty">로그인 후 이용 내역을 볼 수 있습니다.</p>`;
+    return;
+  }
+  usageBodyEl.innerHTML = `<p class="saved-list-empty">불러오는 중…</p>`;
+  loadUsage(false);
+}
+
+usageHistoryBtn.addEventListener("click", openUsageModal);
+usageMoreBtn.addEventListener("click", () => loadUsage(true));
+$("usageClose").addEventListener("click", () => { usageModalEl.hidden = true; });
+usageModalEl.addEventListener("click", (e) => {
+  if (e.target === usageModalEl) usageModalEl.hidden = true;
+});
+
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!saveDialogEl.hidden) closeSaveDialog();
   if (!savedListModalEl.hidden) savedListModalEl.hidden = true;
+  if (!usageModalEl.hidden) usageModalEl.hidden = true;
   if (!doneGuideEl.hidden) closeDoneGuide();
 });

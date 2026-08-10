@@ -162,7 +162,8 @@
         <span class="account-name" id="accountName"></span>
         <button type="button" class="btn ghost small" id="passageLibraryBtn">📄 지문 저장함</button>
         <button type="button" class="btn ghost small" id="materialLibraryBtn">📦 제작 자료 저장함</button>
-        <button type="button" class="btn small" id="openRechargeBtn">💳 충전</button>
+        <button type="button" class="btn ghost small" id="usageHistoryBtn">🧾 이용 내역</button>
+      <button type="button" class="btn small" id="openRechargeBtn">💳 충전</button>
         <button type="button" class="btn ghost small" id="logoutBtn">로그아웃</button>
         <button type="button" class="btn ghost small danger" id="deleteAccountBtn">회원 탈퇴</button>
         <span class="hint">공용 컴퓨터라면 사용 후 반드시 로그아웃하세요.</span>
@@ -522,6 +523,18 @@
     <div id="savedListBody" class="saved-list"></div>
     <div class="print-guide-actions">
       <button type="button" class="btn ghost" id="savedListClose">닫기</button>
+    </div>
+  </div>
+</div>
+
+<div class="print-guide" id="usageModal" hidden>
+  <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="usageTitle">
+    <h3 id="usageTitle">🧾 이용 내역</h3>
+    <p class="print-guide-lead" id="usageLead"></p>
+    <div id="usageBody" class="saved-list"></div>
+    <div class="print-guide-actions">
+      <button type="button" class="btn ghost" id="usageMoreBtn" hidden>더 보기</button>
+      <button type="button" class="btn ghost" id="usageClose">닫기</button>
     </div>
   </div>
 </div>
