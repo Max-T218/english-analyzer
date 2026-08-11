@@ -109,19 +109,84 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 .gate-lead{margin:0 0 20px; font-size:14.5px; line-height:1.75; color:var(--ink-soft); word-break:keep-all;}
 .gate-lead b{color:var(--ink);}
 
-.gate-feats{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:10px;}
-.gate-feat{
-  padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:var(--paper);
-  font-size:13px; line-height:1.6; color:var(--ink-soft); word-break:keep-all;
+/* 쓰는 순서 — 번호를 직접 그려 붙인다(기본 목록 번호보다 눈에 걸리게) */
+.gate-flow{
+  list-style:none; margin:0; padding:0; counter-reset:gate-flow;
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:10px;
 }
-.gate-feat b{display:block; margin-bottom:3px; font-size:13.5px; color:var(--accent);}
+.gate-flow li{
+  counter-increment:gate-flow; position:relative;
+  padding:14px 16px 14px 46px; border:1px solid var(--line); border-radius:10px;
+  background:var(--paper); word-break:keep-all;
+}
+.gate-flow li::before{
+  content:counter(gate-flow,decimal-leading-zero);
+  position:absolute; left:14px; top:13px;
+  font-family:var(--font); font-weight:800; font-size:13px; color:var(--accent); opacity:.75;
+}
+.gate-flow b{display:block; font-size:13.5px; color:var(--ink); margin-bottom:3px;}
+.gate-flow span{font-size:12.5px; line-height:1.65; color:var(--ink-soft);}
 
-.gate-steps{margin:20px 0 0; padding-left:20px; font-size:13.5px; line-height:1.9; color:var(--ink);}
-.gate-steps span{color:var(--ink-soft); font-size:12.5px;}
+/* ── 결과물 미리보기 ──
+   사진이 아니라 진짜 결과물을 그대로 그린다. 본문 출력용 CSS(.sent, .qz-card …)를
+   그대로 쓰되, 로그인 화면에 맞게 크기만 줄이고 지면 높이를 잘라 둔다. */
+.gate-showcase{
+  margin-top:16px; padding:22px 22px 20px; border:1px solid var(--line); border-radius:14px;
+  background:var(--card); box-shadow:var(--shadow);
+}
+.gate-showcase-title{
+  font-family:var(--font); font-size:17px; margin:0 0 6px; color:var(--ink);
+}
+.gate-showcase-lead{margin:0 0 18px; font-size:13px; color:var(--ink-soft); word-break:keep-all;}
+
+/* min-width:0이 없으면 칸이 안쪽 내용(표는 min-width:520px)만큼 버텨서, 좁은 화면에서
+   격자가 화면 밖으로 밀려 나간다 — 문장 카드에서 쓴 것과 같은 이유다. */
+.gate-show{border:1px solid var(--line); border-radius:12px; background:var(--paper); overflow:hidden; min-width:0;}
+.gate-show + .gate-show{margin-top:12px;}
+.gate-show-wide{margin-bottom:12px;}
+.gate-show-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px;}
+.gate-show-grid .gate-show + .gate-show{margin-top:0;}
+.gate-show-head{padding:13px 16px 11px; border-bottom:1px solid var(--line);}
+.gate-show-head b{display:block; font-size:14px; color:var(--accent); margin-bottom:3px;}
+.gate-show-head span{font-size:12.5px; line-height:1.65; color:var(--ink-soft); word-break:keep-all;}
+
+/* 미리보기 지면. 실제 출력물은 A4 폭 기준이라 그대로 두면 글자가 크다 — 조금 줄인다.
+   내용이 길면 아래를 흐리게 잘라 "이어진다"는 것만 보여 준다. */
+.gate-preview{
+  padding:14px 16px; background:var(--card); font-size:13px; min-width:0;
+  max-height:410px; overflow:hidden; position:relative;
+  -webkit-mask-image:linear-gradient(180deg,#000 78%,transparent 100%);
+          mask-image:linear-gradient(180deg,#000 78%,transparent 100%);
+}
+/* 문장 카드는 본문에서 좌우 7:3으로 벌어지는데, 좁은 미리보기에서는 위아래로 쌓는다 */
+.gate-preview .sent{
+  grid-template-columns:1fr; grid-template-areas:"head" "body" "note";
+  margin-bottom:0; box-shadow:none;
+}
+.gate-preview .c-eng{font-size:14.5px; line-height:1.95;}
+.gate-preview .note{border-left:none; border-top:1px solid var(--line);}
+.gate-preview .qz-card{margin:0; box-shadow:none;}
+.gate-preview .qz-answer-box{margin-top:10px;}
+.gate-preview .qz-reveal-btn{display:none;}
+.gate-preview table.vocab{font-size:12.5px;}
+.gate-preview .wb-q:first-of-type{padding-top:4px;}
+
+/* 이 사이트가 어떤 점에 신경 썼는지 — 결과물만으로는 안 보이는 것들 */
+.gate-notes{
+  margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:10px;
+}
+.gate-note{
+  padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:var(--paper);
+  font-size:12.5px; line-height:1.6; color:var(--ink-soft); word-break:keep-all;
+}
+.gate-note b{display:block; margin-bottom:3px; font-size:13px; color:var(--ink);}
 
 /* ── 로그인/회원가입 게이트 — 시작 화면엔 버튼 두 개만, 실제 폼은 플로팅 창으로 ── */
-.gate-auth-launch{display:flex; gap:12px; flex-wrap:wrap;}
+.gate-auth-launch{display:flex; gap:12px; flex-wrap:wrap; align-items:center;}
 .gate-auth-launch .btn{padding:13px 32px; font-size:15.5px;}
+.gate-auth-note{font-size:12.5px; color:var(--ink-soft); word-break:keep-all;}
+/* 소개를 다 읽고 내려온 자리 — 위쪽 버튼과 구분되게 여백을 준다 */
+.gate-auth-bottom{margin-top:16px;}
 
 .auth-google{display:flex; justify-content:center; margin-bottom:16px;}
 .auth-divider{

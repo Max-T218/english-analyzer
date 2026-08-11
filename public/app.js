@@ -322,15 +322,21 @@ function showSignupStep(step) {
   verifyPanelEl.hidden = step !== "verify";
 }
 
-$("openLoginBtn").addEventListener("click", () => {
-  loginErrorEl.textContent = "";
-  openModal(loginModalEl);
-});
-$("openSignupBtn").addEventListener("click", () => {
-  signupErrorEl.textContent = "";
-  showSignupStep("form");
-  openModal(signupModalEl);
-});
+// 시작 화면이 길어져서 로그인 버튼을 위아래 두 곳에 둔다 — 처음 온 사람은 소개를
+// 읽고 아래에서, 다시 온 사람은 위에서 바로 누른다. id는 하나뿐이라 클래스로 건다.
+document.querySelectorAll(".js-open-login").forEach((btn) =>
+  btn.addEventListener("click", () => {
+    loginErrorEl.textContent = "";
+    openModal(loginModalEl);
+  })
+);
+document.querySelectorAll(".js-open-signup").forEach((btn) =>
+  btn.addEventListener("click", () => {
+    signupErrorEl.textContent = "";
+    showSignupStep("form");
+    openModal(signupModalEl);
+  })
+);
 $("loginModalClose").addEventListener("click", () => closeModal(loginModalEl));
 $("signupModalClose").addEventListener("click", () => closeModal(signupModalEl));
 $("rechargeModalClose").addEventListener("click", () => closeModal(rechargeModalEl));
