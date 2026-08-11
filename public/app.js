@@ -382,12 +382,26 @@ async function getJson(url, fallbackMsg) {
    화면에 하드코딩하지 않고 /api/pricing으로 받아 온다. 로그인 여부와 무관한
    값이라 로그인 전에도 미리 받아 둔다. */
 let PRICING = null;
+// 가격표는 화면이 다 그려진 뒤에 도착한다. 그 전에 그려 둔 '예상 금액' 안내는 금액이
+// 빠진 채로 남으므로, 도착하면 다시 그리도록 등록해 둔다.
+const PRICING_READY = [];
+function onPricingReady(fn) {
+  PRICING_READY.push(fn);
+  if (PRICING) fn(); // 이미 도착한 뒤에 등록했으면 바로 한 번
+}
 async function loadPricing() {
   try {
     PRICING = await getJson("/api/pricing", "");
   } catch (_) {
     PRICING = null; // 못 받아 오면 비용 확인 없이 그냥 진행시킨다(아래 costConfirmed 참고)
   }
+  PRICING_READY.forEach((fn) => {
+    try {
+      fn();
+    } catch (_) {
+      /* 안내 문구 하나 때문에 나머지가 멈추면 안 된다 */
+    }
+  });
 }
 loadPricing();
 
@@ -2124,6 +2138,7 @@ function setupQuizTab({ prefix, types, footer }) {
   });
   syncAll();
   syncTypeChips();
+  onPricingReady(updateCostHint); // 가격표가 늦게 와도 금액이 채워지도록
 
   async function generate() {
     errorEl.textContent = "";
@@ -2685,13 +2700,47 @@ wbStageAllEl.addEventListener("change", () => {
   wbStageGridEl.querySelectorAll("input").forEach((b) => (b.checked = check));
   syncWbAll();
   renumberWbStages();
+  updateWbCostHint();
 });
+/* 워크북 값 — 고른 단계 수 × 단계 단가, 상한까지. server.py의 _workbook_cost와 같은 식이다.
+   실제 청구는 언제나 서버가 다시 계산하고, 여기 값은 미리 보여 주기 위한 것이다. */
+function workbookCost(stageCount) {
+  if (!PRICING || !stageCount) return 0;
+  const per = PRICING.workbookStage || 0;
+  const max = PRICING.workbookMax || 0;
+  const sum = per * stageCount;
+  return max ? Math.min(sum, max) : sum;
+}
+
+// 단계를 켜고 끌 때마다 지문 1개당 예상 금액을 바로 보여 준다 (문제 제작 탭과 같은 방식).
+// 지문 수는 이 탭 밖에서 바뀌므로 '지문 1개당'으로 적고, 최종 금액은 확인창이 보여 준다.
+const wbCostHintEl = $("wbCostHint");
+function updateWbCostHint() {
+  if (!wbCostHintEl) return;
+  const n = wbStageGridEl.querySelectorAll("input:checked").length;
+  if (!n) {
+    wbCostHintEl.textContent = "";
+    return;
+  }
+  const parts = [`선택 <b>${n}단계</b>`];
+  if (PRICING) {
+    const cost = workbookCost(n);
+    parts.push(`— 지문 1개당 <b>${cost.toLocaleString()}원</b>`);
+    // 상한에 걸렸으면 왜 단계 수 × 단가와 다른지 밝힌다
+    const per = PRICING.workbookStage || 0;
+    if (per && cost < per * n) parts.push(`<span class="cost-hint-note">(전체 선택 상한)</span>`);
+  }
+  wbCostHintEl.innerHTML = parts.join(" ");
+}
+
 wbStageGridEl.addEventListener("change", () => {
   syncWbAll();
   renumberWbStages();
+  updateWbCostHint();
 });
 syncWbAll();
 renumberWbStages();
+onPricingReady(updateWbCostHint);
 
 const wbBtn = $("wbBtn");
 const wbErrorEl = $("wbError");
@@ -2752,7 +2801,7 @@ async function generateWorkbook() {
     wbErrorEl.textContent = "포함할 단계를 하나 이상 선택하세요.";
     return;
   }
-  if (!costConfirmed(billableJobCount() * (PRICING ? PRICING.workbook : 0), "워크북을 만듭니다.")) {
+  if (!costConfirmed(billableJobCount() * workbookCost(stages.length), "워크북을 만듭니다.")) {
     return;
   }
 
@@ -2797,7 +2846,9 @@ async function generateWorkbook() {
     try {
       const data = await postJson(
         "/api/workbook",
-        { passage: job.text },
+        // stages는 요금 계산에 쓰인다 — 서버가 단계 수로 값을 매기므로 반드시 보낸다.
+        // (만들어지는 내용은 8단계분이 통째로 오고, 고른 것만 화면이 그린다.)
+        { passage: job.text, stages },
         "워크북 생성에 실패했습니다."
       );
       const built = buildWorkbookHtml(data, stages, job, total, exam);
@@ -2914,6 +2965,7 @@ function applyWorkbookSettings(settings) {
   });
   syncWbAll();
   renumberWbStages();
+  updateWbCostHint(); // 불러온 설정의 단계 수에 맞춰 금액 안내도 다시 그린다
   wbTitleEl.value = settings.title || "";
   if (wbExamEl) wbExamEl.value = settings.exam || "";
   wbAnswerChk.checked = !!settings.answer;

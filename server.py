@@ -117,7 +117,38 @@ PRICE_MCQ_TRANSFORM_KRW = int(os.environ.get("PRICE_MCQ_TRANSFORM_KRW", "250")) 
 # 다섯이 지문을 변형해 만들고(선택형·오류찾기·배열), 그 유형들은 객관식과 똑같이 Pro로
 # 생성한다. 원가가 같은데 값만 싸게 받을 이유가 없다.
 PRICE_SAQ_KRW = int(os.environ.get("PRICE_SAQ_KRW", "250"))
-PRICE_WORKBOOK_KRW = int(os.environ.get("PRICE_WORKBOOK_KRW", "200"))      # 워크북, 지문 1개당 (선택 단계 수와 무관)
+# 워크북 — 지문 1개당, 고른 단계 수로 매긴다. 8단계를 다 고르면 상한(700원)에 걸려
+# 800원이 아니라 700원이다(전부 고르는 쪽이 단계당으로는 싸진다).
+#
+# ⚠️ 알아 둘 것: Gemini 호출은 고른 단계 수와 무관하게 언제나 한 번, 8단계분을 통째로
+# 받아온다. 즉 단계를 적게 골라도 원가는 그대로다. 이 요금제는 원가가 아니라 '학생에게
+# 나가는 지면이 몇 장이냐'를 값으로 삼은 것이다. 원가와 맞추려면 고른 단계만 만들도록
+# 스키마·프롬프트를 잘라야 한다(그때 비로소 적게 고르면 실제로 싸진다).
+PRICE_WORKBOOK_STAGE_KRW = int(os.environ.get("PRICE_WORKBOOK_STAGE_KRW", "100"))  # 단계 1개당
+PRICE_WORKBOOK_MAX_KRW = int(os.environ.get("PRICE_WORKBOOK_MAX_KRW", "700"))      # 지문 1개당 상한
+WORKBOOK_STAGE_IDS = (3, 4, 5, 6, 7, 8, 9, 10)  # public/app.js의 WB_STAGES와 같은 목록
+
+
+def parse_workbook_stages(raw):
+    """요청의 stages를 정규화한다. 모르는 값은 버리고 중복도 없앤다 — 화면에서도 막지만
+    화면을 우회한 요청이 그대로 통과하면 안 된다(가격이 단계 수에 걸린다).
+    비어 있으면 예전 화면이 보낸 요청으로 보고 전체를 고른 것으로 친다."""
+    out = []
+    for v in raw or ():
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n in WORKBOOK_STAGE_IDS and n not in out:
+            out.append(n)
+    return out or list(WORKBOOK_STAGE_IDS)
+
+
+def _workbook_cost(stages):
+    """워크북 1지문의 정찰 가격(원). 화면도 같은 식으로 예상 비용을 보여 주지만,
+    실제 청구는 언제나 여기서 다시 계산한 값을 쓴다."""
+    n = len(parse_workbook_stages(stages))
+    return min(n * PRICE_WORKBOOK_STAGE_KRW, PRICE_WORKBOOK_MAX_KRW)
 # 같은 유형에서 2문항째부터 추가되는 금액. 한 번의 호출에서 지문과 시스템 프롬프트는
 # 문항 수와 무관하게 한 번만 입력되므로(= 입력 토큰을 나눠 쓴다), 추가 문항은 출력
 # 비용만 든다. 그래서 첫 문항(유형 단가)보다 싸게 매긴다.
@@ -3708,7 +3739,9 @@ class Handler(BaseHTTPRequestHandler):
                 "mcqTransform": PRICE_MCQ_TRANSFORM_KRW,
                 "saq": PRICE_SAQ_KRW,
                 "extraQuestion": PRICE_EXTRA_QUESTION_KRW,
-                "workbook": PRICE_WORKBOOK_KRW,
+                # 워크북은 고른 단계 수로 매긴다 — 화면이 같은 식으로 예상 비용을 계산한다
+                "workbookStage": PRICE_WORKBOOK_STAGE_KRW,
+                "workbookMax": PRICE_WORKBOOK_MAX_KRW,
                 "reword": PRICE_REWORD_KRW,
                 "ocr": PRICE_OCR_KRW,
             })
@@ -3912,8 +3945,9 @@ class Handler(BaseHTTPRequestHandler):
                     total_q = sum(n for _t, n in quiz_items)
                     self._pending_label = f"문제 제작 · {total_q}문항"
                 elif path == "/api/workbook":
-                    cost = PRICE_WORKBOOK_KRW
-                    self._pending_label = "워크북"
+                    wb_stages = parse_workbook_stages(req.get("stages"))
+                    cost = _workbook_cost(wb_stages)
+                    self._pending_label = f"워크북 · {len(wb_stages)}단계"
                 elif path == "/api/reword":
                     cost = PRICE_REWORD_KRW
                     self._pending_label = "지문 변형"

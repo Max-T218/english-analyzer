@@ -79,7 +79,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | 찾을 것 | 앵커 |
 |---|---|
 | 환경변수·기본값 | 파일 상단 `HOST` ~ `PRICE_OCR_KRW` |
-| 가격 계산 | `_quiz_type_base_price`, `_quiz_action_cost` |
+| 가격 계산 | `_quiz_type_base_price`, `_quiz_action_cost`, `_workbook_cost`(단계 수 × 단가, 상한 있음) |
 | 포인트 원장(이용 내역)·유상무상 구분 | `POINT_LEDGER`, `_split_balance`, `charge_krw`, `add_krw`, `list_usage`, `_fold_old_ledger` |
 | Firestore 연결 | `_load_firestore` |
 | 회원가입·인증코드·비밀번호 | `start_signup`, `complete_signup`, `login_with_password`, `_hash_password` |
@@ -111,6 +111,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | `QUIZ_TYPE_MAX` | `TYPE_MAX` (안내 문구는 `TYPE_MAX_REASON`) |
 | `QUIZ_TYPE_LABELS` | `MCQ_TYPES`, `SAQ_TYPES` |
 | `MCQ_ONLY_TYPES` | `MCQ_TRANSFORM_TYPES` |
+| `WORKBOOK_STAGE_IDS` | `WB_STAGES`의 id — 워크북 요금이 단계 수에 걸려 있다 |
 
 **가격은 예외입니다.** 서버가 유일한 출처이고 화면은 `/api/pricing`으로 받아 씁니다.
 화면 쪽에 가격 숫자를 하드코딩하지 마세요.
