@@ -821,17 +821,19 @@ the passage in full.
   keep them one clause long, and make wrong ones wrong by a concrete factual flip (숫자·주체·
   인과·시점을 바꾸기) — never by vague wording.
 - "서술형배열" (format "write") — instruction
-  "위 글의 (A)와 같은 의미가 되도록 <보기>에 주어진 단어를 모두 배열하여 문장을 완성하시오."
+  "위 글의 밑줄 친 문장과 의미가 같도록 주어진 단어를 배열하여 문장을 완성하시오."
   Pick ONE key sentence of the passage (주제문이나 핵심 문장, 8~20 words).
   · `answerText` = that English sentence, VERBATIM from the passage.
   · `passageHtml` = the WHOLE passage, with ONLY that one sentence replaced by its Korean
-    translation, marked (A) and bolded — like this, in place of the English sentence:
-      <b>(A) 우리가 지난달 박람회를 공지했음에도 불구하고, 학생의 등록이 우리가 예상했던
-      것보다 훨씬 더 저조하다.</b>
-    Every OTHER sentence of the passage stays in English, verbatim and in its original place.
-    The student reads the surrounding English for context and rebuilds the (A) sentence.
-    ⚠️ The English of the (A) sentence must appear NOWHERE in `passageHtml` — that would give
-    the answer away. Only its Korean translation appears there.
+    translation, wrapped in <u><b>…</b></u> — like this, in place of the English sentence:
+      <u><b>우리가 지난달 박람회를 공지했음에도 불구하고, 학생의 등록이 우리가 예상했던
+      것보다 훨씬 더 저조하다.</b></u>
+    Underline and bold are the ONLY marking — do not add (A), ①, or any other label.
+    Exactly ONE underlined stretch may exist in the whole passage, so that "밑줄 친 문장"
+    is unambiguous. Every OTHER sentence stays in English, verbatim and in its original
+    place — the student reads that surrounding English for context.
+    ⚠️ The English of the underlined sentence must appear NOWHERE in `passageHtml` — that
+    would give the answer away. Only its Korean translation appears there.
     Do NOT put the scrambled word bank in `passageHtml`; the app builds it from `answerText`.
     The Korean translation must be natural 문어체 that maps clearly onto the English word
     order the student has to produce (어순 단서가 되도록 직역에 가깝게).
@@ -1010,8 +1012,12 @@ def sanitize_quiz_html(html):
 # 그러면 학생이 "밑줄 친 부분"이 어디까지인지 헷갈린다. 문자 단위로 단어 경계까지
 # 밑줄을 넓혀 항상 낱말 전체에 그어지도록 보정한다.
 _WORD_CH = r"[A-Za-z0-9’'\-]"
-_U_TAIL_RE = re.compile(r"</u>(" + _WORD_CH + r"+)")
-_U_HEAD_RE = re.compile(r"(" + _WORD_CH + r"+)<u>")
+# 경계 조건이 중요하다. '낱말이 실제로 쪼개진 경우'에만 넓혀야 한다 — 즉 밑줄 태그
+# 반대쪽에도 영문자가 붙어 있어야 한 낱말이 갈린 것이다. 이 조건이 없으면 서술형배열의
+# 한글 밑줄 문장 뒤에 공백 없이 영어가 오는 순간(…저조하다.</u>Therefore) 그 영어까지
+# 밑줄 안으로 끌려 들어가, 밑줄 친 문장이 어디까지인지 되레 어긋난다.
+_U_TAIL_RE = re.compile(r"(?<=" + _WORD_CH + r")</u>(" + _WORD_CH + r"+)")
+_U_HEAD_RE = re.compile(r"(" + _WORD_CH + r"+)<u>(?=" + _WORD_CH + r")")
 
 
 def fix_underline_bounds(html):

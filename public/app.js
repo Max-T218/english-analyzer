@@ -2413,9 +2413,9 @@ function quizBodyHtml(q) {
   const fmt = q.format || "mc";
 
   if (fmt === "write") {
-    /* 서술형 배열 — 지문을 그대로 보여 주되 배열할 문장 한 개만 (A) 한글 해석으로
-       바뀌어 있다. 학생은 앞뒤 영어 문맥을 읽고 그 자리에 들어갈 영어를 <보기>의
-       낱말로 다시 만든다. 내신 서술형 시험지가 쓰는 방식이다. */
+    /* 서술형 배열 — 지문을 그대로 보여 주되, 배열할 문장 한 개만 한글 해석으로 바뀌어
+       밑줄+굵게 표시되어 있다. 학생은 앞뒤 영어 문맥을 읽고 그 자리에 들어갈 영어를
+       <보기>의 낱말로 다시 만든다. 내신 서술형 시험지가 쓰는 방식이다. */
     const scrambled = scrambleSentence(q.answerText || "", q.no || 1);
     return `
       <div class="qz-passage">${safeHTML(q.passageHtml)}</div>
