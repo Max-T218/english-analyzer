@@ -80,7 +80,10 @@ PUBLIC_DIR = Path(__file__).resolve().parent / "public"
 
 # --- 로그인(구글 OAuth + 이메일/비밀번호) + Firestore -----------------------
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
-SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 세션 유지 기간(초) — 30일
+# 서버에 남는 세션 기록의 수명(초). 로그인이 실제로 끊기는 시점은 이 값이 아니라
+# '브라우저를 닫을 때'다 — 쿠키에 유효기간을 안 붙이기 때문이다(_session_cookie 참고).
+# 이 값은 브라우저를 계속 켜 둔 채 쓰는 경우의 상한 역할만 한다.
+SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30일
 # 계정을 새로 만들 때 지급하는 잔액(원). 필요에 맞게 환경변수로 조정하고, 특정
 # 사용자에게 더 주고 싶으면 관리자 페이지(/admin.html)에서 충전하거나 Firestore
 # 콘솔에서 users/<id> 문서의 krw_remaining 값을 직접 고치면 된다.
@@ -3640,10 +3643,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _session_cookie(self, token, max_age):
+    def _session_cookie(self, token):
+        """Max-Age를 일부러 붙이지 않는다 — 브라우저를 닫으면 함께 사라지는 쿠키가 된다.
+
+        학원 공용 PC를 여럿이 번갈아 쓰는 자리라, 앞사람 로그인이 남아 있으면 뒷사람이
+        그 계정으로 자료를 만들어 앞사람 잔액을 쓰게 된다. 화면 쪽도 같은 이유로 창을
+        열 때마다 localStorage를 비우고 있는데(app.js 맨 위), 로그인만 30일씩 남아 있어
+        취지가 반쪽이었다.
+
+        서버에 남는 세션 기록은 SESSION_MAX_AGE까지 살아 있지만, 쿠키가 사라지면 그것을
+        가리킬 방법이 없으므로 로그인은 끊긴다."""
         # Render 등 https 뒤에 있을 때만 Secure를 붙인다(로컬 http에서도 로그인이 되게).
         secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
-        return f"session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}"
+        return f"session={token}; Path=/; HttpOnly; SameSite=Lax{secure}"
 
     def _cleared_session_cookie(self):
         secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
@@ -3925,7 +3937,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(
                 _account_payload(sub),
-                cookies=[self._session_cookie(token, SESSION_MAX_AGE)],
+                cookies=[self._session_cookie(token)],
             )
             return
 
@@ -3961,7 +3973,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(
                 _account_payload(user_id),
-                cookies=[self._session_cookie(token, SESSION_MAX_AGE)],
+                cookies=[self._session_cookie(token)],
             )
             return
 
@@ -3982,7 +3994,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(
                 _account_payload(user_id),
-                cookies=[self._session_cookie(token, SESSION_MAX_AGE)],
+                cookies=[self._session_cookie(token)],
             )
             return
 
