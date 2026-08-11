@@ -3552,12 +3552,19 @@ def _fold_old_ledger(user_id):
     (지급+충전-사용=잔액) 검산이 영영 깨진다. 그래서 지우기 전에 합계를 한 줄 남긴다.
 
     정기 실행 장치(cron)가 없으므로 이용 내역을 열 때 겸사겸사 한다. 접을 게 없으면
-    질의 한 번으로 끝나고, 실패해도 조회 자체는 계속되어야 하므로 호출부에서 삼킨다."""
+    질의 한 번으로 끝나고, 실패해도 조회 자체는 계속되어야 하므로 호출부에서 삼킨다.
+
+    order_by를 굳이 붙이는 이유: created_at에 범위 조건(<)을 걸면 Firestore가 그 필드로
+    정렬하려 드는데, 방향을 안 적으면 오름차순으로 잡고 (user_id, created_at 오름차순)
+    색인을 따로 요구한다. 목록 조회가 쓰는 색인은 내림차순이라 그것과 어긋나 매번
+    실패했다. 어차피 오래된 줄을 전부 모아 합산할 뿐이라 순서는 상관없으므로,
+    이미 있는 내림차순 색인에 맞춰 둔다(색인을 하나 더 만들 이유가 없다)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=30 * LEDGER_KEEP_MONTHS)).isoformat()
     old = list(
         DB.collection(POINT_LEDGER)
         .where("user_id", "==", user_id)
         .where("created_at", "<", cutoff)
+        .order_by("created_at", direction=firestore.Query.DESCENDING)
         .stream()
     )
     if len(old) < 2:  # 이월 줄 하나만 남은 상태면 접을 것이 없다
