@@ -398,6 +398,11 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
   font-size:14.5px; line-height:1.9; color:var(--ink); margin:4px 0 10px;
   padding:10px 12px; background:var(--paper); border:1px dashed var(--line); border-radius:9px;
 }
+/* 내신 서술형 시험지의 <보기> 상자 — 배열할 낱말 앞에 붙는 이름표 */
+.qz-scramble-tag{
+  display:inline-block; margin-right:8px; font-weight:700; font-size:13px;
+  color:var(--accent); white-space:nowrap;
+}
 .qz-writeline{border-bottom:1px solid var(--line); height:2em; margin-top:4px;}
 .qz-writeline + .qz-writeline{margin-top:10px;}
 /* 선택형 — 지문 속 [ A / B ] 강조 */

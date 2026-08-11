@@ -821,12 +821,20 @@ the passage in full.
   keep them one clause long, and make wrong ones wrong by a concrete factual flip (숫자·주체·
   인과·시점을 바꾸기) — never by vague wording.
 - "서술형배열" (format "write") — instruction
-  "다음 우리말과 같은 뜻이 되도록 주어진 단어를 모두 배열하여 문장을 완성하시오."
+  "위 글의 (A)와 같은 의미가 되도록 <보기>에 주어진 단어를 모두 배열하여 문장을 완성하시오."
   Pick ONE key sentence of the passage (주제문이나 핵심 문장, 8~20 words).
   · `answerText` = that English sentence, VERBATIM from the passage.
-  · `passageHtml` = ONLY the Korean translation of that one sentence (the student writes the
-    English from it). Do NOT include the whole passage and do NOT include the English words —
-    the app scrambles `answerText` itself to show the word bank.
+  · `passageHtml` = the WHOLE passage, with ONLY that one sentence replaced by its Korean
+    translation, marked (A) and bolded — like this, in place of the English sentence:
+      <b>(A) 우리가 지난달 박람회를 공지했음에도 불구하고, 학생의 등록이 우리가 예상했던
+      것보다 훨씬 더 저조하다.</b>
+    Every OTHER sentence of the passage stays in English, verbatim and in its original place.
+    The student reads the surrounding English for context and rebuilds the (A) sentence.
+    ⚠️ The English of the (A) sentence must appear NOWHERE in `passageHtml` — that would give
+    the answer away. Only its Korean translation appears there.
+    Do NOT put the scrambled word bank in `passageHtml`; the app builds it from `answerText`.
+    The Korean translation must be natural 문어체 that maps clearly onto the English word
+    order the student has to produce (어순 단서가 되도록 직역에 가깝게).
   · choices = [], answer = 0.
 - "어휘 선택형" (format "pick") — instruction
   "다음 각 네모 안에서 문맥상 알맞은 낱말을 골라 쓰시오."
