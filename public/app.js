@@ -1737,7 +1737,7 @@ const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", 
 const MCQ_TYPES = [
   { id: "주제", def: true }, { id: "제목", def: true }, { id: "요지", def: true },
   { id: "빈칸", def: true }, { id: "어휘", def: false }, { id: "어법", def: false },
-  { id: "순서", def: false }, { id: "문장삽입", def: false },
+  { id: "순서", def: false }, { id: "문장삽입", def: false }, { id: "함축의미", def: false },
   { id: "내용일치(영)", def: false }, { id: "내용일치(한)", def: false },
   { id: "내용불일치(영)", def: false }, { id: "내용불일치(한)", def: false },
 ];
@@ -1746,6 +1746,7 @@ const SAQ_TYPES = [
   { id: "서술형배열", def: true }, { id: "OX진위(영)", def: true }, { id: "OX진위(한)", def: false },
   { id: "어휘 선택형", def: true }, { id: "어법 선택형", def: true },
   { id: "틀린 어휘 찾기", def: false }, { id: "틀린 어법 찾기", def: false },
+  { id: "동사형 쓰기", def: false }, { id: "빈칸 쓰기", def: false },
 ];
 
 // select 대신 '체크박스처럼 보이는 라디오 그룹'으로 값을 관리할 때 쓰는 어댑터.
@@ -1830,16 +1831,20 @@ const TYPE_MAX = {
   주제: 5, 제목: 5, 요지: 5,
   "내용일치(영)": 5, "내용일치(한)": 5, "내용불일치(영)": 5, "내용불일치(한)": 5,
   빈칸: 6, 어휘: 6, 어법: 4,
-  순서: 2, 문장삽입: 2,
+  순서: 2, 문장삽입: 2, 함축의미: 2,
   // 주관식
   "OX진위(영)": 8, "OX진위(한)": 8,
   서술형배열: 6, "어휘 선택형": 6,
   "틀린 어휘 찾기": 5, "어법 선택형": 5, "틀린 어법 찾기": 3,
+  "동사형 쓰기": 2, "빈칸 쓰기": 3,
 };
 // +버튼이 막혔을 때 왜 막혔는지 알려 준다 — 유형마다 상한이 다른 이유가 다르다.
 const TYPE_MAX_REASON = {
   순서: "지문의 문장 수에 묶여 있어",
   문장삽입: "지문의 문장 수에 묶여 있어",
+  함축의미: "지문에 비유·반어 표현이 든 문장 수 때문에",
+  "동사형 쓰기": "한 문항이 이미 동사 4~6개를 가져가서",
+  "빈칸 쓰기": "문맥으로 되살릴 수 있는 핵심어 수 때문에",
   어법: "지문에 실제로 있는 문법 포인트 수 때문에",
   "어법 선택형": "지문에 실제로 있는 문법 포인트 수 때문에",
   "틀린 어법 찾기": "지문에 실제로 있는 문법 포인트 수 때문에",
@@ -2399,10 +2404,28 @@ function setupQuizTab({ prefix, types, footer }) {
 
   btn.addEventListener("click", generate);
   printBtn.addEventListener("click", () => printDoc(() => passageBasedName(docName)));
+
+  // 기출 유형 분석 탭이 분석 결과대로 이 탭의 유형 칸을 채울 수 있게 손잡이를 내준다.
+  // 문제 생성 자체는 여기 있는 것을 그대로 쓴다 — 만드는 길이 둘이 되면 한쪽만 고쳐져
+  // 조용히 어긋난다(요금 계산도 이 안에 있다).
+  return {
+    setTypes(items) {
+      gridEl.querySelectorAll(".type-chip").forEach((chip) => {
+        const want = (items || []).find((it) => it.id === chip.dataset.id);
+        chip.querySelector("input").checked = !!want;
+        if (want) setCount(chip, want.count);
+      });
+      syncAll();
+      syncTypeChips();
+      updateCostHint();
+    },
+  };
 }
 
-setupQuizTab({ prefix: "mcq", types: MCQ_TYPES, footer: "수능형 객관식 문제" });
-setupQuizTab({ prefix: "saq", types: SAQ_TYPES, footer: "서술형·단답형 문제" });
+const QUIZ_TABS = {
+  mcq: setupQuizTab({ prefix: "mcq", types: MCQ_TYPES, footer: "수능형 객관식 문제" }),
+  saq: setupQuizTab({ prefix: "saq", types: SAQ_TYPES, footer: "서술형·단답형 문제" }),
+};
 
 // 한 문항의 '정답' 표기를 형식에 맞게 만든다
 // (객관식=①, 서술형=문장, OX=O/X 나열, 선택형=고른 낱말, 오류찾기=틀린말→바른말)
@@ -2417,6 +2440,13 @@ function quizAnswerLabel(q) {
   if (fmt === "pick") {
     // 지문의 [정답|오답] 마크업에서 정답만 순서대로 뽑는다
     return renderChoices(q.passageHtml || "", q.no || 1).answers.join(" / ");
+  }
+  if (fmt === "verb" || fmt === "fill") {
+    // 지문의 (힌트|정답) 마크업에서 정답만 순서대로 뽑는다 (워크북5와 같은 표기).
+    // 동사형 쓰기는 힌트가 동사 원형, 빈칸 쓰기는 힌트가 첫 철자일 뿐 구조가 같다.
+    return renderVerbForms(q.passageHtml || "").answers
+      .map((a, i) => `(${i + 1}) ${a}`)
+      .join("　");
   }
   if (fmt === "fix") {
     return (q.fixes || [])
@@ -2450,6 +2480,20 @@ function quizBodyHtml(q) {
       <div class="qz-passage">${html}</div>
       <div class="qz-writeline"></div>
       <div class="qz-writeline"></div>`;
+  }
+
+  if (fmt === "verb" || fmt === "fill") {
+    /* 동사형 쓰기 · 빈칸 쓰기 — (힌트|정답)을 (힌트)로 보여 주고, 아래에 번호별 답란을
+       둔다. 표기와 렌더링은 워크북5(동사형 연습하기)와 같은 것을 쓴다. 두 유형은 힌트가
+       동사 원형이냐 첫 철자냐만 다르고 구조가 같아 한 갈래로 묶는다. 답란을 번호로
+       나누는 것은 내신 서답형이 (A)~(D)처럼 칸을 나눠 채점하기 때문이다. */
+    const { html, answers } = renderVerbForms(q.passageHtml || "");
+    const lines = answers
+      .map((_, i) => `<div class="qz-fixline">(${i + 1}) ${wbBlank(220)}</div>`)
+      .join("");
+    return `
+      <div class="qz-passage">${html}</div>
+      ${lines}`;
   }
 
   if (fmt === "fix") {
@@ -3900,4 +3944,290 @@ document.addEventListener("keydown", (e) => {
   if (!savedListModalEl.hidden) savedListModalEl.hidden = true;
   if (!usageModalEl.hidden) usageModalEl.hidden = true;
   if (!doneGuideEl.hidden) closeDoneGuide();
+});
+
+/* ══════════ 기출 유형 분석 ══════════
+   학교 기출 시험지를 읽어 '어떤 유형이 몇 문항 나왔는지'를 뽑고, 그 결과로 객관식·
+   주관식 탭의 유형 칸을 채운다. 문제 생성 자체는 그 탭들이 그대로 한다
+   (setupQuizTab의 setTypes 참고) — 만드는 길을 둘로 늘리지 않기 위해서다.
+
+   PDF는 브라우저가 그림으로 못 그린다. 대신 스캔 PDF 안에는 쪽마다 JPEG가 통째로
+   들어 있으므로(DCTDecode), 파일에서 JPEG 시작·끝 표시를 찾아 그대로 꺼낸다.
+   외부 라이브러리가 필요 없고, 실측한 기출 9개 중 8개가 이 방식으로 열렸다.
+   꺼낼 것이 없는 PDF(글자로 만든 원본, 팩스 압축 스캔)는 크기가 작으므로 PDF 그대로
+   서버에 넘겨 Gemini가 직접 읽게 한다. */
+const examDropEl = $("examDrop");
+const examFileEl = $("examFile");
+const examStatusEl = $("examStatus");
+const examBtn = $("examBtn");
+const examClearBtn = $("examClearBtn");
+const examErrorEl = $("examError");
+const examLoadingEl = $("examLoading");
+const examLoadingTextEl = $("examLoadingText");
+const examResultEl = $("examResult");
+const examCostHintEl = $("examCostHint");
+
+const EXAM_MAX_PAGES = 16;      // server.py의 EXAM_MAX_PAGES와 같은 값
+const EXAM_MIN_JPEG = 20000;    // 이보다 작은 조각은 쪽 그림이 아니라 아이콘·썸네일이다
+let examPages = [];             // [{mime, data}] — 서버에 보낼 쪽 그림
+let examBusy = false;
+
+function examStatus(msg, kind) {
+  examStatusEl.hidden = !msg;
+  examStatusEl.textContent = msg || "";
+  examStatusEl.className = "exam-status" + (kind ? " " + kind : "");
+}
+
+// PDF 바이트에서 JPEG를 통째로 꺼낸다. FF D8 FF 로 시작해 FF D9 로 끝난다.
+function extractJpegs(buf) {
+  const out = [];
+  let i = 0;
+  while (i < buf.length - 3) {
+    if (buf[i] === 0xff && buf[i + 1] === 0xd8 && buf[i + 2] === 0xff) {
+      let j = i + 2;
+      while (j < buf.length - 1 && !(buf[j] === 0xff && buf[j + 1] === 0xd9)) j++;
+      if (j >= buf.length - 1) break;   // 끝 표시가 없다 = 여기부터는 JPEG가 아니다
+      const end = j + 2;
+      if (end - i >= EXAM_MIN_JPEG) out.push(new Blob([buf.subarray(i, end)], { type: "image/jpeg" }));
+      i = end;
+    } else {
+      i++;
+    }
+  }
+  return out;
+}
+
+async function examAddFiles(fileList) {
+  if (examBusy) return;
+  examBusy = true;
+  examErrorEl.textContent = "";
+  try {
+    for (const file of [...fileList]) {
+      if (examPages.length >= EXAM_MAX_PAGES) break;
+      const isPdf = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name || "");
+      if (isPdf) {
+        examStatus(`${file.name} 에서 쪽을 꺼내는 중…`);
+        const buf = new Uint8Array(await file.arrayBuffer());
+        const blobs = extractJpegs(buf);
+        if (blobs.length) {
+          for (const b of blobs) {
+            if (examPages.length >= EXAM_MAX_PAGES) break;
+            examPages.push(await photoToPart(b));   // 사진 업로드와 같은 축소를 탄다
+          }
+        } else {
+          // 꺼낼 그림이 없는 PDF — 원본을 그대로 넘긴다. 이런 PDF는 대개 작다.
+          const data = await blobToBase64(file);
+          if (data.length > 9 * 1024 * 1024) {
+            examErrorEl.textContent =
+              `${file.name} 은 그림이 들어 있지 않은 PDF인데 용량이 너무 큽니다. ` +
+              `쪽을 사진으로 찍거나 캡처해서 올려 주세요.`;
+            continue;
+          }
+          examPages.push({ mime: "application/pdf", data });
+        }
+      } else if (isPhoto(file)) {
+        examPages.push(await photoToPart(file));
+      }
+    }
+  } catch (err) {
+    examErrorEl.textContent = `시험지를 읽지 못했습니다: ${err.message || err}`;
+  }
+  examBusy = false;
+  examSyncStatus();
+}
+
+function examSyncStatus() {
+  const n = examPages.length;
+  examBtn.disabled = !n;
+  examClearBtn.style.display = n ? "inline-flex" : "none";
+  if (!n) {
+    examStatus("");
+    return;
+  }
+  const mb = examPages.reduce((s, p) => s + p.data.length, 0) / 1048576;
+  const full = n >= EXAM_MAX_PAGES ? ` (최대 ${EXAM_MAX_PAGES}쪽까지)` : "";
+  examStatus(`시험지 ${n}쪽 준비됨 · 약 ${mb.toFixed(1)}MB${full}`, "ok");
+}
+
+examDropEl.addEventListener("click", () => examFileEl.click());
+examFileEl.addEventListener("change", () => {
+  examAddFiles(examFileEl.files);
+  examFileEl.value = "";
+});
+["dragover", "dragenter"].forEach((ev) =>
+  examDropEl.addEventListener(ev, (e) => {
+    e.preventDefault();
+    examDropEl.classList.add("over");
+  })
+);
+["dragleave", "drop"].forEach((ev) =>
+  examDropEl.addEventListener(ev, (e) => {
+    e.preventDefault();
+    examDropEl.classList.remove("over");
+  })
+);
+examDropEl.addEventListener("drop", (e) => {
+  if (e.dataTransfer && e.dataTransfer.files) examAddFiles(e.dataTransfer.files);
+});
+examClearBtn.addEventListener("click", () => {
+  examPages = [];
+  examResultEl.innerHTML = "";
+  examErrorEl.textContent = "";
+  examSyncStatus();
+});
+
+onPricingReady(() => {
+  if (PRICING && PRICING.examScan > 0) {
+    examCostHintEl.innerHTML =
+      `분석 1회 <b>${PRICING.examScan.toLocaleString()}원</b> · 쪽 수와 무관합니다`;
+  }
+});
+
+// 분석 결과에서 '이 유형 몇 문항'을 세어 [{id, count}]로 만든다.
+// 유형별 상한(TYPE_MAX)을 넘길 수 없다 — 서버도 잘라내므로 넘겨 봐야 조용히 줄어든다.
+// 워크북 단계는 문항 수라는 개념이 없다(고르면 지문 전체에 적용된다). 세기는 같이 하되
+// 개수는 쓰지 않고 '고를 단계'로만 넘긴다.
+function examTypeItems(questions, includeSimilar, engine) {
+  const want = new Map();
+  (questions || []).forEach((q) => {
+    if (!q.kind) return;
+    if (engine && q.engine !== engine) return;
+    if (q.fit === "없음") return;
+    if (q.fit === "비슷함" && !includeSimilar) return;
+    want.set(q.kind, (want.get(q.kind) || 0) + 1);
+  });
+  return [...want].map(([id, n]) => ({ id, count: Math.min(n, TYPE_MAX[id] || 1) }));
+}
+
+// 워크북 탭의 단계 체크박스를 이름으로 찾아 켠다. 이름은 서버의
+// WORKBOOK_STAGE_LABELS와 같은 값이어야 한다(WB_STAGES.name이 그 짝이다).
+function setWorkbookStages(names) {
+  const want = new Set(names || []);
+  const ids = new Set(WB_STAGES.filter((s) => want.has(s.name)).map((s) => s.id));
+  wbStageGridEl.querySelectorAll("input").forEach((b) => {
+    b.checked = ids.has(Number(b.value));
+  });
+  syncWbAll();
+  renumberWbStages();
+  updateWbCostHint();
+  return [...ids];
+}
+
+const EXAM_FIT_INFO = {
+  "같음": { cls: "ok", label: "그대로 만들 수 있음" },
+  "비슷함": { cls: "warn", label: "비슷한 걸로 대체" },
+  "없음": { cls: "no", label: "못 만듦" },
+};
+
+function renderExamScan(scan) {
+  const qs = scan.questions || [];
+  const count = (f) => qs.filter((q) => q.fit === f).length;
+  const rows = qs
+    .map((q) => {
+      const info = EXAM_FIT_INFO[q.fit] || EXAM_FIT_INFO["없음"];
+      return `<tr class="exam-row-${info.cls}">
+        <td class="exam-no">${esc(q.no)}</td>
+        <td class="exam-fmt">${esc(q.format)}</td>
+        <td class="exam-prompt">${esc(q.prompt)}</td>
+        <td class="exam-fit"><span class="exam-badge ${info.cls}">${esc(info.label)}</span></td>
+        <td class="exam-kind">${q.kind ? esc(q.kind) : "—"}</td>
+        <td class="exam-engine">${q.engine ? esc(q.engine) : "—"}</td>
+        <td class="exam-note">${esc(q.note || "")}</td>
+      </tr>`;
+    })
+    .join("");
+
+  examResultEl.innerHTML = `
+    <section class="panel exam-report">
+      <h3 class="exam-title">${esc(scan.title || "기출 시험지")}</h3>
+      <p class="exam-summary">
+        문항 <b>${qs.length}개</b>
+        (선다형 ${qs.filter((q) => q.format === "선다형").length} ·
+         서답형 ${qs.filter((q) => q.format === "서답형").length}) —
+        그대로 만들 수 있음 <b class="ok">${count("같음")}</b> ·
+        비슷한 걸로 대체 <b class="warn">${count("비슷함")}</b> ·
+        못 만듦 <b class="no">${count("없음")}</b>
+      </p>
+      ${scan.note ? `<p class="hint">${esc(scan.note)}</p>` : ""}
+
+      <div class="exam-table-wrap">
+        <table class="exam-table">
+          <thead><tr>
+            <th>번호</th><th>형식</th><th>발문</th><th>판정</th><th>앱 유형</th><th>어느 탭</th><th>비고</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+
+      <div class="actions exam-actions">
+        <label class="chk" title="켜면 '비슷한 걸로 대체' 판정까지 포함해 유형을 채웁니다. 끄면 '그대로 만들 수 있음'만 채웁니다.">
+          <input type="checkbox" id="examIncludeSimilar" checked> 비슷한 것도 포함
+        </label>
+        <button class="btn" id="examFillMcqBtn">📝 객관식 탭 채우기</button>
+        <button class="btn" id="examFillSaqBtn">✍️ 주관식 탭 채우기</button>
+        <button class="btn" id="examFillWbBtn">📚 워크북 탭 채우기</button>
+      </div>
+      <p class="hint exam-next">
+        채운 뒤에는 위쪽 <b>영어 지문</b> 칸에 시험 범위 지문을 넣고, 해당 탭에서
+        <b>문제 만들기</b>를 누르세요. 요금은 그 탭의 문항 수대로 매겨집니다.
+      </p>
+      <div class="exam-fill-note" id="examFillNote" role="status" aria-live="polite"></div>
+    </section>`;
+
+  const similarEl = $("examIncludeSimilar");
+  const noteEl = $("examFillNote");
+
+  function fill(tab) {
+    const mine = examTypeItems(qs, similarEl.checked, tab);
+    if (!mine.length) {
+      noteEl.textContent = `이 시험지에서 ${tab} 탭으로 만들 수 있는 유형이 없습니다.`;
+      noteEl.className = "exam-fill-note warn";
+      return;
+    }
+    if (tab === "워크북") {
+      // 워크북은 단계를 고르면 지문 전체에 적용된다 — 문항 수 개념이 없다.
+      const on = setWorkbookStages(mine.map((it) => it.id));
+      noteEl.textContent =
+        `워크북 탭에 ${on.length}단계를 골랐습니다 (${mine.map((it) => it.id).join(", ")}). ` +
+        `단계는 지문 전체에 적용되므로 문항 수가 아니라 '고른 단계'로 값이 매겨집니다. ` +
+        `지문을 넣고 워크북 탭에서 만드세요.`;
+    } else {
+      const which = tab === "객관식" ? "mcq" : "saq";
+      QUIZ_TABS[which].setTypes(mine);
+      const total = mine.reduce((s, it) => s + it.count, 0);
+      noteEl.textContent =
+        `${tab} 탭에 ${mine.length}유형 ${total}문항을 채웠습니다 ` +
+        `(${mine.map((it) => `${it.id} ${it.count}`).join(", ")}). ` +
+        `지문을 넣고 ${tab} 탭에서 만드세요.`;
+    }
+    noteEl.className = "exam-fill-note ok";
+  }
+
+  $("examFillMcqBtn").addEventListener("click", () => fill("객관식"));
+  $("examFillSaqBtn").addEventListener("click", () => fill("주관식"));
+  $("examFillWbBtn").addEventListener("click", () => fill("워크북"));
+}
+
+examBtn.addEventListener("click", async () => {
+  if (!examPages.length || examBusy) return;
+  examErrorEl.textContent = "";
+  if (PRICING && PRICING.examScan > 0) {
+    if (!costConfirmed(PRICING.examScan, `기출 시험지 ${examPages.length}쪽을 분석합니다.`)) return;
+  }
+  examBusy = true;
+  examBtn.disabled = true;
+  examLoadingEl.classList.add("on");
+  examLoadingTextEl.textContent =
+    `AI가 시험지 ${examPages.length}쪽을 읽고 있습니다… (1~3분 걸립니다)`;
+  examResultEl.innerHTML = "";
+  try {
+    const scan = await postJson("/api/examscan", { files: examPages }, "시험지 분석에 실패했습니다.");
+    renderExamScan(scan);
+    refreshTokenDisplay();  // 분석에 요금이 나갔으므로 잔액 표시만 갱신(화면은 그대로)
+  } catch (err) {
+    examErrorEl.textContent = err.message || String(err);
+  }
+  examLoadingEl.classList.remove("on");
+  examBusy = false;
+  examBtn.disabled = !examPages.length;
 });

@@ -354,6 +354,7 @@
     <button type="button" class="tab-btn" data-tab="saq">✍️ 문제 제작 (주관식)</button>
     <button type="button" class="tab-btn" data-tab="workbook">📚 워크북 제작</button>
     <button type="button" class="tab-btn" data-tab="vocab">📒 단어장</button>
+    <button type="button" class="tab-btn" data-tab="exam">🧾 기출 유형 분석</button>
   </nav>
 
   <!-- ══════════ 탭 1: 지문 분석 ══════════ -->
@@ -580,6 +581,43 @@
     </section>
 
     <div id="vocabDoc"></div>
+  </section>
+
+  <!-- ══════════ 탭 6: 기출 유형 분석 ══════════ -->
+  <section class="tab-page" id="tab-exam">
+    <section class="panel">
+      <p class="hint">
+        학교 기출 시험지를 올리면 <b>어떤 유형이 몇 문항 나왔는지</b> 분석합니다.
+        분석 결과로 객관식·주관식 탭의 유형 칸을 채워 두면, 위쪽 지문 입력칸에
+        <b>시험 범위 지문</b>을 넣고 그 탭에서 문제를 만들 수 있습니다.
+      </p>
+
+      <div class="row">
+        <div class="field" style="flex:1 1 100%">
+          <label>기출 시험지</label>
+          <div class="exam-drop" id="examDrop">
+            <b>시험지 PDF를 여기에 끌어다 놓으세요</b>
+            <span class="exam-drop-sub">사진(JPG·PNG)도 됩니다 · 눌러서 파일 고르기</span>
+          </div>
+          <input type="file" id="examFile" accept="application/pdf,image/*" multiple hidden>
+          <div class="exam-status" id="examStatus" role="status" aria-live="polite" hidden></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="examBtn" disabled>유형 분석하기</button>
+        <button class="btn ghost" id="examClearBtn" style="display:none">🗑️ 올린 시험지 지우기</button>
+        <span class="hint cost-hint" id="examCostHint" role="status" aria-live="polite"></span>
+      </div>
+      <div class="error" id="examError"></div>
+    </section>
+
+    <div class="loading" id="examLoading">
+      <span class="spinner"></span>
+      <span id="examLoadingText">AI가 시험지를 읽고 있습니다…</span>
+    </div>
+
+    <div id="examResult"></div>
   </section>
 
   </div><!-- /#workspace -->

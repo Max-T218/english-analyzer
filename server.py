@@ -128,6 +128,36 @@ PRICE_WORKBOOK_STAGE_KRW = int(os.environ.get("PRICE_WORKBOOK_STAGE_KRW", "100")
 PRICE_WORKBOOK_MAX_KRW = int(os.environ.get("PRICE_WORKBOOK_MAX_KRW", "700"))      # 지문 1개당 상한
 WORKBOOK_STAGE_IDS = (3, 4, 5, 6, 7, 8, 9, 10)  # public/app.js의 WB_STAGES와 같은 목록
 
+# 단계 이름과 '학생이 실제로 하는 일'. public/app.js WB_STAGES의 name·guide와 같은 값을
+# 유지해야 한다 — 기출 유형 분석이 시험지 문항을 이 이름에 갖다 붙이고, 화면은 그 이름으로
+# 워크북 탭의 체크박스를 찾아 켠다. 이름이 어긋나면 채우기가 조용히 아무것도 안 한다.
+WORKBOOK_STAGE_LABELS = {
+    3:  ("빈칸 완성하기(영문)", "우리말 해석을 보고 영문 문장의 빈칸을 채워 쓴다"),
+    4:  ("해석 연습하기",       "영어 문장을 우리말로 해석해 쓴다"),
+    5:  ("동사형 연습하기",     "괄호 안에 기본형으로 주어진 동사를 알맞은 형태로 고쳐 쓴다"),
+    6:  ("어법·어휘 고르기",    "괄호 안 두 낱말 중 어법·문맥상 옳은 것을 골라 쓴다"),
+    7:  ("어색한 곳 찾기",      "지문의 밑줄 친 부분들 중 어법상 틀린 것을 찾아 바르게 고쳐 쓴다"),
+    8:  ("순서 배열하기",       "주어진 말들을 배열해 우리말과 같은 뜻의 문장을 만든다"),
+    9:  ("문단 배열하기",       "문단 (A)(B)(C)를 흐름에 맞게 배열한다"),
+    10: ("영작 연습하기",       "주어진 키워드를 활용해 문장을 영어로 쓴다"),
+}
+WORKBOOK_KIND_NAMES = [name for name, _desc in WORKBOOK_STAGE_LABELS.values()]
+
+# 주관식 유형이 '학생에게 무엇을 시키는지' 한 줄 설명. 기출 유형 분석이 시험지 문항을
+# 이 이름들에 갖다 붙일 때만 쓴다(문제 생성 프롬프트는 자기 규칙을 따로 갖고 있다).
+# 빠진 이름이 있어도 그 유형은 이름만 나가므로 동작에는 지장이 없다.
+QUIZ_KIND_HINTS = {
+    "서술형배열": "밑줄 친 한 문장을 주어진 낱말들을 배열해 영어로 쓴다",
+    "OX진위(영)": "지문 내용에 대한 영어 진술이 맞는지 O/X로 답한다",
+    "OX진위(한)": "지문 내용에 대한 우리말 진술이 맞는지 O/X로 답한다",
+    "어휘 선택형": "괄호 안 두 낱말 중 문맥에 맞는 것을 골라 쓴다",
+    "어법 선택형": "괄호 안 두 낱말 중 어법에 맞는 것을 골라 쓴다",
+    "틀린 어휘 찾기": "지문에서 문맥상 틀린 낱말을 찾아 바르게 고쳐 쓴다",
+    "틀린 어법 찾기": "지문에서 어법상 틀린 곳을 찾아 바르게 고쳐 쓴다",
+    "동사형 쓰기": "괄호 안에 기본형으로 주어진 동사를 알맞은 형태로 고쳐 쓴다",
+    "빈칸 쓰기": "지문의 빈칸에 들어갈 낱말을 첫 철자 힌트를 보고 직접 써넣는다",
+}
+
 
 def parse_workbook_stages(raw):
     """요청의 stages를 정규화한다. 모르는 값은 버리고 중복도 없앤다 — 화면에서도 막지만
@@ -156,6 +186,11 @@ PRICE_EXTRA_QUESTION_KRW = int(os.environ.get("PRICE_EXTRA_QUESTION_KRW", "100")
 # 아직 가격이 정해지지 않은 기능 — 정해질 때까지 무료(0원)로 둔다. 로그인은 그대로 필요.
 PRICE_REWORD_KRW = int(os.environ.get("PRICE_REWORD_KRW", "0"))            # 지문 변형(문제 생성 전 재작성)
 PRICE_OCR_KRW = int(os.environ.get("PRICE_OCR_KRW", "0"))                  # 사진에서 지문 옮기기
+# 기출 시험지 유형 분석 — 시험지 1벌당(쪽 수와 무관하게 한 번). 문항마다 값을 매기지
+# 않는 이유: 한 번 분석해 두고 시험 때마다 다시 쓰는 자료라 반복 호출이 아니고,
+# 쪽 수는 사용자가 고르는 값이 아니라 시험지가 정하는 값이라 예측 가능해야 한다.
+# 지문분석(300원)보다 비싼 건 여러 쪽을 한꺼번에 보는 Pro 호출이기 때문이다.
+PRICE_EXAMSCAN_KRW = int(os.environ.get("PRICE_EXAMSCAN_KRW", "500"))
 
 # 객관식 전용 유형 12개 — public/app.js의 MCQ_TYPES와 반드시 같은 목록을 유지한다.
 # 이 집합에 없는 유형은 전부 주관식으로 보고 PRICE_SAQ_KRW를 매긴다(객관식·주관식
@@ -163,6 +198,7 @@ PRICE_OCR_KRW = int(os.environ.get("PRICE_OCR_KRW", "0"))                  # 사
 MCQ_ONLY_TYPES = {
     "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
+    "함축의미",
 }
 
 
@@ -387,6 +423,13 @@ MAX_BODY_BYTES = int(os.environ.get("MAX_BODY_BYTES", str(14 * 1024 * 1024)))
 MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", str(10 * 1024 * 1024)))
 # 사진에서 지문 옮겨 적기(OCR)에 받는 형식. PDF는 다루지 않는다 — 사진만.
 OCR_MIMES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+# 기출 시험지 분석에 받는 형식. 화면이 PDF에서 쪽별 그림을 꺼내 보내지만, 그림이 들어
+# 있지 않은 PDF(글자로 만든 원본)는 꺼낼 것이 없으므로 PDF 그대로도 받는다.
+EXAM_MIMES = OCR_MIMES | {"application/pdf"}
+# 한 번에 받는 시험지 쪽 수 상한. 실측한 기출 시험지가 6~10쪽이라 넉넉하게 잡았다.
+# 상한이 필요한 이유는 크기가 아니라(1600px로 줄이면 쪽당 0.3~0.4MB다) 한 요청에
+# 수십 장이 들어와 Pro 호출이 한없이 길어지는 것을 막기 위해서다.
+EXAM_MAX_PAGES = int(os.environ.get("EXAM_MAX_PAGES", "16"))
 
 # 전송 실패 자동 재시도 설정 — 시간이 걸려도 모든 지문을 끝까지 분석(사용자 요청).
 # 상한(포기) 없이 성공할 때까지 재시도하되, 한 번의 대기는 아래 값으로 잘라 반복한다.
@@ -664,10 +707,11 @@ QUIZ_SCHEMA = {
 }
 
 QUIZ_TYPE_LABELS = [
-    "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입",
+    "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입", "함축의미",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
     "서술형배열", "OX진위(영)", "OX진위(한)",
     "어휘 선택형", "어법 선택형", "틀린 어휘 찾기", "틀린 어법 찾기",
+    "동사형 쓰기", "빈칸 쓰기",
 ]
 
 # 지문을 '가공 없이 통째로' 보여 주는 유형 — 빈칸·밑줄·블록 분할이 전혀 없다.
@@ -696,10 +740,19 @@ QUIZ_TYPE_MAX = {
     "내용일치(영)": 5, "내용일치(한)": 5, "내용불일치(영)": 5, "내용불일치(한)": 5,
     "빈칸": 6, "어휘": 6, "어법": 4,
     "순서": 2, "문장삽입": 2,
+    # 지문에 실제로 든 비유·반어 표현의 수가 한계다. 그보다 많이 시키면 평범한 사실
+    # 문장에 밑줄을 긋고 '의미하는 바'를 묻게 되어, 정답과 오답이 갈리지 않는다.
+    "함축의미": 2,
     # 주관식 (전부 Flash로 처리되므로 어법 계열은 객관식보다 더 보수적으로 잡는다)
     "OX진위(영)": 8, "OX진위(한)": 8,
     "서술형배열": 6, "어휘 선택형": 6,
     "틀린 어휘 찾기": 5, "어법 선택형": 5, "틀린 어법 찾기": 3,
+    # 한 문항이 지문 전체에서 동사 4~6개를 이미 가져간다. 문항을 늘리면 같은 동사를
+    # 다시 뽑거나 문법 포인트가 없는 동사까지 긁어오게 된다.
+    "동사형 쓰기": 2,
+    # 한 문항이 핵심어 2~4개를 가져간다. 더 늘리면 문맥으로 되살릴 수 없는 낱말까지
+    # 지우게 되어 답이 하나로 정해지지 않는다.
+    "빈칸 쓰기": 3,
 }
 # 한 번의 /api/quiz 호출에 넣을 수 있는 총 문항 수 상한.
 # 화면은 문항 수로 끊어 보내므로(app.js의 QUIZ_QUESTIONS_PER_CALL=6, 한 유형이 그보다
@@ -781,8 +834,8 @@ in every other question.
 - `no`: 1, 2, 3… in order.
 - `type`: one of the allowed type names, EXACTLY as given (e.g. "주제").
 - `format`: "mc" for 5-choice questions, "write" for 서술형배열, "tf" for OX진위(영)/OX진위(한),
-  "pick" for 어휘/어법 선택형, "fix" for 틀린 어휘/어법 찾기.
-  Every other type is "mc".
+  "pick" for 어휘/어법 선택형, "fix" for 틀린 어휘/어법 찾기, "verb" for 동사형 쓰기,
+  "fill" for 빈칸 쓰기. Every other type is "mc".
 - `instruction`: the exact Korean question line the student reads (수능 어투 그대로), e.g.
   "다음 글의 주제로 가장 적절한 것은?". For "문장삽입" also embed the sentence to insert,
   on its own line after the question line, like:
@@ -851,6 +904,21 @@ the passage in full.
   For all four 내용일치/불일치 types: base each statement on a DIFFERENT part of the passage,
   keep them one clause long, and make wrong ones wrong by a concrete factual flip (숫자·주체·
   인과·시점을 바꾸기) — never by vague wording.
+- "함축의미" — instruction "밑줄 친 부분이 의미하는 바로 가장 적절한 것은?"
+  Pick ONE stretch of the passage (a clause or a whole sentence) whose meaning is NOT literal —
+  비유·은유·반어·관용 표현, or a phrase that only makes sense from the surrounding context.
+  A plain factual statement is the wrong choice: if its meaning is obvious on the surface,
+  every distractor becomes obviously wrong and the question tests nothing.
+  · `passageHtml` = the WHOLE passage, verbatim, with that stretch wrapped in <u>…</u>.
+    EXACTLY ONE underlined stretch may exist, so that "밑줄 친 부분" is unambiguous.
+    Add no other marking — no (A), no ①, no bold.
+  · choices = 5 ENGLISH statements, each a plain-language reading of the underlined part.
+  · answer = the ONE that restates what the writer actually means by it.
+  ⚠️ The other four must be readings a student could mistake for the answer AND that the
+  passage rules out — a literal reading of the figure, an opposite, an over-generalisation,
+  a cause/effect swap. NEVER write a distractor that is simply "true elsewhere in the passage
+  but not what this part means": that statement is defensible too, so the item would have two
+  answers. Every wrong choice must be checkable as wrong against the passage itself.
 - "서술형배열" (format "write") — instruction
   "위 글의 밑줄 친 문장과 의미가 같도록 주어진 단어를 배열하여 문장을 완성하시오."
   Pick ONE key sentence of the passage (주제문이나 핵심 문장, 8~20 words).
@@ -883,6 +951,37 @@ the passage in full.
   (수일치, 시제, 태, 준동사(to부정사/동명사/분사), 관계사, 대명사, 병렬구조 등).
   The wrong option must be a genuinely ungrammatical alternative, not just an odd word choice.
   choices = [], answer = 0, answerText = "", fixes = [].
+- "동사형 쓰기" (format "verb") — instruction
+  "다음 글의 괄호 안에 주어진 말을 문맥과 어법에 맞게 알맞은 형태로 고쳐 쓰시오."
+  `passageHtml` = 3~6 sentences taken from the passage, PLAIN TEXT ONLY (no HTML tags at all),
+  with 4~6 VERB GROUPS replaced by (힌트|정답):
+    · left of `|`  = the base words the student sees, comma-separated, in the order they
+      combine. A verb group made of several words lists them all: 조동사·be·have + 본동사.
+      Give them in DICTIONARY form (have, be, dump) — never the inflected answer.
+    · right of `|` = the exact inflected string the passage actually has, verbatim.
+  Example: "People (have, be, dump|have been dumping) their waste where it (not, permit|is
+  not permitted)." — strip the markup and the sentence must read exactly as the passage does.
+  Cover a MIX of 시제·상·수일치·태·to부정사·동명사·분사; include verbals, not only 정동사.
+  Never mark a verb whose form is obvious from the base words alone (a bare present tense
+  that needs no change) — the student must actually decide something.
+  RULES: no nested parentheses; the left side never contains `|`; everything outside ( ) is
+  identical to the passage, character for character.
+  choices = [], answer = 0, answerText = "", tfItems = [], fixes = [].
+- "빈칸 쓰기" (format "fill") — instruction
+  "다음 글의 빈칸에 들어갈 알맞은 낱말을 주어진 철자로 시작하여 쓰시오."
+  `passageHtml` = the passage (or 4~8 consecutive sentences of it), PLAIN TEXT ONLY
+  (no HTML tags at all), with 2~4 KEY CONTENT WORDS replaced by (첫철자|정답):
+    · left of `|`  = the FIRST LETTER of the answer only, in the same case the passage uses.
+    · right of `|` = the word exactly as the passage has it (keep the -s, -ed, -ing ending).
+  Example: "Real change is expensive and slow, while a press release (c|costs) almost nothing."
+  Choose words the reader can RECOVER from the surrounding text — 주제어, 반복되는 핵심어,
+  대조·인과 관계가 문장에 드러나 있는 낱말. Never blank a word whose choice is arbitrary
+  (a proper noun, a number, one of many possible synonyms): with only a first letter to go on
+  the student must be able to land on exactly one word, or the item has no defensible answer.
+  Do not blank two words in the same clause, and never blank the same word twice.
+  RULES: no nested parentheses; the left side is exactly one letter; everything outside ( )
+  is identical to the passage, character for character.
+  choices = [], answer = 0, answerText = "", tfItems = [], fixes = [].
 - "틀린 어휘 찾기" (format "fix") — instruction
   "다음 글에서 문맥상 낱말의 쓰임이 적절하지 않은 것을 모두 찾아 바르게 고쳐 쓰시오."
   `passageHtml` = one paragraph of the passage, PLAIN TEXT ONLY, identical to the original
@@ -1412,6 +1511,262 @@ def call_gemini_ocr(file, api_key, model, partial=False):
             note or "사진에서 영어 지문을 찾지 못했습니다. 지문이 잘 보이게 다시 찍어 올려 주세요."
         )
     return {"text": text, "note": note}
+
+
+# ── 기출 시험지 유형 분석 스키마 ──
+# 시험지 사진 여러 장을 한 번에 보고, 문항마다 '무엇을 묻는 문제인지'를 뽑는다.
+# 영어 지문은 일부러 옮겨 적지 않는다 — 유형 판정에 필요 없고, 널리 공개된 지문을
+# 그대로 재현하려다 RECITATION 차단에 걸리는 길을 아예 피한다(call_gemini_ocr 주석 참고).
+EXAM_SCAN_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "title": {"type": "STRING"},
+        "questions": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "no": {"type": "STRING"},
+                    "group": {"type": "STRING"},
+                    "format": {"type": "STRING"},
+                    "prompt": {"type": "STRING"},
+                    "kind": {"type": "STRING"},
+                    "fit": {"type": "STRING"},
+                    "note": {"type": "STRING"},
+                },
+                "required": ["no", "group", "format", "prompt", "kind", "fit", "note"],
+                "propertyOrdering": ["no", "group", "format", "prompt",
+                                     "kind", "fit", "note"],
+            },
+        },
+        "note": {"type": "STRING"},
+    },
+    "required": ["title", "questions", "note"],
+    "propertyOrdering": ["title", "questions", "note"],
+}
+
+# 시험지가 쓰는 유형 이름은 학교마다 제각각이다("어법상 어색한 것", "밑줄 친 부분 중
+# 틀린 것", "다음 중 옳지 않은 것"). 그 이름을 우리 19유형에 갖다 붙이는 판단을 모델에게
+# 맡기되, 고를 수 있는 이름은 호출할 때 QUIZ_TYPE_LABELS에서 그대로 넣어 준다 —
+# 여기에 유형 이름을 베껴 두면 목록이 바뀔 때 조용히 어긋난다.
+EXAM_SCAN_SYSTEM_PROMPT = r"""You analyse photos of a Korean high-school ENGLISH exam paper
+(고등학교 영어 내신 기출) and report WHAT EACH QUESTION ASKS. Return ONLY the structured JSON
+in the schema — no markdown, no commentary.
+
+## Your job is classification, NOT transcription
+Report the question layout of this exam. Do NOT copy the English reading passages — they are
+irrelevant here and copying them wastes the whole output. Read the Korean question prompt
+(발문) and the answer choices, then decide what type of question it is.
+
+## Reading these scans
+- Pages may be ROTATED or UPSIDE DOWN, and different pages may face different directions.
+  Read them anyway; never skip a page because of its orientation.
+- Handwriting is a student's marking, NOT part of the exam: circled numbers, X marks,
+  underlines, pen notes in Korean or English. IGNORE all of it and read the PRINTED text.
+  Never report a circled choice as if it were the printed answer.
+- Cover EVERY question on EVERY page, in the order printed. Do not stop early.
+- Skip the cover-page instructions (답안은 검정 볼펜으로…), the 배점표, and the answer sheet.
+
+## Per question
+- `no`: the number exactly as printed — "1", "14", "서답1", "서술형 3", "[서답형] 2".
+- `group`: when one passage serves several questions ("[1-2] 다음 글을 읽고 물음에 답하시오"),
+  put that range ("1-2") on EVERY question in it. Otherwise "".
+- `format`: "선다형" for multiple choice (① ② ③ ④ ⑤), "서답형" for anything the student writes.
+- `prompt`: the Korean 발문, copied verbatim, without the leading number. One line.
+- `kind`: the closest type from the ALLOWED LIST given in the user message, copied EXACTLY.
+  Use "" when nothing on the list is close.
+  The list has three groups (객관식 / 주관식 / 워크북). Korean 내신 서답형 — 영작, 우리말
+  해석 쓰기, 동사 형태 고쳐 쓰기, 어법 틀린 곳 찾아 고쳐 쓰기, 단어 배열 — is almost always
+  a 워크북 entry, not a 객관식 one. Look there before giving up and writing "".
+  Judge by WHAT THE STUDENT DOES, not by the page layout: a 워크북 entry prints as a
+  worksheet covering the whole passage rather than one numbered exam item, and that
+  difference alone does NOT make the fit worse.
+  When a 객관식/주관식 entry and a 워크북 entry would BOTH fit, prefer the 객관식/주관식 one —
+  it comes out as a single numbered question like the exam's, while 워크북 comes out as a
+  worksheet. (e.g. 동사 형태를 쓰게 하는 문항은 "동사형 쓰기"가 "동사형 연습하기"보다 낫다.)
+- `fit`: how well that type reproduces this question —
+    "같음"   the list type asks the same thing in the same shape
+    "비슷함" same idea, different shape (e.g. the exam asks in Korean, the list type in English;
+             the exam blanks three spots at once, the list type blanks one)
+    "없음"   no list type produces this question. `kind` MUST be "" when fit is "없음".
+- `note`: Korean, one short phrase, ONLY when fit is 비슷함 or 없음 — say concretely what
+  differs or what is missing ("빈칸 세 개를 한 번에 짝짓는 형태", "찾은 뒤 문장을 다시 쓰게 함",
+  "이 지문에만 해당하는 맞춤 발문"). Otherwise "".
+
+## Judging fit honestly
+Korean 내신 exams often write a prompt tailored to one specific passage
+("이 글에 제시된 사례들이 공통적으로 보여 주는 도시 기반 시설의 특징으로 적절한 것은?").
+It resembles a 주제/요지 question but is not one — a generic type cannot reproduce it.
+Mark these "없음". Guessing a generous match is the worst outcome: the teacher then builds a
+practice sheet believing it matches their school's exam when it does not.
+
+## title and note
+- `title`: what the paper calls itself, in Korean — "2026학년도 1학기 2차고사 영어1 2학년".
+  "" if you cannot read it.
+- `note`: Korean, one sentence, only for problems that affect the result — pages too blurred
+  to read, a page that is clearly missing, questions hidden under handwriting. "" if clean.
+
+Return valid JSON only."""
+
+
+def build_exam_scan_user_prompt(page_count):
+    """고를 수 있는 이름을 세 갈래로 나눠 보여 준다.
+
+    워크북까지 넣는 이유: 학교 시험의 서답형(영작·해석·동사형·어법 고쳐 쓰기)은 객관식·
+    주관식 유형에 대응하는 것이 거의 없고, 그 일들을 실제로 하는 것은 워크북 단계들이다.
+    객관식·주관식만 보여 주면 서답형이 통째로 '없음'으로 판정된다."""
+    mcq = [t for t in QUIZ_TYPE_LABELS if t in MCQ_ONLY_TYPES]
+    # 주관식은 이름만으로 무엇을 시키는 문제인지 알기 어렵다. 설명 없이 내보냈더니
+    # 설명이 붙은 워크북 쪽이 매번 이겨서(단답2가 '동사형 쓰기' 대신 '동사형 연습하기'로
+    # 갔다) 같은 자리에서 겨루도록 여기에도 한 줄씩 붙인다.
+    saq = [
+        f"{t} — {QUIZ_KIND_HINTS[t]}" if t in QUIZ_KIND_HINTS else t
+        for t in QUIZ_TYPE_LABELS if t not in MCQ_ONLY_TYPES
+    ]
+    wb = [f"{name} — {desc}" for name, desc in WORKBOOK_STAGE_LABELS.values()]
+    return "\n".join([
+        f"시험지 {page_count}쪽입니다. 모든 쪽의 모든 문항을 빠짐없이 분류하세요.",
+        "",
+        "ALLOWED LIST — kind 에는 아래 이름 중 하나를 그대로 쓰고, 해당 없으면 빈 문자열.",
+        "",
+        "[객관식] 5지선다로 나옵니다:",
+        "  " + ", ".join(mcq),
+        "",
+        "[주관식] 번호가 붙은 서답형 문항 1개로 나옵니다. 시험지의 서답형은 여기부터 보세요:",
+        "\n".join("  " + s for s in saq),
+        "",
+        "[워크북] 지문 전체를 훑는 학습지로 나옵니다. 위 목록에 더 가까운 것이 있으면 그쪽을",
+        "쓰되, 여기서 맞는 것을 찾았다면 반드시 고르세요 — 학습지 모양이라는 이유만으로",
+        "'없음'으로 두면 안 됩니다:",
+        "\n".join("  " + w for w in wb),
+    ])
+
+
+def call_gemini_exam_scan(files, api_key, model):
+    """시험지 쪽 그림 여러 장을 한 번에 보고 문항별 유형을 돌려준다.
+    files: [{"mime": ..., "data": "<base64>"}] — 화면이 PDF에서 꺼내 축소해 보낸다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+
+    parts = []
+    for i, f in enumerate(files or (), 1):
+        if not isinstance(f, dict):
+            continue
+        mime = (f.get("mime") or "").lower().split(";")[0].strip()
+        data = f.get("data") or ""
+        if mime not in EXAM_MIMES:
+            raise RuntimeError(
+                f"{i}번째 파일의 형식을 지원하지 않습니다({mime or '알 수 없음'}). "
+                "PDF나 JPG·PNG 사진만 올릴 수 있습니다."
+            )
+        if not data:
+            raise RuntimeError(f"{i}번째 파일의 내용이 비어 있습니다.")
+        if len(data) > MAX_FILE_BYTES:
+            raise RuntimeError(
+                f"{i}번째 쪽이 너무 큽니다 (최대 {MAX_FILE_BYTES // 1048576}MB)."
+            )
+        parts.append({"inlineData": {"mimeType": mime, "data": data}})
+
+    if not parts:
+        raise RuntimeError("분석할 시험지를 올려 주세요.")
+
+    parts.append({"text": build_exam_scan_user_prompt(len(parts))})
+    payload = {
+        "systemInstruction": {"parts": [{"text": EXAM_SCAN_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": parts}],
+        "generationConfig": {
+            # 분류 작업이라 낮은 온도가 맞다. 0으로 두지 않는 이유는 OCR과 같다 —
+            # 결정적 디코딩이 RECITATION 차단을 부른다.
+            "temperature": 0.15,
+            "maxOutputTokens": 16384,
+            "responseMimeType": "application/json",
+            "responseSchema": EXAM_SCAN_SCHEMA,
+        },
+    }
+    result = _gemini_json(
+        payload, api_key, model,
+        "시험지의 문항이 너무 많아 분석하다가 잘렸습니다. 쪽을 나눠 올려 주세요.",
+    )
+    return normalize_exam_scan(result)
+
+
+_EXAM_FITS = ("같음", "비슷함", "없음")
+
+
+def normalize_exam_scan(result):
+    """모델 응답을 화면이 믿고 쓸 수 있는 모양으로 정리한다.
+
+    kind는 반드시 QUIZ_TYPE_LABELS 안의 이름이어야 한다 — 여기서 걸러내지 않으면
+    화면이 곧바로 /api/quiz에 그 이름을 실어 보내고, 서버가 모르는 유형이라 조용히
+    버려져 '고른 유형이 안 나오는' 증상이 된다(parse_quiz_items와 같은 원칙)."""
+    rows = []
+    for raw in (result or {}).get("questions") or ():
+        if not isinstance(raw, dict):
+            continue
+        kind = str(raw.get("kind") or "").strip()
+        fit = str(raw.get("fit") or "").strip()
+        if kind not in QUIZ_TYPE_LABELS and kind not in WORKBOOK_KIND_NAMES:
+            kind, fit = "", "없음"
+        if fit not in _EXAM_FITS:
+            fit = "비슷함" if kind else "없음"
+        if fit == "없음":
+            kind = ""          # 못 만드는 문항에 유형이 붙어 있으면 안 된다
+
+        fmt = "서답형" if str(raw.get("format") or "").strip() == "서답형" else "선다형"
+        note = sanitize_inline(str(raw.get("note") or ""))
+
+        # 어느 탭에서 만드는지는 모델에게 묻지 않고 이름으로 정한다 — 이름이 어느
+        # 목록에 있느냐가 곧 답이라, 모델이 틀릴 여지를 남길 이유가 없다.
+        if not kind:
+            engine = ""
+        elif kind in WORKBOOK_KIND_NAMES:
+            engine = "워크북"
+        elif kind in MCQ_ONLY_TYPES:
+            engine = "객관식"
+        else:
+            engine = "주관식"
+
+        # 객관식/서답형이 어긋나면 '같음'일 수 없다.
+        # 실측에서 모델이 서답형 '주제문을 완성하시오'에 객관식 유형 주제를 붙이고
+        # 같음이라고 했다. 이름만 보면 맞지만 만들어 나오는 것은 5지선다라 시험지의
+        # 영작 문항과 전혀 다른 물건이다. 반대 방향도 같다(선다형 빈칸 짝짓기에
+        # 주관식 어법 선택형이 붙었다). 유형 이름이 그럴듯해서 생기는 착시라
+        # 모델에게 맡기지 않고 여기서 기계로 끌어내린다.
+        # 워크북은 전부 학생이 써 넣는 형태이므로 선다형과는 언제나 어긋난다.
+        want_fmt = "선다형" if engine == "객관식" else "서답형"
+        if kind and fmt != want_fmt:
+            fit = "비슷함"
+            gap = {
+                "객관식": "이 유형으로 만들면 객관식이 됩니다",
+                "주관식": "이 유형으로 만들면 주관식이 됩니다",
+                "워크북": "워크북은 써 넣는 학습지로 나옵니다",
+            }[engine]
+            note = f"{note} / {gap}" if note else gap
+
+        rows.append({
+            "no": sanitize_inline(str(raw.get("no") or "")),
+            "group": sanitize_inline(str(raw.get("group") or "")),
+            "format": fmt,
+            "prompt": sanitize_inline(str(raw.get("prompt") or "")),
+            "kind": kind,
+            "engine": engine,
+            "fit": fit,
+            "note": note,
+        })
+    if not rows:
+        raise RuntimeError(
+            "시험지에서 문항을 찾지 못했습니다. 시험지가 잘 보이는지 확인하고 다시 올려 주세요."
+        )
+    return {
+        "title": sanitize_inline(str((result or {}).get("title") or "")),
+        "questions": rows,
+        "note": sanitize_inline(str((result or {}).get("note") or "")),
+    }
 
 
 # ── 워크북(단계별 학습지) 스키마 ──
@@ -3751,6 +4106,8 @@ class Handler(BaseHTTPRequestHandler):
                 "workbookMax": PRICE_WORKBOOK_MAX_KRW,
                 "reword": PRICE_REWORD_KRW,
                 "ocr": PRICE_OCR_KRW,
+                # 기출 유형 분석은 시험지 1벌당 한 값 — 쪽 수에 곱하지 않는다
+                "examScan": PRICE_EXAMSCAN_KRW,
             })
             return
 
@@ -3892,7 +4249,7 @@ class Handler(BaseHTTPRequestHandler):
 
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
-                        "/api/reword", "/api/ocr",
+                        "/api/reword", "/api/ocr", "/api/examscan",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
                         "/api/account/recharge",
@@ -3925,10 +4282,10 @@ class Handler(BaseHTTPRequestHandler):
         # AI를 실제로 호출하는 엔드포인트는 전부 로그인이 있어야 쓸 수 있다 —
         # 이제 사용자가 자기 Gemini 키를 내지 않고 관리자 키 하나를 같이 쓰므로,
         # 로그인이 곧 '누가 관리자 키를 쓰는지' 구분하는 유일한 장치다.
-        # 그중 실제로 콘텐츠를 생성하는 다섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
+        # 그중 실제로 콘텐츠를 생성하는 여섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/quiz", "/api/workbook",
-                           "/api/reword", "/api/ocr")
+                           "/api/reword", "/api/ocr", "/api/examscan")
         if path in GENERATE_PATHS + ("/api/models",):
             if DB is None:
                 self._send_json(
@@ -3958,6 +4315,11 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/reword":
                     cost = PRICE_REWORD_KRW
                     self._pending_label = "지문 변형"
+                elif path == "/api/examscan":
+                    # 쪽 수와 무관하게 시험지 1벌당 한 값이다(PRICE_EXAMSCAN_KRW 주석 참고).
+                    cost = PRICE_EXAMSCAN_KRW
+                    pages = len(req.get("files") or ())
+                    self._pending_label = f"기출 유형 분석 · {pages}쪽"
                 else:  # /api/ocr
                     cost = PRICE_OCR_KRW
                     self._pending_label = "사진에서 지문 옮기기"
@@ -4278,6 +4640,37 @@ class Handler(BaseHTTPRequestHandler):
             except Recitation as e:
                 # 화면이 '사진을 조각내어 다시 시도'로 넘어갈 수 있게 식별자를 붙인다
                 self._send_json({"error": str(e), "code": "recitation"}, 502)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        if path == "/api/examscan":
+            files = req.get("files")
+            if not isinstance(files, list) or not files:
+                self._send_json({"error": "분석할 시험지를 올려 주세요."}, 400)
+                return
+            if len(files) > EXAM_MAX_PAGES:
+                self._send_json({
+                    "error": f"한 번에 {EXAM_MAX_PAGES}쪽까지 분석할 수 있습니다 "
+                             f"(올린 쪽 수 {len(files)}쪽). 나눠서 올려 주세요."
+                }, 400)
+                return
+            api_key = req.get("apiKey") or ""
+            # 유형 분석은 항상 Pro — 사용자가 모델을 고르지 않는다.
+            # 스캔본이라 글자가 흐리고 쪽마다 방향이 다른데다, 여기서 한 번 잘못 읽으면
+            # 이후 만드는 문제가 통째로 어긋난다. 시험지 1벌에 한 번만 부르는 호출이라
+            # Pro를 써도 총원가가 크게 늘지 않는다.
+            model = MODEL_PRO
+            try:
+                scan = call_gemini_exam_scan(files, api_key, model)
+                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
+                self._send_json(scan)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
             except ProUnavailable as e:
