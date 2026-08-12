@@ -157,6 +157,8 @@ QUIZ_KIND_HINTS = {
     "동사형 쓰기": "괄호 안에 기본형으로 주어진 동사를 알맞은 형태로 고쳐 쓴다",
     "빈칸 쓰기": "지문에 뚫린 빈칸에 들어갈 낱말을 본문에서 찾아 써넣는다(힌트 없음)",
     "표현 찾아 쓰기": "주어진 우리말과 뜻이 같은 영어 표현을 지문에서 찾아 옮겨 쓴다",
+    "무관한 문장 쓰기": "글의 흐름과 관계 없는 문장을 찾아 그대로 옮겨 쓴다(번호 없음)",
+    "요약문 완성": "글을 한 문장으로 요약한 문장의 빈칸 두 곳을 <보기>의 낱말로 채운다",
 }
 
 
@@ -200,7 +202,7 @@ PRICE_EXAMSCAN_KRW = int(os.environ.get("PRICE_EXAMSCAN_KRW", "0"))
 MCQ_ONLY_TYPES = {
     "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
-    "함축의미",
+    "함축의미", "무관한 문장", "요약문",
 }
 
 
@@ -726,10 +728,12 @@ QUIZ_SCHEMA = {
 
 QUIZ_TYPE_LABELS = [
     "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입", "함축의미",
+    "무관한 문장", "요약문",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
     "서술형배열", "OX진위(영)", "OX진위(한)",
     "어휘 선택형", "어법 선택형", "틀린 어휘 찾기", "틀린 어법 찾기",
     "동사형 쓰기", "빈칸 쓰기", "표현 찾아 쓰기",
+    "무관한 문장 쓰기", "요약문 완성",
 ]
 
 # 지문을 '가공 없이 통째로' 보여 주는 유형 — 빈칸·밑줄·블록 분할이 전혀 없다.
@@ -774,6 +778,12 @@ QUIZ_TYPE_MAX = {
     # 한 문항이 3~4개 표현을 가져간다. 겹치지 않으면서 뜻이 하나로 떨어지는 표현이
     # 지문 하나에 그리 많지 않다.
     "표현 찾아 쓰기": 2,
+    # 무관한 문장·요약문 계열은 지문 하나에 1문항이 상한이다. 둘 다 '글 전체의 논지'
+    # 하나에 걸려 있어서다 — 무관한 문장을 두 개 심으면 남은 문장만으로는 원래 흐름이
+    # 이어지지 않아 어느 쪽이 무관한지 가릴 수 없고, 요약문은 글 하나에 요약이 하나뿐이라
+    # 두 번째 문항은 같은 문장을 다른 낱말로 뚫은 중복이 된다.
+    "무관한 문장": 1, "요약문": 1,
+    "무관한 문장 쓰기": 1, "요약문 완성": 1,
 }
 # 한 번의 /api/quiz 호출에 넣을 수 있는 총 문항 수 상한.
 # 화면은 문항 수로 끊어 보내므로(app.js의 QUIZ_QUESTIONS_PER_CALL=6, 한 유형이 그보다
@@ -914,6 +924,57 @@ the passage in full.
   = the rest of the passage (after removing one sentence) with 5 candidate insertion points
   marked as circled numbers ①~⑤ placed BETWEEN sentences. choices = ["①","②","③","④","⑤"]
   in that literal order; answer = where the removed sentence truly belongs.
+- "무관한 문장" (format "mc") — instruction "다음 글에서 전체 흐름과 관계 없는 문장은?"
+  `passageHtml` = the passage rebuilt like this, PLAIN TEXT with circled numbers only
+  (no HTML tags):
+    · The FIRST 2 sentences stay as an UNNUMBERED opening — they establish the topic, and a
+      student cannot judge "관계 없음" before the topic is set.
+    · After them come EXACTLY 5 sentences, each preceded by ①②③④⑤ (①Sentence. ②Sentence. …).
+    · FOUR of those 5 are the passage's own next sentences, verbatim, in their original order.
+    · ONE is a sentence YOU write and INSERT. That inserted one is the answer.
+  ⚠️ HOW TO WRITE THE INSERTED SENTENCE — this is the whole difficulty of the type.
+  A well-written passage contains no irrelevant sentence, so you must manufacture one that is
+  tempting yet indefensible. It must satisfy BOTH:
+    (a) SAME SUBJECT MATTER — reuse the passage's own nouns and key terms. Introduce no new
+        topic, no new proper noun, no new domain. On a quick read it must look like it belongs.
+    (b) DIFFERENT CONCERN — it makes a claim the passage never argues toward. Reliable ways:
+        turn a descriptive passage into a practical recommendation; discuss a limitation,
+        exception, or difficulty the passage does not raise; reverse a cause-and-effect
+        direction; evaluate what the passage merely describes.
+  Example of the pattern (passage about how cave art let humans TRANSMIT knowledge across
+  generations): the inserted sentence says "despite advances in technology there is a limit in
+  RESTORING damaged cave paintings" — same subject (cave paintings), different concern
+  (restoration technique vs knowledge transmission).
+  ⚠️ Do NOT edit the other four sentences in any way. If one of the passage's own sentences
+  would read as more off-topic than the one you inserted, the item has no defensible answer —
+  in that case choose a different insertion point and rewrite your sentence.
+  ⚠️ PLACE THE INSERTED SENTENCE AT ③ OR ④ — never ①, ②, or ⑤. At ① the topic is not yet
+  established; at ⑤ the passage would end on the irrelevant note and stop reading as a whole.
+  (Real 수능·모의고사 answers land on ③/④ almost without exception.)
+  choices = ["①","②","③","④","⑤"] in that literal order; answer = the inserted position.
+- "요약문" (format "mc") — instruction
+  "다음 글의 내용을 한 문장으로 요약하고자 한다. 빈칸 (A), (B)에 들어갈 말로 가장 적절한 것은?"
+  `passageHtml` = the passage verbatim, then <br><br>, then ONE English summary sentence that
+  compresses the WHOLE passage (not just its first half), with exactly two blanks written as
+  "(A)______________" and "(B)______________".
+  The two blanked words must be the sentence's two load-bearing ideas — typically the property
+  the passage attributes to its subject, and the consequence that follows. Blanking a word the
+  reader can guess from grammar alone (an article, a preposition, a generic noun) wastes the item.
+  choices = 5 strings, each ONE pair written exactly as "wordA … wordB" (three-dot ellipsis,
+  spaces around it). answer = the correct pair.
+  ⚠️ DISTRACTOR GRID — without this the item is only half a question.
+  If all five (A) words differ AND all five (B) words differ, a student who knows only (A) has
+  already found the answer. Real exams prevent this: ONE side reuses words so that the same
+  (A) appears in two or three different pairs, and only (B) separates them.
+  So: on ONE side use just 2-3 distinct words spread across the five pairs; on the OTHER side
+  use five distinct words. Example of the shape:
+      ① hinders … denies      ② enhances … counters   ③ controls … distorts
+      ④ enhances … confirms   ⑤ hinders … approves
+  (A) has three distinct words reused; knowing "hinders" still leaves ① and ⑤ to separate.
+  ⚠️ Every wrong pair must be wrong for a reason grounded in the passage — a word the passage
+  actually contradicts, not a word that is merely odd. Do not use nonsense fillers.
+  ⚠️ Do NOT put the correct pair first. Order the five pairs so the answer falls at ②, ③, ④,
+  or ⑤ — a correct choice sitting at ① is a giveaway.
 - "내용일치(영)" — instruction "다음 글의 내용과 일치하는 것은?". passageHtml = 지문 전문.
   choices = 5 ENGLISH statements about the passage; EXACTLY ONE is true to the
   passage, the other 4 must CONTRADICT it (not merely be unmentioned). answer = the true one.
@@ -1023,6 +1084,44 @@ the passage in full.
   RULES: no nested parentheses; the left side is empty; everything outside ( ) is identical
   to the passage, character for character.
   choices = [], answer = 0, answerText = "", tfItems = [], fixes = [].
+- "무관한 문장 쓰기" (format "short") — instruction
+  "다음 글에서 전체 흐름과 관계 없는 문장을 찾아 그대로 옮겨 쓰시오."
+  주관식판이다. 객관식 "무관한 문장"과 심는 방법은 같고, 번호를 붙이지 않는다 —
+  학생이 ①~⑤ 중에서 고르는 것이 아니라 스스로 찾아 옮겨 적는다.
+  `passageHtml` = the passage rebuilt as ONE plain paragraph, NO circled numbers, NO markup:
+    · the passage's first 2 sentences, verbatim, as the opening;
+    · then 4 more of the passage's own sentences, verbatim and in their original order;
+    · plus ONE sentence YOU write and INSERT among them — that inserted sentence is the answer.
+  ⚠️ The inserted sentence follows the SAME two rules as "무관한 문장" above:
+  (a) SAME SUBJECT MATTER — reuse the passage's own nouns and key terms, introduce no new
+  topic; (b) DIFFERENT CONCERN — a claim the passage never argues toward.
+  ⚠️ Insert it in the MIDDLE — after at least 2 of the passage's own sentences have followed
+  the opening, and never as the last sentence (the passage must still end on its own note).
+  ⚠️ Change nothing else. If one of the passage's own sentences would read as more off-topic
+  than the one you inserted, the item has no defensible answer — move the insertion and rewrite.
+  `answerText` = the inserted sentence, character for character as it appears in passageHtml.
+  choices = [], answer = 0, tfItems = [], fixes = [], findItems = [].
+- "요약문 완성" (format "short") — instruction
+  "다음 글의 내용을 한 문장으로 요약하고자 한다. <보기>에서 알맞은 낱말을 골라 빈칸 (A), (B)에 쓰시오."
+  `passageHtml` = three parts joined by <br><br> :
+    1. the passage, verbatim;
+    2. ONE English summary sentence compressing the WHOLE passage, with exactly two blanks
+       written as "(A)______________" and "(B)______________";
+    3. a word bank on one line, exactly in this shape:
+       &lt;보기&gt; word1 / word2 / word3 / word4 / word5 / word6
+  The two blanked words must be the summary's two load-bearing ideas — typically the property
+  the passage attributes to its subject and the consequence that follows. Never blank a word
+  recoverable from grammar alone (article, preposition, generic noun).
+  ⚠️ THE WORD BANK IS WHAT MAKES THIS GRADEABLE. With a bare blank, any synonym is a
+  defensible answer and the item breaks (같은 이유로 "빈칸 쓰기"는 본문에 실제로 다시 나오는
+  낱말만 뚫는다). So the bank must contain EXACTLY 6 words: the 2 correct ones plus 4
+  distractors. Every distractor must be wrong for a reason the passage actually supplies — a
+  word the passage CONTRADICTS — never a word that is merely odd or off-topic. Put the 6 words
+  in a scrambled order, not with the answers first.
+  ⚠️ No word in the bank may fit either blank except the intended one. If a distractor would
+  also read correctly in (A) or (B), replace it.
+  `answerText` = "(A) word  (B) word" using the two correct words.
+  choices = [], answer = 0, tfItems = [], fixes = [], findItems = [].
 - "틀린 어휘 찾기" (format "fix") — instruction
   "다음 글에서 문맥상 낱말의 쓰임이 적절하지 않은 것을 모두 찾아 바르게 고쳐 쓰시오."
   `passageHtml` = one paragraph of the passage, PLAIN TEXT ONLY, identical to the original

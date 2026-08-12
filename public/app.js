@@ -1738,6 +1738,7 @@ const MCQ_TYPES = [
   { id: "주제", def: true }, { id: "제목", def: true }, { id: "요지", def: true },
   { id: "빈칸", def: true }, { id: "어휘", def: false }, { id: "어법", def: false },
   { id: "순서", def: false }, { id: "문장삽입", def: false }, { id: "함축의미", def: false },
+  { id: "무관한 문장", def: false }, { id: "요약문", def: false },
   { id: "내용일치(영)", def: false }, { id: "내용일치(한)", def: false },
   { id: "내용불일치(영)", def: false }, { id: "내용불일치(한)", def: false },
 ];
@@ -1748,6 +1749,7 @@ const SAQ_TYPES = [
   { id: "틀린 어휘 찾기", def: false }, { id: "틀린 어법 찾기", def: false },
   { id: "동사형 쓰기", def: false }, { id: "빈칸 쓰기", def: false },
   { id: "표현 찾아 쓰기", def: false },
+  { id: "무관한 문장 쓰기", def: false }, { id: "요약문 완성", def: false },
 ];
 
 // select 대신 '체크박스처럼 보이는 라디오 그룹'으로 값을 관리할 때 쓰는 어댑터.
@@ -1833,11 +1835,13 @@ const TYPE_MAX = {
   "내용일치(영)": 5, "내용일치(한)": 5, "내용불일치(영)": 5, "내용불일치(한)": 5,
   빈칸: 6, 어휘: 6, 어법: 4,
   순서: 2, 문장삽입: 2, 함축의미: 2,
+  "무관한 문장": 1, 요약문: 1,
   // 주관식
   "OX진위(영)": 8, "OX진위(한)": 8,
   서술형배열: 6, "어휘 선택형": 6,
   "틀린 어휘 찾기": 5, "어법 선택형": 5, "틀린 어법 찾기": 3,
   "동사형 쓰기": 2, "빈칸 쓰기": 3, "표현 찾아 쓰기": 2,
+  "무관한 문장 쓰기": 1, "요약문 완성": 1,
 };
 // +버튼이 막혔을 때 왜 막혔는지 알려 준다 — 유형마다 상한이 다른 이유가 다르다.
 const TYPE_MAX_REASON = {
@@ -1850,6 +1854,13 @@ const TYPE_MAX_REASON = {
   어법: "지문에 실제로 있는 문법 포인트 수 때문에",
   "어법 선택형": "지문에 실제로 있는 문법 포인트 수 때문에",
   "틀린 어법 찾기": "지문에 실제로 있는 문법 포인트 수 때문에",
+  // 둘 다 '글 전체의 논지' 하나에 걸려 있어 지문 하나에서 1문항이 상한이다.
+  // 무관한 문장을 두 개 심으면 남은 문장만으로 원래 흐름이 이어지지 않아 어느 쪽이
+  // 무관한지 가릴 수 없고, 요약은 글 하나에 하나뿐이라 두 번째는 중복이 된다.
+  "무관한 문장": "글의 논지가 하나뿐이라",
+  요약문: "글 하나를 요약한 문장이 하나뿐이라",
+  "무관한 문장 쓰기": "글의 논지가 하나뿐이라",
+  "요약문 완성": "글 하나를 요약한 문장이 하나뿐이라",
 };
 function typeMaxNote(id) {
   const max = TYPE_MAX[id] || 1;
@@ -1873,7 +1884,11 @@ const QUIZ_MAX_QUESTIONS_PER_RUN = 200;
 
 // 객관식 '지문변형형' — 정찰 가격도, 실제로 쓰는 모델(Pro)도 다른 유형들.
 // server.py의 MCQ_ONLY_TYPES 중 QUIZ_PLAIN_PASSAGE_TYPES에 없는 5개와 반드시 같아야 한다.
-const MCQ_TRANSFORM_TYPES = new Set(["빈칸", "어휘", "어법", "순서", "문장삽입"]);
+// 무관한 문장·요약문도 여기 든다 — 둘 다 지문을 그대로 싣지 않고 손을 댄다
+// (무관한 문장은 없던 문장을 지어 끼워 넣고, 요약문은 요약 문장을 새로 쓴다).
+const MCQ_TRANSFORM_TYPES = new Set([
+  "빈칸", "어휘", "어법", "순서", "문장삽입", "무관한 문장", "요약문",
+]);
 
 /* 유형을 호출 묶음으로 나눈다. 규칙 세 가지:
    ① '지문변형형'(Pro로 처리)과 나머지(Flash로 처리)를 먼저 가른다 — 한 호출 안에 두
@@ -2433,7 +2448,7 @@ const QUIZ_TABS = {
 // (객관식=①, 서술형=문장, OX=O/X 나열, 선택형=고른 낱말, 오류찾기=틀린말→바른말)
 function quizAnswerLabel(q) {
   const fmt = q.format || "mc";
-  if (fmt === "write") return esc(q.answerText || "");
+  if (fmt === "write" || fmt === "short") return esc(q.answerText || "");
   if (fmt === "tf") {
     return (q.tfItems || [])
       .map((it, i) => `(${i + 1}) ${it.isTrue ? "O" : "X"}`)
@@ -2468,6 +2483,18 @@ function quizAnswerLabel(q) {
 // 문항 본체(지문·선택지·답란)를 형식별로 렌더
 function quizBodyHtml(q) {
   const fmt = q.format || "mc";
+
+  /* 지문을 읽고 답란에 직접 쓰는 주관식 — '무관한 문장 쓰기'와 '요약문 완성'이 쓴다.
+     write(서술형배열)와 따로 두는 이유: write는 answerText를 낱말로 흩어 <보기>를 만드는데,
+     이 둘은 정답을 흩어 보여 주면 안 된다(무관한 문장은 지문 안에 이미 있고, 요약문 완성은
+     AI가 만든 <보기>가 passageHtml에 들어 있다).
+     답란을 두 줄 두는 것은 무관한 문장이 한 문장을 통째로 옮겨 적는 유형이라서다. */
+  if (fmt === "short") {
+    return `
+      <div class="qz-passage">${safeHTML(q.passageHtml)}</div>
+      <div class="qz-writeline"></div>
+      <div class="qz-writeline"></div>`;
+  }
 
   if (fmt === "write") {
     /* 서술형 배열 — 지문을 그대로 보여 주되, 배열할 문장 한 개만 한글 해석으로 바뀌어
