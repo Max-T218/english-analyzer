@@ -156,6 +156,7 @@ QUIZ_KIND_HINTS = {
     "틀린 어법 찾기": "지문에서 어법상 틀린 곳을 찾아 바르게 고쳐 쓴다",
     "동사형 쓰기": "괄호 안에 기본형으로 주어진 동사를 알맞은 형태로 고쳐 쓴다",
     "빈칸 쓰기": "지문의 빈칸에 들어갈 낱말을 첫 철자 힌트를 보고 직접 써넣는다",
+    "표현 찾아 쓰기": "주어진 우리말과 뜻이 같은 영어 표현을 지문에서 찾아 옮겨 쓴다",
 }
 
 
@@ -690,6 +691,20 @@ QUIZ_SCHEMA = {
                             "propertyOrdering": ["wrong", "right"],
                         },
                     },
+                    # 표현 찾아 쓰기 — 우리말 뜻과 지문에 있는 영어 표현의 짝.
+                    # 이 유형만 지문에 표시를 심지 않고 목록을 따로 세우므로 칸이 따로 있다.
+                    "findItems": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "ko": {"type": "STRING"},
+                                "en": {"type": "STRING"},
+                            },
+                            "required": ["ko", "en"],
+                            "propertyOrdering": ["ko", "en"],
+                        },
+                    },
                     "explanation": {"type": "STRING"},
                 },
                 # passageHtml은 required가 아니다 — 지문을 가공 없이 그대로 쓰는 유형
@@ -697,9 +712,11 @@ QUIZ_SCHEMA = {
                 # 지문을 유형 수만큼 되받지 않으므로 출력 토큰이 크게 줄고,
                 # 문항끼리 지문이 미묘하게 달라지는 사고도 사라진다.
                 "required": ["no", "type", "format", "instruction",
-                             "choices", "answer", "answerText", "tfItems", "fixes", "explanation"],
+                             "choices", "answer", "answerText", "tfItems", "fixes",
+                             "findItems", "explanation"],
                 "propertyOrdering": ["no", "type", "format", "instruction", "passageHtml",
-                                     "choices", "answer", "answerText", "tfItems", "fixes", "explanation"],
+                                     "choices", "answer", "answerText", "tfItems", "fixes",
+                                     "findItems", "explanation"],
             },
         },
     },
@@ -712,7 +729,7 @@ QUIZ_TYPE_LABELS = [
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
     "서술형배열", "OX진위(영)", "OX진위(한)",
     "어휘 선택형", "어법 선택형", "틀린 어휘 찾기", "틀린 어법 찾기",
-    "동사형 쓰기", "빈칸 쓰기",
+    "동사형 쓰기", "빈칸 쓰기", "표현 찾아 쓰기",
 ]
 
 # 지문을 '가공 없이 통째로' 보여 주는 유형 — 빈칸·밑줄·블록 분할이 전혀 없다.
@@ -754,6 +771,9 @@ QUIZ_TYPE_MAX = {
     # 한 문항이 핵심어 2~4개를 가져간다. 더 늘리면 문맥으로 되살릴 수 없는 낱말까지
     # 지우게 되어 답이 하나로 정해지지 않는다.
     "빈칸 쓰기": 3,
+    # 한 문항이 3~4개 표현을 가져간다. 겹치지 않으면서 뜻이 하나로 떨어지는 표현이
+    # 지문 하나에 그리 많지 않다.
+    "표현 찾아 쓰기": 2,
 }
 # 한 번의 /api/quiz 호출에 넣을 수 있는 총 문항 수 상한.
 # 화면은 문항 수로 끊어 보내므로(app.js의 QUIZ_QUESTIONS_PER_CALL=6, 한 유형이 그보다
@@ -836,7 +856,7 @@ in every other question.
 - `type`: one of the allowed type names, EXACTLY as given (e.g. "주제").
 - `format`: "mc" for 5-choice questions, "write" for 서술형배열, "tf" for OX진위(영)/OX진위(한),
   "pick" for 어휘/어법 선택형, "fix" for 틀린 어휘/어법 찾기, "verb" for 동사형 쓰기,
-  "fill" for 빈칸 쓰기. Every other type is "mc".
+  "fill" for 빈칸 쓰기, "find" for 표현 찾아 쓰기. Every other type is "mc".
 - `instruction`: the exact Korean question line the student reads (수능 어투 그대로), e.g.
   "다음 글의 주제로 가장 적절한 것은?". For "문장삽입" also embed the sentence to insert,
   on its own line after the question line, like:
@@ -967,6 +987,22 @@ the passage in full.
   that needs no change) — the student must actually decide something.
   RULES: no nested parentheses; the left side never contains `|`; everything outside ( ) is
   identical to the passage, character for character.
+  choices = [], answer = 0, answerText = "", tfItems = [], fixes = [].
+- "표현 찾아 쓰기" (format "find") — instruction
+  "아래 우리말과 뜻이 같은 영어 표현을 윗글에서 찾아 쓰시오."
+  The ONLY type that leaves the passage alone and puts a list beside it.
+  · `passageHtml` = the passage in full, verbatim, PLAIN TEXT with no marking of any kind.
+    The answers must still be visible in it — the student's job is to FIND them.
+  · `findItems` = 3~4 items {ko, en}:
+      en = a phrase copied VERBATIM from the passage, 2~6 words, a meaningful unit
+           (동사구, 명사구, 전치사구, 관용표현). Never a whole sentence, never a single
+           common word.
+      ko = its natural Korean meaning, 문어체, written so that exactly one phrase in the
+           passage matches it. Keep the part of speech: 동사구는 "~하다"로, 명사구는 명사로.
+    List them in the order the phrases appear in the passage.
+  ⚠️ Each `en` must occur EXACTLY ONCE in the passage, and no two items may overlap or share
+  words. If a Korean meaning could point at two different phrases, the item has two answers —
+  pick a different phrase instead.
   choices = [], answer = 0, answerText = "", tfItems = [], fixes = [].
 - "빈칸 쓰기" (format "fill") — instruction
   "다음 글의 빈칸에 들어갈 알맞은 낱말을 주어진 철자로 시작하여 쓰시오."

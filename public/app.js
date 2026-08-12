@@ -1747,6 +1747,7 @@ const SAQ_TYPES = [
   { id: "어휘 선택형", def: true }, { id: "어법 선택형", def: true },
   { id: "틀린 어휘 찾기", def: false }, { id: "틀린 어법 찾기", def: false },
   { id: "동사형 쓰기", def: false }, { id: "빈칸 쓰기", def: false },
+  { id: "표현 찾아 쓰기", def: false },
 ];
 
 // select 대신 '체크박스처럼 보이는 라디오 그룹'으로 값을 관리할 때 쓰는 어댑터.
@@ -1836,7 +1837,7 @@ const TYPE_MAX = {
   "OX진위(영)": 8, "OX진위(한)": 8,
   서술형배열: 6, "어휘 선택형": 6,
   "틀린 어휘 찾기": 5, "어법 선택형": 5, "틀린 어법 찾기": 3,
-  "동사형 쓰기": 2, "빈칸 쓰기": 3,
+  "동사형 쓰기": 2, "빈칸 쓰기": 3, "표현 찾아 쓰기": 2,
 };
 // +버튼이 막혔을 때 왜 막혔는지 알려 준다 — 유형마다 상한이 다른 이유가 다르다.
 const TYPE_MAX_REASON = {
@@ -1845,6 +1846,7 @@ const TYPE_MAX_REASON = {
   함축의미: "지문에 비유·반어 표현이 든 문장 수 때문에",
   "동사형 쓰기": "한 문항이 이미 동사 4~6개를 가져가서",
   "빈칸 쓰기": "문맥으로 되살릴 수 있는 핵심어 수 때문에",
+  "표현 찾아 쓰기": "뜻이 하나로 떨어지는 표현 수 때문에",
   어법: "지문에 실제로 있는 문법 포인트 수 때문에",
   "어법 선택형": "지문에 실제로 있는 문법 포인트 수 때문에",
   "틀린 어법 찾기": "지문에 실제로 있는 문법 포인트 수 때문에",
@@ -2448,6 +2450,12 @@ function quizAnswerLabel(q) {
       .map((a, i) => `(${i + 1}) ${a}`)
       .join("　");
   }
+  if (fmt === "find") {
+    return (q.findItems || [])
+      .filter((it) => it && it.en)
+      .map((it, i) => `(${i + 1}) ${esc(it.en)}`)
+      .join("　");
+  }
   if (fmt === "fix") {
     return (q.fixes || [])
       .filter((f) => f && f.wrong)
@@ -2493,6 +2501,21 @@ function quizBodyHtml(q) {
       .join("");
     return `
       <div class="qz-passage">${html}</div>
+      ${lines}`;
+  }
+
+  if (fmt === "find") {
+    /* 표현 찾아 쓰기 — 지문은 손대지 않고(정답이 그 안에 그대로 있어야 학생이 찾는다)
+       아래에 우리말 목록과 답란을 세운다. 지문에 표시를 심는 다른 서답형과 유일하게
+       다른 모양이라 렌더러를 따로 둔다. */
+    const items = (q.findItems || []).filter((it) => it && it.ko);
+    const lines = items
+      .map((it, i) =>
+        `<div class="qz-findline"><span class="qz-findko">(${i + 1}) ${esc(it.ko)}</span>` +
+        `<span class="qz-findarrow">→</span>${wbBlank(240)}</div>`)
+      .join("");
+    return `
+      <div class="qz-passage">${safeHTML(q.passageHtml)}</div>
       ${lines}`;
   }
 

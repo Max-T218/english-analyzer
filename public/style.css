@@ -1096,3 +1096,6 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
 
 @media print { #tab-exam { display: none !important; } }
 .exam-engine { white-space: nowrap; font-weight: 600; }
+.qz-findline { display: flex; align-items: baseline; gap: 8px; margin: 6px 0; }
+.qz-findko { min-width: 190px; }
+.qz-findarrow { color: var(--muted, #64748b); }
