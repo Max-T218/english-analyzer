@@ -2491,11 +2491,29 @@ function quizBodyHtml(q) {
   }
 
   if (fmt === "verb" || fmt === "fill") {
-    /* 동사형 쓰기 · 빈칸 쓰기 — (힌트|정답)을 (힌트)로 보여 주고, 아래에 번호별 답란을
-       둔다. 표기와 렌더링은 워크북5(동사형 연습하기)와 같은 것을 쓴다. 두 유형은 힌트가
-       동사 원형이냐 첫 철자냐만 다르고 구조가 같아 한 갈래로 묶는다. 답란을 번호로
-       나누는 것은 내신 서답형이 (A)~(D)처럼 칸을 나눠 채점하기 때문이다. */
-    const { html, answers } = renderVerbForms(q.passageHtml || "");
+    /* 동사형 쓰기 · 빈칸 쓰기 — 지문에 심은 (힌트|정답)을 학생이 볼 모양으로 바꾸고,
+       아래에 번호별 답란을 둔다.
+
+       워크북5의 renderVerbForms를 그대로 쓰지 않는 이유가 둘 있다.
+       ① 워크북은 문장 하나에 답란이 하나라 번호가 필요 없지만, 여기서는 지문 하나에
+          빈칸이 여럿이고 답란도 (1)(2)(3)으로 나뉜다. 지문 쪽에 번호가 없으면 어느
+          빈칸이 몇 번인지 알 수 없다.
+       ② 빈칸 쓰기의 힌트는 첫 철자 한 글자인데, 이것을 "(a)"로 찍으면 내신 시험지에서
+          빈칸 이름으로 쓰는 (A)(B)(C)와 똑같이 보여 힌트로 읽히지 않는다.
+          철자 뒤에 밑줄을 붙여 "a____" 로 보여 준다. */
+    const answers = [];
+    const html = esc(q.passageHtml || "").replace(
+      /\(([^()|]*)\|([^()|]*)\)/g,
+      (_, hint, ans) => {
+        answers.push(ans.trim());
+        const n = answers.length;
+        const h = hint.trim();
+        return fmt === "fill"
+          ? `<b class="qz-blankno">(${n})</b>&nbsp;<span class="qz-fillhint">${h}` +
+            `<span class="qz-fillrule"></span></span>`
+          : `<b class="qz-blankno">(${n})</b>&nbsp;<b class="wb-paren">(${h})</b>`;
+      }
+    );
     const lines = answers
       .map((_, i) => `<div class="qz-fixline">(${i + 1}) ${wbBlank(220)}</div>`)
       .join("");
