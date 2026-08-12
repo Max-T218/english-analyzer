@@ -3971,6 +3971,8 @@ const EXAM_MAX_PAGES = 16;      // server.py의 EXAM_MAX_PAGES와 같은 값
 const EXAM_MIN_JPEG = 20000;    // 이보다 작은 조각은 쪽 그림이 아니라 아이콘·썸네일이다
 let examPages = [];             // [{mime, data}] — 서버에 보낼 쪽 그림
 let examBusy = false;
+let examAutoTimer = null;
+let examAutoDone = false;       // 지금 올려 둔 시험지로 자동 분석을 이미 걸었는가
 
 function examStatus(msg, kind) {
   examStatusEl.hidden = !msg;
@@ -4046,7 +4048,28 @@ function examSyncStatus() {
   }
   const mb = examPages.reduce((s, p) => s + p.data.length, 0) / 1048576;
   const full = n >= EXAM_MAX_PAGES ? ` (최대 ${EXAM_MAX_PAGES}쪽까지)` : "";
-  examStatus(`시험지 ${n}쪽 준비됨 · 약 ${mb.toFixed(1)}MB${full}`, "ok");
+  const next = examAutoDone ? "" : " · 곧 분석을 시작합니다";
+  examStatus(`시험지 ${n}쪽 준비됨 · 약 ${mb.toFixed(1)}MB${full}${next}`, "ok");
+  examScheduleAuto();
+}
+
+/* 올리기가 끝나면 버튼을 따로 누르지 않아도 분석으로 이어 간다.
+   곧바로 부르지 않고 잠깐 기다리는 이유: 여러 장을 잇달아 끌어다 놓거나 PDF에서 쪽이
+   하나씩 들어오는 동안에도 이 함수가 매번 불린다. 그때마다 분석이 걸리면 한 시험지에
+   요금이 여러 번 나간다. 마지막으로 들어온 뒤 잠잠해지면 그때 한 번만 시작한다.
+
+   가격표가 아직 안 왔으면 자동으로 시작하지 않는다 — 그 상태에서는 비용 확인창이
+   생략되도록 되어 있어(costConfirmed), 파일을 놓기만 했는데 확인 없이 차감될 수 있다.
+   그때는 사용자가 버튼을 직접 누르게 둔다. */
+function examScheduleAuto() {
+  if (examAutoDone || examBusy || !examPages.length) return;
+  if (!PRICING) return;
+  clearTimeout(examAutoTimer);
+  examAutoTimer = setTimeout(() => {
+    if (examAutoDone || examBusy || !examPages.length) return;
+    examAutoDone = true;
+    runExamScan();
+  }, 800);
 }
 
 examDropEl.addEventListener("click", () => examFileEl.click());
@@ -4070,7 +4093,9 @@ examDropEl.addEventListener("drop", (e) => {
   if (e.dataTransfer && e.dataTransfer.files) examAddFiles(e.dataTransfer.files);
 });
 examClearBtn.addEventListener("click", () => {
+  clearTimeout(examAutoTimer);
   examPages = [];
+  examAutoDone = false;   // 새 시험지를 올리면 다시 자동으로 분석한다
   examResultEl.innerHTML = "";
   examErrorEl.textContent = "";
   examSyncStatus();
@@ -4208,7 +4233,7 @@ function renderExamScan(scan) {
   $("examFillWbBtn").addEventListener("click", () => fill("워크북"));
 }
 
-examBtn.addEventListener("click", async () => {
+async function runExamScan() {
   if (!examPages.length || examBusy) return;
   examErrorEl.textContent = "";
   if (PRICING && PRICING.examScan > 0) {
@@ -4230,4 +4255,6 @@ examBtn.addEventListener("click", async () => {
   examLoadingEl.classList.remove("on");
   examBusy = false;
   examBtn.disabled = !examPages.length;
-});
+}
+
+examBtn.addEventListener("click", runExamScan);
