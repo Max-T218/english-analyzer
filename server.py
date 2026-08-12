@@ -186,11 +186,12 @@ PRICE_EXTRA_QUESTION_KRW = int(os.environ.get("PRICE_EXTRA_QUESTION_KRW", "100")
 # 아직 가격이 정해지지 않은 기능 — 정해질 때까지 무료(0원)로 둔다. 로그인은 그대로 필요.
 PRICE_REWORD_KRW = int(os.environ.get("PRICE_REWORD_KRW", "0"))            # 지문 변형(문제 생성 전 재작성)
 PRICE_OCR_KRW = int(os.environ.get("PRICE_OCR_KRW", "0"))                  # 사진에서 지문 옮기기
-# 기출 시험지 유형 분석 — 시험지 1벌당(쪽 수와 무관하게 한 번). 문항마다 값을 매기지
-# 않는 이유: 한 번 분석해 두고 시험 때마다 다시 쓰는 자료라 반복 호출이 아니고,
-# 쪽 수는 사용자가 고르는 값이 아니라 시험지가 정하는 값이라 예측 가능해야 한다.
-# 지문분석(300원)보다 비싼 건 여러 쪽을 한꺼번에 보는 Pro 호출이기 때문이다.
-PRICE_EXAMSCAN_KRW = int(os.environ.get("PRICE_EXAMSCAN_KRW", "500"))
+# 기출 시험지 유형 분석 — 무료(0원). Pro로 여러 쪽을 읽는 무거운 호출이지만 값을 받지
+# 않는다. 이것만으로는 손에 남는 자료가 없고(문항 목록일 뿐이다), 여기서 나온 유형으로
+# 문제·워크북을 만들 때 이미 값을 받기 때문이다. 분석에까지 값을 매기면 무엇을 만들지
+# 정하기 전에 먼저 돈을 내는 셈이 된다.
+# OCR·지문 변형과 같은 자리다 — 결과물이 아니라 '만들기 전 단계'는 받지 않는다.
+PRICE_EXAMSCAN_KRW = int(os.environ.get("PRICE_EXAMSCAN_KRW", "0"))
 
 # 객관식 전용 유형 12개 — public/app.js의 MCQ_TYPES와 반드시 같은 목록을 유지한다.
 # 이 집합에 없는 유형은 전부 주관식으로 보고 PRICE_SAQ_KRW를 매긴다(객관식·주관식
@@ -4106,7 +4107,7 @@ class Handler(BaseHTTPRequestHandler):
                 "workbookMax": PRICE_WORKBOOK_MAX_KRW,
                 "reword": PRICE_REWORD_KRW,
                 "ocr": PRICE_OCR_KRW,
-                # 기출 유형 분석은 시험지 1벌당 한 값 — 쪽 수에 곱하지 않는다
+                # 기출 유형 분석 — 기본 0원. 값이 붙어도 시험지 1벌당이지 쪽 수에 곱하지 않는다
                 "examScan": PRICE_EXAMSCAN_KRW,
             })
             return
@@ -4316,7 +4317,8 @@ class Handler(BaseHTTPRequestHandler):
                     cost = PRICE_REWORD_KRW
                     self._pending_label = "지문 변형"
                 elif path == "/api/examscan":
-                    # 쪽 수와 무관하게 시험지 1벌당 한 값이다(PRICE_EXAMSCAN_KRW 주석 참고).
+                    # 기본 0원 — 값을 매기지 않는 이유는 PRICE_EXAMSCAN_KRW 주석 참고.
+                    # 관리자가 환경변수로 값을 매기면 그때부터 쪽 수와 무관하게 1벌당 이 값이다.
                     cost = PRICE_EXAMSCAN_KRW
                     pages = len(req.get("files") or ())
                     self._pending_label = f"기출 유형 분석 · {pages}쪽"

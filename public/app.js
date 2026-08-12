@@ -4058,9 +4058,10 @@ function examSyncStatus() {
    하나씩 들어오는 동안에도 이 함수가 매번 불린다. 그때마다 분석이 걸리면 한 시험지에
    요금이 여러 번 나간다. 마지막으로 들어온 뒤 잠잠해지면 그때 한 번만 시작한다.
 
-   가격표가 아직 안 왔으면 자동으로 시작하지 않는다 — 그 상태에서는 비용 확인창이
-   생략되도록 되어 있어(costConfirmed), 파일을 놓기만 했는데 확인 없이 차감될 수 있다.
-   그때는 사용자가 버튼을 직접 누르게 둔다. */
+   가격표가 아직 안 왔으면 자동으로 시작하지 않는다. 분석은 지금 0원이라 당장은 차감될
+   것이 없지만, 값은 환경변수로 붙일 수 있고 가격표가 오기 전에는 그 값을 알 수 없다.
+   PRICING이 null이면 비용 확인창이 생략되도록 되어 있어(costConfirmed), 값이 붙은 뒤에는
+   파일을 놓기만 했는데 확인 없이 차감되는 상황이 된다. 그때는 버튼을 직접 누르게 둔다. */
 function examScheduleAuto() {
   if (examAutoDone || examBusy || !examPages.length) return;
   if (!PRICING) return;
@@ -4102,10 +4103,10 @@ examClearBtn.addEventListener("click", () => {
 });
 
 onPricingReady(() => {
-  if (PRICING && PRICING.examScan > 0) {
-    examCostHintEl.innerHTML =
-      `분석 1회 <b>${PRICING.examScan.toLocaleString()}원</b> · 쪽 수와 무관합니다`;
-  }
+  if (!PRICING) return;
+  examCostHintEl.innerHTML = PRICING.examScan > 0
+    ? `분석 1회 <b>${PRICING.examScan.toLocaleString()}원</b> · 쪽 수와 무관합니다`
+    : "분석에는 <b>포인트가 들지 않습니다</b> · 문제를 만들 때만 값이 매겨집니다";
 });
 
 // 분석 결과에서 '이 유형 몇 문항'을 세어 [{id, count}]로 만든다.
