@@ -322,7 +322,12 @@
         </div>
       </div>
     </div>
-
+    <!-- 학원 마크 칸이 원래 있던 자리 표시.
+         시험지 제작은 이 칸을 '만들기 직전' 단계로 옮겨서 보여 주는데(단계별 흐름),
+         탭을 벗어나면 여기로 돌려놓아야 한다. 입력칸을 하나 더 만드는 대신 같은
+         DOM을 옮기는 이유는 값이 localStorage 하나에 걸려 있어 입력칸이 둘이 되면
+         서로 동기화해야 하기 때문이다. -->
+    <span id="brandHome" hidden></span>
 
   </section>
 
@@ -588,8 +593,9 @@
     <section class="panel">
       <p class="hint">
         학교 기출 시험지를 올리면 <b>어떤 유형이 몇 문항 나왔는지</b> 분석합니다.
-        분석 결과로 객관식·주관식 탭의 유형 칸을 채워 두면, 위쪽 지문 입력칸에
-        <b>시험 범위 지문</b>을 넣고 그 탭에서 문제를 만들 수 있습니다.
+        분석이 끝나면 아래에서 <b>같은 구성의 시험지</b>를 바로 만들 수 있습니다.
+        (분석 결과로 객관식·주관식 탭의 유형 칸만 채워 두고, 그 탭으로 옮겨
+        직접 만들 수도 있습니다.)
       </p>
 
       <div class="row">
@@ -618,6 +624,71 @@
     </div>
 
     <div id="examResult"></div>
+
+    <!-- ── 기출과 같은 구성으로 시험지 만들기 ──
+         분석이 끝나야 열린다(분석 결과가 곧 이 시험지의 사양이기 때문).
+         위쪽 공용 지문칸이 아니라 자기 입력칸을 따로 쓴다 — 여기 지문은 '곱해지는 축'이
+         아니라 '골라 쓰는 풀'이라 상한이 40개로 다르다. -->
+    <section class="panel" id="examPaperPanel" hidden>
+      <div class="field-head">
+        <label>이 시험지와 같은 구성으로 만들기</label>
+      </div>
+      <p class="hint" id="examPaperSpec" role="status" aria-live="polite"></p>
+      <label class="chk" title="켜면 '비슷한 걸로 대체' 판정까지 문항에 넣습니다. 끄면 '그대로 만들 수 있음'만 넣어 문항 수가 줄어듭니다.">
+        <input type="checkbox" id="examIncludeSimilar" checked> 비슷한 것도 포함
+      </label>
+
+      <div class="field-head" style="margin-top:14px">
+        <label>시험 범위 지문 <span id="examPassageCount"></span></label>
+        <span class="hint">시험 범위 전체를 넣으세요. 이 중에서 골라 씁니다</span>
+      </div>
+      <div id="examPassageList"></div>
+      <div class="passage-add-row">
+        <button type="button" class="btn ghost small" id="examAddPassageBtn">＋ 지문 추가</button>
+        <button type="button" class="btn ghost small danger" id="examClearPassagesBtn">🗑️ 지문 전체 지우기</button>
+        <span class="passage-max-note" id="examPassageMaxNote" role="status" aria-live="polite"></span>
+      </div>
+
+      <label class="group-label">몇 부를 만들까요</label>
+      <div class="quiz-type-grid radio-grid">
+        <label><input type="radio" name="examCopies" value="1" checked> 1부</label>
+        <label><input type="radio" name="examCopies" value="2"> 2부 (A형·B형)</label>
+      </div>
+      <div class="hint type-order-hint">
+        2부를 만들면 <b>같은 지문에 같은 유형이 겹치지 않게</b> 배분합니다 —
+        A형을 푼 학생이 B형에서 이득을 보지 않도록.
+      </div>
+
+      <!-- 학원 마크 칸이 여기로 옮겨 온다 (원래 자리는 위쪽 #brandHome).
+           만들기 직전에 두는 이유 — 시험지는 학생에게 그대로 나가는 인쇄물이라
+           학원명·로고가 찍힐지 여부를 이 단계에서 확인하는 것이 자연스럽다. -->
+      <div id="examBrandSlot"></div>
+
+      <div class="hint cost-hint" id="examPaperCostHint" role="status" aria-live="polite"></div>
+
+      <div class="actions">
+        <button class="btn" id="examPlanBtn">📝 문제 제작</button>
+        <span class="hint">
+          누르면 어느 문항을 어느 지문으로 만들지 정한 뒤 바로 제작합니다.
+          쓴 지문 목록은 완성된 시험지 뒤에 함께 실립니다.
+        </span>
+      </div>
+      <div class="error" id="examPaperError"></div>
+    </section>
+
+    <div class="loading" id="examPaperLoading">
+      <span class="spinner"></span>
+      <span id="examPaperLoadingText">시험지를 만들고 있습니다…</span>
+    </div>
+
+    <div class="actions" id="examPaperActions">
+      <button class="btn ghost" id="examPaperPrintBtn" style="display:none"
+              title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
+      <button class="btn ghost" id="examPaperSaveBtn" style="display:none"
+              title="만든 시험지와 배분표를 저장합니다. 배분표가 있어야 나중에 다른 부를 겹치지 않게 만들 수 있습니다.">💾 저장</button>
+    </div>
+
+    <div id="examPaperResult"></div>
   </section>
 
   </div><!-- /#workspace -->

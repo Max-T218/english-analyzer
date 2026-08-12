@@ -1088,13 +1088,22 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
 .exam-row-no .exam-prompt { color: var(--muted, #64748b); }
 .exam-badge { font-weight: 600; }
 
-.exam-actions { margin-top: 12px; }
-.exam-next { margin-top: 6px; }
-.exam-fill-note { margin-top: 8px; font-size: .9rem; }
-.exam-fill-note.ok { color: #15803d; }
-.exam-fill-note.warn { color: #b45309; }
+/* .exam-actions / .exam-next / .exam-fill-note 는 [탭 채우기] 버튼 줄의 것이었다.
+   그 버튼들을 없애면서 함께 지웠다 — 기출 탭은 이제 이 탭 안에서 시험지를 끝낸다. */
 
-@media print { #tab-exam { display: none !important; } }
+/* 기출 탭에서 인쇄하면 '만든 시험지'만 나간다.
+   예전에는 이 탭 전체를 인쇄에서 뺐다 — 유형 분석 표는 화면에서 보고 판단하는
+   자료지 인쇄물이 아니었기 때문이다. 지금은 같은 탭에서 시험지를 만들므로 탭째
+   빼면 인쇄가 백지로 나온다. 그래서 화면용 부분만 골라서 뺀다.
+   (#examPaperResult 안에는 문항·정답표·배분표가 들어 있고 그것이 인쇄물이다) */
+@media print {
+  #tab-exam > section.panel,
+  #examResult,
+  #examPaperPanel,
+  #examPaperActions,
+  #examLoading,
+  #examPaperLoading { display: none !important; }
+}
 .exam-engine { white-space: nowrap; font-weight: 600; }
 .qz-findline { display: flex; align-items: baseline; gap: 8px; margin: 6px 0; }
 .qz-findko { min-width: 190px; }

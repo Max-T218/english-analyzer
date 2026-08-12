@@ -779,6 +779,10 @@ function updatePassageCount(ta) {
 // API 사용량 한도 때문이 아니라(하루 한도는 훨씬 넉넉하다) 지문을 하나씩 순차로
 // 처리해서 개수만큼 시간이 늘고, 오래 돌수록 중간에 모델 과부하를 만날 확률이
 // 올라가기 때문이다. 지문 10개면 분석에 대략 3~10분(꼼꼼 검토 시 2배).
+//
+// 시험지 제작 탭만 이 값을 쓰지 않고 EXAM_PAPER_MAX_PASSAGES(40)를 쓴다 — 그쪽은
+// 지문이 '곱해지는 축'이 아니라 '골라 쓰는 풀'이라 개수가 늘어도 문항 수(=요금·시간)가
+// 늘지 않기 때문이다. 여기 10개 탭들은 지문마다 고른 유형을 전부 만들므로 그대로 둔다.
 const MAX_PASSAGES = 10;
 
 /* ── 붙여넣은 지문의 문장 번호(❶ ① ➊ …) 자동 제거 ──
@@ -826,7 +830,10 @@ function stripSentenceMarkers(text) {
   return { text: out.replace(/[ \t]{2,}/g, " ").trim(), count };
 }
 
-function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
+// max를 받는 이유: 지문 입력칸이 두 벌이고 상한이 서로 다르다(공용 10개 / 시험지 40개).
+// 안 넘기면 지금까지대로 MAX_PASSAGES를 쓴다.
+function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) {
+  const limit = max || MAX_PASSAGES;
   const rowCount = () => listEl.querySelectorAll(".passage-item").length;
 
   function renumber() {
@@ -837,7 +844,7 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
       it.querySelector(".passage-del").style.visibility =
         items.length > 1 ? "visible" : "hidden";
     });
-    const full = items.length >= MAX_PASSAGES;
+    const full = items.length >= limit;
     if (countEl) {
       countEl.textContent = full
         ? `· 총 ${items.length}개 (최대)`
@@ -847,14 +854,14 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
     }
     // 상한에 닿으면 '지문 추가' 버튼을 잠그고 이유를 화면에 띄운다 (삭제하면 다시 풀린다)
     addBtn.disabled = full;
-    addBtn.title = full ? `1회 분석 최대 지문은 ${MAX_PASSAGES}개입니다.` : "";
+    addBtn.title = full ? `한 번에 넣을 수 있는 지문은 ${limit}개입니다.` : "";
     if (maxNoteEl) {
-      maxNoteEl.textContent = full ? `1회 분석 최대 지문은 ${MAX_PASSAGES}개입니다.` : "";
+      maxNoteEl.textContent = full ? `한 번에 넣을 수 있는 지문은 ${limit}개입니다.` : "";
     }
   }
 
   function addRow(focus) {
-    if (rowCount() >= MAX_PASSAGES) return null;
+    if (rowCount() >= limit) return null;
     const item = document.createElement("div");
     item.className = "passage-item";
     item.innerHTML = `
@@ -1003,7 +1010,7 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
     const list = Array.isArray(jobs) && jobs.length ? jobs : [null];
     list.forEach((job) => {
       const ta = addRow(false);
-      if (!ta || !job) return; // 상한(MAX_PASSAGES)에 걸리면 나머지는 건너뜀
+      if (!ta || !job) return; // 상한(limit)에 걸리면 나머지는 건너뜀
       ta.value = job.text || "";
       if (job.named && job.name) {
         ta.closest(".passage-item").querySelector(".passage-name").value = job.name;
@@ -1015,7 +1022,7 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl) {
 
   // 사진에서 옮겨 온 지문을 입력칸에 채운다. 빈 칸부터 쓰고, 없으면 칸을 늘린다.
   // 사진 1장 = 지문 1개이므로 텍스트 하나가 칸 하나를 차지한다.
-  // 반환: 실제로 채웠으면 true (상한 MAX_PASSAGES에 걸리면 false)
+  // 반환: 실제로 채웠으면 true (상한 limit에 걸리면 false)
   function fillText(raw) {
     const text = String(raw || "").trim();
     if (!text) return false;
@@ -1341,7 +1348,7 @@ function syncFloatPrint() {
   const btn =
     active &&
     active.querySelector(
-      "#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn"
+      "#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
     );
   floatPrintGroup.hidden = !(btn && btn.style.display !== "none");
 }
@@ -1352,13 +1359,44 @@ function activeSectionBtn(selector) {
   return active && active.querySelector(selector);
 }
 floatPrintBtn.addEventListener("click", () => {
-  const b = activeSectionBtn("#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn");
+  const b = activeSectionBtn(
+    "#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
+  );
   if (b) b.click();
 });
+/* ── 기출 탭에서는 탭 바깥의 공용 칸 두 개를 치운다 ──
+   공용 지문칸과 학원 마크 칸은 탭 바깥(탭 버튼보다 위)에 있어서 어느 탭에서나 화면
+   맨 위에 뜬다. 그런데 시험지 제작은 이 둘을 그 자리에서 쓰지 않는다 —
+     · 지문은 자기 입력칸(examPaperMgr)을 쓴다. 상한이 달라서다(공용 10개 / 시험지 40개).
+       두 칸이 동시에 보이면 어디에 넣어야 하는지 알 수 없고, 잘못 넣으면 아무 일도
+       일어나지 않는다.
+     · 학원 마크는 '만들기 직전' 단계로 옮겨 보여 준다(#examBrandSlot).
+   그래서 기출 탭에 들어오면 둘 다 감추고, 분석이 끝나면 시험지 칸 안에서 다시 꺼낸다.
+   탭을 벗어나면 원래 자리(#brandHome 앞)로 돌려놓는다 — 다른 탭은 이 칸을 계속 쓴다. */
+const sharedPassagePanel = document.querySelector(".passage-panel");
+const brandPanelEl = document.querySelector(".brand-panel");
+const brandHomeEl = $("brandHome");
+
+function moveBrandPanel(intoExam) {
+  if (!brandPanelEl || !brandHomeEl) return;
+  const slot = $("examBrandSlot");
+  if (intoExam && slot) slot.appendChild(brandPanelEl);
+  else brandHomeEl.parentNode.insertBefore(brandPanelEl, brandHomeEl);
+}
+
+function syncTabChrome(tab) {
+  const onExam = tab === "exam";
+  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam;
+  // 기출 탭에서는 분석이 끝나 시험지 칸이 열렸을 때만 마크 칸을 보여 준다
+  moveBrandPanel(onExam && !examPaperPanelEl.hidden);
+  if (brandPanelEl) brandPanelEl.hidden = onExam && examPaperPanelEl.hidden;
+}
+
 tabBtns.forEach((btn) => {
   btn.addEventListener("click", () => {
     tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
     tabPages.forEach((p) => p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
+    syncTabChrome(btn.dataset.tab);
     syncFloatPrint();
   });
 });
@@ -3713,6 +3751,7 @@ const TAB_LABELS = {
   saq: "✍️ 주관식 문제",
   workbook: "📚 워크북",
   vocab: "📒 단어장",
+  exam: "🧾 시험지",
 };
 // 저장 종류 — "지문"만 따로 두고 나머지(제작 결과물)는 한 묶음으로 본다
 const PASSAGE_TAB = "passage";
@@ -3724,6 +3763,8 @@ const SAVE_TITLE_SUGGEST = {
   saq: () => passageBasedName("주관식문제"),
   workbook: () => titledName("워크북", "wbTitle"),
   vocab: () => titledName("단어장", "vocabTitle"),
+  // 시험지는 공용 지문칸이 아니라 자기 지문칸을 쓰므로 passageBasedName을 못 쓴다
+  exam: () => ["시험지", todayStr()].join("_"),
 };
 
 const saveDialogEl = $("saveDialog");
@@ -4178,35 +4219,10 @@ onPricingReady(() => {
     : "분석에는 <b>포인트가 들지 않습니다</b> · 문제를 만들 때만 값이 매겨집니다";
 });
 
-// 분석 결과에서 '이 유형 몇 문항'을 세어 [{id, count}]로 만든다.
-// 유형별 상한(TYPE_MAX)을 넘길 수 없다 — 서버도 잘라내므로 넘겨 봐야 조용히 줄어든다.
-// 워크북 단계는 문항 수라는 개념이 없다(고르면 지문 전체에 적용된다). 세기는 같이 하되
-// 개수는 쓰지 않고 '고를 단계'로만 넘긴다.
-function examTypeItems(questions, includeSimilar, engine) {
-  const want = new Map();
-  (questions || []).forEach((q) => {
-    if (!q.kind) return;
-    if (engine && q.engine !== engine) return;
-    if (q.fit === "없음") return;
-    if (q.fit === "비슷함" && !includeSimilar) return;
-    want.set(q.kind, (want.get(q.kind) || 0) + 1);
-  });
-  return [...want].map(([id, n]) => ({ id, count: Math.min(n, TYPE_MAX[id] || 1) }));
-}
-
-// 워크북 탭의 단계 체크박스를 이름으로 찾아 켠다. 이름은 서버의
-// WORKBOOK_STAGE_LABELS와 같은 값이어야 한다(WB_STAGES.name이 그 짝이다).
-function setWorkbookStages(names) {
-  const want = new Set(names || []);
-  const ids = new Set(WB_STAGES.filter((s) => want.has(s.name)).map((s) => s.id));
-  wbStageGridEl.querySelectorAll("input").forEach((b) => {
-    b.checked = ids.has(Number(b.value));
-  });
-  syncWbAll();
-  renumberWbStages();
-  updateWbCostHint();
-  return [...ids];
-}
+/* examTypeItems / setWorkbookStages 는 여기 있었다.
+   분석 결과의 유형을 세어 객관식·주관식·워크북 탭의 입력칸을 대신 채워 주던 함수들인데,
+   그 세 [탭 채우기] 버튼을 없애면서 부르는 곳이 사라졌다. 시험지 제작은 유형을 다른 탭에
+   옮겨 담지 않고 examPaperSlots로 곧장 문항 슬롯을 만든다. */
 
 const EXAM_FIT_INFO = {
   "같음": { cls: "ok", label: "그대로 만들 수 있음" },
@@ -4254,53 +4270,14 @@ function renderExamScan(scan) {
         </table>
       </div>
 
-      <div class="actions exam-actions">
-        <label class="chk" title="켜면 '비슷한 걸로 대체' 판정까지 포함해 유형을 채웁니다. 끄면 '그대로 만들 수 있음'만 채웁니다.">
-          <input type="checkbox" id="examIncludeSimilar" checked> 비슷한 것도 포함
-        </label>
-        <button class="btn" id="examFillMcqBtn">📝 객관식 탭 채우기</button>
-        <button class="btn" id="examFillSaqBtn">✍️ 주관식 탭 채우기</button>
-        <button class="btn" id="examFillWbBtn">📚 워크북 탭 채우기</button>
-      </div>
-      <p class="hint exam-next">
-        채운 뒤에는 위쪽 <b>영어 지문</b> 칸에 시험 범위 지문을 넣고, 해당 탭에서
-        <b>문제 만들기</b>를 누르세요. 요금은 그 탭의 문항 수대로 매겨집니다.
-      </p>
-      <div class="exam-fill-note" id="examFillNote" role="status" aria-live="polite"></div>
     </section>`;
 
-  const similarEl = $("examIncludeSimilar");
-  const noteEl = $("examFillNote");
-
-  function fill(tab) {
-    const mine = examTypeItems(qs, similarEl.checked, tab);
-    if (!mine.length) {
-      noteEl.textContent = `이 시험지에서 ${tab} 탭으로 만들 수 있는 유형이 없습니다.`;
-      noteEl.className = "exam-fill-note warn";
-      return;
-    }
-    if (tab === "워크북") {
-      // 워크북은 단계를 고르면 지문 전체에 적용된다 — 문항 수 개념이 없다.
-      const on = setWorkbookStages(mine.map((it) => it.id));
-      noteEl.textContent =
-        `워크북 탭에 ${on.length}단계를 골랐습니다 (${mine.map((it) => it.id).join(", ")}). ` +
-        `단계는 지문 전체에 적용되므로 문항 수가 아니라 '고른 단계'로 값이 매겨집니다. ` +
-        `지문을 넣고 워크북 탭에서 만드세요.`;
-    } else {
-      const which = tab === "객관식" ? "mcq" : "saq";
-      QUIZ_TABS[which].setTypes(mine);
-      const total = mine.reduce((s, it) => s + it.count, 0);
-      noteEl.textContent =
-        `${tab} 탭에 ${mine.length}유형 ${total}문항을 채웠습니다 ` +
-        `(${mine.map((it) => `${it.id} ${it.count}`).join(", ")}). ` +
-        `지문을 넣고 ${tab} 탭에서 만드세요.`;
-    }
-    noteEl.className = "exam-fill-note ok";
-  }
-
-  $("examFillMcqBtn").addEventListener("click", () => fill("객관식"));
-  $("examFillSaqBtn").addEventListener("click", () => fill("주관식"));
-  $("examFillWbBtn").addEventListener("click", () => fill("워크북"));
+  // 분석 결과가 곧 시험지의 사양이다 — 분석이 끝나야 아래 시험지 제작 칸이 열린다.
+  // 예전에는 여기에 [객관식/주관식/워크북 탭 채우기] 세 버튼을 두어 유형만 옮겨 담고
+  // 사용자가 다른 탭으로 건너가 지문을 넣게 했다. 만드는 길이 둘로 갈려 어느 쪽으로
+  // 가야 하는지 화면만 봐서는 알 수 없었고, 그 길은 지문마다 유형을 전부 만들어
+  // '기출과 같은 구성 한 부'와도 어긋났다. 지금은 이 탭에서 곧장 끝낸다.
+  openExamPaperPanel(scan);
 }
 
 async function runExamScan() {
@@ -4328,3 +4305,544 @@ async function runExamScan() {
 }
 
 examBtn.addEventListener("click", runExamScan);
+
+/* ══════════════ 기출과 같은 구성으로 시험지 만들기 ══════════════
+   기출 분석이 "이 학교는 어법 2, 빈칸 3, 순서 2 … 총 30문항"을 알려 주면 그 구성
+   그대로 시험지 한 부를 만든다. 객관식·주관식 탭과 결정적으로 다른 것은 지문을 쓰는
+   방식이다.
+
+     · 객관식 탭 — 넣은 지문 '전부' × 고른 유형 '전부'. 지문이 곱해지는 축이라
+       40지문에 30문항 구성을 걸면 1,200문항이 나온다. 시험지가 아니라 문제집이다.
+     · 시험지   — 문항 수는 기출이 정한 30개로 고정이고, 지문은 그 30문항이 나눠
+       가질 '풀'이다. 40지문을 넣어도 문항은 30개, 요금도 30문항어치다.
+
+   ── 대원칙 1. 한 부 안에서 같은 지문을 두 번 쓰지 않는다 ──
+   이 앱은 문항마다 지문을 따로 싣는다(실제 시험지의 "[3~4] 다음 글을 읽고 물음에
+   답하시오" 식 묶음이 아니다). 그래서 한 지문으로 빈칸 문제와 주제 문제를 같이 내면,
+   주제 문제에 가공 없이 실린 지문이 빈칸의 정답을 그대로 보여 준다. 지문을 겹치지 않게
+   하면 이 사고가 구조적으로 사라진다 — 지켜야 할 규칙이 아니라 성립하는 불변식이 된다.
+   '문항 수 ≤ 지문 수'가 하드 요구사항이 되는 것도 이 원칙 때문이다.
+
+   ── 대원칙 2. 부가 달라도 같은 (지문, 유형) 조합은 다시 쓰지 않는다 ──
+   40지문에서 30문항씩 뽑으면 2부째부터 지문은 반드시 겹친다(60 > 40). 거기서 유형까지
+   겹치면 A형과 B형에 사실상 같은 문항이 실려 A형을 푼 학생이 B형에서 그대로 이득을
+   본다. 지문이 겹치는 것은 어쩔 수 없고, 유형까지 겹치지 않게 막는 것이 이 원칙이다.
+   저장물에 배분표를 함께 넣는 이유가 이것이다 — 나중에 B형을 따로 만들 때 A형이 무엇을
+   썼는지 알아야 피할 수 있다.
+
+   ── 흐름 ──
+   기출 분석(무료) → 지문 입력 → 배분(공짜·즉시) → 배분표 확인 → 생성(여기서만 과금)
+   실패할 수 있는 경우를 전부 배분 단계에서 잡는 것이 요점이다. 배분은 AI 호출이 0회라
+   몇 번을 다시 굴려도 요금이 없고, 만들 수 없는 조합은 돈을 쓰기 전에 드러난다. */
+
+const EXAM_PAPER_MAX_PASSAGES = 40;
+// 부수 상한. 계산상으로는 더 나오지만(유형별 적합 지문 ÷ 부당 문항 수) 2부가 이미
+// 60회 호출·30~60분이고, 그보다 길면 한 탭을 붙들고 있기 어려워 실제로 안 쓰인다.
+const EXAM_PAPER_MAX_COPIES = 2;
+const EXAM_COPY_LABELS = ["A형", "B형"];
+
+/* 유형별 지문 조건 — server.py의 QUIZ_TYPE_MAX 주석이 그대로 근거다.
+   "순서·문장삽입은 지문의 문장 수에 물리적으로 묶여 모델을 바꿔도 늘지 않는다",
+   "빈칸 쓰기는 같은 낱말이 지문 다른 곳에 실제로 나오는 자리만 뚫는다"가 여기 조건이 된다.
+   배분 단계에서 미리 걸러 두면 만들다 실패하는 횟수가 줄고, 무엇보다 '만들 수 없다'는
+   사실이 돈을 쓰기 전에 드러난다. 조건이 거칠어도 되는 이유는 생성이 실패하면 같은
+   유형의 다음 후보 지문으로 넘어가고, 요금은 성공했을 때만 빠지기 때문이다. */
+const EXAM_FIT_RULES = {
+  "순서": { minSent: 6 },
+  "문장삽입": { minSent: 6 },
+  // 도입부 2문장 + 번호 붙는 5문장 = 7문장이 물리적 하한이다. 그중 하나는 AI가 지어
+  // 끼워 넣으므로 지문 자신이 6문장을 대야 한다(실측 기출 11문항이 전부 이 모양이었다).
+  "무관한 문장": { minSent: 6 },
+  "무관한 문장 쓰기": { minSent: 6 },
+  // 글 전체를 한 문장으로 압축하려면 논지가 세워질 만큼은 있어야 한다
+  "요약문": { minSent: 5 },
+  "요약문 완성": { minSent: 5 },
+  "서술형배열": { minSent: 4 },
+  "함축의미": { minSent: 4 },
+  "요지": { minSent: 4 },
+  "주제": { minSent: 3 },
+  "제목": { minSent: 3 },
+  "빈칸": { minSent: 3 },
+  "빈칸 쓰기": { minSent: 3, repeatWord: true },
+  "동사형 쓰기": { minSent: 3 },
+  "표현 찾아 쓰기": { minSent: 3 },
+};
+const EXAM_FIT_MIN_SENT = 2;      // 유형을 안 가리는 최소 조건
+const EXAM_FIT_MIN_CHARS = 120;
+
+// 문장 수 — 배분 조건에만 쓰므로 대충 세면 된다. 마지막 문장에 문장부호가 없는
+// 경우가 흔해(붙여넣다 잘림) 남은 꼬리도 한 문장으로 친다.
+function countSentences(text) {
+  const s = String(text || "");
+  const closed = (s.match(/[^.!?]+[.!?]/g) || []).filter((x) => x.trim().length > 1).length;
+  const tail = s.replace(/[\s\S]*[.!?]/, "").trim();
+  return closed + (tail.length > 1 ? 1 : 0);
+}
+
+// 5글자 이상인 낱말이 두 번 이상 나오는가 — '빈칸 쓰기'가 요구하는 조건이다.
+// 짧은 낱말(the·and·that)은 어느 지문에나 있어 조건 구실을 못 하므로 길이로 거른다.
+function hasRepeatedWord(text) {
+  const seen = new Set();
+  for (const w of String(text || "").toLowerCase().match(/[a-z]{5,}/g) || []) {
+    if (seen.has(w)) return true;
+    seen.add(w);
+  }
+  return false;
+}
+
+// 지문 하나에 배분 판정용 값을 미리 붙여 둔다 (문장 수를 문항마다 다시 세지 않도록)
+function examProfile(job) {
+  return {
+    ...job,
+    sentences: countSentences(job.text),
+    repeatWord: hasRepeatedWord(job.text),
+  };
+}
+
+// 이 지문으로 이 유형을 낼 수 있는가
+function examEligible(type, p) {
+  const rule = EXAM_FIT_RULES[type] || {};
+  if (p.sentences < (rule.minSent || EXAM_FIT_MIN_SENT)) return false;
+  if (p.text.length < EXAM_FIT_MIN_CHARS) return false;
+  if (rule.repeatWord && !p.repeatWord) return false;
+  return true;
+}
+
+// 조건을 사람 말로 — 배분이 실패했을 때 무엇을 더 넣어야 하는지 알려 준다
+function examFitReason(type) {
+  const rule = EXAM_FIT_RULES[type] || {};
+  const parts = [];
+  if (rule.minSent) parts.push(`문장 ${rule.minSent}개 이상`);
+  if (rule.repeatWord) parts.push("같은 낱말이 두 번 이상 나오는 지문");
+  return parts.join(" · ") || `${EXAM_FIT_MIN_CHARS}자 이상`;
+}
+
+/* 기출 문항 목록을 '만들 문항 슬롯'으로 바꾼다.
+   워크북 유형은 뺀다 — 워크북은 지문 전체를 훑는 학습지라 번호 붙은 시험지 문항이
+   되지 않고, /api/quiz로 만들어지지도 않는다(만들려면 워크북 탭을 써야 한다).
+   순서는 객관식 먼저·서답형 뒤 — 실제 시험지 관례다. 기출의 문항 번호는 따라가지
+   않는다(번호 위치까지 맞추면 배분 제약만 늘고 얻는 것이 없다). */
+function examPaperSlots(questions, includeSimilar) {
+  const picked = [];
+  (questions || []).forEach((q) => {
+    if (!q.kind || q.fit === "없음") return;
+    if (q.fit === "비슷함" && !includeSimilar) return;
+    if (q.engine === "워크북") return;
+    picked.push({ type: q.kind, engine: q.engine, format: q.format });
+  });
+  return picked
+    .map((s, i) => ({ ...s, seq: i }))
+    .sort((a, b) => (a.engine === "객관식" ? 0 : 1) - (b.engine === "객관식" ? 0 : 1) || a.seq - b.seq)
+    .map((s, i) => ({ type: s.type, engine: s.engine, format: s.format, q: i + 1 }));
+}
+
+/* 배분 — 문항마다 지문 하나를 붙인다. AI 호출 0회.
+
+   후보 지문이 '적은' 문항부터 자리를 잡는다(most-constrained-first). 반대로 하면
+   어법·주제처럼 아무 지문이나 되는 유형이 긴 지문을 먼저 차지해 버려, 정작 긴 지문이
+   있어야 하는 순서·문장삽입 차례에 짧은 지문만 남는다.
+   같은 조건이면 '쓸 수 있는 유형이 적은' 지문부터 소비한다 — 두루 쓰이는 지문을 뒤에
+   남겨 두는 쪽이 전체가 성립할 확률이 높다.
+
+   usedPairs: 이미 만들어 둔 부들이 쓴 "지문번호|유형" 집합 (대원칙 2).
+   실패하면 어느 유형에서 후보가 떨어졌는지 그대로 돌려준다 — 사용자가 무엇을 더 넣어야
+   하는지 알아야 하기 때문이다. */
+function planExamPaper(slots, jobs, copies, usedPairs, seed) {
+  const profiles = jobs.map(examProfile);
+  const eligible = slots.map((s) => profiles.filter((p) => examEligible(s.type, p)).map((p) => p.no));
+
+  // 지문이 감당하는 유형 가짓수 — 적을수록 먼저 쓴다
+  const breadth = new Map();
+  profiles.forEach((p) => {
+    breadth.set(p.no, slots.reduce((n, s) => n + (examEligible(s.type, p) ? 1 : 0), 0));
+  });
+
+  const key = (no, type) => `${no}|${type}`;
+  const taken = new Set(usedPairs || []);
+  const plans = [];
+
+  for (let c = 0; c < copies; c++) {
+    const usedHere = new Set();          // 대원칙 1 — 이 부 안에서 쓴 지문
+    const rows = new Array(slots.length).fill(null);
+    const order = slots
+      .map((s, i) => i)
+      .sort((a, b) => eligible[a].length - eligible[b].length || a - b);
+
+    for (const i of order) {
+      const s = slots[i];
+      let cands = eligible[i].filter((no) => !usedHere.has(no) && !taken.has(key(no, s.type)));
+      if (!cands.length) {
+        return {
+          ok: false,
+          fail: { type: s.type, copy: c + 1, pool: eligible[i].length, need: examFitReason(s.type) },
+        };
+      }
+      // 먼저 섞고 나서 breadth로 정렬한다 — 정렬이 안정적이라 같은 값끼리는 섞인
+      // 순서가 남고, [다시 배분]이 다른 표를 내놓는다.
+      cands = seededShuffle(cands, seed + c * 977 + i);
+      cands.sort((a, b) => (breadth.get(a) || 0) - (breadth.get(b) || 0));
+      const pick = cands[0];
+      usedHere.add(pick);
+      taken.add(key(pick, s.type));
+      rows[i] = { q: s.q, type: s.type, engine: s.engine, passageNo: pick };
+    }
+    plans.push(rows);
+  }
+  return { ok: true, plans };
+}
+
+// 배분표 한 부를 표로 — 화면 미리보기와 인쇄물이 같은 함수를 쓴다
+function examPlanTableHtml(rows, jobs, caption) {
+  const nameOf = (no) => {
+    const j = jobs.find((x) => x.no === no);
+    return j ? j.name : `지문 ${no}`;
+  };
+  const body = rows
+    .map(
+      (r) => `<tr>
+        <td>${r.q}</td><td>${esc(r.type)}</td>
+        <td>${esc(r.engine)}</td><td>${esc(nameOf(r.passageNo))}</td>
+      </tr>`
+    )
+    .join("");
+  return `
+    <h3 class="section"><span class="num">📋</span> ${esc(caption)}</h3>
+    <div class="table-wrap"><table class="answerkey">
+      <thead><tr><th>문항</th><th>유형</th><th>구분</th><th>쓴 지문</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>`;
+}
+
+/* ── 시험지 제작 화면 배선 ── */
+const examPaperPanelEl = $("examPaperPanel");
+const examPaperSpecEl = $("examPaperSpec");
+const examPaperErrorEl = $("examPaperError");
+const examPaperCostHintEl = $("examPaperCostHint");
+const examPlanBtn = $("examPlanBtn");
+const examPaperLoadingEl = $("examPaperLoading");
+const examPaperLoadingTextEl = $("examPaperLoadingText");
+const examPaperResultEl = $("examPaperResult");
+const examCopiesEl = radioGroup("examCopies");
+const examSimilarEl = $("examIncludeSimilar");
+
+// 기출이 '비슷한 걸로 대체' 판정한 문항까지 넣을지. 문항 수가 달라지므로 요금·배분이
+// 함께 바뀐다 — 끄면 '그대로 만들 수 있음'만 남는다.
+const examIncludeSimilar = () => !examSimilarEl || examSimilarEl.checked;
+
+let examScanNow = null;   // 지금 화면에 떠 있는 기출 분석 (저장하지 않는다)
+let examPlanNow = null;   // 방금 계산한 배분 (생성이 끝나면 비운다)
+let examPaperSets = [];   // 완성된 부 [{label, questions, plan}]
+let examPaperBusy = false;
+
+const examPaperMgr = createPassageManager(
+  $("examPassageList"),
+  $("examAddPassageBtn"),
+  $("examPassageCount"),
+  () => examPlanBtn.click(),
+  $("examPassageMaxNote"),
+  EXAM_PAPER_MAX_PASSAGES
+);
+examPaperMgr.addRow(false);
+
+$("examClearPassagesBtn").addEventListener("click", () => {
+  if (confirm("입력한 시험 범위 지문을 모두 지우시겠습니까?\n되돌릴 수 없습니다.")) {
+    examPaperMgr.clearAll();
+    examInputChanged();
+  }
+});
+
+// 문항 1개 = 호출 1회 = 유형 1개 × 1문항. 추가문항 할인(extraQuestion)은 구조상
+// 걸릴 일이 없다 — 한 호출에 한 문항만 담기기 때문이다.
+function examSlotPrice(slot) {
+  if (!PRICING) return 0;
+  if (slot.engine === "객관식") {
+    return MCQ_TRANSFORM_TYPES.has(slot.type) ? PRICING.mcqTransform : PRICING.mcqPlain;
+  }
+  return PRICING.saq;
+}
+
+function examCopies() {
+  const n = Number(examCopiesEl ? examCopiesEl.value : 1) || 1;
+  return Math.min(EXAM_PAPER_MAX_COPIES, Math.max(1, n));
+}
+
+function updateExamPaperCost() {
+  if (!examPaperCostHintEl) return;
+  if (!examScanNow) {
+    examPaperCostHintEl.textContent = "";
+    return;
+  }
+  const slots = examPaperSlots(examScanNow.questions, examIncludeSimilar());
+  const copies = examCopies();
+  const jobs = examPaperMgr.getJobs();
+  const parts = [
+    `<b>${slots.length}문항</b> × ${copies}부 = <b>${slots.length * copies}문항</b>`,
+    `· 지문 <b>${jobs.length}개</b> 입력됨`,
+  ];
+  if (PRICING) {
+    const won = slots.reduce((s, sl) => s + examSlotPrice(sl), 0) * copies;
+    parts.push(`— 예상 <b>${won.toLocaleString()}원</b>`);
+  }
+  // 대원칙 1이 곧 '문항 수 ≤ 지문 수'다. 지문이 모자라면 배분 자체가 성립하지 않으므로
+  // 제작 버튼을 누르기 전에 먼저 알려 준다.
+  if (jobs.length < slots.length) {
+    parts.push(
+      `<b class="no">— 지문이 ${slots.length - jobs.length}개 모자랍니다</b>` +
+      ` (한 부 안에서 같은 지문을 두 번 쓰지 않으므로 문항 수만큼 필요합니다)`
+    );
+  }
+  examPaperCostHintEl.innerHTML = parts.join(" ");
+}
+
+/* 지문·부수·'비슷한 것 포함'이 바뀌면 방금 계산한 배분은 더 이상 그 입력의 것이 아니다.
+   즉시 버린다 — 다음에 [문제 제작]을 누르면 새 입력으로 다시 계산된다. */
+function examInputChanged() {
+  if (examPlanNow) {
+    dropExamPlan();
+    examPaperErrorEl.textContent = "";
+  }
+  updateExamPaperCost();
+}
+if (examCopiesEl) examCopiesEl.addEventListener("change", examInputChanged);
+if (examSimilarEl) examSimilarEl.addEventListener("change", examInputChanged);
+$("examPassageList").addEventListener("input", examInputChanged);
+// 지문 삭제는 input을 일으키지 않는다. 캡처 단계에서 받는 이유는 삭제 처리가 그 행을
+// 먼저 없애 버려, 거품 단계에서는 이 컨테이너까지 올라오지 않을 수 있기 때문이다.
+$("examPassageList").addEventListener(
+  "click",
+  (e) => {
+    if (e.target.closest(".passage-del")) examInputChanged();
+  },
+  true
+);
+
+function openExamPaperPanel(scan) {
+  examScanNow = scan;
+  examPlanNow = null;
+  examPaperErrorEl.textContent = "";
+  examPaperPanelEl.hidden = false;
+
+  const slots = examPaperSlots(scan.questions, examIncludeSimilar());
+  const mcq = slots.filter((s) => s.engine === "객관식").length;
+  const saq = slots.length - mcq;
+  const dropped = (scan.questions || []).length - slots.length;
+  examPaperSpecEl.innerHTML =
+    `이 시험지의 구성은 <b>${slots.length}문항</b>` +
+    ` (객관식 ${mcq} · 서답형 ${saq})입니다. 같은 구성으로 시험지를 만듭니다.` +
+    (dropped > 0
+      ? ` <span class="warn">기출 ${dropped}문항은 여기서 만들 수 없어 빠졌습니다</span>` +
+        ` (못 만드는 유형이거나, 워크북으로만 되는 유형입니다).`
+      : "");
+  updateExamPaperCost();
+  // 이제 지문칸이 열렸으니 학원 마크 칸도 이 안으로 꺼내 온다
+  syncTabChrome("exam");
+}
+
+function dropExamPlan() {
+  examPlanNow = null;
+}
+
+/* 배분은 화면에 단계로 드러내지 않는다 — [문제 제작] 한 번이면 끝나야 하기 때문이다.
+   대신 배분이 AI 호출 0회·0원이라는 성질은 그대로 쓴다. 누르면 먼저 배분을 계산해
+   '만들 수 없는 경우'를 전부 걸러내고, 그 검사를 통과했을 때만 요금 확인창을 띄운다.
+   덕분에 요금이 나간 뒤에 배분이 실패하는 일이 없다.
+   어느 문항을 어느 지문으로 만들었는지는 완성된 시험지 뒤에 표로 함께 실린다. */
+function runExamPaperFlow() {
+  if (examPaperBusy) return;
+  examPaperErrorEl.textContent = "";
+  if (!examScanNow) return;
+
+  const slots = examPaperSlots(examScanNow.questions, examIncludeSimilar());
+  const jobs = examPaperMgr.getJobs();
+  if (!slots.length) {
+    dropExamPlan();
+    examPaperErrorEl.textContent =
+      "이 시험지로 만들 수 있는 문항이 없습니다. '비슷한 것도 포함'을 켜 보세요.";
+    return;
+  }
+  if (jobs.length < slots.length) {
+    dropExamPlan();
+    examPaperErrorEl.textContent =
+      `지문이 모자랍니다 — ${slots.length}문항을 만들려면 지문이 ${slots.length}개 이상 필요합니다` +
+      ` (지금 ${jobs.length}개). 한 부 안에서 같은 지문을 두 번 쓰지 않기 때문입니다.`;
+    return;
+  }
+
+  const copies = examCopies();
+  // 이미 만들어 둔 부(또는 저장에서 불러온 부)가 쓴 조합은 피한다 — 대원칙 2.
+  // 씨앗을 매번 새로 뽑으므로 같은 입력으로 다시 눌러도 배분이 달라진다.
+  const res = planExamPaper(slots, jobs, copies, examUsedPairs(), Math.floor(Math.random() * 1e9));
+
+  if (!res.ok) {
+    const f = res.fail;
+    dropExamPlan();
+    examPaperErrorEl.innerHTML =
+      `<b>${esc(f.type)}</b> 문항에 쓸 지문이 떨어졌습니다` +
+      (copies > 1 ? ` (${f.copy}부째)` : "") +
+      ` — 조건에 맞는 지문이 ${f.pool}개뿐입니다. 필요한 조건: <b>${esc(f.need)}</b>.<br>` +
+      `그런 지문을 더 넣거나, 부수를 줄여 보세요.`;
+    return;
+  }
+
+  examPlanNow = { slots, jobs, copies, plans: res.plans };
+  runExamPaper();
+}
+
+// 이미 만들어 둔 부들이 쓴 (지문, 유형) — 대원칙 2의 근거가 되는 값이다.
+// 저장물을 불러오면 그 배분표가 여기 들어와, 나중에 B형을 따로 만들어도 겹치지 않는다.
+function examUsedPairs() {
+  const out = new Set();
+  examPaperSets.forEach((set) => {
+    (set.plan || []).forEach((r) => out.add(`${r.passageNo}|${r.type}`));
+  });
+  return out;
+}
+
+/* 생성 — 여기서만 요금이 나간다.
+   호출 하나가 (지문 1개 · 유형 1개 · 1문항)이다. 대원칙 1 때문에 한 문항이 지문
+   하나를 통째로 차지하므로 묶을 것이 없다(chunkTypes를 쓰지 않는 이유).
+   부가 끝날 때마다 화면에 붙이고 저장 버튼을 열어 둔다 — 중간에 끊겨도 끝난 부는 남는다. */
+async function runExamPaper() {
+  if (!examPlanNow || examPaperBusy) return;
+  const { jobs, copies, plans } = examPlanNow;
+  const won = PRICING
+    ? examPlanNow.slots.reduce((s, sl) => s + examSlotPrice(sl), 0) * copies
+    : 0;
+  const totalSteps = plans.reduce((n, rows) => n + rows.length, 0);
+  if (!costConfirmed(won, `시험지 ${copies}부(${totalSteps}문항)를 만듭니다.`)) return;
+
+  examPaperBusy = true;
+  examPaperErrorEl.textContent = "";
+  examPaperLoadingEl.classList.add("on");
+  const makeBtn = $("examMakeBtn");
+  const replanBtn = $("examReplanBtn");
+  if (makeBtn) makeBtn.disabled = true;
+  if (replanBtn) replanBtn.disabled = true;
+
+  const jobOf = (no) => jobs.find((j) => j.no === no);
+  let step = 0;
+  let stopped = false;
+
+  for (let c = 0; c < copies && !stopped; c++) {
+    const rows = plans[c];
+    const label = copies > 1 ? EXAM_COPY_LABELS[c] : "";
+    const questions = [];
+    const failed = [];
+
+    for (const r of rows) {
+      step++;
+      examPaperLoadingTextEl.textContent =
+        `${label ? label + " · " : ""}${r.q}번 ${r.type} 만드는 중… (${step}/${totalSteps})`;
+      const job = jobOf(r.passageNo);
+      if (!job) continue;
+      try {
+        const data = await postJson(
+          "/api/quiz",
+          { passage: job.text, types: [{ id: r.type, count: 1 }], variation: "verbatim" },
+          "문제 생성에 실패했습니다."
+        );
+        const q = (data.questions || [])[0];
+        if (q) questions.push({ ...q, _plan: r });
+        else failed.push({ ...r, msg: "문항이 만들어지지 않았습니다." });
+      } catch (err) {
+        failed.push({ ...r, msg: err.message || String(err) });
+        // 한도 소진은 기다려도 안 풀린다 — 남은 문항을 시도하지 않고 멈춘다
+        if (isQuotaError(err)) {
+          stopped = true;
+          break;
+        }
+      }
+    }
+
+    if (questions.length) {
+      // 실제로 만들어진 것만 남기고 번호를 다시 매긴다 — 실패한 문항 자리에 번호가
+      // 비어 있으면 시험지에 결번이 생긴다.
+      const plan = questions.map((q, i) => ({ ...q._plan, q: i + 1 }));
+      questions.forEach((q) => delete q._plan);
+      examPaperSets.push({ label, questions, plan, failed });
+      renderExamPaperSets();
+    }
+  }
+
+  examPaperLoadingEl.classList.remove("on");
+  examPaperBusy = false;
+  refreshTokenDisplay();
+  if (stopped) {
+    examPaperErrorEl.textContent =
+      "한도에 걸려 중단했습니다. 만들어진 부는 아래에 남아 있으니 저장해 두세요.";
+  }
+  // 다음에 누르면 방금 쓴 (지문, 유형) 조합을 피해 새로 배분한다 — 대원칙 2
+  examPlanNow = null;
+}
+
+function renderExamPaperSets() {
+  // 인쇄/저장 버튼은 다른 탭과 같은 방식으로 '버튼 자체'를 감춘다 —
+  // syncFloatPrint가 버튼의 style.display를 보고 떠 있는 인쇄 버튼을 켜고 끄기 때문이다.
+  const showBtns = (on) => {
+    $("examPaperPrintBtn").style.display = on ? "inline-flex" : "none";
+    $("examPaperSaveBtn").style.display = on ? "inline-flex" : "none";
+  };
+  if (!examPaperSets.length) {
+    examPaperResultEl.innerHTML = "";
+    showBtns(false);
+    syncFloatPrint();
+    return;
+  }
+  const jobs = examPlanNow ? examPlanNow.jobs : examPaperMgr.getJobs();
+  examPaperResultEl.innerHTML = examPaperSets
+    .map((set) => {
+      const head = { name: set.label || "시험지", named: true };
+      const fails = (set.failed || []).length
+        ? `<p class="hint warn">${set.failed.length}문항은 만들지 못해 빠졌습니다 — ` +
+          esc(set.failed.map((f) => `${f.type}`).join(", ")) + `</p>`
+        : "";
+      return (
+        fails +
+        buildQuizHtml({ questions: set.questions, variations: [] }, head, 1, "mcq", "") +
+        examPlanTableHtml(set.plan, jobs, `출제 지문${set.label ? " — " + set.label : ""}`)
+      );
+    })
+    .join("");
+  showBtns(true);
+  syncFloatPrint();
+}
+
+$("examPlanBtn").addEventListener("click", runExamPaperFlow);
+$("examPaperPrintBtn").addEventListener("click", () =>
+  printDoc(() => ["시험지", todayStr()].filter(Boolean).join("_"))
+);
+
+/* 저장 — 만든 문항과 함께 '배분표'를 넣는 것이 요점이다.
+   기출 시험지 자체(발문·이미지·학교명)는 저장하지 않는다. 여기 들어가는 것은 이 앱이
+   계산해 낸 배분 결과와 우리가 만든 문항뿐이다.
+   배분표가 있어야 나중에 B형을 따로 만들 때 A형이 쓴 (지문, 유형)을 피할 수 있다
+   (대원칙 2). 배분표 없이 저장하면 그 원칙이 성립하지 않는다. */
+TAB_SAVE.exam = {
+  saveBtn: $("examPaperSaveBtn"),
+  canSave: () => (examPaperSets.length ? "" : "저장할 시험지가 없습니다. 먼저 시험지를 만들어 주세요."),
+  getPayload: () => ({
+    passages: examPaperMgr.getJobs(),
+    sets: examPaperSets,
+  }),
+  applyPayload: (payload) => {
+    examPaperMgr.setJobs(payload.passages || []);
+    examPaperSets = Array.isArray(payload.sets) ? payload.sets : [];
+    examPlanNow = null;
+    // 불러온 부의 배분표가 곧 '피해야 할 조합'이 된다 — 이어서 다른 부를 만들 수 있다.
+    // 다만 기출 분석은 저장하지 않으므로(저작권), 이어 만들려면 기출을 다시 올려야 한다.
+    examPaperPanelEl.hidden = !examScanNow;
+    renderExamPaperSets();
+    updateExamPaperCost();
+    syncTabChrome("exam");
+    if (!examScanNow) {
+      examPaperErrorEl.textContent =
+        "불러온 시험지를 인쇄·저장할 수 있습니다. 이어서 다른 부를 만들려면 위에서 기출 시험지를 다시 올려 분석하세요 " +
+        "(분석 결과는 저장하지 않습니다). 그때 이 배분표를 피해 배분합니다.";
+    }
+  },
+  clearResults: () => {
+    examPaperSets = [];
+    renderExamPaperSets();
+  },
+};
+$("examPaperSaveBtn").addEventListener("click", () => openSaveDialog("exam"));
