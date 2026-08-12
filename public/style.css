@@ -1106,3 +1106,4 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   display: inline-block; width: 84px; margin-left: 1px;
   border-bottom: 1px solid var(--ink, #1f2937); vertical-align: baseline;
 }
+.qz-fillrule.wide { width: 108px; }

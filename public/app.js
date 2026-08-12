@@ -2498,9 +2498,10 @@ function quizBodyHtml(q) {
        ① 워크북은 문장 하나에 답란이 하나라 번호가 필요 없지만, 여기서는 지문 하나에
           빈칸이 여럿이고 답란도 (1)(2)(3)으로 나뉜다. 지문 쪽에 번호가 없으면 어느
           빈칸이 몇 번인지 알 수 없다.
-       ② 빈칸 쓰기의 힌트는 첫 철자 한 글자인데, 이것을 "(a)"로 찍으면 내신 시험지에서
-          빈칸 이름으로 쓰는 (A)(B)(C)와 똑같이 보여 힌트로 읽히지 않는다.
-          철자 뒤에 밑줄을 붙여 "a____" 로 보여 준다. */
+       ② 빈칸 쓰기는 힌트 없이 밑줄만 둔다. 예전에는 첫 철자를 주었는데, 그것을 "(a)"로
+          찍으면 내신 시험지에서 빈칸 이름으로 쓰는 (A)(B)(C)처럼 보여 힌트로 읽히지
+          않았다. 지금은 아예 주지 않으므로 밑줄만 그린다.
+          (힌트 자리가 비어 있지 않은 예전 저장물은 그 글자를 밑줄 앞에 그대로 보여 준다) */
     const answers = [];
     const html = esc(q.passageHtml || "").replace(
       /\(([^()|]*)\|([^()|]*)\)/g,
@@ -2510,7 +2511,7 @@ function quizBodyHtml(q) {
         const h = hint.trim();
         return fmt === "fill"
           ? `<b class="qz-blankno">(${n})</b>&nbsp;<span class="qz-fillhint">${h}` +
-            `<span class="qz-fillrule"></span></span>`
+            `<span class="qz-fillrule${h ? "" : " wide"}"></span></span>`
           : `<b class="qz-blankno">(${n})</b>&nbsp;<b class="wb-paren">(${h})</b>`;
       }
     );

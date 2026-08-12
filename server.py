@@ -155,7 +155,7 @@ QUIZ_KIND_HINTS = {
     "틀린 어휘 찾기": "지문에서 문맥상 틀린 낱말을 찾아 바르게 고쳐 쓴다",
     "틀린 어법 찾기": "지문에서 어법상 틀린 곳을 찾아 바르게 고쳐 쓴다",
     "동사형 쓰기": "괄호 안에 기본형으로 주어진 동사를 알맞은 형태로 고쳐 쓴다",
-    "빈칸 쓰기": "지문의 빈칸에 들어갈 낱말을 첫 철자 힌트를 보고 직접 써넣는다",
+    "빈칸 쓰기": "지문에 뚫린 빈칸에 들어갈 낱말을 본문에서 찾아 써넣는다(힌트 없음)",
     "표현 찾아 쓰기": "주어진 우리말과 뜻이 같은 영어 표현을 지문에서 찾아 옮겨 쓴다",
 }
 
@@ -1005,19 +1005,23 @@ the passage in full.
   pick a different phrase instead.
   choices = [], answer = 0, answerText = "", tfItems = [], fixes = [].
 - "빈칸 쓰기" (format "fill") — instruction
-  "다음 글의 빈칸에 들어갈 알맞은 낱말을 주어진 철자로 시작하여 쓰시오."
+  "다음 글의 빈칸에 들어갈 알맞은 낱말을 윗글에서 찾아 쓰시오."
   `passageHtml` = the passage (or 4~8 consecutive sentences of it), PLAIN TEXT ONLY
-  (no HTML tags at all), with 2~4 KEY CONTENT WORDS replaced by (첫철자|정답):
-    · left of `|`  = the FIRST LETTER of the answer only, in the same case the passage uses.
+  (no HTML tags at all), with 2~4 KEY CONTENT WORDS replaced by (|정답):
+    · left of `|` = ALWAYS EMPTY. Write nothing there — no letter, no dots, no underscore.
+      The student gets a bare blank.
     · right of `|` = the word exactly as the passage has it (keep the -s, -ed, -ing ending).
-  Example: "Real change is expensive and slow, while a press release (c|costs) almost nothing."
-  Choose words the reader can RECOVER from the surrounding text — 주제어, 반복되는 핵심어,
-  대조·인과 관계가 문장에 드러나 있는 낱말. Never blank a word whose choice is arbitrary
-  (a proper noun, a number, one of many possible synonyms): with only a first letter to go on
-  the student must be able to land on exactly one word, or the item has no defensible answer.
+  Example: "Real change is expensive and slow, while a press release (|costs) almost nothing."
+  ⚠️ No first-letter hint is given, so the answer must be PINNED, not merely plausible.
+  Blank a word ONLY when the same word (or its obvious base form) still appears SOMEWHERE
+  ELSE in `passageHtml` — a repeated key term, a word picked up again later, a term the
+  passage itself defines. The student's job is to find it in the text and copy it.
+  Never blank a word that has to be supplied from outside the passage: with a bare blank,
+  any synonym (ignored / overlooked / neglected) is a defensible answer and the item breaks.
+  If the passage has fewer than 2 such words, produce fewer items rather than reaching.
   Do not blank two words in the same clause, and never blank the same word twice.
-  RULES: no nested parentheses; the left side is exactly one letter; everything outside ( )
-  is identical to the passage, character for character.
+  RULES: no nested parentheses; the left side is empty; everything outside ( ) is identical
+  to the passage, character for character.
   choices = [], answer = 0, answerText = "", tfItems = [], fixes = [].
 - "틀린 어휘 찾기" (format "fix") — instruction
   "다음 글에서 문맥상 낱말의 쓰임이 적절하지 않은 것을 모두 찾아 바르게 고쳐 쓰시오."
