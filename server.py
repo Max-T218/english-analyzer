@@ -764,6 +764,13 @@ QUIZ_PLAIN_PASSAGE_TYPES = {
     "OX진위(영)", "OX진위(한)",
 }
 
+# '목표 어법'(화면의 targetGrammar)이 걸리는 유형.
+# 지문 분석에만 있던 설정을 문제 제작에도 쓴다 — 이번 단원에서 가르친 문법을
+# 시험에 그대로 내기 위한 것이다. 문법 포인트를 직접 묻는 유형만 넣는다.
+# 주제·제목·빈칸처럼 문법과 무관한 유형에는 지시를 아예 실어 보내지 않는다
+# (엉뚱한 곳에 문법을 끼워 넣으려 드는 것을 막는다).
+QUIZ_GRAMMAR_TYPES = {"어법", "어법 선택형", "틀린 어법 찾기", "동사형 쓰기"}
+
 # 한 지문에서 유형별로 뽑을 수 있는 최대 문항 수.
 # public/app.js의 TYPE_MAX와 반드시 같은 값을 유지한다(화면은 이 값으로 +버튼을 막고,
 # 서버는 화면을 우회한 요청을 여기서 잘라낸다 — 가격이 개수에 걸리므로 필수).
@@ -1210,7 +1217,8 @@ QUIZ_VARIATIONS = {
 }
 
 
-def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None, variation="verbatim"):
+def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
+                           variation="verbatim", target_grammar=""):
     """items = [(유형, 문항수)] — 유형마다 몇 문항인지가 요청에 그대로 들어 있다."""
     types = [t for t, _ in items]
     count = sum(n for _, n in items)
@@ -1249,6 +1257,27 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None, v
             "정답을 다른 말로 바꿔 쓰고 오답 선지를 완전히 새로 구성하세요. "
             "빈칸·어휘·어법은 지문의 서로 다른 위치를 고르세요. "
             "내용일치·OX진위는 매번 다른 사실을 다루세요."
+        )
+    # 목표 어법 — 이번 단원에서 가르친 문법을 그대로 시험에 내기 위한 지시.
+    # 어법 계열 유형이 이번 호출에 실제로 들어 있을 때만 붙인다.
+    #
+    # 요점은 '밑줄 다섯 개를 전부 그 문법으로 채우라'가 아니라 '학생이 찾아내야 하는
+    # 정답 자리를 그 문법으로 하라'는 것이다. 나머지 밑줄까지 같은 포인트로 채우면
+    # 무엇을 고르는 문제인지 흐려진다.
+    #
+    # 지문에 그 문법이 없을 때 억지로 끼워 넣으라고 하지 않는다 — 없는 구조를 우겨넣으면
+    # 지문이 어색해지고, 원문(교과서·기출)과 달라진 것을 선생님이 알아채기 어렵다.
+    # 그런 경우에는 지금까지처럼 지문에 있는 문법으로 낸다.
+    grammar_types = [t for t in types if t in QUIZ_GRAMMAR_TYPES]
+    target_grammar = (target_grammar or "").strip()
+    if target_grammar and grammar_types:
+        lines.append(
+            f"목표 어법: {target_grammar} — {', '.join(sorted(set(grammar_types)))} 문항은 "
+            "학생이 찾아내야 하는 자리(정답이 되는 밑줄·네모·괄호)를 이 문법 포인트로 "
+            "잡으세요. 나머지 보기는 다른 포인트로 채워 무엇을 묻는 문제인지 흐려지지 "
+            "않게 합니다. 목표 어법을 쉼표로 여럿 적었으면 문항마다 하나씩 돌아가며 "
+            "배정하세요. 다만 지문에 그 문법이 쓰인 곳이 없으면 억지로 지문을 고쳐 넣지 "
+            "말고, 지문에 실제로 있는 문법으로 평소대로 출제하세요."
         )
     if short_hint is not None:
         # 어떤 유형이 몇 문항 모자랐는지 짚어 주는 편이 재요청 한 번에 채워질 확률이 높다.
@@ -1318,7 +1347,7 @@ def fix_underline_bounds(html):
 
 
 def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
-                      explain_hint=None, variation="verbatim"):
+                      explain_hint=None, variation="verbatim", target_grammar=""):
     """items = [(유형, 문항수)]. 개수 상한은 parse_quiz_items가 이미 적용해 둔다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -1343,7 +1372,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
         "contents": [
             {"role": "user", "parts": [
                 {"text": build_quiz_user_prompt(
-                    passage, items, short_hint, explain_hint, variation
+                    passage, items, short_hint, explain_hint, variation, target_grammar
                 )}
             ]}
         ],
@@ -5419,9 +5448,13 @@ class Handler(BaseHTTPRequestHandler):
                 t not in QUIZ_PLAIN_PASSAGE_TYPES for t, _ in items
             ) else MODEL
             variation = req.get("variation") or "verbatim"
+            # 목표 어법 — 어법 계열 유형이 섞여 있을 때만 프롬프트에 실린다
+            # (판단은 build_quiz_user_prompt가 한다). 길이는 넉넉히 잘라 둔다.
+            quiz_grammar = (req.get("targetGrammar") or "").strip()[:200]
             t0 = time.monotonic()
             try:
-                result = call_gemini_quiz(passage, items, api_key, model, variation=variation)
+                result = call_gemini_quiz(passage, items, api_key, model, variation=variation,
+                                          target_grammar=quiz_grammar)
                 # 문항 누락 방어 — 요청한 개수보다 적게 오면 한 번 더 요청해 채운다
                 want = sum(n for _, n in items)
                 for _ in range(2):
@@ -5438,7 +5471,8 @@ class Handler(BaseHTTPRequestHandler):
                     missing = [f"{t} {n - made[t]}문항" for t, n in items if made[t] < n]
                     retry = call_gemini_quiz(
                         passage, items, api_key, model,
-                        short_hint=(missing or got), variation=variation
+                        short_hint=(missing or got), variation=variation,
+                        target_grammar=quiz_grammar
                     )
                     # 더 많이 만들어 온 결과만 채택 (재시도가 더 나쁘면 기존 유지)
                     if len(retry.get("questions", [])) > got:
@@ -5453,7 +5487,8 @@ class Handler(BaseHTTPRequestHandler):
                     if _over_budget(t0):
                         break
                     retry = call_gemini_quiz(
-                        passage, items, api_key, model, explain_hint=missing, variation=variation
+                        passage, items, api_key, model, explain_hint=missing, variation=variation,
+                        target_grammar=quiz_grammar
                     )
                     # 문항 수가 줄지 않고 해설이 더 잘 채워진 결과만 채택
                     if (

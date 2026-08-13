@@ -336,6 +336,19 @@
       <label>영어 지문 <span id="passageCount"></span></label>
       <span class="hint">모든 탭이 이 지문을 함께 사용합니다</span>
     </div>
+    <!-- 목표 어법 — 지문과 함께 다니는 설정이라 지문칸 옆에 둔다.
+         지문 분석(주황 표시)과 어법 계열 문제 출제가 같은 값을 쓴다. -->
+    <div class="row" style="margin-top:0">
+      <div class="field" style="flex:1 1 100%">
+        <label for="targetGrammar">목표 어법 (선택)</label>
+        <input type="text" id="targetGrammar" placeholder="예: 분사구문, 관계대명사, 가정법">
+        <div class="hint">
+          적어 두면 <b>분석본</b>에서 그 구조를 주황색으로 짚어 주고,
+          <b>어법 문제</b>(객관식 어법 · 주관식 어법 선택형 · 틀린 어법 찾기 · 동사형 쓰기)의
+          정답 자리를 이 문법으로 냅니다. 쉼표로 여럿 적으면 문항마다 나눠 씁니다.
+        </div>
+      </div>
+    </div>
     <div id="passageList"></div>
     <div class="passage-add-row">
       <button type="button" class="btn ghost small" id="addPassageBtn">＋ 지문 추가</button>
@@ -363,19 +376,14 @@
     <button type="button" class="tab-btn" data-tab="saq">✍️ 문제 제작 (주관식)</button>
     <button type="button" class="tab-btn" data-tab="workbook">📚 워크북 제작</button>
     <button type="button" class="tab-btn" data-tab="vocab">📒 단어장</button>
-    <button type="button" class="tab-btn" data-tab="exam">🧾 기출 유형 분석</button>
+    <button type="button" class="tab-btn" data-tab="exam">🧾 동형 모의고사 제작</button>
   </nav>
 
   <!-- ══════════ 탭 1: 지문 분석 ══════════ -->
   <section class="tab-page active" id="tab-analyze">
     <section class="panel">
-      <div class="row" style="margin-top:0">
-        <div class="field">
-          <label for="targetGrammar">목표 어법 (선택)</label>
-          <input type="text" id="targetGrammar" placeholder="예: 분사구문, 관계대명사, 가정법">
-        </div>
-      </div>
-
+      <!-- 목표 어법 칸은 위 공용 지문 패널로 옮겼다 — 분석뿐 아니라 어법 문제 출제도
+           같은 값을 쓰게 되어, 탭마다 같은 것을 다시 적지 않도록 했다. -->
       <div class="actions">
         <button class="btn" id="analyzeBtn">분석하기</button>
         <button class="btn ghost" id="printBtn" style="display:none"
@@ -655,6 +663,18 @@
       </div>
       <input type="file" id="examPdfFile" accept="application/pdf" multiple hidden>
       <div class="ocr-status" id="examPassageStatus" role="status" aria-live="polite" hidden></div>
+
+      <!-- 목표 어법 — 이 탭은 지문칸을 따로 쓰므로 목표 어법도 따로 받는다.
+           위 공용 칸(분석·객관식·주관식)과 값이 섞이지 않는다. -->
+      <div class="row" style="margin-top:14px">
+        <div class="field" style="flex:1 1 100%">
+          <label for="examTargetGrammar">목표 어법 (선택)</label>
+          <input type="text" id="examTargetGrammar" placeholder="예: 분사구문, 관계대명사, 가정법">
+          <div class="hint">
+            배분표의 <b>어법 문항</b>을 이 문법으로 냅니다. 비워 두면 지문에 맞춰 알아서 정합니다.
+          </div>
+        </div>
+      </div>
 
       <label class="group-label">몇 부를 만들까요</label>
       <div class="quiz-type-grid radio-grid">

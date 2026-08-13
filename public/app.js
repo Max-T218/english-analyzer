@@ -762,6 +762,14 @@ renderBrand(); // 저장된 마크가 있으면 시작 시 바로 표시
 const PASSAGE_WARN = 1200;
 const PASSAGE_DANGER = 1500;
 
+// 단어 수 — 공백으로 끊어 센다(영어 지문 기준).
+// 글자 수만으로는 지문 하나가 얼마나 무거운지 감이 잘 안 와서, 합칠지 나눌지 정할 때
+// 보라고 함께 띄운다. 길이 경고(1,200·1,500자)의 기준은 지금까지대로 글자 수다.
+function countWords(text) {
+  const t = String(text || "").trim();
+  return t ? t.split(/\s+/).length : 0;
+}
+
 function updatePassageCount(ta) {
   const el = ta.closest(".passage-item").querySelector(".passage-count");
   const text = ta.value.trim();
@@ -771,7 +779,7 @@ function updatePassageCount(ta) {
     el.textContent = "0자";
     return;
   }
-  let msg = `${n.toLocaleString()}자`;
+  let msg = `${n.toLocaleString()}자 · ${countWords(text).toLocaleString()}단어`;
   if (n > PASSAGE_DANGER) {
     el.classList.add("danger");
     msg += " · 나눠 넣으세요";
@@ -845,11 +853,36 @@ function stripSentenceMarkers(text) {
   return { text: out.replace(/[ \t]{2,}/g, " ").trim(), count };
 }
 
+/* ── 지문 나누기 기준 ──
+   한 칸에 여러 문단을 통째로 붙여넣은 경우를 칸 여러 개로 가른다.
+   ① 빈 줄이 있으면 빈 줄을 경계로 삼는다 — 사람이 문단을 나눈 표시이므로 가장 확실하다.
+   ② 빈 줄이 하나도 없으면 그때만 줄바꿈을 경계로 쓴다(PDF·교재에서 옮겨 오면 문단
+      사이가 빈 줄 없이 한 줄로만 갈라져 있는 경우가 많다).
+   합치기가 두 지문 사이에 빈 줄을 넣는 이유가 여기 있다 — 합친 것을 그대로 되돌릴 수 있다. */
+function splitPassageText(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return [];
+  const byBlank = text.split(/\n[ \t]*\n+/).map((s) => s.trim()).filter(Boolean);
+  if (byBlank.length > 1) return byBlank;
+  return text.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+}
+
 // max를 받는 이유: 지문 입력칸이 두 벌이고 상한이 서로 다르다(공용 10개 / 시험지 40개).
 // 안 넘기면 지금까지대로 MAX_PASSAGES를 쓴다.
 function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) {
   const limit = max || MAX_PASSAGES;
   const rowCount = () => listEl.querySelectorAll(".passage-item").length;
+
+  /* '나누기' 버튼에 몇 칸으로 갈라지는지를 미리 적어 둔다.
+     빈 줄이 없으면 줄바꿈이 경계가 되므로, 줄마다 개행이 든 지문을 무심코 누르면
+     한 줄짜리 칸이 우수수 생길 수 있다. 누르기 전에 '✂ 12개로 나누기'라고 보이면
+     그게 내가 원하는 게 아니라는 걸 바로 알 수 있다. */
+  function syncSplitBtn(item) {
+    const btn = item.querySelector(".passage-split");
+    const n = splitPassageText(item.querySelector(".passage-input").value).length;
+    btn.hidden = n < 2;
+    if (n >= 2) btn.textContent = `✂ ${n}개로 나누기`;
+  }
 
   function renumber() {
     const items = [...listEl.querySelectorAll(".passage-item")];
@@ -858,6 +891,12 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
       it.querySelector(".passage-name").placeholder = `지문 ${i + 1}`;
       it.querySelector(".passage-del").style.visibility =
         items.length > 1 ? "visible" : "hidden";
+      // 합칠 상대가 없는 자리에서는 버튼을 아예 감춘다 —
+      // 첫 칸에 '위와 합치기', 마지막 칸에 '아래와 합치기'는 누를 데가 없다.
+      it.querySelector(".passage-merge-up").hidden = i === 0;
+      it.querySelector(".passage-merge-down").hidden = i === items.length - 1;
+      // '나누기'는 실제로 나뉠 게 있을 때만 나타난다(평소엔 숨어 있어 머리줄이 붐비지 않는다)
+      syncSplitBtn(it);
     });
     const full = items.length >= limit;
     if (countEl) {
@@ -875,7 +914,9 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
     }
   }
 
-  function addRow(focus) {
+  // afterEl을 넘기면 그 칸 '바로 뒤'에 끼워 넣는다(나누기 전용).
+  // 나눈 조각이 목록 맨 아래로 날아가면 원래 지문과 떨어져 순서를 다시 맞춰야 하기 때문이다.
+  function addRow(focus, afterEl) {
     if (rowCount() >= limit) return null;
     const item = document.createElement("div");
     item.className = "passage-item";
@@ -883,15 +924,20 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
       <div class="passage-item-head">
         <input type="text" class="passage-name" placeholder="지문 1" title="지문 이름 (비워두면 지문 1, 지문 2 …)">
         <span class="passage-count" aria-live="polite"></span>
+        <button type="button" class="btn ghost small passage-merge-up" title="바로 위 지문과 하나로 합치기">↑ 위와 합치기</button>
+        <button type="button" class="btn ghost small passage-merge-down" title="바로 아래 지문과 하나로 합치기">↓ 아래와 합치기</button>
+        <button type="button" class="btn ghost small passage-split" title="문단마다 지문 칸을 나누기" hidden>✂ 나누기</button>
         <button type="button" class="btn ghost small passage-expand" title="지문 전체를 한눈에 보기">🔍 크게 보기</button>
         <button type="button" class="btn ghost small passage-del" title="이 지문 삭제">✕ 삭제</button>
       </div>
       <textarea class="passage-input" placeholder="분석할 영어 지문을 여기에 붙여넣으세요."></textarea>
       <div class="passage-note" hidden></div>`;
-    listEl.appendChild(item);
+    if (afterEl && afterEl.parentNode === listEl) listEl.insertBefore(item, afterEl.nextSibling);
+    else listEl.appendChild(item);
     const ta = item.querySelector(".passage-input");
     const nameEl = item.querySelector(".passage-name");
     const noteEl = item.querySelector(".passage-note");
+    const splitBtn = item.querySelector(".passage-split");
 
     // 붙여넣기 직후 문장 번호를 정리하고, 무엇을 지웠는지 알려 준다.
     // 안내는 두 상태를 오간다 — 지운 뒤에는 '되돌리기', 되돌린 뒤에는 '다시 지우기'.
@@ -946,6 +992,12 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
         updatePassageCount(ta);
         offerStrip();   // 되돌렸으니 이제 다시 지울 수 있다고 알린다
         ta.focus();
+        return;
+      }
+      // 합치기·나누기 되돌리기 — 한 칸이 아니라 목록 전체가 바뀌는 일이라
+      // 직전 목록을 통째로 되살린다(칸이 새로 그려지므로 이 안내도 함께 사라진다).
+      if (e.target.closest(".passage-op-undo") && item._opUndo) {
+        setJobs(item._opUndo);
       }
     });
     ta.addEventListener("keydown", (e) => {
@@ -960,10 +1012,17 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
       // 안내가 거짓말이 되기 때문. 이때 '되돌리기'는 더 이상 유효하지 않다.
       // (붙여넣기의 input은 doStrip보다 먼저 실행되므로 지운 뒤 안내를 덮지 않는다)
       undoText = null;
+      item._opUndo = null;
       offerStrip();
+      // 문단이 생기거나 사라지면 '나누기' 버튼도 그에 맞춰 나타났다 숨는다
+      syncSplitBtn(item);
       if (item.classList.contains("expanded")) fitExpanded(); // 넓힌 채로 계속 늘려 준다
     });
     updatePassageCount(ta);
+
+    item.querySelector(".passage-merge-up").addEventListener("click", () => mergeRows(item, -1));
+    item.querySelector(".passage-merge-down").addEventListener("click", () => mergeRows(item, 1));
+    splitBtn.addEventListener("click", () => splitRow(item));
 
     /* ── '크게 보기' — 지문 전체를 스크롤 없이 한눈에 보이게 칸을 늘린다 ──
        resize:vertical 손잡이를 매번 끌어 늘리는 게 긴 지문에서는 번거로워서,
@@ -994,6 +1053,105 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
   }
 
   addBtn.addEventListener("click", () => addRow(true));
+
+  /* ══════ 합치기 · 나누기 ══════
+     둘 다 실행 버튼을 누르기 전, 입력칸 안에서만 일어나는 일이다. 서버로 가는 것은
+     지금까지와 똑같은 지문 목록이라 요금·모델 계산에는 영향이 없다(지문 수가 줄면
+     그만큼 요금도 줄어들 뿐이다). */
+
+  // 지금 목록 전체(빈 칸 포함)를 그대로 떠 둔다 — 되돌리기용.
+  // getJobs는 빈 칸을 버리므로 되살리기에는 쓸 수 없어 따로 만든다.
+  function snapshotRows() {
+    return [...listEl.querySelectorAll(".passage-item")].map((it) => {
+      const name = it.querySelector(".passage-name").value.trim();
+      return { text: it.querySelector(".passage-input").value, name, named: !!name };
+    });
+  }
+
+  // 합치기·나누기 결과를 그 칸 아래 안내줄에 알린다(붙여넣기 정리 안내와 같은 자리).
+  // snap을 주면 '되돌리기'가 함께 뜬다.
+  function showOpNote(item, msg, snap) {
+    item._opUndo = snap || null;
+    const noteEl = item.querySelector(".passage-note");
+    let html = snap
+      ? `${msg} <button type="button" class="linkish passage-op-undo">되돌리기</button>`
+      : msg;
+    // 이 안내가 붙여넣기 정리 안내와 같은 자리를 쓰므로, 남아 있는 문장 번호 안내를
+    // 덮어 지워 버리지 않도록 함께 적어 둔다(둘 다 지금 이 칸의 상태다).
+    const left = stripSentenceMarkers(item.querySelector(".passage-input").value).count;
+    if (left) {
+      html += ` · 문장 번호 <b>${left}개</b> <button type="button" class="linkish passage-restrip">번호 지우기</button>`;
+    }
+    noteEl.innerHTML = html;
+    noteEl.hidden = false;
+  }
+
+  // dir: -1이면 위 칸과, 1이면 아래 칸과 합친다. 남는 칸은 사라진다.
+  // 이름은 위쪽 칸 것을 쓰되, 위가 비어 있고 아래에만 이름이 있으면 그것을 가져온다.
+  function mergeRows(item, dir) {
+    const other = dir < 0 ? item.previousElementSibling : item.nextElementSibling;
+    if (!other || !other.classList.contains("passage-item")) return;
+    const top = dir < 0 ? other : item;
+    const bottom = dir < 0 ? item : other;
+    const snap = snapshotRows();
+    const topTa = top.querySelector(".passage-input");
+    const topName = top.querySelector(".passage-name");
+    const botName = bottom.querySelector(".passage-name").value.trim();
+    if (!topName.value.trim() && botName) topName.value = botName;
+    // 사이에 빈 줄을 넣는다 — 문단 경계가 남아 '나누기'로 그대로 되돌릴 수 있다
+    const merged = [topTa.value.trim(), bottom.querySelector(".passage-input").value.trim()]
+      .filter(Boolean)
+      .join("\n\n");
+    bottom.remove();
+    topTa.value = merged;
+    // 글자·단어 수와 '나누기' 버튼을 직접 입력했을 때와 똑같이 갱신한다
+    topTa.dispatchEvent(new Event("input", { bubbles: true }));
+    renumber();
+    // input이 _opUndo를 지우므로 안내는 반드시 그 뒤에 붙인다
+    showOpNote(top, "지문 2개를 합쳤습니다.", snap);
+    topTa.focus();
+  }
+
+  // 문단마다 칸을 나눈다. 새 칸은 원래 칸 바로 뒤에 들어간다.
+  function splitRow(item) {
+    const ta = item.querySelector(".passage-input");
+    let parts = splitPassageText(ta.value);
+    if (parts.length < 2) return;
+    const room = limit - rowCount(); // 더 만들 수 있는 칸 수
+    if (room <= 0) {
+      showOpNote(item, `지문 칸이 ${limit}개로 꽉 차서 나눌 수 없습니다. 다른 칸을 지우거나 합친 뒤 다시 눌러 주세요.`, null);
+      return;
+    }
+    const snap = snapshotRows();
+    let piled = 0; // 칸이 모자라 마지막 칸에 함께 남긴 문단 수
+    if (parts.length - 1 > room) {
+      // 상한에 걸려도 글은 절대 버리지 않는다 — 남는 문단은 마지막 칸에 모아 둔다
+      piled = parts.length - room;
+      parts = parts.slice(0, room).concat([parts.slice(room).join("\n\n")]);
+    }
+    const nameEl = item.querySelector(".passage-name");
+    const base = nameEl.value.trim();
+    ta.value = parts[0];
+    if (base) nameEl.value = `${base} (1)`;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    let anchor = item;
+    parts.slice(1).forEach((text, i) => {
+      const newTa = addRow(false, anchor);
+      if (!newTa) return;
+      newTa.value = text;
+      const row = newTa.closest(".passage-item");
+      if (base) row.querySelector(".passage-name").value = `${base} (${i + 2})`;
+      newTa.dispatchEvent(new Event("input", { bubbles: true }));
+      anchor = row;
+    });
+    renumber();
+    showOpNote(
+      item,
+      `지문 <b>${parts.length}개</b>로 나눴습니다.` +
+        (piled ? ` (칸이 모자라 마지막 문단 ${piled}개는 한 칸에 모았습니다)` : ""),
+      snap
+    );
+  }
 
   function clearAll() {
     listEl.innerHTML = "";
@@ -1089,9 +1247,11 @@ clearPassagesBtn.addEventListener("click", () => {
 TAB_SAVE.passage = {
   saveBtn: $("passageSaveBtn"),
   canSave: () => (passageMgr.getJobs().length ? "" : "저장할 지문이 없습니다. 지문을 먼저 입력해 주세요."),
-  getPayload: () => ({ passages: passageMgr.getJobs() }),
+  // 목표 어법도 함께 담는다 — 이제 이 패널에 같이 있고, 지문과 한 벌로 쓰이는 설정이다
+  getPayload: () => ({ passages: passageMgr.getJobs(), targetGrammar: grammarEl.value }),
   applyPayload: (payload) => {
     passageMgr.setJobs(payload.passages || []);
+    grammarEl.value = payload.targetGrammar || "";
     passageListEl.scrollIntoView({ behavior: "smooth", block: "start" });
   },
 };
@@ -2502,6 +2662,9 @@ function setupQuizTab({ prefix, types, footer }) {
                 passage: source,
                 types: group,   // [{id, count}] — 유형별 문항 수가 그대로 실린다
                 variation: "verbatim",
+                // 어법 계열 유형이 섞여 있을 때만 서버가 쓴다. 비어 있으면 지금까지대로
+                // AI가 지문에 맞춰 알아서 문법 포인트를 고른다.
+                targetGrammar: grammarEl.value,
               },
               "문제 생성에 실패했습니다."
             );
@@ -4690,6 +4853,8 @@ const examPlanBtn = $("examPlanBtn");
 const examPaperLoadingEl = $("examPaperLoading");
 const examPaperLoadingTextEl = $("examPaperLoadingText");
 const examPaperResultEl = $("examPaperResult");
+// 목표 어법 — 이 탭은 지문칸이 따로라 공용 칸(grammarEl)과 별개로 받는다
+const examGrammarEl = $("examTargetGrammar");
 const examCopiesEl = radioGroup("examCopies");
 const examSimilarEl = $("examIncludeSimilar");
 
@@ -4906,7 +5071,13 @@ async function runExamPaper() {
       try {
         const data = await postJson(
           "/api/quiz",
-          { passage: job.text, types: [{ id: r.type, count: 1 }], variation: "verbatim" },
+          {
+            passage: job.text,
+            types: [{ id: r.type, count: 1 }],
+            variation: "verbatim",
+            // 이 탭은 지문칸이 따로이므로 목표 어법도 이 탭 칸의 값을 쓴다
+            targetGrammar: examGrammarEl.value,
+          },
           "문제 생성에 실패했습니다."
         );
         const q = (data.questions || [])[0];
@@ -4991,9 +5162,11 @@ TAB_SAVE.exam = {
   getPayload: () => ({
     passages: examPaperMgr.getJobs(),
     sets: examPaperSets,
+    targetGrammar: examGrammarEl.value,
   }),
   applyPayload: (payload) => {
     examPaperMgr.setJobs(payload.passages || []);
+    examGrammarEl.value = payload.targetGrammar || "";
     examPaperSets = Array.isArray(payload.sets) ? payload.sets : [];
     examPlanNow = null;
     // 불러온 부의 배분표가 곧 '피해야 할 조합'이 된다 — 이어서 다른 부를 만들 수 있다.

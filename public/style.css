@@ -278,8 +278,17 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 }
 .passage-panel .field-head .hint{font-size:11.5px;}
 
-/* ── 탭 내비게이션 ── */
-.tabs{display:flex; gap:4px; margin-bottom:18px; border-bottom:2px solid var(--line); flex-wrap:wrap;}
+/* ── 탭 내비게이션 ──
+   탭이 6개가 되면서 한 줄에 878px이 필요해졌는데 본문 폭은 856px이라 22px이 모자란다.
+   줄바꿈에 맡기면 마지막 하나만 둘째 줄로 떨어져 5+1로 어긋나 보인다.
+   그래서 폭을 3등분해 3+3으로 고정한다 — 탭 이름 길이가 제각각(97~175px)이라
+   flex-wrap으로는 균형이 잡히지 않는다. */
+.tabs{
+  display:grid; grid-template-columns:repeat(3,1fr); gap:2px 4px;
+  margin-bottom:18px; border-bottom:2px solid var(--line);
+}
+/* 좁은 화면에서는 셋씩도 비좁아 둘씩 나눈다 (3줄) */
+@media (max-width:560px){ .tabs{grid-template-columns:repeat(2,1fr);} }
 .tab-btn{
   font:inherit; font-size:14px; font-weight:700; cursor:pointer; color:var(--ink-soft);
   background:transparent; border:none; padding:10px 16px; border-bottom:3px solid transparent;
@@ -642,7 +651,8 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 #passageCount{font-weight:600; font-size:12px; color:var(--ink-soft);}
 #passageList{display:flex; flex-direction:column; gap:12px;}
 .passage-item{border:1px solid var(--line); border-radius:10px; background:var(--paper); padding:10px 10px 12px;}
-.passage-item-head{display:flex; align-items:center; gap:10px; margin-bottom:8px;}
+/* 버튼이 늘어 좁은 화면에서는 한 줄에 다 들어가지 않는다 — 넘치는 대신 아래로 접는다 */
+.passage-item-head{display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;}
 .passage-item-no{font-size:12.5px; font-weight:700; color:var(--accent); letter-spacing:.02em;}
 /* 지문 이름 — 비워두면 '지문 1', '지문 2' 가 자동으로 쓰인다 */
 .passage-name{
@@ -657,7 +667,18 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 .passage-count.warn{color:#b8760a; font-weight:600;}
 .passage-count.danger{color:var(--g); font-weight:700;}
 @media (prefers-color-scheme:dark) and (min-width:999999px){ .passage-count.warn{color:#e0a83a;} }
-.passage-del{padding:4px 10px; font-size:12px; line-height:1;}
+.passage-del,
+.passage-merge-up,
+.passage-merge-down,
+.passage-split{padding:4px 10px; font-size:12px; line-height:1; white-space:nowrap;}
+/* 합치기·나누기는 지문을 통째로 옮기는 동작이라 눈에 덜 띄게 둔다 —
+   삭제(✕)와 나란히 있어도 실수로 먼저 눌리지 않도록 */
+.passage-merge-up,
+.passage-merge-down,
+.passage-split{color:var(--ink-soft);}
+.passage-merge-up:hover,
+.passage-merge-down:hover,
+.passage-split:hover{color:var(--ink);}
 /* 붙여넣기 정리 안내 — 무엇을 지웠는지 알리고 되돌릴 수 있게 한다 */
 .passage-note{
   margin-top:6px; font-size:11.5px; color:var(--ink-soft);
@@ -1032,9 +1053,41 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   .table-wrap{overflow:visible;}
   table{min-width:0;}
   th,td{overflow-wrap:break-word; word-break:keep-all;}
-  /* 인쇄 틀 — <tfoot>은 매 페이지 하단에 '자리를 차지하며' 반복되므로,
-     position:fixed 와 달리 본문 마지막 줄과 절대 겹치지 않는다. */
-  .print-frame{ display:table; width:100%; border-collapse:collapse; }
+  /* ── 지면 폭 상한 ──
+     인쇄 틀이 표(<table>)인 탓에, 안에 든 것 중 하나라도 지면보다 넓으면 표가 그것에
+     끌려 함께 넓어진다. 그러면 종이 밖으로 밀려난 오른쪽이 통째로 잘린다.
+     실제로 그랬다 — 답지의 '정답' 칸이 줄바꿈 금지라, 서술형 정답(영어 문장 하나)이
+     한 줄로 뻗으면서 표가 A4 인쇄 폭(186mm)을 22mm 넘겼고, 답지 한 칸 때문에 시험지
+     15쪽 전부가 오른쪽으로 밀려 2단 조판의 오른쪽 단이 글자 중간에서 잘렸다.
+     table-layout:fixed는 '안의 내용이 아무리 넓어도 표는 100%를 지킨다'는 뜻이다.
+     아래 개별 규칙들이 내용을 접어 넣고, 이 줄은 그게 실패해도 지면은 지키는 뚜껑이다. */
+  .print-frame{ display:table; width:100%; max-width:100%; table-layout:fixed; border-collapse:collapse; }
+  .wrap, .qz-cards, .table-wrap{ max-width:100%; }
+  /* 긴 낱말·주소가 단 하나를 밀어 넓히지 못하게 */
+  .qz-card{ overflow-wrap:break-word; }
+
+  /* 답지·배분표 — 열 폭을 못 박는다.
+     네 열 모두 폭을 적는다. 두 열만 적고 나머지를 브라우저에 맡기면 남는 폭을 반씩
+     나눠 주지 않고 내용 길이대로 갈라, 정답 열이 31px까지 쪼그라드는 일이 실제로 있었다.
+     주관식 답지에는 '해설' 열이 없는데, 그때는 합이 100%에 못 미치므로 브라우저가
+     남는 폭을 비례로 늘려 준다 — 정답 열이 가장 넓어져 오히려 알맞다. */
+  table.answerkey{ table-layout:fixed; }
+  table.answerkey th:nth-child(1), table.answerkey td:nth-child(1){ width:7%; }
+  table.answerkey th:nth-child(2), table.answerkey td:nth-child(2){ width:19%; }
+  table.answerkey th:nth-child(3), table.answerkey td:nth-child(3){ width:36%; }
+  table.answerkey th:nth-child(4), table.answerkey td:nth-child(4){ width:38%; }
+  /* 화면에서는 '②'가 두 줄로 쪼개지지 않게 줄바꿈을 막아 두었는데, 서술형·요약문의
+     정답은 문장 통째라 그 금지가 표를 지면 밖으로 밀어낸다. 인쇄에서는 접는다. */
+  table.answerkey td:nth-child(3){ white-space:normal; overflow-wrap:anywhere; }
+
+  /* 표현 찾아 쓰기 — 우리말 190px + 답란 240px이 고정이라 2단 조판(단 폭 약 88mm)에서
+     한 줄이 단을 넘긴다. 고정 폭을 비율로 바꿔 단 안에 들어오게 한다.
+     (답란이 있는 다른 유형은 한 줄에 칸이 하나뿐이라 지금 폭 그대로 둔다)
+     우리말과 답란을 억지로 한 줄에 욱여넣으면 답란이 131px까지 좁아져 쓸 자리가 없다.
+     줄을 접어 우리말 아래에 답란을 통째로 두면 단 폭(약 308px)을 다 쓴다. */
+  .qz-findline{ flex-wrap:wrap; }
+  .qz-findko{ min-width:0; flex:1 1 46%; }
+  .qz-findline .wb-blank{ min-width:0 !important; flex:1 1 60%; }
   .print-frame > tbody{ display:table-row-group; }
   .print-frame > tfoot{ display:table-footer-group; }
   .print-frame > tbody > tr,
