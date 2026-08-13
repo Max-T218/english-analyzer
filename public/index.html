@@ -762,7 +762,7 @@
         <button class="btn" id="examPlanBtn">📝 문제 제작</button>
         <span class="hint">
           누르면 어느 문항을 어느 지문으로 만들지 정한 뒤 바로 제작합니다.
-          쓴 지문 목록은 완성된 시험지 뒤에 함께 실립니다.
+          쓴 지문 목록은 결과 아래 <b>화면에서만</b> 보여 줍니다 (인쇄되지 않습니다).
         </span>
       </div>
       <div class="error" id="examPaperError"></div>
@@ -844,6 +844,25 @@
     </label>
     <div class="print-guide-actions">
       <button type="button" class="btn" id="doneGuideClose">결과 보기</button>
+    </div>
+  </div>
+</div>
+
+<!-- PDF에서 빼 둔 지문(도표·인물 소개·안내문) 확인 창.
+     지문을 다 넣은 '뒤에' 뜬다 — 넣는 중에 물으면 흐름이 끊기고, 무엇이 들어갔는지
+     본 다음에 판단하는 편이 낫다. -->
+<div class="print-guide" id="pdfHeldGuide" hidden>
+  <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="pdfHeldTitle">
+    <h3 id="pdfHeldTitle">📄 지문 일부를 넣지 않았습니다</h3>
+    <p class="print-guide-lead" id="pdfHeldLead"></p>
+    <div id="pdfHeldList" class="pdf-held-list"></div>
+    <p class="print-guide-note">
+      체크한 지문만 입력칸에 들어갑니다. 넣더라도 <b>내용일치</b>처럼 글 전체를 묻는
+      유형에 쓰세요 — 빈칸·순서·문장삽입에 쓰면 말이 안 되는 문항이 나옵니다.
+    </p>
+    <div class="print-guide-actions">
+      <button type="button" class="btn ghost" id="pdfHeldSkip">그대로 두기</button>
+      <button type="button" class="btn" id="pdfHeldAdd">＋ 선택한 지문 추가</button>
     </div>
   </div>
 </div>

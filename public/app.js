@@ -1588,6 +1588,131 @@ const examPassageStatus = statusWriter(examPassageStatusEl);
 
 let pdfBusy = false;
 
+/* ── 도표·실용문 가려내기 ──
+
+   모의고사 한 벌에는 서술문만 들어 있지 않다. 도표 설명(25번), 안내문(27·28번)이 섞여
+   있는데, 이 지문으로 빈칸·순서·문장삽입을 만들면 말이 안 되는 문항이 나온다. 실측한
+   시험지에서 도표 지문으로 만든 어휘 문항이 "The graph above shows…"로 시작했는데
+   정작 그 그래프는 시험지에 없었고, 축제 안내문(When & Where · ※ 홈페이지 주소)에는
+   빈칸 추론이 걸려 있었다.
+
+   그래서 PDF에서 꺼낼 때 이런 지문은 빼 두고, 다 넣은 뒤에 "추가할까요?"를 묻는다.
+   버리지 않는 이유는 내용일치처럼 이들 지문이 제격인 유형도 있어서다 — 고르는 것은
+   선생님 몫이고, 이 함수는 '기본값을 어느 쪽에 둘지'만 정한다.
+
+   Gemini를 부르지 않고 글 모양만 본다. 서버가 지문을 넘길 때 _pdf_clean_passage가
+   줄바꿈을 전부 공백으로 눌러 버리므로(`\s+` → ' '), '짧은 줄이 많다' 같은 줄 단위
+   신호는 쓸 수 없다. 살아남는 표시만 센다 — 가운뎃점·※·주소·항목 이름.
+
+   인물 소개(26번)는 여기서 가려내지 못한다. 평범한 서술문이라 글 모양이 다른 지문과
+   같아서, 규칙으로 잡으려 들면 멀쩡한 지문까지 걸린다. */
+const PDF_CHART_RE = /\b(?:graph|chart|table)\s+above\b|\babove\s+(?:graph|chart|table)\b/i;
+const PDF_LABEL_RE = /\b(?:When|Where|Date|Time|Place|Venue|Fee|Cost|Location|Contact|Registration|Deadline|Notes?|Hours|Admission|Prizes?|Eligibility)\s*:/gi;
+
+function passageShape(text) {
+  const t = String(text || "");
+  if (!t.trim()) return "";
+  if (PDF_CHART_RE.test(t)) return "도표";
+
+  let hits = 0;
+  // 가운뎃점이 여럿이면 항목을 나열한 것이다 — 가장 확실한 표시라 둘로 센다
+  if ((t.match(/[•·▪‣]/g) || []).length >= 3) hits += 2;
+  if (/※/.test(t)) hits++;
+  if (/\b(?:www\.|https?:\/\/)/i.test(t)) hits++;
+  // "When:" 하나쯤은 서술문에도 나온다. 둘 이상이면 안내문 꼴이다.
+  const labels = (t.match(PDF_LABEL_RE) || []).length;
+  hits += labels >= 2 ? 2 : labels;
+
+  return hits >= 2 ? "실용문" : "";
+}
+
+/* ── 문항 번호로 빼기 ──
+   글 모양만으로는 인물 소개(26번)를 못 가려낸다. 평범한 서술문이라 다른 지문과 모양이
+   같아서, 규칙으로 잡으려 들면 멀쩡한 지문까지 걸린다. 대신 번호를 본다 — 수능형
+   편집에서 도표·인물 소개·안내문이 놓이는 자리가 정해져 있다.
+
+   서버가 붙여 준 이름("25번", "27~28번")을 여기서만 읽고 버린다. 지문 이름칸에는 이
+   값을 쓰지 않으므로(교과서에서 엉뚱하게 붙는다), 번호를 잘못 읽어도 지문 이름을
+   더럽히지 않고 아래 확인 창에서 체크 한 번으로 되돌릴 수 있다. */
+const PDF_SKIP_NOS = new Set([25, 26, 27, 28]);
+const PDF_SKIP_LABEL = { 25: "도표", 26: "인물 소개", 27: "안내문", 28: "안내문" };
+
+function pdfQuestionNos(name) {
+  const m = /^(\d+)\s*(?:~\s*(\d+))?번$/.exec(String(name || "").trim());
+  if (!m) return [];
+  const from = Number(m[1]);
+  const to = m[2] ? Number(m[2]) : from;
+  // 10문항을 넘는 묶음은 번호를 잘못 읽은 것으로 본다
+  if (!(from >= 1 && to >= from && to - from < 10)) return [];
+  return Array.from({ length: to - from + 1 }, (_, i) => from + i);
+}
+
+/* PDF에서 빼 둔 지문. 확인 창에서 고를 때까지 여기 들고 있는다.
+   한 번에 한 PDF만 읽으므로(pdfBusy) 자리는 하나면 된다. */
+let pdfHeldBack = null;
+const pdfHeldGuideEl = $("pdfHeldGuide");
+const pdfHeldListEl = $("pdfHeldList");
+
+function closePdfHeldGuide() {
+  pdfHeldGuideEl.hidden = true;
+  pdfHeldBack = null;
+}
+
+function openPdfHeldGuide(mgr, status, items) {
+  pdfHeldBack = { mgr, status, items };
+  $("pdfHeldLead").innerHTML =
+    `지문 <b>${items.length}개</b>를 넣지 않고 남겨 두었습니다. ` +
+    `모의고사의 <b>도표(25번) · 인물 소개(26번) · 안내문(27·28번)</b>은 ` +
+    `빈칸·순서·문장삽입 같은 유형에 맞지 않아 기본으로 빼 둡니다.`;
+  pdfHeldListEl.innerHTML = items
+    .map(
+      (it, i) => `
+    <label class="pdf-held-item">
+      <input type="checkbox" data-i="${i}" checked>
+      <span class="pdf-held-body">
+        <span class="pdf-held-head">
+          ${it.no ? `<span class="pdf-held-no">${esc(it.no)}</span>` : ""}
+          ${it.kind ? `<span class="pdf-held-kind">${esc(it.kind)}</span>` : ""}
+        </span>
+        <span class="pdf-held-text">${esc(it.text.slice(0, 170))}…</span>
+      </span>
+    </label>`
+    )
+    .join("");
+  pdfHeldGuideEl.hidden = false;
+}
+
+$("pdfHeldSkip").addEventListener("click", closePdfHeldGuide);
+pdfHeldGuideEl.addEventListener("click", (e) => {
+  if (e.target === pdfHeldGuideEl) closePdfHeldGuide();
+});
+
+$("pdfHeldAdd").addEventListener("click", () => {
+  if (!pdfHeldBack) return closePdfHeldGuide();
+  const { mgr, status, items } = pdfHeldBack;
+  const picked = [...pdfHeldListEl.querySelectorAll("input:checked")]
+    .map((el) => items[Number(el.dataset.i)])
+    .filter(Boolean);
+  closePdfHeldGuide();
+  if (!picked.length) return;
+
+  let added = 0;
+  let full = false;
+  for (const it of picked) {
+    if (mgr.fillText(it.text)) added++;
+    else {
+      full = true;
+      break;
+    }
+  }
+  status(
+    `<b>지문 ${added}개</b>를 추가했습니다.` +
+      (full ? " 지문 칸이 가득 차 나머지는 넣지 못했습니다." : "") +
+      ` 이런 지문은 <b>내용일치</b>처럼 글 전체를 묻는 유형에 쓰세요.`,
+    full ? "warn" : "ok"
+  );
+});
+
 // mgr: 채울 지문칸 관리자(공용 또는 시험 범위), status: 안내를 그리는 함수
 async function runPdfImport(fileList, mgr, status) {
   const files = [...fileList].filter(isPdf);
@@ -1603,6 +1728,8 @@ async function runPdfImport(fileList, mgr, status) {
   let full = false;
   const notes = [];
   const fails = [];
+  const held = [];   // 도표·실용문 — 다 넣은 뒤에 추가할지 묻는다
+  pdfHeldBack = null;
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
@@ -1633,8 +1760,28 @@ async function runPdfImport(fileList, mgr, status) {
         fails.push(`${who} — 영어 지문을 찾지 못했습니다.`);
         continue;
       }
-      for (const p of res.passages) {
-        // p.name(서버가 뽑은 '31번'·소제목)은 일부러 쓰지 않는다 — fillText 주석 참고
+      /* 번호로 빼는 규칙은 이 PDF가 28번을 넘어설 때만 쓴다. 25~28이 도표·안내문
+         자리인 것은 수능형 편집의 관례라, 거기까지 닿지 않는 PDF(교과서 단원, 부분
+         발췌)에서 25~28번은 그냥 평범한 지문이다. */
+      const nosOf = res.passages.map((p) => pdfQuestionNos(p.name));
+      const useNoRule = Math.max(0, ...nosOf.flat()) >= 29;
+
+      for (let k = 0; k < res.passages.length; k++) {
+        const p = res.passages[k];
+        // p.name은 지문 이름칸에 쓰지 않는다 — fillText 주석 참고. 여기서 번호만 읽고 버린다.
+        const nos = nosOf[k];
+        const hitNo = useNoRule ? nos.find((n) => PDF_SKIP_NOS.has(n)) : undefined;
+        const shape = passageShape(p.text);
+        if (hitNo !== undefined || shape) {
+          held.push({
+            text: p.text,
+            no: nos.length
+              ? nos.length > 1 ? `${nos[0]}~${nos[nos.length - 1]}번` : `${nos[0]}번`
+              : "",
+            kind: shape || PDF_SKIP_LABEL[hitNo] || "",
+          });
+          continue;   // 빼 두고 아래 확인 창에서 물어본다
+        }
         if (mgr.fillText(p.text)) added++;
         else {
           full = true;
@@ -1669,6 +1816,12 @@ async function runPdfImport(fileList, mgr, status) {
         `PDF와 대조해 <b>문단이 제대로 끊겼는지 확인한 뒤</b> 실행하세요.`
     );
   }
+  if (held.length) {
+    const label = held.map((h) => h.no || h.kind).filter(Boolean).join(", ");
+    parts.push(
+      `📊 <b>지문 ${held.length}개는 넣지 않았습니다</b>${label ? ` — ${esc(label)}` : ""}.`
+    );
+  }
   notes.forEach((n) => parts.push(`⚠️ ${esc(n)}`));
   fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
   if (!parts.length) parts.push("옮길 지문을 찾지 못했습니다.");
@@ -1679,6 +1832,11 @@ async function runPdfImport(fileList, mgr, status) {
   pdfFileEl.value = "";       // 같은 파일을 다시 골라도 change가 나도록 비운다
   examPdfFileEl.value = "";
   refreshTokenDisplay();
+
+  /* 넣을 것을 다 넣은 뒤에 묻는다 — 넣는 중에 물으면 흐름이 끊기고, 무엇이 들어갔는지
+     본 다음에 판단하는 편이 낫다. 칸이 이미 가득 찼으면 물어도 넣을 데가 없으므로
+     위 안내에 사실만 남기고 창은 띄우지 않는다. */
+  if (held.length && !full) openPdfHeldGuide(mgr, status, held);
 }
 
 pdfBtn.addEventListener("click", () => pdfFileEl.click());
@@ -4987,12 +5145,19 @@ function examPlanTableHtml(rows, jobs, caption) {
       </tr>`
     )
     .join("");
+  /* .exam-plan으로 감싸는 이유는 인쇄에서 통째로 빼기 위해서다 — 표 자체는 정답표와
+     같은 class(answerkey)를 써서 이 감싸개가 없으면 둘을 갈라낼 수 없다.
+     배분표는 '어느 문항을 어느 지문으로 만들었나'를 적은 제작 기록이라 화면에서 확인할
+     것이지 학생에게 나가는 인쇄물이 아니다. 다음 부를 겹치지 않게 만드는 데 쓰는 값은
+     저장본(payload)에 들어 있고, 인쇄물에서 읽어 오지 않는다. */
   return `
-    <h3 class="section"><span class="num">📋</span> ${esc(caption)}</h3>
-    <div class="table-wrap"><table class="answerkey">
-      <thead><tr><th>문항</th><th>유형</th><th>구분</th><th>쓴 지문</th></tr></thead>
-      <tbody>${body}</tbody>
-    </table></div>`;
+    <div class="exam-plan">
+      <h3 class="section"><span class="num">📋</span> ${esc(caption)}</h3>
+      <div class="table-wrap"><table class="answerkey">
+        <thead><tr><th>문항</th><th>유형</th><th>구분</th><th>쓴 지문</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>
+    </div>`;
 }
 
 /* ── 시험지 제작 화면 배선 ── */
@@ -5152,7 +5317,8 @@ function dropExamPlan() {
    대신 배분이 AI 호출 0회·0원이라는 성질은 그대로 쓴다. 누르면 먼저 배분을 계산해
    '만들 수 없는 경우'를 전부 걸러내고, 그 검사를 통과했을 때만 요금 확인창을 띄운다.
    덕분에 요금이 나간 뒤에 배분이 실패하는 일이 없다.
-   어느 문항을 어느 지문으로 만들었는지는 완성된 시험지 뒤에 표로 함께 실린다. */
+   어느 문항을 어느 지문으로 만들었는지는 결과 아래에 표로 붙는다(화면 전용 — 인쇄에서는
+   .exam-plan을 뺀다). */
 function runExamPaperFlow() {
   if (examPaperBusy) return;
   examPaperErrorEl.textContent = "";
