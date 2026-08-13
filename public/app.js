@@ -1193,6 +1193,46 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
     renumber();
   }
 
+  /* 저장해 둔 지문을 지금 있는 칸을 그대로 두고 '뒤에' 이어 붙인다.
+     setJobs가 통째로 갈아 끼우는 것과 짝이 된다 — 시험 범위가 교과서 단원 여럿에
+     걸쳐 있으면 저장도 단원별로 나눠 하게 되는데, 그걸 다시 한자리에 모으려면
+     불러올 때마다 앞엣것이 사라지지 않아야 한다.
+
+     비어 있는 칸은 먼저 치운다. 시작할 때 자동으로 생기는 빈 칸 하나가 붙인 지문들
+     사이에 끼면 결과물에 빈 지문이 섞인다(getJobs가 빈 칸을 걸러내긴 하지만, 화면에
+     남은 빈 칸이 '몇 개짜리인지'를 헷갈리게 한다).
+
+     반환 {added, full} — full이면 상한에 걸려 못 넣은 것이 있다는 뜻이다. */
+  function appendJobs(jobs) {
+    const list = (Array.isArray(jobs) ? jobs : []).filter(
+      (j) => j && String(j.text || "").trim()
+    );
+    if (!list.length) return { added: 0, full: false };
+
+    [...listEl.querySelectorAll(".passage-item")].forEach((it) => {
+      if (!it.querySelector(".passage-input").value.trim()) it.remove();
+    });
+
+    let added = 0;
+    let full = false;
+    for (const job of list) {
+      const ta = addRow(false);
+      if (!ta) {
+        full = true;   // 상한에 닿았다 — 남은 것은 넣지 않는다
+        break;
+      }
+      ta.value = job.text;
+      if (job.named && job.name) {
+        ta.closest(".passage-item").querySelector(".passage-name").value = job.name;
+      }
+      updatePassageCount(ta);
+      added++;
+    }
+    if (!rowCount()) addRow(false);   // 하나도 못 넣었으면 빈 칸은 남겨 둔다
+    renumber();
+    return { added, full };
+  }
+
   // 사진·PDF에서 옮겨 온 지문을 입력칸에 채운다. 빈 칸부터 쓰고, 없으면 칸을 늘린다.
   // 사진 1장 = 지문 1개, PDF 문단(문항) 1개 = 지문 1개이므로 텍스트 하나가 칸 하나를 차지한다.
   //
@@ -1216,7 +1256,7 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
     return true;
   }
 
-  return { addRow, getJobs, setJobs, renumber, clearAll, fillText };
+  return { addRow, getJobs, setJobs, appendJobs, renumber, clearAll, fillText };
 }
 
 // 모든 탭이 공유하는 지문 입력 (탭 밖 공통 패널) — 별도 저장소 없이 화면 하나로 공유
@@ -1251,9 +1291,24 @@ TAB_SAVE.passage = {
   canSave: () => (passageMgr.getJobs().length ? "" : "저장할 지문이 없습니다. 지문을 먼저 입력해 주세요."),
   // 목표 어법도 함께 담는다 — 이제 이 패널에 같이 있고, 지문과 한 벌로 쓰이는 설정이다
   getPayload: () => ({ passages: passageMgr.getJobs(), targetGrammar: grammarEl.value }),
-  applyPayload: (payload) => {
-    passageMgr.setJobs(payload.passages || []);
-    grammarEl.value = payload.targetGrammar || "";
+  /* mode "append"면 지금 입력칸을 비우지 않고 뒤에 이어 붙인다 (저장함의 [뒤에 붙이기]).
+     목표 어법은 그때 덮어쓰지 않는다 — 이어 붙이는 저장본의 값으로 지금 것을 바꾸면,
+     앞서 불러온 지문에 맞춰 적어 둔 어법이 조용히 사라진다. 비어 있을 때만 채운다. */
+  applyPayload: (payload, mode) => {
+    if (mode === "append") {
+      const { added, full } = passageMgr.appendJobs(payload.passages || []);
+      if (!grammarEl.value.trim()) grammarEl.value = payload.targetGrammar || "";
+      const total = passageMgr.getJobs().length;
+      ocrStatus(
+        full
+          ? `지문 ${added}개를 뒤에 붙였습니다 (총 ${total}개). 칸이 가득 차 나머지는 넣지 못했습니다 — 필요 없는 지문을 지우고 다시 붙여 주세요.`
+          : `지문 ${added}개를 뒤에 붙였습니다 (총 ${total}개).`,
+        full ? "warn" : "ok"
+      );
+    } else {
+      passageMgr.setJobs(payload.passages || []);
+      grammarEl.value = payload.targetGrammar || "";
+    }
     passageListEl.scrollIntoView({ behavior: "smooth", block: "start" });
   },
 };
@@ -4127,7 +4182,10 @@ const SAVE_TITLE_SUGGEST = {
   exam: () => {
     const h = examHeadValues();
     const label = sanitizeFilename([h.school, h.title].filter(Boolean).join(" "));
-    return ["시험지", label, todayStr()].filter(Boolean).join("_");
+    // 저장함 목록에는 제목만 보인다(payload를 열지 않는다). 시험지가 든 저장과 구성표만
+    // 든 저장을 목록에서 가려내려면 제목이 그 말을 해 주는 수밖에 없다.
+    const prefix = examPaperSets.length ? "시험지" : "기출구성";
+    return [prefix, label, todayStr()].filter(Boolean).join("_");
   },
 };
 
@@ -4158,10 +4216,13 @@ function openSaveDialog(tab) {
   pendingSaveTab = tab;
   saveDialogErrorEl.textContent = "";
   saveDialogTitleEl.textContent = tab === PASSAGE_TAB ? "💾 지문 저장" : "💾 제작 자료 저장";
-  // 지문 저장은 입력칸만 담으므로, 무엇이 저장되는지 문구로 분명히 해 둔다
-  saveDialogLeadEl.textContent = tab === PASSAGE_TAB
+  // 지문 저장은 입력칸만 담으므로, 무엇이 저장되는지 문구로 분명히 해 둔다.
+  // 탭이 saveLead를 등록해 두었으면 그 문구가 이긴다 — 같은 탭인데도 무엇이 담기는지가
+  // 그때그때 다른 경우가 있다(기출 탭: 시험지까지인지, 구성표뿐인지).
+  const customLead = TAB_SAVE[tab] && TAB_SAVE[tab].saveLead ? TAB_SAVE[tab].saveLead() : "";
+  saveDialogLeadEl.textContent = customLead || (tab === PASSAGE_TAB
     ? "지금 입력칸에 있는 지문만 저장합니다. 나중에 \"📄 지문 저장함\"에서 그대로 되불러올 수 있습니다."
-    : "지문과 만든 결과를 함께 저장합니다. 나중에 \"📦 제작 자료 저장함\"에서 이 제목으로 다시 찾을 수 있습니다.";
+    : "지문과 만든 결과를 함께 저장합니다. 나중에 \"📦 제작 자료 저장함\"에서 이 제목으로 다시 찾을 수 있습니다.");
   const blocked = TAB_SAVE[tab] && TAB_SAVE[tab].canSave ? TAB_SAVE[tab].canSave() : "";
   if (!isLoggedIn) {
     saveDialogErrorEl.textContent = "저장하려면 먼저 구글 로그인을 해주세요.";
@@ -4221,7 +4282,12 @@ function savedItemRowHtml(item) {
         <div class="saved-list-date">${esc(date)}</div>
       </div>
       <div class="saved-list-actions">
-        <button type="button" class="btn ghost small saved-list-load">불러오기</button>
+        <button type="button" class="btn ghost small saved-list-load"
+                title="지금 입력칸에 있는 지문을 이 저장본으로 바꿉니다.">불러오기</button>
+        ${item.tab === PASSAGE_TAB
+          ? `<button type="button" class="btn ghost small saved-list-append"
+                     title="지금 입력칸에 있는 지문은 그대로 두고, 이 저장본을 그 뒤에 이어 붙입니다.">＋ 뒤에 붙이기</button>`
+          : ""}
         <button type="button" class="btn ghost small danger saved-list-delete">삭제</button>
       </div>
     </div>`;
@@ -4233,7 +4299,8 @@ function savedItemRowHtml(item) {
 const LIBRARY = {
   passage: {
     title: "📄 지문 저장함",
-    lead: "저장해 둔 지문입니다. 불러오면 지문 입력칸에 그대로 되돌아옵니다.",
+    lead: "저장해 둔 지문입니다. [불러오기]는 지금 입력칸을 이 저장본으로 바꾸고, " +
+          "[＋ 뒤에 붙이기]는 지금 것을 두고 뒤에 이어 붙입니다 — 나눠 저장한 지문을 한자리에 모을 때 쓰세요.",
     empty: "아직 저장한 지문이 없습니다. 지문을 입력한 뒤 “💾 지문 저장”을 눌러 보세요.",
     match: (item) => item.tab === PASSAGE_TAB,
   },
@@ -4279,7 +4346,8 @@ savedListBodyEl.addEventListener("click", async (e) => {
   if (!row) return;
   const id = row.dataset.id;
 
-  if (e.target.closest(".saved-list-load")) {
+  const append = !!e.target.closest(".saved-list-append");
+  if (append || e.target.closest(".saved-list-load")) {
     try {
       const item = await getJson(`/api/saved/${encodeURIComponent(id)}`, "불러오기에 실패했습니다.");
       const tab = item.tab;
@@ -4287,11 +4355,13 @@ savedListBodyEl.addEventListener("click", async (e) => {
       savedListModalEl.hidden = true;
       const tabBtn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
       if (tabBtn) tabBtn.click();
-      // 불러오면 지문이 통째로 바뀌므로, 화면에 남아 있던 이전 제작 결과물은 모두
-      // 지운다 — 안 그러면 방금 불러온 지문과 맞지 않는 결과물이 그대로 남아
-      // 어느 지문으로 만든 것인지 알 수 없게 된다(지문만 불러온 경우가 특히 그랬다).
-      clearAllTabResults();
-      TAB_SAVE[tab].applyPayload(item.payload || {});
+      /* 통째로 불러오면 지문이 다 바뀌므로 화면에 남아 있던 이전 제작 결과물을 모두
+         지운다 — 안 그러면 방금 불러온 지문과 맞지 않는 결과물이 그대로 남아 어느
+         지문으로 만든 것인지 알 수 없게 된다(지문만 불러온 경우가 특히 그랬다).
+         뒤에 붙일 때는 지우지 않는다. 앞서 있던 지문이 그 자리에 그대로 남으므로
+         그 지문으로 만든 결과물도 여전히 맞는 짝이다. */
+      if (!append) clearAllTabResults();
+      TAB_SAVE[tab].applyPayload(item.payload || {}, append ? "append" : "replace");
     } catch (err) {
       alert(err.message || "불러오기에 실패했습니다.");
     }
@@ -5069,6 +5139,7 @@ function openExamPaperPanel(scan) {
         ` (못 만드는 유형이거나, 워크북으로만 되는 유형입니다).`
       : "");
   updateExamPaperCost();
+  syncExamSpecSave();
   // 이제 지문칸이 열렸으니 학원 마크 칸도 이 안으로 꺼내 온다
   syncTabChrome("exam");
 }
@@ -5283,7 +5354,16 @@ function examSheetHeadHtml(set) {
   `;
 }
 
+/* '이 기출 구성 저장' 줄은 분석은 끝났는데 아직 시험지를 안 만들었을 때만 보인다.
+   한 부라도 만들면 아래 '💾 저장'이 시험지와 구성표를 함께 담으므로 여기서 감춘다 —
+   저장 버튼이 둘 보이면 어느 쪽이 무엇을 담는지 알 수 없다. */
+function syncExamSpecSave() {
+  const row = $("examSpecSaveRow");
+  if (row) row.hidden = !(examScanNow && !examPaperSets.length);
+}
+
 function renderExamPaperSets() {
+  syncExamSpecSave();
   // 인쇄/저장 버튼은 다른 탭과 같은 방식으로 '버튼 자체'를 감춘다 —
   // syncFloatPrint가 버튼의 style.display를 보고 떠 있는 인쇄 버튼을 켜고 끄기 때문이다.
   const showBtns = (on) => {
@@ -5396,7 +5476,19 @@ function examSpecToScan(spec) {
    (대원칙 2), 구성표가 있어야 기출을 다시 올리지 않고 그 B형을 만들 수 있다. */
 TAB_SAVE.exam = {
   saveBtn: $("examPaperSaveBtn"),
-  canSave: () => (examPaperSets.length ? "" : "저장할 시험지가 없습니다. 먼저 시험지를 만들어 주세요."),
+  /* 시험지를 아직 안 만들었어도 구성표만으로 저장할 수 있다 — 분석은 1~3분이 걸리고
+     값이 매겨지면 요금도 나가는데, 지문을 다 넣기 전에 새로고침하면 통째로 날아갔다. */
+  canSave: () =>
+    examPaperSets.length || examScanNow
+      ? ""
+      : "저장할 것이 없습니다. 기출 시험지를 올려 유형 분석을 먼저 해 주세요.",
+  saveLead: () =>
+    examPaperSets.length
+      ? "만든 시험지와 배분표, 기출 구성표를 함께 저장합니다. " +
+        "기출의 발문·문항 번호·고사 이름은 저장하지 않습니다."
+      : "기출 구성표와 지금 입력칸에 있는 지문을 저장합니다 (아직 만든 시험지가 없습니다). " +
+        "불러오면 기출을 다시 올리지 않고 이 구성 그대로 이어서 만들 수 있습니다. " +
+        "기출의 발문·문항 번호·고사 이름은 저장하지 않습니다.",
   getPayload: () => ({
     passages: examPaperMgr.getJobs(),
     sets: examPaperSets,
@@ -5452,3 +5544,6 @@ TAB_SAVE.exam = {
   },
 };
 $("examPaperSaveBtn").addEventListener("click", () => openSaveDialog("exam"));
+// 분석만 끝난 상태에서 누르는 저장 — 같은 저장 창을 쓴다. 무엇이 담기는지는
+// saveLead가, 목록에서 어떻게 보일지는 SAVE_TITLE_SUGGEST가 경우에 맞춰 바꾼다.
+$("examSpecSaveBtn").addEventListener("click", () => openSaveDialog("exam"));
