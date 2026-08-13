@@ -1195,18 +1195,20 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
 
   // 사진·PDF에서 옮겨 온 지문을 입력칸에 채운다. 빈 칸부터 쓰고, 없으면 칸을 늘린다.
   // 사진 1장 = 지문 1개, PDF 문단(문항) 1개 = 지문 1개이므로 텍스트 하나가 칸 하나를 차지한다.
-  // name을 넘기면 지문 이름칸에 넣는다 — PDF에서 온 '31번', 소제목처럼 어느 지문인지
-  // 한눈에 알려 주는 이름이 있을 때만이고, 없으면 '지문 1, 2 …'가 그대로 쓰인다.
+  //
+  // 본문만 넣고 '지문 이름'은 건드리지 않는다. 예전에는 PDF에서 뽑은 '31번'·소제목을
+  // 이름칸에 자동으로 넣었는데, 잘 맞는 것은 문항 번호가 또렷한 모의고사뿐이었다.
+  // 교과서·부교재는 쪽머리·단원 제목·본문 첫 줄이 뒤섞여 엉뚱한 이름이 붙었고,
+  // 그 이름이 결과물 이름표와 저장 파일명에까지 그대로 따라갔다. 자동으로 붙은 이름은
+  // 손으로 지우기 전에는 사라지지 않으니, 아예 비워 두고 선생님이 짓게 한다.
   // 반환: 실제로 채웠으면 true (상한 limit에 걸리면 false)
-  function fillText(raw, name) {
+  function fillText(raw) {
     const text = String(raw || "").trim();
     if (!text) return false;
     let ta = [...listEl.querySelectorAll(".passage-input")].find((t) => !t.value.trim());
     if (!ta) ta = addRow(false);
     if (!ta) return false;   // 지문 칸 상한에 닿음
     ta.value = text;
-    const label = String(name || "").trim();
-    if (label) ta.closest(".passage-item").querySelector(".passage-name").value = label;
     // 글자 수·안내를 직접 입력했을 때와 똑같이 갱신한다
     // (문장번호가 남아 있으면 '번호 지우기' 안내가 자동으로 뜬다)
     ta.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1577,7 +1579,8 @@ async function runPdfImport(fileList, mgr, status) {
         continue;
       }
       for (const p of res.passages) {
-        if (mgr.fillText(p.text, p.name)) added++;
+        // p.name(서버가 뽑은 '31번'·소제목)은 일부러 쓰지 않는다 — fillText 주석 참고
+        if (mgr.fillText(p.text)) added++;
         else {
           full = true;
           break;
@@ -3055,9 +3058,12 @@ function markVariations(html, variations) {
 
 // 문제 카드 + 정답/해설(화면: 토글, 인쇄: 항상 별도 섹션) HTML 생성
 // kind: "mcq" | "saq" — 주관식 해설지에는 해설 열을 넣지 않는다(정답만).
-function buildQuizHtml(d, job, total, kind, label) {
+// sheetHead: 시험지 머리글 HTML(기출 탭 전용, 선택). 섹션 '안'에 넣는 이유 —
+//   인쇄 CSS가 .passage-block마다 쪽을 나누므로, 밖에 두면 머리글만 있는 빈 쪽이 생긴다.
+function buildQuizHtml(d, job, total, kind, label, sheetHead) {
   const parts = [];
   parts.push(`<section class="passage-block qz-block">`);
+  if (sheetHead) parts.push(sheetHead);
   parts.push(passageBanner(job, total, label));
 
   // 문항 카드는 별도 래퍼에 담는다 — 인쇄할 때 이 래퍼에만 2단 조판을 적용하고
@@ -4113,8 +4119,16 @@ const SAVE_TITLE_SUGGEST = {
   saq: () => passageBasedName("주관식문제"),
   workbook: () => titledName("워크북", "wbTitle"),
   vocab: () => titledName("단어장", "vocabTitle"),
-  // 시험지는 공용 지문칸이 아니라 자기 지문칸을 쓰므로 passageBasedName을 못 쓴다
-  exam: () => ["시험지", todayStr()].join("_"),
+  /* 시험지는 공용 지문칸이 아니라 자기 지문칸을 쓰므로 passageBasedName을 못 쓴다.
+     대신 시험지 머리글에 적어 둔 학교·고사 이름을 가져온다 — 기출에서 읽어 낸 고사
+     이름(scan.title)은 저장하지 않으므로, 저장함에서 이 시험지가 어느 기출을 본뜬
+     것인지 알려 주는 것은 선생님이 직접 적은 이 이름뿐이다.
+     머리글을 비워 뒀으면 지금까지처럼 '시험지_날짜'가 된다. */
+  exam: () => {
+    const h = examHeadValues();
+    const label = sanitizeFilename([h.school, h.title].filter(Boolean).join(" "));
+    return ["시험지", label, todayStr()].filter(Boolean).join("_");
+  },
 };
 
 const saveDialogEl = $("saveDialog");
@@ -4925,6 +4939,24 @@ const examGrammarEl = $("examTargetGrammar");
 const examCopiesEl = radioGroup("examCopies");
 const examSimilarEl = $("examIncludeSimilar");
 
+/* 출제 순서 — "type"(기출 순서대로) / "random"(무작위로 섞기)
+   기본은 기출 순서다. 기출을 그대로 본뜬 시험지가 이 탭의 목적이기 때문이다.
+   섞기는 만들어진 문항을 부(部)마다 따로 섞는다 — A형과 B형이 같은 순서로 나오지
+   않게 하려는 것으로, 2부를 만들 때 특히 뜻이 있다. */
+const examOrderEl = radioGroup("examOrder");
+const examOrderHintEl = $("examOrderHint");
+const examIsRandom = () => !!examOrderEl && examOrderEl.value === "random";
+
+function updateExamOrderHint() {
+  if (!examOrderHintEl) return;
+  examOrderHintEl.innerHTML = examIsRandom()
+    ? "유형과 상관없이 문항이 <b>무작위로 섞여</b> 나옵니다. 부마다 따로 섞이므로 " +
+      "A형과 B형의 순서가 서로 다릅니다. 문제지 번호와 정답표·배분표 번호는 섞인 순서로 함께 매겨집니다."
+    : "기출과 같은 차례로 나옵니다 — <b>객관식 먼저, 서답형 뒤</b>입니다.";
+}
+if (examOrderEl) examOrderEl.addEventListener("change", updateExamOrderHint);
+updateExamOrderHint();
+
 // 기출이 '비슷한 걸로 대체' 판정한 문항까지 넣을지. 문항 수가 달라지므로 요금·배분이
 // 함께 바뀐다 — 끄면 '그대로 만들 수 있음'만 남는다.
 const examIncludeSimilar = () => !examSimilarEl || examSimilarEl.checked;
@@ -5164,11 +5196,17 @@ async function runExamPaper() {
     }
 
     if (questions.length) {
+      // 무작위 모드 — 번호를 다시 매기기 '전에' 섞는다. 그래야 문제지 번호와
+      // 정답표·배분표 번호가 섞인 순서 그대로 함께 따라간다.
+      // 부마다 새 씨앗을 뽑으므로 A형과 B형의 순서가 서로 다르다.
+      const ordered = examIsRandom()
+        ? seededShuffle(questions, Math.floor(Math.random() * 1e9))
+        : questions;
       // 실제로 만들어진 것만 남기고 번호를 다시 매긴다 — 실패한 문항 자리에 번호가
       // 비어 있으면 시험지에 결번이 생긴다.
-      const plan = questions.map((q, i) => ({ ...q._plan, q: i + 1 }));
-      questions.forEach((q) => delete q._plan);
-      examPaperSets.push({ label, questions, plan, failed });
+      const plan = ordered.map((q, i) => ({ ...q._plan, q: i + 1 }));
+      ordered.forEach((q) => delete q._plan);
+      examPaperSets.push({ label, questions: ordered, plan, failed });
       renderExamPaperSets();
     }
   }
@@ -5182,6 +5220,67 @@ async function runExamPaper() {
   }
   // 다음에 누르면 방금 쓴 (지문, 유형) 조합을 피해 새로 배분한다 — 대원칙 2
   examPlanNow = null;
+}
+
+/* ── 시험지 머리글 ──
+   만든 문항을 '학교 시험지'처럼 보이게 하는 부분이다. 학교마다 판형이 다르지만
+   공통으로 들어가는 것은 넷이다 — 고사명, 학교·학년, 큼직한 과목 상자, 그리고
+   성명 기입란. 그 넷만 재현한다.
+   학교 이름이 비어 있으면 머리글을 아예 만들지 않는다. 학교명 없는 시험지 머리글은
+   실제 시험지처럼 보이지 않아 오히려 어설프기 때문이다. 그때는 지금까지처럼
+   지문 이름표(passageBanner)만 붙는다. */
+const examHeadEls = {
+  school: $("examSchool"),
+  title: $("examSheetTitle"),
+  subject: $("examSubject"),
+  grade: $("examGrade"),
+  teacher: $("examTeacher"),
+  minutes: $("examMinutes"),
+};
+
+function examHeadValues() {
+  const v = (el) => (el ? el.value.trim() : "");
+  return {
+    school: v(examHeadEls.school),
+    title: v(examHeadEls.title),
+    subject: v(examHeadEls.subject),
+    grade: v(examHeadEls.grade),
+    teacher: v(examHeadEls.teacher),
+    minutes: v(examHeadEls.minutes),
+  };
+}
+
+function examSheetHeadHtml(set) {
+  const h = examHeadValues();
+  if (!h.school) return "";
+  const count = (set.questions || []).length;
+  // 과목 상자 — 실제 시험지가 그렇듯 오른쪽에 크게 둔다. 글자 사이 간격은 CSS가 준다.
+  const subject = h.subject || "영어";
+  const form = set.label ? `<div class="exam-sheet-form">${esc(set.label)}</div>` : "";
+  const line2 = [h.school, h.grade].filter(Boolean).map(esc).join(" · ");
+  const info = [
+    h.minutes ? `시험 시간 ${esc(h.minutes)}분` : "",
+    count ? `총 ${count}문항` : "",
+    h.teacher ? `출제 ${esc(h.teacher)}` : "",
+  ].filter(Boolean);
+  return `
+    <div class="exam-sheet-head">
+      <div class="exam-sheet-top">
+        <div class="exam-sheet-id">
+          ${h.title ? `<div class="exam-sheet-exam">${esc(h.title)}</div>` : ""}
+          <div class="exam-sheet-school">${line2}</div>
+        </div>
+        <div class="exam-sheet-subject">
+          <div class="exam-sheet-subject-name">${esc(subject)}</div>
+          ${form}
+        </div>
+      </div>
+      <div class="exam-sheet-bar">
+        <span class="exam-sheet-info">${info.join(" · ")}</span>
+        <span class="exam-sheet-fill">반 <u></u> 번호 <u></u> 성명 <u class="wide"></u></span>
+      </div>
+    </div>
+  `;
 }
 
 function renderExamPaperSets() {
@@ -5200,14 +5299,17 @@ function renderExamPaperSets() {
   const jobs = examPlanNow ? examPlanNow.jobs : examPaperMgr.getJobs();
   examPaperResultEl.innerHTML = examPaperSets
     .map((set) => {
-      const head = { name: set.label || "시험지", named: true };
+      // 머리글이 붙으면 그 안에 이미 학교·형(A/B)이 들어 있으므로 이름표는 빼서
+      // 같은 말이 두 번 찍히지 않게 한다.
+      const sheetHead = examSheetHeadHtml(set);
+      const head = { name: set.label || "시험지", named: !sheetHead };
       const fails = (set.failed || []).length
         ? `<p class="hint warn">${set.failed.length}문항은 만들지 못해 빠졌습니다 — ` +
           esc(set.failed.map((f) => `${f.type}`).join(", ")) + `</p>`
         : "";
       return (
         fails +
-        buildQuizHtml({ questions: set.questions, variations: [] }, head, 1, "mcq", "") +
+        buildQuizHtml({ questions: set.questions, variations: [] }, head, 1, "mcq", "", sheetHead) +
         examPlanTableHtml(set.plan, jobs, `출제 지문${set.label ? " — " + set.label : ""}`)
       );
     })
@@ -5216,16 +5318,82 @@ function renderExamPaperSets() {
   syncFloatPrint();
 }
 
+/* 머리글 칸을 고치면 이미 만들어 둔 시험지에도 곧바로 반영한다 — 만든 뒤에 학교
+   이름을 적어 넣는 순서가 자연스럽기 때문이다. input이 아니라 change로 듣는다:
+   글자마다 결과물 전체를 다시 그리면 펼쳐 둔 정답·해설이 도로 닫힌다. */
+Object.values(examHeadEls).forEach((el) => {
+  if (el) el.addEventListener("change", () => renderExamPaperSets());
+});
+
 $("examPlanBtn").addEventListener("click", runExamPaperFlow);
 $("examPaperPrintBtn").addEventListener("click", () =>
   printDoc(() => ["시험지", todayStr()].filter(Boolean).join("_"))
 );
 
-/* 저장 — 만든 문항과 함께 '배분표'를 넣는 것이 요점이다.
-   기출 시험지 자체(발문·이미지·학교명)는 저장하지 않는다. 여기 들어가는 것은 이 앱이
-   계산해 낸 배분 결과와 우리가 만든 문항뿐이다.
-   배분표가 있어야 나중에 B형을 따로 만들 때 A형이 쓴 (지문, 유형)을 피할 수 있다
-   (대원칙 2). 배분표 없이 저장하면 그 원칙이 성립하지 않는다. */
+/* ══════════════ 기출 구성표 — 저장할 수 있는 모양으로 ══════════════
+
+   기출 분석 결과(examScanNow)에는 두 종류가 섞여 있다.
+
+     ① 학교 시험지에서 읽어 낸 것 — title(고사 이름), no(문항 번호), group(묶음 범위),
+        prompt(발문 원문), note(비고)
+     ② 이 앱이 판정해 낸 것   — format(선다형/서답형), fit(같음/비슷함/없음),
+        kind(앱 유형), engine(어느 탭)
+
+   ①은 남의 저작물이라 저장하지 않는다. 그런데 시험지를 만드는 데 실제로 쓰이는 것은
+   ②뿐이다 — examPaperSlots가 읽는 필드가 그 넷이 전부다. 그래서 ②만 남겨 두면
+   '무슨 유형 몇 개'라는 주문서는 그대로 살면서 원본 시험지의 흔적은 남지 않는다.
+
+   문항 줄은 못 만드는 것(fit "없음")까지 통째로 남긴다. 지우면 '기출 N문항은 여기서
+   만들 수 없어 빠졌습니다' 안내의 숫자가 불러온 뒤 달라진다. 그 줄에 남는 값은
+   format 하나뿐이라(kind·engine이 빈 문자열) 남겨도 학교를 가리키지 않는다. */
+function examSpecFromScan(scan) {
+  return {
+    questions: ((scan && scan.questions) || []).map((q) => ({
+      format: q.format,
+      fit: q.fit,
+      kind: q.kind,
+      engine: q.engine,
+    })),
+  };
+}
+
+// 화면이 아는 유형 이름 — 저장본의 kind가 아직 살아 있는 이름인지 검사할 때 쓴다
+const EXAM_KNOWN_KINDS = new Set([...MCQ_TYPES, ...SAQ_TYPES].map((t) => t.id));
+
+/* 저장본 → 분석 결과 모양으로 되돌린다. ①은 빈 문자열로 채운다 — 화면의 기출 표는
+   다시 그리지 않지만(그리려면 발문이 있어야 한다), 그 아래 제작 칸은 구성만으로 열린다.
+
+   여기서 유형 이름을 한 번 더 검사하는 이유: 서버의 normalize_exam_scan이 같은 검사를
+   하지만 그건 '분석하는 그 순간'에 한 번뿐이다. 저장본은 그 검사를 지나온 뒤 몇 달을
+   묵을 수 있고, 그 사이 유형 목록이 바뀌면(이름 변경·삭제) 서버가 모르는 이름이 된다.
+   그대로 두면 /api/quiz가 그 유형을 조용히 버려 문항이 소리 없이 빠진다.
+   워크북 유형은 검사하지 않는다 — examPaperSlots가 어차피 걸러내 슬롯이 되지 않는다. */
+function examSpecToScan(spec) {
+  const stale = [];
+  const questions = (Array.isArray(spec && spec.questions) ? spec.questions : []).map((raw) => {
+    const q = {
+      no: "", group: "", prompt: "", note: "",
+      format: raw.format === "서답형" ? "서답형" : "선다형",
+      fit: raw.fit || "없음",
+      kind: raw.kind || "",
+      engine: raw.engine || "",
+    };
+    if (q.kind && q.engine !== "워크북" && !EXAM_KNOWN_KINDS.has(q.kind)) {
+      stale.push(q.kind);
+      q.kind = "";
+      q.fit = "없음";
+      q.engine = "";
+    }
+    return q;
+  });
+  return { scan: { title: "", note: "", questions }, stale };
+}
+
+/* 저장 — 만든 문항과 '배분표', 그리고 기출 구성표를 넣는다.
+   기출 시험지 자체(발문·문항 번호·고사 이름)는 저장하지 않는다. 들어가는 것은 이 앱이
+   계산해 낸 배분 결과와 우리가 만든 문항, 그리고 위의 구성표뿐이다.
+   배분표가 있어야 나중에 B형을 따로 만들 때 A형이 쓴 (지문, 유형)을 피할 수 있고
+   (대원칙 2), 구성표가 있어야 기출을 다시 올리지 않고 그 B형을 만들 수 있다. */
 TAB_SAVE.exam = {
   saveBtn: $("examPaperSaveBtn"),
   canSave: () => (examPaperSets.length ? "" : "저장할 시험지가 없습니다. 먼저 시험지를 만들어 주세요."),
@@ -5233,23 +5401,50 @@ TAB_SAVE.exam = {
     passages: examPaperMgr.getJobs(),
     sets: examPaperSets,
     targetGrammar: examGrammarEl.value,
+    // 머리글(학교명·고사명 등) — 불러온 시험지를 다시 인쇄해도 같은 모양이 되도록
+    sheetHead: examHeadValues(),
+    // 기출 구성표 — 발문·번호·고사 이름은 빼고 '무슨 유형 몇 개'만
+    examSpec: examScanNow ? examSpecFromScan(examScanNow) : null,
   }),
   applyPayload: (payload) => {
     examPaperMgr.setJobs(payload.passages || []);
     examGrammarEl.value = payload.targetGrammar || "";
+    // 머리글이 없던 시절에 저장한 것은 칸을 건드리지 않는다 (과목 기본값 '영어'가
+    // 빈칸으로 지워지지 않게)
+    if (payload.sheetHead) {
+      Object.keys(examHeadEls).forEach((k) => {
+        if (examHeadEls[k]) examHeadEls[k].value = payload.sheetHead[k] || "";
+      });
+    }
     examPaperSets = Array.isArray(payload.sets) ? payload.sets : [];
     examPlanNow = null;
-    // 불러온 부의 배분표가 곧 '피해야 할 조합'이 된다 — 이어서 다른 부를 만들 수 있다.
-    // 다만 기출 분석은 저장하지 않으므로(저작권), 이어 만들려면 기출을 다시 올려야 한다.
-    examPaperPanelEl.hidden = !examScanNow;
+
+    /* 구성표가 함께 저장돼 있으면 기출을 다시 올리지 않고 제작 칸을 연다.
+       불러온 부의 배분표가 곧 '피해야 할 조합'이 되므로(대원칙 2), 여기서 곧바로
+       B형을 이어 만들 수 있다. 구성표가 없는 옛 저장본은 예전처럼 인쇄·저장만 된다. */
+    let notice = "";
+    if (payload.examSpec) {
+      const { scan, stale } = examSpecToScan(payload.examSpec);
+      openExamPaperPanel(scan);   // examScanNow를 세우고 구성 안내를 다시 그린다
+      if (stale.length) {
+        const names = [...new Set(stale)].join(", ");
+        notice =
+          `저장한 뒤 유형 목록이 바뀌어 ${stale.length}문항이 빠졌습니다 — ${names}. ` +
+          `없어졌거나 이름이 바뀐 유형이라 지금은 만들 수 없습니다. 남은 문항으로 만들거나, ` +
+          `기출을 다시 올려 분석하면 지금 유형으로 다시 판정합니다.`;
+      }
+    } else {
+      examScanNow = null;
+      examPaperPanelEl.hidden = true;
+      notice =
+        "불러온 시험지를 인쇄·저장할 수 있습니다. 이어서 다른 부를 만들려면 위에서 기출 시험지를 다시 올려 분석하세요 " +
+        "(구성표를 저장하기 전에 만든 시험지입니다). 그때 이 배분표를 피해 배분합니다.";
+    }
+
     renderExamPaperSets();
     updateExamPaperCost();
     syncTabChrome("exam");
-    if (!examScanNow) {
-      examPaperErrorEl.textContent =
-        "불러온 시험지를 인쇄·저장할 수 있습니다. 이어서 다른 부를 만들려면 위에서 기출 시험지를 다시 올려 분석하세요 " +
-        "(분석 결과는 저장하지 않습니다). 그때 이 배분표를 피해 배분합니다.";
-    }
+    examPaperErrorEl.textContent = notice;
   },
   clearResults: () => {
     examPaperSets = [];

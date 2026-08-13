@@ -1159,6 +1159,66 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   #examLoading,
   #examPaperLoading { display: none !important; }
 }
+/* ── 시험지 머리글 ──
+   실제 학교 시험지의 첫 장을 흉내 낸다 — 위쪽에 고사명·학교, 오른쪽에 큼직한 과목
+   상자, 그 아래 가로줄로 시험 시간·문항 수와 성명 기입란.
+   색을 쓰지 않는 이유: 학교 시험지는 흑백 인쇄물이고, 여기에 앱의 강조색이 들어가면
+   곧바로 '학교 것이 아닌' 티가 난다. 화면에서도 인쇄와 같은 흑백으로 보여 준다. */
+.exam-sheet-head {
+  margin: 0 0 16px; padding: 0; color: #111;
+  border: 2px solid #111; border-radius: 2px;
+  background: #fff; break-inside: avoid; page-break-inside: avoid;
+}
+.exam-sheet-top {
+  display: flex; align-items: stretch; justify-content: space-between; gap: 12px;
+}
+.exam-sheet-id {
+  display: flex; flex-direction: column; justify-content: center; gap: 6px;
+  padding: 14px 16px; min-width: 0;
+}
+.exam-sheet-exam { font-size: 1.02rem; font-weight: 700; letter-spacing: .01em; }
+.exam-sheet-school { font-size: 1.28rem; font-weight: 800; letter-spacing: .02em; }
+/* 과목 상자 — 오른쪽 끝에 세로 줄 하나로 갈라 붙인다 */
+.exam-sheet-subject {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; padding: 12px 18px; min-width: 132px;
+  border-left: 2px solid #111;
+}
+.exam-sheet-subject-name {
+  font-size: 1.6rem; font-weight: 800; letter-spacing: .35em;
+  /* letter-spacing이 마지막 글자 뒤에도 붙어 가운데가 왼쪽으로 밀리는 것을 되돌린다 */
+  text-indent: .35em; white-space: nowrap;
+}
+.exam-sheet-form { font-size: .95rem; font-weight: 700; }
+.exam-sheet-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 6px 14px;
+  padding: 7px 16px; border-top: 1px solid #111; font-size: .9rem;
+}
+/* 기입란 — 밑줄만 그은 빈칸. 손으로 적는 자리라 내용은 없다 */
+.exam-sheet-fill u {
+  display: inline-block; width: 42px; margin: 0 2px;
+  border-bottom: 1px solid #111; text-decoration: none;
+}
+.exam-sheet-fill u.wide { width: 92px; }
+
+@media (max-width: 620px) {
+  .exam-sheet-top { flex-direction: column; }
+  .exam-sheet-subject { border-left: 0; border-top: 2px solid #111; }
+  .exam-sheet-subject-name { font-size: 1.35rem; }
+}
+
+@media print {
+  /* '몇 문항은 만들지 못해 빠졌습니다' 안내는 선생님이 화면에서 볼 것이지
+     학생에게 나가는 시험지에 찍힐 것이 아니다 — 게다가 머리글 바로 위에 온다. */
+  #examPaperResult > .hint { display: none !important; }
+  /* 머리글은 그 부(部)의 첫 쪽에만 나온다 — 시험지 표지 자리다 */
+  .exam-sheet-head { margin-bottom: 6mm; border-color: #000; }
+  .exam-sheet-bar { border-top-color: #000; }
+  .exam-sheet-subject { border-left-color: #000; }
+  .exam-sheet-fill u { border-bottom-color: #000; }
+}
+
 .exam-engine { white-space: nowrap; font-weight: 600; }
 .qz-findline { display: flex; align-items: baseline; gap: 8px; margin: 6px 0; }
 .qz-findko { min-width: 190px; }
