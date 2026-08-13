@@ -2205,7 +2205,10 @@ irrelevant here and copying them wastes the whole output. Read the Korean questi
 - `group`: when one passage serves several questions ("[1-2] 다음 글을 읽고 물음에 답하시오"),
   put that range ("1-2") on EVERY question in it. Otherwise "".
 - `format`: "선다형" for multiple choice (① ② ③ ④ ⑤), "서답형" for anything the student writes.
-- `prompt`: the Korean 발문, copied verbatim, without the leading number. One line.
+- `prompt`: the Korean 발문, without the leading number. ONE line, 60 characters MAX —
+  if the 발문 is longer, keep the beginning and stop there. This field is only a label the
+  teacher reads to recognise the question; a full transcript wastes the output budget that
+  the remaining questions need.
 - `kind`: the closest type from the ALLOWED LIST given in the user message, copied EXACTLY.
   Use "" when nothing on the list is close.
   The list has three groups (객관식 / 주관식 / 워크북). Korean 내신 서답형 — 영작, 우리말
@@ -2316,16 +2319,33 @@ def call_gemini_exam_scan(files, api_key, model):
             # 분류 작업이라 낮은 온도가 맞다. 0으로 두지 않는 이유는 OCR과 같다 —
             # 결정적 디코딩이 RECITATION 차단을 부른다.
             "temperature": 0.15,
-            "maxOutputTokens": 16384,
+            # 16384였는데 7쪽(약 30문항)짜리 시험지가 여기서 잘렸다.
+            # 한 문항이 no·group·format·prompt(발문)·kind·fit·note를 다 싣고, 한글은
+            # 토큰을 많이 먹는다. 게다가 쪽 수 상한은 EXAM_MAX_PAGES(16쪽)이라 이 칸이
+            # 절반에도 못 미쳤다. 다른 무거운 호출과 같은 값으로 올려 상한을 맞춘다.
+            "maxOutputTokens": 65536,
             "responseMimeType": "application/json",
             "responseSchema": EXAM_SCAN_SCHEMA,
         },
     }
+    # salvage=True — 그래도 잘리면 통째로 버리지 않고 읽어 낸 문항까지 살린다.
+    # 30문항 중 25문항이라도 표가 나오는 편이, 아무것도 없이 "쪽을 나눠 올리세요"보다
+    # 낫다. 몇 문항까지 읽었는지는 아래에서 note로 알린다.
     result = _gemini_json(
         payload, api_key, model,
         "시험지의 문항이 너무 많아 분석하다가 잘렸습니다. 쪽을 나눠 올려 주세요.",
+        salvage=True,
     )
-    return normalize_exam_scan(result)
+    scan = normalize_exam_scan(result)
+    if result.get("_truncated"):
+        last = (scan["questions"][-1]["no"] if scan["questions"] else "").strip()
+        cut = (
+            f"시험지가 길어 분석이 중간에 끊겼습니다 — 문항 {len(scan['questions'])}개까지 "
+            + (f"읽었습니다(마지막 {last}번). " if last else "읽었습니다. ")
+            + "뒤쪽 문항까지 넣으려면 쪽을 나눠 두 번에 올려 주세요."
+        )
+        scan["note"] = f"{scan['note']} / {cut}" if scan["note"] else cut
+    return scan
 
 
 _EXAM_FITS = ("같음", "비슷함", "없음")
@@ -3733,7 +3753,49 @@ def _gemini_call_with_retry(data, api_key, model):
         raise RuntimeError(f"네트워크 오류: {e.reason}")
 
 
-def _extract_gemini_json(body, trunc_msg):
+def _repair_truncated_json(text):
+    """출력이 잘려 끊긴 JSON에서 '온전히 끝난 데까지'만 살려 낸다.
+
+    쓰는 곳은 기출 시험지 유형 분석 하나뿐이다(salvage=True). 거기서는 30문항 중
+    25문항이라도 표가 나오는 편이, 아무것도 못 보고 다시 올리는 것보다 낫기 때문이다.
+    분석본·문제 제작에는 쓰지 않는다 — 반쪽짜리 결과물이 성공한 척 나가면 안 된다.
+
+    되살릴 수 있는 지점은 '배열 안의 객체 하나가 막 닫힌 자리'다. 거기서 자르고 열려
+    있는 괄호를 닫으면 그때까지 읽은 항목이 그대로 남는다. 못 살리면 None."""
+    s = (text or "").strip()
+    stack = []          # 지금 열려 있는 괄호들
+    in_str = esc = False
+    cut = None          # 자를 위치
+    cut_stack = None    # 그 위치에서 닫아야 할 괄호들
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+            # 배열 안의 객체가 닫힌 자리만 후보로 삼는다(맨 바깥 객체는 제외)
+            if ch == "}" and len(stack) >= 2 and stack[-1] == "[":
+                cut, cut_stack = i + 1, list(stack)
+    if cut is None:
+        return None
+    tail = "".join("]" if b == "[" else "}" for b in reversed(cut_stack))
+    try:
+        return json.loads(s[:cut] + tail)
+    except json.JSONDecodeError:
+        return None
+
+
+def _extract_gemini_json(body, trunc_msg, salvage=False):
     """Gemini 응답 바디에서 텍스트를 뽑아 JSON으로 파싱한다.
     안전필터·빈응답·MAX_TOKENS 잘림 등은 한국어 RuntimeError로 변환한다."""
     feedback = body.get("promptFeedback", {})
@@ -3771,6 +3833,11 @@ def _extract_gemini_json(body, trunc_msg):
     try:
         result = json.loads(text)
     except json.JSONDecodeError:
+        if salvage:
+            saved = _repair_truncated_json(text)
+            if isinstance(saved, dict):
+                saved["_truncated"] = True   # 호출부가 '어디까지 읽었는지' 알릴 수 있게
+                return saved
         if finish == "MAX_TOKENS":
             raise RuntimeError(trunc_msg)
         raise RuntimeError("모델 응답을 JSON으로 해석하지 못했습니다.")
@@ -3779,7 +3846,7 @@ def _extract_gemini_json(body, trunc_msg):
     return result
 
 
-def _gemini_json(payload, api_key, model, trunc_msg):
+def _gemini_json(payload, api_key, model, trunc_msg, salvage=False):
     """페이로드를 보내고 JSON 결과를 받는다 (모든 Gemini 호출의 공통 입구).
 
     RECITATION으로 막히면 표본추출 설정을 바꿔 다시 시도한다. 이 차단은 '가장 그럴듯한
@@ -3795,7 +3862,7 @@ def _gemini_json(payload, api_key, model, trunc_msg):
         data = json.dumps(payload).encode("utf-8")
         body = _gemini_call_with_retry(data, api_key, model)
         try:
-            return _extract_gemini_json(body, trunc_msg)
+            return _extract_gemini_json(body, trunc_msg, salvage)
         except Recitation as e:
             last = e
             continue
