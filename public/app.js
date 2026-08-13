@@ -4630,24 +4630,72 @@ function renderExamScan(scan) {
   openExamPaperPanel(scan);
 }
 
+/* 한 번에 보낼 쪽 수.
+   7쪽을 한 요청으로 보냈더니 배포 프록시가 응답을 기다리다 끊어(HTTP 502) 분석이
+   통째로 날아갔다. 쪽당 15~20초쯤 걸리는데 프록시 한계가 약 100초라, 한 요청이
+   3쪽을 넘지 않게 잘라 여러 번 부른다. 총 시간은 비슷하지만 각 요청이 짧아
+   중간에서 끊기지 않고, 한 묶음이 실패해도 나머지는 살아남는다. */
+const EXAM_SCAN_BATCH = 3;
+
 async function runExamScan() {
   if (!examPages.length || examBusy) return;
   examErrorEl.textContent = "";
+  const batches = [];
+  for (let i = 0; i < examPages.length; i += EXAM_SCAN_BATCH) {
+    batches.push({ from: i + 1, files: examPages.slice(i, i + EXAM_SCAN_BATCH) });
+  }
   if (PRICING && PRICING.examScan > 0) {
-    if (!costConfirmed(PRICING.examScan, `기출 시험지 ${examPages.length}쪽을 분석합니다.`)) return;
+    // 나눠 부르면 호출 수만큼 값이 매겨진다 — 확인 문구에 실제 총액을 적는다
+    const won = PRICING.examScan * batches.length;
+    if (!costConfirmed(won, `기출 시험지 ${examPages.length}쪽을 ${batches.length}번에 나눠 분석합니다.`)) return;
   }
   examBusy = true;
   examBtn.disabled = true;
   examLoadingEl.classList.add("on");
-  examLoadingTextEl.textContent =
-    `AI가 시험지 ${examPages.length}쪽을 읽고 있습니다… (1~3분 걸립니다)`;
   examResultEl.innerHTML = "";
-  try {
-    const scan = await postJson("/api/examscan", { files: examPages }, "시험지 분석에 실패했습니다.");
-    renderExamScan(scan);
+
+  const questions = [];
+  const seenNo = new Set();   // 쪽 경계에 걸친 문항이 두 묶음에서 겹쳐 오는 것을 막는다
+  const notes = [];
+  const failed = [];
+  let title = "";
+
+  for (let b = 0; b < batches.length; b++) {
+    const { from, files } = batches[b];
+    const to = from + files.length - 1;
+    examLoadingTextEl.textContent =
+      batches.length > 1
+        ? `AI가 시험지를 읽고 있습니다… (${b + 1}/${batches.length}) — ${from}~${to}쪽`
+        : `AI가 시험지 ${examPages.length}쪽을 읽고 있습니다… (1~3분 걸립니다)`;
+    try {
+      const scan = await postJson(
+        "/api/examscan",
+        { files, pageFrom: from, pageTotal: examPages.length },
+        "시험지 분석에 실패했습니다."
+      );
+      if (!title && scan.title) title = scan.title;
+      if (scan.note) notes.push(scan.note);
+      for (const q of scan.questions || []) {
+        const key = String(q.no || "").trim();
+        if (key && seenNo.has(key)) continue;   // 같은 번호가 또 오면 먼저 읽은 것을 남긴다
+        if (key) seenNo.add(key);
+        questions.push(q);
+      }
+    } catch (err) {
+      failed.push(`${from}~${to}쪽: ${err.message || String(err)}`);
+      // 한도 소진은 기다려도 안 풀린다 — 남은 묶음을 시도하지 않는다
+      if (isQuotaError(err)) break;
+    }
+  }
+
+  if (questions.length) {
+    if (failed.length) {
+      notes.push(`읽지 못한 쪽이 있습니다 — ${failed.join(" / ")}. 그 쪽의 문항은 빠져 있습니다.`);
+    }
+    renderExamScan({ title, questions, note: notes.join(" / ") });
     refreshTokenDisplay();  // 분석에 요금이 나갔으므로 잔액 표시만 갱신(화면은 그대로)
-  } catch (err) {
-    examErrorEl.textContent = err.message || String(err);
+  } else {
+    examErrorEl.textContent = failed.join(" / ") || "시험지에서 문항을 찾지 못했습니다.";
   }
   examLoadingEl.classList.remove("on");
   examBusy = false;

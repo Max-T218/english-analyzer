@@ -2279,7 +2279,7 @@ practice sheet believing it matches their school's exam when it does not.
 Return valid JSON only."""
 
 
-def build_exam_scan_user_prompt(page_count):
+def build_exam_scan_user_prompt(page_count, page_from=0, page_total=0):
     """고를 수 있는 이름을 세 갈래로 나눠 보여 준다.
 
     워크북까지 넣는 이유: 학교 시험의 서답형(영작·해석·동사형·어법 고쳐 쓰기)은 객관식·
@@ -2294,8 +2294,19 @@ def build_exam_scan_user_prompt(page_count):
         for t in QUIZ_TYPE_LABELS if t not in MCQ_ONLY_TYPES
     ]
     wb = [f"{name} — {desc}" for name, desc in WORKBOOK_STAGE_LABELS.values()]
+    # 쪽을 나눠 여러 번 부를 때는 '전체 중 몇 쪽째'인지 알려 준다.
+    # 이 말이 없으면 모델이 앞쪽 문항을 못 봤다는 이유로 번호를 1부터 다시 매기거나,
+    # 잘린 지문을 보고 '쪽이 빠졌다'는 note를 남긴다.
+    if page_total and page_from:
+        head = (
+            f"전체 {page_total}쪽짜리 시험지 중 {page_from}~{page_from + page_count - 1}쪽입니다. "
+            "여기 보이는 문항만, 시험지에 인쇄된 번호 그대로 분류하세요. "
+            "앞뒤 쪽은 따로 처리하므로 빠진 쪽을 걱정하거나 번호를 새로 매기지 마세요."
+        )
+    else:
+        head = f"시험지 {page_count}쪽입니다. 모든 쪽의 모든 문항을 빠짐없이 분류하세요."
     return "\n".join([
-        f"시험지 {page_count}쪽입니다. 모든 쪽의 모든 문항을 빠짐없이 분류하세요.",
+        head,
         "",
         "ALLOWED LIST — kind 에는 아래 이름 중 하나를 그대로 쓰고, 해당 없으면 빈 문자열.",
         "",
@@ -2312,7 +2323,7 @@ def build_exam_scan_user_prompt(page_count):
     ])
 
 
-def call_gemini_exam_scan(files, api_key, model):
+def call_gemini_exam_scan(files, api_key, model, page_from=0, page_total=0):
     """시험지 쪽 그림 여러 장을 한 번에 보고 문항별 유형을 돌려준다.
     files: [{"mime": ..., "data": "<base64>"}] — 화면이 PDF에서 꺼내 축소해 보낸다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -2345,7 +2356,7 @@ def call_gemini_exam_scan(files, api_key, model):
     if not parts:
         raise RuntimeError("분석할 시험지를 올려 주세요.")
 
-    parts.append({"text": build_exam_scan_user_prompt(len(parts))})
+    parts.append({"text": build_exam_scan_user_prompt(len(parts), page_from, page_total)})
     payload = {
         "systemInstruction": {"parts": [{"text": EXAM_SCAN_SYSTEM_PROMPT}]},
         "contents": [{"role": "user", "parts": parts}],
@@ -5522,8 +5533,15 @@ class Handler(BaseHTTPRequestHandler):
             # 이후 만드는 문제가 통째로 어긋난다. 시험지 1벌에 한 번만 부르는 호출이라
             # Pro를 써도 총원가가 크게 늘지 않는다.
             model = MODEL_PRO
+            # 화면이 쪽을 나눠 여러 번 부를 때, 이번 묶음이 전체 중 몇 쪽째인지.
+            # 한 번에 다 보내면 배포 프록시(약 100초)가 응답을 기다리다 끊어 버린다.
             try:
-                scan = call_gemini_exam_scan(files, api_key, model)
+                page_from = max(0, int(req.get("pageFrom") or 0))
+                page_total = max(0, int(req.get("pageTotal") or 0))
+            except (TypeError, ValueError):
+                page_from = page_total = 0
+            try:
+                scan = call_gemini_exam_scan(files, api_key, model, page_from, page_total)
                 charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
                 self._send_json(scan)
             except NeedsPro as e:
