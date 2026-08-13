@@ -263,6 +263,10 @@ SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+# 메일 설정이 없을 때 인증코드를 서버 로그에 찍고 가입을 계속 진행할지.
+# 로컬에서 메일 없이 회원가입 흐름을 시험할 때만 켠다 — 실서비스에서 켜면
+# '메일을 못 보냈는데 보냈다고 말하는' 상태가 되고, 인증코드가 로그에 남는다.
+SIGNUP_CODE_TO_LOG = os.environ.get("SIGNUP_CODE_TO_LOG", "").strip().lower() in ("1", "true", "yes")
 VERIFY_CODE_TTL = 15 * 60    # 인증코드 유효 시간(초)
 VERIFY_MAX_ATTEMPTS = 5      # 인증코드 오답 허용 횟수 — 넘으면 처음부터 다시 가입
 SIGNUP_RESEND_COOLDOWN = 60  # 같은 이메일로 인증코드를 다시 보낼 수 있는 최소 간격(초)
@@ -287,14 +291,34 @@ def _gen_verify_code():
     return "".join(secrets.choice("0123456789") for _ in range(6))
 
 
+class MailNotConfigured(RuntimeError):
+    """인증메일을 보낼 수단이 없다 — 가입을 진행시키면 안 된다."""
+
+
 def send_verification_email(to_email, code):
-    """인증코드를 메일로 보낸다. SMTP 설정이 없으면(로컬 개발 등) 메일 대신
-    서버 로그에 코드를 남기고 넘어간다 — 관리자가 콘솔에서 코드를 보고 직접
-    전달할 수 있고, 실제 메일 없이도 회원가입 흐름을 테스트할 수 있다."""
+    """인증코드를 메일로 보낸다.
+
+    예전에는 SMTP 설정이 없으면 코드를 서버 로그에 찍고 '보낸 것처럼' 넘어갔다.
+    로컬에서 메일 없이 흐름을 시험하려던 배려였는데, 실제 서비스에서 그 설정이
+    빠져 있는 바람에 이런 일이 벌어졌다 —
+      화면은 "인증코드를 보냈습니다. 메일함을 확인하세요"라고 말하고,
+      메일은 나가지 않고, 선생님은 오지 않는 메일을 기다리다 가입을 포기하고,
+      가입 완료 단계에서만 만들어지는 users 문서가 끝내 생기지 않아
+      회원 목록에는 구글 로그인 회원만 남았다. 아무 데도 오류가 안 찍히니
+      운영자도 몰랐다.
+    그래서 기본 동작을 '분명히 실패'로 바꾼다. 로그로 흘려 보내는 예전 동작은
+    SIGNUP_CODE_TO_LOG를 켰을 때만 쓴다(로컬 시험용 — 실서비스에는 켜지 말 것)."""
     if not SMTP_USER or not SMTP_PASSWORD:
-        print(f"[signup] SMTP 설정이 없어 메일을 보내지 못했습니다. "
-              f"{to_email} 인증코드: {code}", file=sys.stderr)
-        return
+        if SIGNUP_CODE_TO_LOG:
+            print(f"[signup] SMTP 설정이 없어 메일 대신 로그로 남깁니다. "
+                  f"{to_email} 인증코드: {code}", file=sys.stderr)
+            return
+        print(f"[signup] SMTP_USER/SMTP_PASSWORD가 없어 {to_email} 에게 "
+              f"인증메일을 보내지 못했습니다.", file=sys.stderr)
+        raise MailNotConfigured(
+            "지금은 이메일로 가입할 수 없습니다 (인증메일 발송이 설정되지 않았습니다). "
+            "구글 계정으로 로그인해 주시거나, 잠시 후 다시 시도해 주세요."
+        )
     msg = EmailMessage()
     msg["Subject"] = "[English Lab] 이메일 인증코드"
     msg["From"] = SMTP_USER
@@ -361,7 +385,17 @@ def start_signup(email, password, name):
         "created_at": _now_iso(),
         "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=VERIFY_CODE_TTL)).isoformat(),
     })
-    send_verification_email(email, code)
+    try:
+        send_verification_email(email, code)
+    except Exception:
+        # 코드를 못 보냈으면 시도 자체를 없던 일로 되돌린다.
+        # 안 그러면 이 문서가 남아 재시도 쿨다운(SIGNUP_RESEND_COOLDOWN)에 걸려,
+        # 메일도 못 받고 다시 눌러 볼 수도 없는 상태가 된다.
+        try:
+            ref.delete()
+        except Exception:
+            pass
+        raise
 
 
 def complete_signup(email, code):
@@ -4584,6 +4618,29 @@ def list_all_users():
     return rows
 
 
+def list_pending_signups():
+    """가입을 시작했지만 아직 인증코드를 넣지 않은 사람들 — 이메일·이름·시작 시각만.
+
+    회원 목록에는 users 문서가 있는 사람만 나온다. 인증을 못 끝내면 문서가 생기지
+    않으므로, 메일이 안 나가는 상황에서는 '가입하려던 사람이 있었다는 사실' 자체가
+    화면 어디에도 남지 않는다. 실제로 그렇게 이메일 가입이 통째로 막혀 있는데도
+    한동안 아무도 몰랐다. 그래서 관리자 화면에 함께 띄운다.
+
+    인증코드와 비밀번호 해시는 절대 내보내지 않는다 — 코드가 새면 남의 계정을
+    대신 만들어 버릴 수 있다."""
+    _require_db()
+    rows = []
+    for doc in DB.collection("pending_signups").stream():
+        d = doc.to_dict() or {}
+        rows.append({
+            "email": d.get("email", "") or doc.id,
+            "name": d.get("name", ""),
+            "createdAt": d.get("created_at", ""),
+        })
+    rows.sort(key=lambda r: r["createdAt"], reverse=True)
+    return rows
+
+
 def recharge_user_krw(user_id, amount, kind="grant", label=None):
     """관리자가 임의로 잔액을 더하거나(양수) 뺀다(음수). 계정이 실제로 있는지는
     트랜잭션 안에서 확인한다.
@@ -4838,7 +4895,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
                 return
             try:
-                self._send_json({"users": list_all_users()})
+                # pending은 곁들이라, 실패해도 회원 목록까지 같이 죽이지는 않는다
+                try:
+                    pending = list_pending_signups()
+                except Exception:
+                    pending = []
+                self._send_json({
+                    "users": list_all_users(),
+                    "pending": pending,
+                    "mailReady": bool(SMTP_USER and SMTP_PASSWORD),
+                })
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
             return
@@ -5082,6 +5148,10 @@ class Handler(BaseHTTPRequestHandler):
                 start_signup(email, password, name)
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
+                return
+            except MailNotConfigured as e:
+                # 사용자 잘못이 아니다 — 서버가 아직 메일을 보낼 수 없는 상태다.
+                self._send_json({"error": str(e), "code": "mail_off"}, 503)
                 return
             except Exception as e:
                 self._send_json({"error": f"회원가입에 실패했습니다: {e}"}, 500)

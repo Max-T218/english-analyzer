@@ -40,6 +40,12 @@
     </div>
 
     <div class="error" id="adminListError"></div>
+    <!-- 가입을 시작했지만 인증을 끝내지 못한 사람들.
+         회원 목록에는 안 나오므로(users 문서가 없다) 여기서만 보인다. -->
+    <div class="panel" id="pendingPanel" hidden style="border-color:#d9a441; background:rgba(217,164,65,.08);">
+      <b id="pendingTitle" style="font-size:13px;"></b>
+      <div id="pendingList" style="margin-top:8px; font-size:12.5px; line-height:1.9;"></div>
+    </div>
 
     <div class="panel" style="overflow-x:auto;">
       <table id="userTable" style="width:100%; border-collapse:collapse; font-size:13.5px;">
@@ -183,6 +189,7 @@ async function loadUsers() {
     currentUsers = data.users || [];
     lastLoadedAt = new Date();
     renderUsers();
+    renderPending(data.pending || [], data.mailReady !== false);
   } catch (err) {
     // 세션이 만료됐으면 로그인 화면으로 되돌린다
     if (/로그인/.test(err.message || "")) {
@@ -203,6 +210,30 @@ function renderSummary() {
     : "";
   $("adminSummary").textContent =
     `회원 ${currentUsers.length}명 · 전체 잔액 ${totalKrw.toLocaleString()}원${at}`;
+}
+
+/* 가입하다 멈춘 사람들 — 이메일 인증을 끝내지 못해 회원 문서가 없는 경우.
+   메일 발송이 꺼져 있으면(mailReady=false) 그것이 원인이므로 먼저 알린다. */
+function renderPending(pending, mailReady) {
+  const panel = $("pendingPanel");
+  if (!pending.length && mailReady) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  $("pendingTitle").textContent = mailReady
+    ? `⏳ 가입 진행 중(인증 대기) ${pending.length}명`
+    : `⚠️ 인증메일 발송이 꺼져 있습니다 — 이메일 가입이 되지 않습니다`
+      + (pending.length ? ` (대기 ${pending.length}명)` : "");
+  $("pendingList").innerHTML =
+    (mailReady
+      ? ""
+      : `<div style="margin-bottom:8px;">서버에 SMTP_USER·SMTP_PASSWORD가 없어 인증코드를 보낼 수 없습니다.
+         이 상태에서는 이메일로 가입할 수 없고, 구글 로그인만 됩니다.</div>`) +
+    (pending.length
+      ? pending.map((p) => `<div>${esc(p.email)}${p.name ? " (" + esc(p.name) + ")" : ""}
+           <span style="color:var(--ink-soft);">· ${esc(fmtDate(p.createdAt))} 시작</span></div>`).join("")
+      : "");
 }
 
 function renderUsers() {

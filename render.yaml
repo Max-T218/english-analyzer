@@ -1,6 +1,6 @@
 # Render 배포 설정 (Blueprint) — 서비스를 '새로 만들 때' 쓰는 설계도입니다.
 #
-# ⚠️ 지금 돌아가는 서비스(ara-analyzer)는 이 파일이 아니라 대시보드에서 직접 만들어졌고,
+# ⚠️ 지금 돌아가는 서비스(english-analyzer-cy35)는 이 파일이 아니라 대시보드에서 직접 만들어졌고,
 #    그래서 아래 envVars는 그 서비스에 적용되지 않습니다. 이 파일을 고쳐도 사이트의
 #    설정은 바뀌지 않습니다. 실제 설정을 바꾸려면 Render 대시보드 → Environment 탭에
 #    직접 넣어야 합니다.
@@ -14,7 +14,7 @@
 #    둡니다.
 services:
   - type: web
-    name: ara-analyzer
+    name: english-analyzer-cy35
     runtime: python
     plan: free
     buildCommand: "pip install -r requirements.txt"
