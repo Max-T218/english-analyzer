@@ -336,9 +336,18 @@
       <label>영어 지문 <span id="passageCount"></span></label>
       <span class="hint">모든 탭이 이 지문을 함께 사용합니다</span>
     </div>
-    <!-- 목표 어법 — 지문과 함께 다니는 설정이라 지문칸 옆에 둔다.
+    <div id="passageList"></div>
+    <div class="passage-add-row">
+      <button type="button" class="btn ghost small" id="addPassageBtn">＋ 지문 추가</button>
+      <button type="button" class="btn ghost small" id="ocrBtn">📷 사진에서 가져오기</button>
+      <button type="button" class="btn ghost small" id="pdfBtn">📄 PDF에서 가져오기</button>
+      <button type="button" class="btn ghost small" id="passageSaveBtn">💾 지문 저장</button>
+      <button type="button" class="btn ghost small danger" id="clearPassagesBtn">🗑️ 지문 전체 지우기</button>
+      <span class="passage-max-note" id="passageMaxNote" role="status" aria-live="polite"></span>
+    </div>
+    <!-- 목표 어법 — 지문과 함께 다니는 설정이라 이 패널에 둔다(지문칸 아래).
          지문 분석(주황 표시)과 어법 계열 문제 출제가 같은 값을 쓴다. -->
-    <div class="row" style="margin-top:0">
+    <div class="row" style="margin-top:14px">
       <div class="field" style="flex:1 1 100%">
         <label for="targetGrammar">목표 어법 (선택)</label>
         <input type="text" id="targetGrammar" placeholder="예: 분사구문, 관계대명사, 가정법">
@@ -348,15 +357,6 @@
           정답 자리를 이 문법으로 냅니다. 쉼표로 여럿 적으면 문항마다 나눠 씁니다.
         </div>
       </div>
-    </div>
-    <div id="passageList"></div>
-    <div class="passage-add-row">
-      <button type="button" class="btn ghost small" id="addPassageBtn">＋ 지문 추가</button>
-      <button type="button" class="btn ghost small" id="ocrBtn">📷 사진에서 가져오기</button>
-      <button type="button" class="btn ghost small" id="pdfBtn">📄 PDF에서 가져오기</button>
-      <button type="button" class="btn ghost small" id="passageSaveBtn">💾 지문 저장</button>
-      <button type="button" class="btn ghost small danger" id="clearPassagesBtn">🗑️ 지문 전체 지우기</button>
-      <span class="passage-max-note" id="passageMaxNote" role="status" aria-live="polite"></span>
     </div>
     <input type="file" id="ocrFile" accept="image/*" multiple hidden>
     <input type="file" id="pdfFile" accept="application/pdf" multiple hidden>
@@ -662,6 +662,11 @@
         <span class="passage-max-note" id="examPassageMaxNote" role="status" aria-live="polite"></span>
       </div>
       <input type="file" id="examPdfFile" accept="application/pdf" multiple hidden>
+      <div class="ocr-hint">
+        교과서·모의고사 <b>PDF</b>를 이 칸에 <b>끌어다 놓아도</b> 됩니다 —
+        <b>문단(또는 문항)마다 지문 1개</b>로 나눠 한 번에 채웁니다.
+        옮긴 뒤에는 <b>오타가 없는지 꼭 확인하세요.</b>
+      </div>
       <div class="ocr-status" id="examPassageStatus" role="status" aria-live="polite" hidden></div>
 
       <!-- 목표 어법 — 이 탭은 지문칸을 따로 쓰므로 목표 어법도 따로 받는다.

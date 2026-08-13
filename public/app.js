@@ -1638,31 +1638,50 @@ examPdfFileEl.addEventListener("change", () => {
   }
 });
 
-// 지문 패널에 사진·PDF를 끌어다 놓기
-const passagePanelEl = document.querySelector(".passage-panel");
-["dragenter", "dragover"].forEach((ev) =>
-  passagePanelEl.addEventListener(ev, (e) => {
-    if (![...((e.dataTransfer && e.dataTransfer.types) || [])].includes("Files")) return;
+/* 지문 칸에 파일을 끌어다 놓기.
+   공용 지문 패널과 시험지 제작 탭의 '시험 범위 지문'이 같은 배선을 나눠 쓴다 —
+   버튼(📄 PDF에서 가져오기)은 두 곳 다 있는데 끌어다 놓기는 공용 칸에만 있어서,
+   같은 칸인 줄 알고 놓았다가 아무 일도 안 일어나는 일이 있었다.
+   ocr 옵션: 사진(OCR)은 공용 칸에만 있다. runOcr이 공용 지문칸을 직접 채우도록
+   되어 있어, 시험 범위 칸에 사진을 놓으면 엉뚱한 칸이 채워지기 때문이다.
+   그래서 거기서는 조용히 무시하지 않고 어디에 놓아야 하는지 알려 준다. */
+function wirePassageDrop(panelEl, mgr, statusFn, opts) {
+  if (!panelEl) return;
+  const withOcr = !!(opts && opts.ocr);
+  ["dragenter", "dragover"].forEach((ev) =>
+    panelEl.addEventListener(ev, (e) => {
+      if (![...((e.dataTransfer && e.dataTransfer.types) || [])].includes("Files")) return;
+      e.preventDefault();
+      panelEl.classList.add("dropping");
+    })
+  );
+  ["dragleave", "drop"].forEach((ev) =>
+    panelEl.addEventListener(ev, (e) => {
+      if (ev === "dragleave" && panelEl.contains(e.relatedTarget)) return;
+      panelEl.classList.remove("dropping");
+    })
+  );
+  panelEl.addEventListener("drop", (e) => {
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || !files.length) return;
     e.preventDefault();
-    passagePanelEl.classList.add("dropping");
-  })
-);
-["dragleave", "drop"].forEach((ev) =>
-  passagePanelEl.addEventListener(ev, (e) => {
-    if (ev === "dragleave" && passagePanelEl.contains(e.relatedTarget)) return;
-    passagePanelEl.classList.remove("dropping");
-  })
-);
-passagePanelEl.addEventListener("drop", (e) => {
-  const files = e.dataTransfer && e.dataTransfer.files;
-  if (!files || !files.length) return;
-  e.preventDefault();
-  // 사진과 PDF는 가는 길이 다르다 — 섞어서 놓아도 각각 제 길로 보낸다
-  const pdfs = [...files].filter(isPdf);
-  const shots = [...files].filter((f) => !isPdf(f));
-  if (pdfs.length) runPdfImport(pdfs, passageMgr, ocrStatus);
-  if (shots.length) runOcr(shots);
-});
+    // 사진과 PDF는 가는 길이 다르다 — 섞어서 놓아도 각각 제 길로 보낸다
+    const pdfs = [...files].filter(isPdf);
+    const shots = [...files].filter((f) => !isPdf(f));
+    if (pdfs.length) runPdfImport(pdfs, mgr, statusFn);
+    if (!shots.length) return;
+    if (withOcr) runOcr(shots);
+    else
+      statusFn(
+        "여기에는 <b>PDF</b>만 놓을 수 있습니다. 사진에서 지문을 가져오려면 " +
+          "위쪽 <b>영어 지문</b> 칸에 놓아 주세요.",
+        "warn"
+      );
+  });
+}
+
+const passagePanelEl = document.querySelector(".passage-panel");
+wirePassageDrop(passagePanelEl, passageMgr, ocrStatus, { ocr: true });
 
 // ── 탭 전환 ──
 const tabBtns = [...document.querySelectorAll(".tab-btn")];
@@ -4876,6 +4895,9 @@ const examPaperMgr = createPassageManager(
   EXAM_PAPER_MAX_PASSAGES
 );
 examPaperMgr.addRow(false);
+// 공용 지문칸과 똑같이 PDF를 끌어다 놓을 수 있게 한다.
+// 대상은 패널 전체다 — 지문칸만 받으면 칸이 하나뿐일 때 놓을 자리가 너무 좁다.
+wirePassageDrop(examPaperPanelEl, examPaperMgr, examPassageStatus);
 
 $("examClearPassagesBtn").addEventListener("click", () => {
   if (confirm("입력한 시험 범위 지문을 모두 지우시겠습니까?\n되돌릴 수 없습니다.")) {
