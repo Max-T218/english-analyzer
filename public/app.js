@@ -419,15 +419,22 @@ let currentKrw = null;
 // (네트워크 문제 등) 확인 없이 그냥 진행시킨다 — 비용 확인은 편의 기능이지,
 // 이것 때문에 정작 필요한 기능 자체가 막히면 안 된다. krw가 0이면(무료 기능이거나
 // 지문이 없으면) 그냥 진행한다.
-function costConfirmed(krw, label) {
-  if (PRICING === null) return true;
-  if (!Number.isFinite(krw) || krw <= 0) return true;
-  const balanceLine = Number.isFinite(currentKrw)
-    ? `지금 잔액: ${currentKrw.toLocaleString()}원 → 진행 후 약 ${(currentKrw - krw).toLocaleString()}원\n`
-    : "";
-  return confirm(
-    `${label}\n\n예상 비용: ${krw.toLocaleString()}원\n${balanceLine}\n진행하시겠습니까?`
-  );
+// jobCount를 넘기면 '지문이 너무 많다'는 안내도 같은 창에 함께 넣는다 — PDF에서 한
+// 번에 수십 개를 담을 수 있게 되면서, 담은 줄도 모르고 실행해 몇십 분을 기다리는 일이
+// 생길 수 있기 때문이다. 확인창을 두 번 띄우지 않으려고 비용 안내와 한 창에 합친다.
+function costConfirmed(krw, label, jobCount) {
+  const manyLine =
+    Number.isFinite(jobCount) && jobCount > MANY_PASSAGES_WARN
+      ? `지문 ${jobCount}개를 하나씩 차례로 처리합니다 — 시간이 꽤 걸립니다.\n`
+      : "";
+  const priced = PRICING !== null && Number.isFinite(krw) && krw > 0;
+  if (!manyLine && !priced) return true;
+  const costLine = priced ? `예상 비용: ${krw.toLocaleString()}원\n` : "";
+  const balanceLine =
+    priced && Number.isFinite(currentKrw)
+      ? `지금 잔액: ${currentKrw.toLocaleString()}원 → 진행 후 약 ${(currentKrw - krw).toLocaleString()}원\n`
+      : "";
+  return confirm(`${label}\n\n${manyLine}${costLine}${balanceLine}\n진행하시겠습니까?`);
 }
 
 // 탭마다 자신을 등록해 두는 저장/불러오기 레지스트리. 각 항목:
@@ -778,12 +785,20 @@ function updatePassageCount(ta) {
 // 한 번에 넣을 수 있는 지문 수 상한.
 // API 사용량 한도 때문이 아니라(하루 한도는 훨씬 넉넉하다) 지문을 하나씩 순차로
 // 처리해서 개수만큼 시간이 늘고, 오래 돌수록 중간에 모델 과부하를 만날 확률이
-// 올라가기 때문이다. 지문 10개면 분석에 대략 3~10분(꼼꼼 검토 시 2배).
+// 올라가기 때문이다.
 //
-// 시험지 제작 탭만 이 값을 쓰지 않고 EXAM_PAPER_MAX_PASSAGES(40)를 쓴다 — 그쪽은
-// 지문이 '곱해지는 축'이 아니라 '골라 쓰는 풀'이라 개수가 늘어도 문항 수(=요금·시간)가
-// 늘지 않기 때문이다. 여기 10개 탭들은 지문마다 고른 유형을 전부 만들므로 그대로 둔다.
-const MAX_PASSAGES = 10;
+// 예전에는 10개였다. PDF에서 지문을 꺼내면(📄 PDF에서 가져오기) 모의고사 한 부가
+// 25개, 시험 범위 교과서까지 더하면 30개를 넘는데, 10개에서 잘리면 나머지를 다시
+// 손으로 넣어야 해서 자동으로 꺼낸 의미가 사라진다. 그래서 시험지 제작 탭과 같은
+// 40개로 맞췄다.
+//
+// 대신 '넣는 것'과 '한 번에 돌리는 것'은 다르다 — 여기 탭들은 지문마다 고른 유형을
+// 전부 만들므로 시간·요금이 지문 수에 곱해진다. 지문 10개면 분석에 대략 3~10분
+// (꼼꼼 검토 시 2배)이고, 40개면 그 네 배다. 그래서 많이 담긴 상태로 실행할 때는
+// 실행 직전에 한 번 더 알린다(runActiveTab의 안내 참고).
+const MAX_PASSAGES = 40;
+// 이 수를 넘겨 한 번에 실행하려 하면 시간이 얼마나 걸릴지 먼저 알린다.
+const MANY_PASSAGES_WARN = 10;
 
 /* ── 붙여넣은 지문의 문장 번호(❶ ① ➊ …) 자동 제거 ──
    교재·기출 자료를 복사하면 문장마다 원문자 번호가 딸려 온다. 그대로 두면
@@ -1020,16 +1035,20 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
     renumber();
   }
 
-  // 사진에서 옮겨 온 지문을 입력칸에 채운다. 빈 칸부터 쓰고, 없으면 칸을 늘린다.
-  // 사진 1장 = 지문 1개이므로 텍스트 하나가 칸 하나를 차지한다.
+  // 사진·PDF에서 옮겨 온 지문을 입력칸에 채운다. 빈 칸부터 쓰고, 없으면 칸을 늘린다.
+  // 사진 1장 = 지문 1개, PDF 문단(문항) 1개 = 지문 1개이므로 텍스트 하나가 칸 하나를 차지한다.
+  // name을 넘기면 지문 이름칸에 넣는다 — PDF에서 온 '31번', 소제목처럼 어느 지문인지
+  // 한눈에 알려 주는 이름이 있을 때만이고, 없으면 '지문 1, 2 …'가 그대로 쓰인다.
   // 반환: 실제로 채웠으면 true (상한 limit에 걸리면 false)
-  function fillText(raw) {
+  function fillText(raw, name) {
     const text = String(raw || "").trim();
     if (!text) return false;
     let ta = [...listEl.querySelectorAll(".passage-input")].find((t) => !t.value.trim());
     if (!ta) ta = addRow(false);
     if (!ta) return false;   // 지문 칸 상한에 닿음
     ta.value = text;
+    const label = String(name || "").trim();
+    if (label) ta.closest(".passage-item").querySelector(".passage-name").value = label;
     // 글자 수·안내를 직접 입력했을 때와 똑같이 갱신한다
     // (문장번호가 남아 있으면 '번호 지우기' 안내가 자동으로 뜬다)
     ta.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1318,7 +1337,148 @@ ocrFileEl.addEventListener("change", () => {
   if (ocrFileEl.files && ocrFileEl.files.length) runOcr(ocrFileEl.files);
 });
 
-// 지문 패널에 사진을 끌어다 놓기
+/* ══════════════ PDF에서 지문 가져오기 ══════════════
+   사진 OCR과 목적은 같지만 길이 다르다. 교과서 본문·모의고사 PDF는 '글자로 만든'
+   파일이라 글자가 이미 안에 들어 있어, 서버가 그대로 꺼내 문단(문항)마다 지문 하나로
+   나눈다 — AI를 부르지 않으므로 요금이 들지 않고 옮겨 적다 생기는 오타도 없다.
+   시험 범위가 30개를 넘어도 한 번에 담기는 것이 이 기능의 요점이다.
+   규칙으로 못 나누는 자료를 만나면 서버가 canAi로 알려 주고, 그때만 AI에게
+   '지문이 몇째 줄부터 몇째 줄까지인지'를 물어본다(본문은 그대로 원문에서 잘라 쓴다).
+   결과는 입력칸에 채우기만 하고 실행은 사용자가 직접 누른다 — 사진 OCR과 같은 이유다. */
+const pdfBtn = $("pdfBtn");
+const pdfFileEl = $("pdfFile");
+const examPdfBtn = $("examPdfBtn");
+const examPdfFileEl = $("examPdfFile");
+const examPassageStatusEl = $("examPassageStatus");
+
+const PDF_MAX_UPLOAD = 9 * 1024 * 1024; // base64 기준. 서버 상한(10MB)보다 먼저 잡는다
+
+// PDF인지 판정. 끌어다 놓기나 일부 파일 관리자는 type을 비워 주므로 확장자로도 확인한다.
+function isPdf(file) {
+  const type = (file.type || "").toLowerCase();
+  const name = (file.name || "").toLowerCase();
+  return type === "application/pdf" || /\.pdf$/.test(name);
+}
+
+function statusWriter(el) {
+  return (html, tone) => {
+    el.innerHTML = html;
+    el.className = "ocr-status" + (tone ? " " + tone : "");
+    el.hidden = !html;
+  };
+}
+const examPassageStatus = statusWriter(examPassageStatusEl);
+
+let pdfBusy = false;
+
+// mgr: 채울 지문칸 관리자(공용 또는 시험 범위), status: 안내를 그리는 함수
+async function runPdfImport(fileList, mgr, status) {
+  const files = [...fileList].filter(isPdf);
+  if (!files.length) {
+    status("PDF 파일만 올릴 수 있습니다.", "warn");
+    return;
+  }
+  if (pdfBusy) return;
+  pdfBusy = true;
+  [pdfBtn, examPdfBtn].forEach((b) => b && (b.disabled = true));
+
+  let added = 0;
+  let full = false;
+  const notes = [];
+  const fails = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const who = file.name || `PDF ${i + 1}`;
+    status(`<span class="spinner"></span> ${esc(who)} 읽는 중… (${i + 1}/${files.length})`);
+    try {
+      const data = await blobToBase64(file);
+      // 다 올려 놓고 거절당하면 시간만 버린다 — 여기서 먼저 잡는다
+      if (data.length > PDF_MAX_UPLOAD) {
+        fails.push(`${who} — 파일이 너무 큽니다. 쪽을 나눠 올려 주세요.`);
+        continue;
+      }
+      const payload = { file: { mime: "application/pdf", data } };
+      let res = await postJson("/api/pdfsplit", payload, "PDF에서 지문을 꺼내지 못했습니다.");
+      if (!res.passages.length && res.canAi) {
+        // 규칙으로는 못 나눴다. AI에게 경계만 물어본다 — 값이 매겨져 있으면 먼저 확인한다.
+        if (!costConfirmed(PRICING ? PRICING.pdfSplit : 0,
+                           `${who}\n\n문단을 자동으로 나누지 못했습니다. AI로 다시 찾아볼까요?`)) {
+          fails.push(`${who} — 문단을 나누지 못했습니다.`);
+          continue;
+        }
+        status(`<span class="spinner"></span> ${esc(who)} AI가 지문 경계를 찾는 중…`);
+        res = await postJson("/api/pdfsplit", Object.assign({ ai: true }, payload),
+                             "PDF에서 지문을 꺼내지 못했습니다.");
+        notes.push(`${who}: 규칙으로 나누지 못해 AI가 경계를 찾았습니다. 지문이 어디서 끊겼는지 특히 잘 확인하세요.`);
+      }
+      if (!res.passages.length) {
+        fails.push(`${who} — 영어 지문을 찾지 못했습니다.`);
+        continue;
+      }
+      for (const p of res.passages) {
+        if (mgr.fillText(p.text, p.name)) added++;
+        else {
+          full = true;
+          break;
+        }
+      }
+      if (res.note) notes.push(`${who}: ${res.note}`);
+      if (full) {
+        fails.push(`${who} — 지문 칸이 가득 차 나머지는 넣지 못했습니다.`);
+        break;
+      }
+    } catch (err) {
+      const msg = err.message || String(err);
+      fails.push(`${who} — ${msg}`);
+      if (err.code === "no_text") {
+        // 스캔본이다 — 사진 OCR로 가야 한다. 위 안내에 이미 그 길이 적혀 있다.
+        continue;
+      }
+      // 한도 소진은 기다려도 안 풀린다 — 남은 파일을 시도하지 않는다
+      if (isQuotaError(err)) {
+        const left = files.length - (i + 1);
+        if (left > 0) fails.push(`한도 초과로 중단했습니다. 남은 ${left}개는 시도하지 않았습니다.`);
+        break;
+      }
+    }
+  }
+
+  const parts = [];
+  if (added) {
+    parts.push(
+      `<b>지문 ${added}개</b>를 입력칸에 나눠 담았습니다. ` +
+        `PDF와 대조해 <b>문단이 제대로 끊겼는지 확인한 뒤</b> 실행하세요.`
+    );
+  }
+  notes.forEach((n) => parts.push(`⚠️ ${esc(n)}`));
+  fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
+  if (!parts.length) parts.push("옮길 지문을 찾지 못했습니다.");
+  status(parts.join("<br>"), added ? (fails.length ? "warn" : "ok") : "warn");
+
+  pdfBusy = false;
+  [pdfBtn, examPdfBtn].forEach((b) => b && (b.disabled = false));
+  pdfFileEl.value = "";       // 같은 파일을 다시 골라도 change가 나도록 비운다
+  examPdfFileEl.value = "";
+  refreshTokenDisplay();
+}
+
+pdfBtn.addEventListener("click", () => pdfFileEl.click());
+pdfFileEl.addEventListener("change", () => {
+  if (pdfFileEl.files && pdfFileEl.files.length) {
+    runPdfImport(pdfFileEl.files, passageMgr, ocrStatus);
+  }
+});
+// 시험지 제작 탭의 '시험 범위 지문'도 같은 길로 채운다 — 시험 범위 전체를 넣는 칸이라
+// PDF 한 부를 통째로 담는 쓰임이 가장 잦은 곳이다.
+examPdfBtn.addEventListener("click", () => examPdfFileEl.click());
+examPdfFileEl.addEventListener("change", () => {
+  if (examPdfFileEl.files && examPdfFileEl.files.length) {
+    runPdfImport(examPdfFileEl.files, examPaperMgr, examPassageStatus);
+  }
+});
+
+// 지문 패널에 사진·PDF를 끌어다 놓기
 const passagePanelEl = document.querySelector(".passage-panel");
 ["dragenter", "dragover"].forEach((ev) =>
   passagePanelEl.addEventListener(ev, (e) => {
@@ -1337,7 +1497,11 @@ passagePanelEl.addEventListener("drop", (e) => {
   const files = e.dataTransfer && e.dataTransfer.files;
   if (!files || !files.length) return;
   e.preventDefault();
-  runOcr(files);
+  // 사진과 PDF는 가는 길이 다르다 — 섞어서 놓아도 각각 제 길로 보낸다
+  const pdfs = [...files].filter(isPdf);
+  const shots = [...files].filter((f) => !isPdf(f));
+  if (pdfs.length) runPdfImport(pdfs, passageMgr, ocrStatus);
+  if (shots.length) runOcr(shots);
 });
 
 // ── 탭 전환 ──
@@ -1462,7 +1626,10 @@ async function analyze() {
     errorEl.textContent = "분석할 영어 지문을 입력하세요.";
     return;
   }
-  if (!costConfirmed(billableJobCount() * (PRICING ? PRICING.analyze : 0), "지문 분석을 시작합니다.")) {
+  if (!costConfirmed(
+        billableJobCount() * (PRICING ? PRICING.analyze : 0),
+        "지문 분석을 시작합니다.",
+        jobs.length)) {
     return;
   }
 
@@ -2240,7 +2407,7 @@ function setupQuizTab({ prefix, types, footer }) {
         `지문 ${billableJobCount()}개 × ${perSetQuestions}문항` +
         (vars.length > 1 ? ` × 변형 ${vars.length}세트` : "") +
         ` = 총 ${billableJobCount() * perSetQuestions * vars.length}문항`;
-      if (!costConfirmed(cost, label)) return;
+      if (!costConfirmed(cost, label, jobs.length)) return;
     }
 
     btn.disabled = true;
@@ -2952,7 +3119,8 @@ async function generateWorkbook() {
     wbErrorEl.textContent = "포함할 단계를 하나 이상 선택하세요.";
     return;
   }
-  if (!costConfirmed(billableJobCount() * workbookCost(stages.length), "워크북을 만듭니다.")) {
+  if (!costConfirmed(billableJobCount() * workbookCost(stages.length),
+                     "워크북을 만듭니다.", jobs.length)) {
     return;
   }
 

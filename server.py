@@ -12,9 +12,11 @@ Gemini API 키는 관리자(운영자)가 환경변수 GEMINI_API_KEY 하나로�
 실행:  python server.py       (기본 http://localhost:8000)
 """
 
+import base64
 import copy
 import difflib
 import hashlib
+import io
 import json
 import os
 import re
@@ -195,6 +197,11 @@ PRICE_OCR_KRW = int(os.environ.get("PRICE_OCR_KRW", "0"))                  # 사
 # 정하기 전에 먼저 돈을 내는 셈이 된다.
 # OCR·지문 변형과 같은 자리다 — 결과물이 아니라 '만들기 전 단계'는 받지 않는다.
 PRICE_EXAMSCAN_KRW = int(os.environ.get("PRICE_EXAMSCAN_KRW", "0"))
+# PDF에서 지문 꺼내기 — 규칙으로 나누는 길은 Gemini를 부르지 않으므로 값이 붙지
+# 않는다(아래 잔액 확인에서도 0원으로 지나간다). 규칙이 실패해 사용자가 'AI로 다시
+# 시도'를 누른 경우에만 이 값을 매긴다. 그때도 AI는 '지문이 몇째 줄부터 몇째 줄까지인지'
+# 만 답하고 본문은 서버가 원문에서 잘라 쓰므로 호출이 가볍다.
+PRICE_PDFSPLIT_KRW = int(os.environ.get("PRICE_PDFSPLIT_KRW", "0"))
 
 # 객관식 전용 유형 12개 — public/app.js의 MCQ_TYPES와 반드시 같은 목록을 유지한다.
 # 이 집합에 없는 유형은 전부 주관식으로 보고 PRICE_SAQ_KRW를 매긴다(객관식·주관식
@@ -434,6 +441,17 @@ EXAM_MIMES = OCR_MIMES | {"application/pdf"}
 # 상한이 필요한 이유는 크기가 아니라(1600px로 줄이면 쪽당 0.3~0.4MB다) 한 요청에
 # 수십 장이 들어와 Pro 호출이 한없이 길어지는 것을 막기 위해서다.
 EXAM_MAX_PAGES = int(os.environ.get("EXAM_MAX_PAGES", "16"))
+# PDF에서 지문 꺼내기(/api/pdfsplit)에 받는 형식. 여기는 그림이 아니라 PDF 안의
+# '글자층'을 읽으므로 PDF만 받는다.
+PDF_MIME = "application/pdf"
+# 한 번에 읽는 PDF 쪽 수 상한. 모의고사 한 부가 27쪽, 교과서 한 과가 2~5쪽이라
+# 넉넉히 잡았다. 상한을 두는 이유는 크기가 아니라 글자층 해석에 드는 시간이다
+# (실측: 27쪽 2.3초 — 쪽 수에 거의 비례한다).
+PDF_MAX_PAGES = int(os.environ.get("PDF_MAX_PAGES", "80"))
+# 꺼낸 글자가 이 길이를 넘으면 자른다 — AI 보조(경계 찾기)에 통째로 넣기 때문이다.
+PDF_MAX_CHARS = int(os.environ.get("PDF_MAX_CHARS", "200000"))
+# 이보다 짧은 덩어리는 지문이 아니라 제목·안내문 조각으로 본다.
+PDF_MIN_PASSAGE_CHARS = int(os.environ.get("PDF_MIN_PASSAGE_CHARS", "120"))
 
 # 전송 실패 자동 재시도 설정 — 시간이 걸려도 모든 지문을 끝까지 분석(사용자 요청).
 # 상한(포기) 없이 성공할 때까지 재시도하되, 한 번의 대기는 아래 값으로 잘라 반복한다.
@@ -1651,6 +1669,452 @@ def call_gemini_ocr(file, api_key, model, partial=False):
             note or "사진에서 영어 지문을 찾지 못했습니다. 지문이 잘 보이게 다시 찍어 올려 주세요."
         )
     return {"text": text, "note": note}
+
+
+# ══════════════ PDF에서 지문 꺼내기 ══════════════
+# 사진 OCR(위)과 목적은 같지만 방법이 다르다. 여기서 다루는 PDF는 '글자로 만든' 파일이라
+# 글자가 이미 안에 들어 있다 — Gemini를 부르지 않고 그대로 꺼낸다. 그래서
+#   (1) 요금이 들지 않고, (2) 옮겨 적다 생기는 오타가 원천적으로 없고,
+#   (3) 널리 공개된 기출이어도 재현(RECITATION) 차단을 만나지 않는다.
+# 스캔본(그림만 든 PDF)은 꺼낼 글자가 없다 — 그때는 사진 OCR 쪽으로 안내한다.
+#
+# 나누는 기준은 두 가지다.
+#   문항형(모의고사·문제집) — '18. 다음 글의 …' 같은 한글 지시문이 지문의 시작점이다.
+#   문단형(교과서 본문)     — 들여쓰기·앞 줄이 짧게 끝났는지·글자 크기로 문단을 가른다.
+# 어느 쪽으로도 안 나뉘면 화면이 'AI로 다시 시도'를 권한다(call_gemini_pdf_split).
+try:
+    from pdfminer.high_level import extract_pages as _pdf_extract_pages
+    from pdfminer.layout import LAParams, LTTextContainer, LTTextLine
+    PDF_READY = True
+except ImportError:
+    # pdfminer.six가 없으면 이 기능만 꺼진다 — 서버는 그대로 뜨고 나머지 기능도 그대로다.
+    PDF_READY = False
+
+_HANGUL_RE = re.compile(r"[가-힣]")
+# 문항 시작줄: '18.' '41~42.' '31 .' 로 시작하고 한글 지시문이 이어진다.
+# 한글을 함께 요구하는 이유 — 영어 본문의 '1. Introduction' 같은 줄을 문항으로 오인하지
+# 않기 위해서다(지시문은 언제나 한글이다).
+_PDF_Q_RE = re.compile(r"^\s*(\d{1,2})\s*(?:[~～∼-]\s*(\d{1,2}))?\s*[.．]\s*\S")
+# 보기 줄(① … ⑤)로 시작하면 지문은 거기서 끝난다.
+_PDF_CHOICE_RE = re.compile(r"^\s*[①-⑤]")
+# 교사용 자료가 본문에 박아 둔 정답 교정: "(c) presence (→ lack)" → "lack".
+# 앞의 보기 기호(① … ⑤ / (a) … (e))부터 화살표 괄호까지가 '틀리게 인쇄된 부분'이다.
+_PDF_FIX_RE = re.compile(r"(?:[①-⑤]|\([a-e]\))\s*([^()]{1,80}?)\s*\(\s*→\s*([^)]+)\)")
+# 문장삽입 문항이 본문에 찍어 두는 삽입 위치 표시 — ( ① ) ( ② ) …
+_PDF_SLOT_RE = re.compile(r"\(\s*[①-⑤]\s*\)")
+# 순서·장문 문항이 문단 앞에 붙이는 라벨 — (A) (B) (C) (D) (E)
+_PDF_PARA_LABEL_RE = re.compile(r"(^|\s)\([A-E]\)\s*")
+# 지문에서 걷어낼 원문자 번호 전체(app.js의 CIRCLED_MARKERS와 같은 뜻).
+_PDF_MARKER_CHARS = "".join(
+    chr(ord(base) + i)
+    for base in ("❶", "⓫", "➀", "➊", "①", "⑴", "⒈", "⓵")
+    for i in range(10)
+)
+# 그중 '속이 찬 원'만 문장 번호로 쓴다 — 값(몇 번째 문장인지)까지 읽는 것은 이 목록뿐이다.
+# ①~⑤는 보기 기호로도 쓰여서 문장 번호로 삼으면 순서를 잘못 읽는다.
+_PDF_SENT_MARKERS = {}
+for _base, _start in (("❶", 1), ("⓫", 11), ("➊", 1)):
+    for _i in range(10):
+        _PDF_SENT_MARKERS.setdefault(chr(ord(_base) + _i), _start + _i)
+_PDF_SENT_SPLIT_RE = re.compile(f"([{''.join(_PDF_SENT_MARKERS)}])")
+
+
+def _pdf_is_question_line(t):
+    """'18. 다음 글의 …' 같은 문항 시작줄인가.
+
+    한글이 들어 있는지로 가른다(비율이 아니라 유무로 보는 이유 — 함축의미 문항처럼
+    지시문에 영어 구절을 통째로 인용하는 줄은 한글 비율이 20%도 안 된다).
+    영어 본문의 '1. Introduction' 같은 줄은 한글이 없어 걸리지 않는다."""
+    return bool(_PDF_Q_RE.match(t)) and len(_HANGUL_RE.findall(t)) >= 2
+
+
+def _ko_ratio(s):
+    """글자 중 한글이 차지하는 비율. 영어 지문 줄과 한글 해석·어휘 줄을 가른다."""
+    letters = [c for c in s if c.isalpha()]
+    if not letters:
+        return 0.0
+    return sum(1 for c in letters if _HANGUL_RE.match(c)) / len(letters)
+
+
+def _pdf_page_lines(page):
+    """PDF 한 쪽을 '읽는 순서대로 놓인 줄'의 목록으로 바꾼다.
+
+    두 가지를 손봐야 원문이 그대로 나온다.
+    - 양쪽 정렬(justify)로 자간이 벌어진 줄은 단어마다 조각나 들어온다 → 같은 높이의
+      조각을 이어 붙여 '보이는 한 줄'로 되돌린다(같은 텍스트 상자 안에서만 잇는다 —
+      옆 단의 줄과 높이가 겹치기 때문).
+    - 교과서·교사용 자료는 왼쪽이 영어, 오른쪽이 한글 해석인 2단 구성이다 → 높이순으로
+      섞어 읽으면 영어 문장 사이에 한글이 끼어든다. 좌·우로 나눈 뒤 각각 위에서 아래로 읽는다.
+    """
+    rows = []
+    for box in page:
+        if not isinstance(box, LTTextContainer):
+            continue
+        for ln in box:
+            if not isinstance(ln, LTTextLine):
+                continue
+            text = ln.get_text().rstrip()
+            if not text.strip():
+                continue
+            sizes = [c.size for c in ln if hasattr(c, "size")]
+            rows.append({
+                "t": text, "x0": ln.x0, "x1": ln.x1,
+                "y": -ln.y1,  # 위→아래가 커지도록 뒤집는다
+                "size": max(sizes) if sizes else 10.0,
+            })
+    if not rows:
+        return []
+    out = []
+    for group in _pdf_columns(rows):
+        for row in group:
+            prev = out[-1] if out else None
+            # 같은 단에서 같은 높이(±2pt)에 가까이(30pt 이내) 이어지면 한 줄로 붙인다.
+            # 단을 나눈 뒤에 붙이는 이유 — 붙이기 전에는 옆 단의 한글 줄이 같은 높이에
+            # 있어 함께 딸려 들어온다.
+            if (prev and abs(row["y"] - prev["y"]) <= 2
+                    and -1 <= row["x0"] - prev["x1"] <= 30):
+                prev["t"] = prev["t"].rstrip() + " " + row["t"].lstrip()
+                prev["x1"] = max(prev["x1"], row["x1"])
+                prev["size"] = max(prev["size"], row["size"])
+            else:
+                out.append(dict(row))
+    return out
+
+
+def _pdf_row_order(row):
+    """읽는 순서 — 위에서 아래로, 같은 높이면 왼쪽부터.
+    같은 줄인데 1~2pt 어긋난 조각들이 갈리지 않도록 높이를 3pt 단위로 뭉갠다."""
+    return (round(row["y"] / 3), row["x0"])
+
+
+def _pdf_columns(rows, depth=2):
+    """쪽을 단(column)으로 나눠, 각 단을 위에서 아래로 읽을 수 있게 돌려준다.
+
+    쪽 한가운데를 기준으로 자르면 안 된다 — 본문 줄이 가운데를 넘어가는 자료가 흔하고
+    (실측한 모의고사에서 자간이 벌어진 조각 하나가 넘어가 문장에서 두 단어가 빠졌다),
+    그러면 그 조각만 옆 단으로 넘어가 조용히 사라진다.
+    그래서 '줄이 거의 가로지르지 않는 빈 세로줄'(단 사이 여백)만 경계로 삼는다.
+    '거의'인 이유 — 머리말·꼬리말·저작권 문구는 쪽 전체를 가로지른다. 이것까지 막으면
+    어떤 자리도 통과하지 못해 2단 자료가 1단으로 읽힌다(그러면 영어 문장 사이에 옆 단의
+    한글 해석·어휘가 끼어든다). 가로지르는 줄이 몇 개뿐이면 왼쪽 단에 넣고 넘어간다.
+    쓸 만한 자리가 없으면 1단으로 보고 그대로 둔다."""
+    rows = sorted(rows, key=_pdf_row_order)
+    if depth <= 0 or len(rows) < 6:
+        return [rows]
+    allowed = max(2, len(rows) // 12)
+    # 후보는 '어떤 줄이 실제로 시작하는 자리'다. 1pt 단위로 묶어 후보 수를 줄이되 값은
+    # 그 묶음의 실제 최솟값을 쓴다 — 반올림한 값을 그대로 쓰면 414.7에서 시작하는 단이
+    # 415 기준으로는 왼쪽에 남아 단이 갈리지 않는다.
+    starts = {}
+    for r in rows:
+        key = int(r["x0"])
+        starts[key] = min(starts.get(key, r["x0"]), r["x0"])
+    for cut in sorted(starts.values())[1:]:
+        left = [r for r in rows if r["x0"] < cut]
+        right = [r for r in rows if r["x0"] >= cut]
+        if len(left) < 3 or len(right) < 3:
+            continue
+        if sum(1 for r in left if r["x1"] > cut) > allowed:
+            continue     # 이 자리를 가로지르는 줄이 많다 = 여백이 아니다
+        return _pdf_columns(left, depth - 1) + _pdf_columns(right, depth - 1)
+    return [rows]
+
+
+def _pdf_drop_running_heads(pages):
+    """여러 쪽에 똑같이 찍히는 줄(머리말·꼬리말·저작권 문구·쪽 번호)을 걷어낸다.
+    숫자를 #로 바꿔 비교하므로 '- 1 -', '- 2 -'도 같은 줄로 묶인다."""
+    if len(pages) < 3:
+        return pages
+    seen = Counter()
+    for lines in pages:
+        for key in {re.sub(r"\d+", "#", r["t"].strip()) for r in lines}:
+            seen[key] += 1
+    common = {k for k, n in seen.items() if n >= len(pages) * 0.6}
+    return [[r for r in lines if re.sub(r"\d+", "#", r["t"].strip()) not in common]
+            for lines in pages]
+
+
+def _pdf_reorder_sentences(text):
+    """문장 번호가 순서를 알려 주는 경우에만 문장을 원래 순서로 되돌린다.
+
+    문장삽입 문항은 '주어진 문장'을 본문 위에 따로 찍어 두는데, 교사용 자료는 그 문장에
+    제자리 번호를 매겨 둔다(❹ 가 맨 앞에 오고 본문이 ❶❷❸❺… 로 이어지는 식).
+    번호가 1..N을 정확히 한 번씩 채울 때만 정렬한다 — 그렇지 않으면 손대지 않는다."""
+    parts = _PDF_SENT_SPLIT_RE.split(text)
+    if len(parts) < 3:
+        return text
+    head = parts[0].strip()
+    items = []
+    for i in range(1, len(parts) - 1, 2):
+        items.append((_PDF_SENT_MARKERS[parts[i]], parts[i + 1].strip()))
+    nums = [n for n, _ in items]
+    if sorted(nums) != list(range(1, len(nums) + 1)) or nums == sorted(nums):
+        return text
+    items.sort(key=lambda kv: kv[0])
+    return " ".join(([head] if head else []) + [s for _n, s in items])
+
+
+def _pdf_clean_passage(text, drop_labels):
+    """꺼낸 덩어리를 '지문 그대로'로 다듬는다. 지우는 것은 시험지가 덧붙인 표시뿐이다."""
+    text = text.replace("­", "-").replace(" ", " ")  # 소프트 하이픈·비분리 공백
+    text = re.sub(r"\s+", " ", text).strip()
+    # 삽입 위치 표시를 먼저 지운다 — 문장 순서를 읽기 전에 치워야 ( ① ) 가 문장 번호로
+    # 잘못 세어지지 않는다.
+    text = _PDF_SLOT_RE.sub("", text)
+    text = _pdf_reorder_sentences(text)
+    # 정답 교정을 반영한다 — 어법·어휘 문항은 일부러 틀리게 인쇄한 것이라
+    # 교정본이 원래 지문이다. ("the (c) presence (→ lack) of" → "the lack of")
+    text = _PDF_FIX_RE.sub(lambda m: m.group(2).strip(), text)
+    if drop_labels:
+        text = _PDF_PARA_LABEL_RE.sub(r"\1", text)
+    # (a)~(e)는 어휘·지칭 문항이 낱말에 붙인 기호다. 본문에 실제로 쓰인 괄호를
+    # 지우지 않도록 3개 이상 나올 때만 기호로 보고 걷어낸다.
+    if len(re.findall(r"\([a-e]\)", text)) >= 3:
+        text = re.sub(r"\([a-e]\)\s*", "", text)
+    text = re.sub(f"[{_PDF_MARKER_CHARS}]\\s*", "", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+def _pdf_looks_like_prose(body):
+    """모아 놓은 줄이 '글'인가, 낱말 목록인가.
+
+    교사용 자료는 지문 뒤에 어휘 목록을 싣는다(commercial / aim for / predictability …).
+    한 줄에 한 낱말씩이라 이어 붙이면 길이만으로는 지문과 구별되지 않는다 —
+    짧은 줄이 절반을 넘으면 목록으로 본다."""
+    if not body:
+        return False
+    short = sum(1 for t in body if len(t.split()) <= 3)
+    return short <= len(body) * 0.5
+
+
+def _pdf_body_from(lines, start):
+    """지시문 다음 줄부터 영어 본문만 모은다. 보기(①~⑤)·한글·구역 표시를 만나면 거기서 끝."""
+    body = []
+    got = 0
+    for row in lines[start:]:
+        t = row["t"].strip()
+        if not t:
+            continue
+        # ■ Vocabulary · ▶ 유형 같은 구역 표시가 나오면 그 문항의 지문은 끝난 것이다
+        if t.startswith("■") or t.startswith("▶"):
+            break
+        if _PDF_CHOICE_RE.match(t) or t.startswith("*"):
+            if got >= 40:
+                break
+            continue
+        # 화살표 기호 한 자만 있는 줄 — 요약문 상자가 시작되는 자리다
+        if got >= 40 and not re.search(r"[A-Za-z0-9]", t):
+            break
+        if _ko_ratio(t) > 0.5:
+            if got >= 40:
+                break
+            continue        # 두 줄로 접힌 한글 지시문은 건너뛰고 본문을 계속 찾는다
+        body.append(t)
+        got += len(t)
+    return body
+
+
+def _pdf_split_by_question(pages):
+    """문항형(모의고사·문제집): 한글 지시문마다 지문 하나."""
+    out = []
+    for lines in pages:
+        starts = [i for i, r in enumerate(lines) if _pdf_is_question_line(r["t"])]
+        for k, i in enumerate(starts):
+            end = starts[k + 1] if k + 1 < len(starts) else len(lines)
+            body = _pdf_body_from(lines[:end], i + 1)
+            if not _pdf_looks_like_prose(body):
+                continue
+            text = _pdf_clean_passage(" ".join(body), drop_labels=True)
+            if len(text) < PDF_MIN_PASSAGE_CHARS:
+                continue
+            m = _PDF_Q_RE.match(lines[i]["t"])
+            name = f"{m.group(1)}~{m.group(2)}번" if m.group(2) else f"{m.group(1)}번"
+            out.append({"name": name, "text": text})
+    return out
+
+
+def _pdf_split_by_paragraph(pages):
+    """문단형(교과서 본문): 영어 줄만 남기고 문단 경계에서 자른다.
+
+    경계로 보는 신호는 셋이다 — 들여쓰기, 앞 줄이 오른쪽 끝까지 못 가고 끝났는지,
+    글자가 커졌는지(소제목). 소제목은 그 자체로 지문이 되기엔 짧으므로 다음 문단의
+    이름으로 쓴다."""
+    out = []
+    pending_name = ""
+    for lines in pages:
+        eng = [r for r in lines if _ko_ratio(r["t"]) < 0.3 and re.search(r"[A-Za-z]", r["t"])]
+        if not eng:
+            continue
+        left = min(r["x0"] for r in eng)
+        right = max(r["x1"] for r in eng)
+        width = max(right - left, 1)
+        body_size = Counter(round(r["size"], 1) for r in eng).most_common(1)[0][0]
+        chunks, cur = [], []
+        for k, row in enumerate(eng):
+            indented = row["x0"] - left > 4
+            ended_short = k > 0 and (right - eng[k - 1]["x1"]) > width * 0.12
+            bigger = row["size"] > body_size + 0.6
+            if cur and (indented or ended_short or bigger):
+                chunks.append(cur)
+                cur = []
+            cur.append(row)
+        if cur:
+            chunks.append(cur)
+        for chunk in chunks:
+            rows = [r["t"] for r in chunk]
+            text = _pdf_clean_passage(" ".join(rows), drop_labels=False)
+            if len(text) >= PDF_MIN_PASSAGE_CHARS:
+                if not _pdf_looks_like_prose(rows):
+                    continue           # 낱말 목록(어휘 정리)이지 지문이 아니다
+                out.append({"name": pending_name, "text": text})
+                pending_name = ""
+            elif text and (len(text) <= 60 or not re.search(r"[.!?]$", text)):
+                pending_name = text[:40]   # 소제목 — 다음 문단의 이름으로 넘긴다
+    return out
+
+
+def read_pdf_pages(raw):
+    """PDF 바이트에서 쪽별 줄 목록을 꺼낸다. 글자층이 없으면 빈 목록이 나온다."""
+    if not PDF_READY:
+        raise RuntimeError(
+            "이 서버에는 PDF를 읽는 부품(pdfminer.six)이 설치되어 있지 않습니다. "
+            "관리자에게 문의하세요."
+        )
+    try:
+        pages = [_pdf_page_lines(p) for p in _pdf_extract_pages(
+            io.BytesIO(raw), laparams=LAParams(), maxpages=PDF_MAX_PAGES)]
+    except Exception as e:
+        raise RuntimeError(f"PDF를 읽지 못했습니다: {e}")
+    return _pdf_drop_running_heads(pages)
+
+
+def split_pdf_passages(pages):
+    """쪽별 줄 목록을 지문 목록으로 나눈다. {mode, passages} 를 돌려준다.
+    Gemini를 부르지 않는다 — 규칙만으로 나눈다."""
+    marks = sum(1 for lines in pages for r in lines if _pdf_is_question_line(r["t"]))
+    if marks >= 2:
+        found = _pdf_split_by_question(pages)
+        if len(found) >= 2:
+            return {"mode": "question", "passages": found}
+    return {"mode": "paragraph", "passages": _pdf_split_by_paragraph(pages)}
+
+
+# ── AI 보조: 규칙이 못 나눈 PDF의 경계만 찾아 준다 ──
+# 본문을 옮겨 적게 하지 않는 것이 핵심이다. 줄마다 번호를 붙여 보여 주고 '몇째 줄부터
+# 몇째 줄까지가 지문 하나인지'만 받는다. 그래서
+#   (1) 답이 짧아 빠르고 싸며, (2) 모델이 글자를 바꿔 놓을 여지가 없고,
+#   (3) 원문을 길게 되뱉지 않으므로 재현(RECITATION) 차단에 걸리지 않는다.
+# 본문은 서버가 원래 줄에서 잘라 쓴다.
+PDF_SPLIT_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "passages": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "start": {"type": "INTEGER"},
+                    "end": {"type": "INTEGER"},
+                    "name": {"type": "STRING"},
+                },
+                "required": ["start", "end", "name"],
+                "propertyOrdering": ["start", "end", "name"],
+            },
+        },
+        "note": {"type": "STRING"},
+    },
+    "required": ["passages", "note"],
+    "propertyOrdering": ["passages", "note"],
+}
+
+PDF_SPLIT_SYSTEM_PROMPT = r"""You are given the text of a Korean school English material
+(교과서 본문, 모의고사, 문제집, 부교재), one numbered line per printed line.
+Find where each ENGLISH READING PASSAGE begins and ends. Return ONLY the structured JSON.
+
+## What to return
+For each passage: `start` and `end` are LINE NUMBERS (inclusive) from the input.
+NEVER copy the passage text itself — line numbers only.
+- Passages must not overlap, and must be listed in reading order.
+- `name`: a short Korean label the teacher will see — the question number ("31번",
+  "41~42번") when the material is a question paper, or the section heading, or "" if
+  there is none. Keep it under 20 characters.
+
+## Where a passage starts and ends
+- Question papers: the passage starts on the line AFTER the Korean instruction
+  ("31. 다음 빈칸에 들어갈 말로…") and ends just BEFORE the answer choices (① ② ③ ④ ⑤),
+  the Korean translation, the vocabulary list, or the next question.
+- Textbook/reading material: one paragraph of the English body = one passage.
+  A heading line is not a passage — use it as the `name` of the paragraph under it.
+- Include every line of the passage body, including lines that only hold a few words.
+
+## Leave out
+Korean instructions and translations, vocabulary glosses, answer choices, answer keys,
+footnotes (* neural 신경의), headers, footers, page numbers, copyright notices,
+and anything that is not the English body itself.
+
+## note (Korean, one short sentence)
+"" when the split was clean. Otherwise say what was unclear — for example
+글자가 깨져 있음, 영어 지문을 찾지 못함, 지문 경계가 분명하지 않음.
+
+Return valid JSON only."""
+
+_PDF_SPLIT_TRUNC_MSG = "PDF가 너무 길어 경계를 찾다가 잘렸습니다. 쪽을 나눠 올려 주세요."
+
+
+def call_gemini_pdf_split(pages, api_key, model):
+    """규칙이 못 나눈 PDF를 Gemini에게 '경계만' 물어 지문 목록으로 만든다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+
+    flat = [r["t"].strip() for lines in pages for r in lines if r["t"].strip()]
+    if not flat:
+        raise RuntimeError("PDF에서 글자를 찾지 못했습니다.")
+    numbered = "\n".join(f"{i + 1}: {t}" for i, t in enumerate(flat))
+    if len(numbered) > PDF_MAX_CHARS:
+        raise RuntimeError(
+            f"PDF의 글자가 너무 많습니다 (약 {len(numbered) // 1000}천 자). "
+            "쪽을 나눠 올려 주세요."
+        )
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": PDF_SPLIT_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [
+            {"text": "다음 자료에서 영어 지문의 시작·끝 줄 번호를 찾아 주세요.\n\n" + numbered},
+        ]}],
+        "generationConfig": {
+            # 경계 찾기는 판단이 아니라 확인에 가깝다 — 낮은 온도가 맞다.
+            # 본문을 뱉지 않으므로 여기서는 온도를 올려 재현 차단을 피할 이유가 없다.
+            "temperature": 0.0,
+            "maxOutputTokens": 8192,
+            "responseMimeType": "application/json",
+            "responseSchema": PDF_SPLIT_SCHEMA,
+        },
+    }
+    result = _gemini_json(payload, api_key, model, _PDF_SPLIT_TRUNC_MSG)
+
+    out = []
+    for item in result.get("passages") or ():
+        try:
+            start = int(item.get("start", 0))
+            end = int(item.get("end", 0))
+        except (TypeError, ValueError):
+            continue
+        # 모델이 준 것은 번호뿐이다 — 범위를 실제 줄 수 안으로 자르고 본문은 원문에서 꺼낸다
+        start = max(1, start)
+        end = min(len(flat), end)
+        if end < start:
+            continue
+        text = _pdf_clean_passage(" ".join(flat[start - 1:end]), drop_labels=True)
+        if len(text) < PDF_MIN_PASSAGE_CHARS:
+            continue
+        name = _TAG_STRIP_RE.sub("", str(item.get("name") or "")).strip()[:20]
+        out.append({"name": name, "text": text})
+    return {"passages": out, "note": str(result.get("note") or "").strip()}
 
 
 # ── 기출 시험지 유형 분석 스키마 ──
@@ -4248,6 +4712,9 @@ class Handler(BaseHTTPRequestHandler):
                 "ocr": PRICE_OCR_KRW,
                 # 기출 유형 분석 — 기본 0원. 값이 붙어도 시험지 1벌당이지 쪽 수에 곱하지 않는다
                 "examScan": PRICE_EXAMSCAN_KRW,
+                # PDF에서 지문 꺼내기 — 규칙으로 나눌 때는 언제나 0원이고,
+                # 'AI로 다시 시도'를 눌렀을 때만 이 값이 매겨진다
+                "pdfSplit": PRICE_PDFSPLIT_KRW,
             })
             return
 
@@ -4389,7 +4856,7 @@ class Handler(BaseHTTPRequestHandler):
 
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
-                        "/api/reword", "/api/ocr", "/api/examscan",
+                        "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
                         "/api/account/recharge",
@@ -4425,7 +4892,7 @@ class Handler(BaseHTTPRequestHandler):
         # 그중 실제로 콘텐츠를 생성하는 여섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/quiz", "/api/workbook",
-                           "/api/reword", "/api/ocr", "/api/examscan")
+                           "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit")
         if path in GENERATE_PATHS + ("/api/models",):
             if DB is None:
                 self._send_json(
@@ -4461,6 +4928,11 @@ class Handler(BaseHTTPRequestHandler):
                     cost = PRICE_EXAMSCAN_KRW
                     pages = len(req.get("files") or ())
                     self._pending_label = f"기출 유형 분석 · {pages}쪽"
+                elif path == "/api/pdfsplit":
+                    # 규칙으로 나누는 길은 Gemini를 부르지 않으므로 언제나 0원이다.
+                    # 'AI로 다시 시도'(ai=true)일 때만 값을 매긴다.
+                    cost = PRICE_PDFSPLIT_KRW if req.get("ai") else 0
+                    self._pending_label = "PDF에서 지문 꺼내기"
                 else:  # /api/ocr
                     cost = PRICE_OCR_KRW
                     self._pending_label = "사진에서 지문 옮기기"
@@ -4789,6 +5261,75 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e), "code": "quota"}, 429)
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
+            return
+
+        # PDF에서 지문 꺼내기. 사진 OCR과 달리 기본 경로는 Gemini를 부르지 않는다 —
+        # 글자층을 그대로 꺼내 규칙으로 나눈다(요금 0원, 오타 없음).
+        # 규칙이 못 나눈 파일만 화면이 ai=true로 다시 보내 경계를 물어본다.
+        if path == "/api/pdfsplit":
+            file = req.get("file")
+            if not isinstance(file, dict):
+                self._send_json({"error": "올릴 PDF를 선택하세요."}, 400)
+                return
+            mime = (file.get("mime") or "").lower().split(";")[0].strip()
+            data = file.get("data") or ""
+            if mime != PDF_MIME:
+                self._send_json({"error": "PDF 파일만 올릴 수 있습니다."}, 400)
+                return
+            if not data:
+                self._send_json({"error": "PDF 내용이 비어 있습니다."}, 400)
+                return
+            if len(data) > MAX_FILE_BYTES:
+                self._send_json({
+                    "error": f"PDF가 너무 큽니다 (최대 {MAX_FILE_BYTES // 1048576}MB). "
+                             "쪽을 나눠 올려 주세요."
+                }, 413)
+                return
+            try:
+                raw_pdf = base64.b64decode(data)
+            except Exception:
+                self._send_json({"error": "PDF를 읽지 못했습니다 (파일이 손상된 것 같습니다)."}, 400)
+                return
+            try:
+                pages = read_pdf_pages(raw_pdf)
+            except RuntimeError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            if not any(pages):
+                # 스캔본(그림만 든 PDF)이다 — 여기서는 꺼낼 글자가 없다.
+                # 사진 OCR로 가야 하므로 화면이 알아볼 수 있게 code를 붙인다.
+                self._send_json({
+                    "error": "이 PDF에는 글자가 들어 있지 않습니다 (사진을 찍어 만든 스캔본). "
+                             "쪽을 사진으로 저장해 '📷 사진에서 가져오기'로 올려 주세요.",
+                    "code": "no_text",
+                }, 422)
+                return
+            if req.get("ai"):
+                try:
+                    found = call_gemini_pdf_split(pages, req.get("apiKey") or "", MODEL)
+                except QuotaExceeded as e:
+                    self._send_json({"error": str(e), "code": "quota"}, 429)
+                    return
+                except Exception as e:
+                    self._send_json({"error": str(e)}, 502)
+                    return
+                if not found["passages"]:
+                    self._send_json({
+                        "error": found["note"] or "이 PDF에서 영어 지문을 찾지 못했습니다."
+                    }, 422)
+                    return
+                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
+                self._send_json({"mode": "ai", "passages": found["passages"],
+                                 "note": found["note"]})
+                return
+            split = split_pdf_passages(pages)
+            self._send_json({
+                "mode": split["mode"],
+                "passages": split["passages"],
+                # 규칙으로 못 나눴다 — 화면이 'AI로 다시 시도'를 권할 수 있게 알린다
+                "canAi": not split["passages"],
+                "note": "",
+            })
             return
 
         if path == "/api/examscan":

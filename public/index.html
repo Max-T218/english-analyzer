@@ -340,15 +340,19 @@
     <div class="passage-add-row">
       <button type="button" class="btn ghost small" id="addPassageBtn">＋ 지문 추가</button>
       <button type="button" class="btn ghost small" id="ocrBtn">📷 사진에서 가져오기</button>
+      <button type="button" class="btn ghost small" id="pdfBtn">📄 PDF에서 가져오기</button>
       <button type="button" class="btn ghost small" id="passageSaveBtn">💾 지문 저장</button>
       <button type="button" class="btn ghost small danger" id="clearPassagesBtn">🗑️ 지문 전체 지우기</button>
       <span class="passage-max-note" id="passageMaxNote" role="status" aria-live="polite"></span>
     </div>
     <input type="file" id="ocrFile" accept="image/*" multiple hidden>
+    <input type="file" id="pdfFile" accept="application/pdf" multiple hidden>
     <div class="ocr-hint">
       <b>사진 1장 = 지문 1개</b>로 들어갑니다. 여러 장을 한 번에 올려도 됩니다.
       입력칸에 <b>끌어다 놓거나</b> <b>Ctrl+V</b>로 캡처를 붙여넣어도 됩니다.
-      옮긴 뒤에는 <b>오타가 없는지 꼭 확인하세요.</b>
+      <br>
+      교과서 본문·모의고사 <b>PDF</b>를 올리면 <b>문단(또는 문항)마다 지문 1개</b>로 나눠
+      한 번에 채웁니다. 어느 쪽이든 옮긴 뒤에는 <b>오타가 없는지 꼭 확인하세요.</b>
     </div>
     <div class="ocr-status" id="ocrStatus" role="status" aria-live="polite" hidden></div>
   </section>
@@ -645,9 +649,12 @@
       <div id="examPassageList"></div>
       <div class="passage-add-row">
         <button type="button" class="btn ghost small" id="examAddPassageBtn">＋ 지문 추가</button>
+        <button type="button" class="btn ghost small" id="examPdfBtn">📄 PDF에서 가져오기</button>
         <button type="button" class="btn ghost small danger" id="examClearPassagesBtn">🗑️ 지문 전체 지우기</button>
         <span class="passage-max-note" id="examPassageMaxNote" role="status" aria-live="polite"></span>
       </div>
+      <input type="file" id="examPdfFile" accept="application/pdf" multiple hidden>
+      <div class="ocr-status" id="examPassageStatus" role="status" aria-live="polite" hidden></div>
 
       <label class="group-label">몇 부를 만들까요</label>
       <div class="quiz-type-grid radio-grid">

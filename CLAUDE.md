@@ -12,7 +12,9 @@
   Python 표준 라이브러리 `http.server`로 직접 라우팅합니다 — Flask도 FastAPI도 쓰지 않습니다.
 - **프런트**: `public/` 정적 파일. 빌드 도구·번들러·프레임워크 없음. 바닐라 JS 한 파일
   (`app.js`, 156KB)입니다.
-- **저장소**: Firestore. `google-cloud-firestore`가 유일한 pip 의존성입니다.
+- **저장소**: Firestore. pip 의존성은 둘뿐입니다 — `google-cloud-firestore`(로그인·저장),
+  `pdfminer.six`(PDF에서 지문 꺼내기. 없으면 그 기능만 꺼지고 서버는 그대로 뜹니다 —
+  `PDF_READY` 참고).
 - **배포**: Render (`render.yaml`). `origin/main`에 push하면 자동 재배포됩니다.
 
 ## 실행
@@ -85,6 +87,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | 회원가입·인증코드·비밀번호 | `start_signup`, `complete_signup`, `login_with_password`, `_hash_password` |
 | Gemini 호출 공통(재시도·시간 예산) | `RETRY_MIN_WAIT`, `MAX_RETRY_TOTAL`, `_over_budget`, `RefineTrace`, `_parse_retry_delay` |
 | 기능별 프롬프트·스키마·호출 | `*_SCHEMA` / `*_SYSTEM_PROMPT` / `call_gemini_*` 3종 세트 — quiz, reword, ocr, workbook. 지문 분석만 이름에 접두어가 없어 `GEMINI_SCHEMA` / `SYSTEM_PROMPT`입니다 |
+| PDF에서 지문 꺼내기 | `read_pdf_pages`(글자층+좌표 읽기), `_pdf_columns`(단 나누기), `split_pdf_passages`(문항형/문단형 판정), `_pdf_clean_passage`(번호·보기·정답교정 정리). 여기까지는 Gemini를 부르지 않습니다 — 규칙이 실패했을 때만 `call_gemini_pdf_split`이 '경계 줄 번호'만 물어봅니다 |
 | 출력 HTML 정리 | `sanitize_inline`, `sanitize_quiz_html`, `clean_korean`, `clean_note`, `normalize_ruby`, `fix_underline_bounds` |
 | 라우팅 | `_handle_get`, 그리고 POST 쪽의 `if path == "/api/..."` 나열 |
 
@@ -93,8 +96,13 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `/* ══════ 제목 ══════ */` 주석이 섹션 구분입니다. 주요 앵커:
 
 `createPassageManager`(지문 입력칸 관리) · `TAB_SAVE`(탭별 저장 배선) · `runActiveTab` ·
-`runOcr` · `buildAnalysisHtml` · `MCQ_TYPES` / `SAQ_TYPES` / `TYPE_MAX` ·
+`runOcr`(사진) · `runPdfImport`(PDF — 공용 칸과 시험 범위 칸 양쪽을 채운다) ·
+`buildAnalysisHtml` · `MCQ_TYPES` / `SAQ_TYPES` / `TYPE_MAX` ·
 `renderAccount`(잔액 표시) · `setEditMode`(결과물 직접 수정) · `printDoc`
+
+지문 칸 상한은 `MAX_PASSAGES`(40, 공용)와 `EXAM_PAPER_MAX_PASSAGES`(40, 시험지)입니다.
+많이 담은 채 실행하면 시간이 지문 수만큼 곱해지므로 `costConfirmed`가 실행 직전에
+한 번 더 알립니다(`MANY_PASSAGES_WARN`).
 
 ### `public/index.html`
 
@@ -121,7 +129,8 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 **GET** — `/api/pricing` `/api/me` `/api/saved` `/api/saved/<id>` `/api/usage` `/api/admin/me`
 `/api/admin/users` `/api/admin/usage` `/api/_probe`(임시, 아래 참고)
 
-**POST** — `/api/analyze` `/api/quiz` `/api/workbook` `/api/reword` `/api/ocr` `/api/models`
+**POST** — `/api/analyze` `/api/quiz` `/api/workbook` `/api/reword` `/api/ocr` `/api/pdfsplit`
+`/api/models`
 `/api/auth/google` `/api/auth/signup` `/api/auth/verify` `/api/auth/login` `/api/auth/delete`
 `/api/logout` `/api/account/recharge` `/api/saved` `/api/saved/delete` `/api/admin/login`
 `/api/admin/logout` `/api/admin/recharge`

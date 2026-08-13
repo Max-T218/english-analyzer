@@ -1,3 +1,6 @@
 # 이 앱은 대부분 Python 표준 라이브러리만 사용합니다.
 # 저장/불러오기(구글 로그인 + Firestore) 기능을 위해 구글 공식 클라이언트만 추가합니다.
 google-cloud-firestore
+# PDF에서 지문 꺼내기(/api/pdfsplit)에 씁니다 — PDF 안의 글자층과 그 좌표를 읽습니다.
+# 없어도 서버는 그대로 뜨고, 이 기능만 꺼집니다(server.py의 PDF_READY 참고).
+pdfminer.six
