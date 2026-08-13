@@ -4743,6 +4743,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("content-type", "application/json; charset=utf-8")
         self.send_header("content-length", str(len(data)))
+        # API 응답은 어디에도 쌓아 두지 않는다.
+        # 잔액·회원 목록·이용 내역은 초 단위로 바뀌는 값인데, 지금까지 캐시 지시자도
+        # 검증자(ETag·Last-Modified)도 없이 내보내고 있었다. 그런 응답은 브라우저가
+        # 대개 캐시하지 않지만 '대개'일 뿐이고, 앞단 프록시(배포 플랫폼·학교망)가 끼면
+        # 낡은 값이 되돌아올 수 있다. 한 줄로 그 여지를 없앤다.
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")   # 옛 프록시용
         for c in cookies or ():
             self.send_header("Set-Cookie", c)
         for k, v in (headers or {}).items():

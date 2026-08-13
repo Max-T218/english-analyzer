@@ -145,6 +145,24 @@ $("adminLogoutBtn").addEventListener("click", async () => {
 });
 $("adminRefreshBtn").addEventListener("click", loadUsers);
 
+/* 이 화면으로 '돌아올 때' 다시 받아 온다.
+   회원은 계속 앱을 쓰고 있어서 잔액이 실시간으로 깎이고 새로 가입도 들어오는데,
+   지금까지는 처음 들어올 때와 새로고침 버튼을 누를 때만 목록을 받아 왔다.
+   그래서 관리자 화면을 켜 둔 채 다른 일을 하다 돌아오면 몇 시간 전 목록을 보게 됐다.
+
+   일정 간격으로 계속 부르지 않는 이유: 사람이 안 보고 있는 동안에도 Firestore 읽기가
+   쌓인다. 보는 순간에만 새로 받으면 비용은 그대로면서 눈에 보이는 값은 늘 최신이다.
+   30초 안에 두 번 돌아오는 경우까지 매번 부르지는 않는다(창을 자주 오가는 사용감). */
+let lastAutoLoad = 0;
+function refreshIfStale() {
+  if (workspaceEl.hidden) return;              // 로그인 화면이면 부를 것이 없다
+  if (document.visibilityState !== "visible") return;
+  if (Date.now() - lastAutoLoad < 30000) return;
+  loadUsers();
+}
+document.addEventListener("visibilitychange", refreshIfStale);
+window.addEventListener("focus", refreshIfStale);
+
 function fmtDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -154,12 +172,16 @@ function fmtDate(iso) {
 
 let currentUsers = [];
 
+let lastLoadedAt = null;   // 이 목록을 언제 받아 왔는지 (화면에 그대로 적는다)
+
 async function loadUsers() {
   const errEl = $("adminListError");
   errEl.textContent = "";
+  lastAutoLoad = Date.now();   // 방금 받아 왔으니 자동 갱신은 30초 뒤부터
   try {
     const data = await getJson("/api/admin/users");
     currentUsers = data.users || [];
+    lastLoadedAt = new Date();
     renderUsers();
   } catch (err) {
     // 세션이 만료됐으면 로그인 화면으로 되돌린다
@@ -171,10 +193,20 @@ async function loadUsers() {
   }
 }
 
-function renderUsers() {
-  const total = currentUsers.length;
+// 요약줄 — 회원 수·전체 잔액과 함께 '언제 받아 온 목록인지'를 적는다.
+// 이 화면은 열어 둔 채로 두면 그 시점에 멈춰 있는데, 그것을 알 방법이 없어서
+// 몇 시간 전 잔액을 지금 값으로 믿게 되는 것이 문제였다.
+function renderSummary() {
   const totalKrw = currentUsers.reduce((sum, u) => sum + (u.krwRemaining || 0), 0);
-  $("adminSummary").textContent = `회원 ${total}명 · 전체 잔액 ${totalKrw.toLocaleString()}원`;
+  const at = lastLoadedAt
+    ? " · " + lastLoadedAt.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) + " 기준"
+    : "";
+  $("adminSummary").textContent =
+    `회원 ${currentUsers.length}명 · 전체 잔액 ${totalKrw.toLocaleString()}원${at}`;
+}
+
+function renderUsers() {
+  renderSummary();
 
   $("userTableBody").innerHTML = currentUsers.map((u) => `
     <tr style="border-bottom:1px solid var(--line-soft);" data-uid="${esc(u.id)}">
@@ -263,8 +295,11 @@ $("userTableBody").addEventListener("click", async (e) => {
     const u = currentUsers.find((x) => x.id === uid);
     if (u) u.krwRemaining = data.krwRemaining;
     input.value = "";
-    $("adminSummary").textContent =
-      `회원 ${currentUsers.length}명 · 전체 잔액 ${currentUsers.reduce((s, x) => s + (x.krwRemaining || 0), 0).toLocaleString()}원`;
+    renderSummary();
+    // 충전한 줄은 서버가 돌려준 확정 잔액이라 맞지만, 나머지 줄은 화면을 연 시점의
+    // 옛 값 그대로다. 회원들이 그 사이에 쓴 만큼 잔액이 이미 달라져 있으므로
+    // 목록 전체를 다시 받아 온다 — '방금 충전했으니 이 화면은 최신'이라는 착각을 막는다.
+    loadUsers();
   } catch (err) {
     alert(err.message || "충전에 실패했습니다.");
   } finally {
