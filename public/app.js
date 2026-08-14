@@ -2710,7 +2710,7 @@ const MCQ_TYPES = [
   { id: "주제", def: true }, { id: "제목", def: true }, { id: "요지", def: true },
   { id: "빈칸", def: true }, { id: "어휘", def: false }, { id: "어법", def: false },
   { id: "순서", def: false }, { id: "문장삽입", def: false }, { id: "함축의미", def: false },
-  { id: "무관한 문장", def: false }, { id: "요약문", def: false },
+  { id: "무관한 문장", def: false }, { id: "요약문", def: false }, { id: "영영풀이", def: false },
   { id: "내용일치(영)", def: false }, { id: "내용일치(한)", def: false },
   { id: "내용불일치(영)", def: false }, { id: "내용불일치(한)", def: false },
 ];
@@ -2720,7 +2720,7 @@ const SAQ_TYPES = [
   { id: "어휘 선택형", def: true }, { id: "어법 선택형", def: true },
   { id: "틀린 어휘 찾기", def: false }, { id: "틀린 어법 찾기", def: false },
   { id: "동사형 쓰기", def: false }, { id: "빈칸 쓰기", def: false },
-  { id: "표현 찾아 쓰기", def: false },
+  { id: "표현 찾아 쓰기", def: false }, { id: "영영풀이 쓰기", def: false },
   { id: "무관한 문장 쓰기", def: false }, { id: "요약문 완성", def: false },
 ];
 
@@ -2806,13 +2806,13 @@ const TYPE_MAX = {
   주제: 5, 제목: 5, 요지: 5,
   "내용일치(영)": 5, "내용일치(한)": 5, "내용불일치(영)": 5, "내용불일치(한)": 5,
   빈칸: 6, 어휘: 6, 어법: 4,
-  순서: 2, 문장삽입: 2, 함축의미: 2,
+  순서: 2, 문장삽입: 2, 함축의미: 2, 영영풀이: 5,
   "무관한 문장": 1, 요약문: 1,
   // 주관식
   "OX진위(영)": 8, "OX진위(한)": 8,
   서술형배열: 6, "어휘 선택형": 6,
   "틀린 어휘 찾기": 5, "어법 선택형": 5, "틀린 어법 찾기": 3,
-  "동사형 쓰기": 2, "빈칸 쓰기": 3, "표현 찾아 쓰기": 2,
+  "동사형 쓰기": 2, "빈칸 쓰기": 3, "표현 찾아 쓰기": 2, "영영풀이 쓰기": 2,
   "무관한 문장 쓰기": 1, "요약문 완성": 1,
 };
 // +버튼이 막혔을 때 왜 막혔는지 알려 준다 — 유형마다 상한이 다른 이유가 다르다.
@@ -2823,6 +2823,7 @@ const TYPE_MAX_REASON = {
   "동사형 쓰기": "한 문항이 이미 동사 4~6개를 가져가서",
   "빈칸 쓰기": "문맥으로 되살릴 수 있는 핵심어 수 때문에",
   "표현 찾아 쓰기": "뜻이 하나로 떨어지는 표현 수 때문에",
+  "영영풀이 쓰기": "영영풀이 하나로 뜻이 딱 정해지는 낱말 수 때문에",
   어법: "지문에 실제로 있는 문법 포인트 수 때문에",
   "어법 선택형": "지문에 실제로 있는 문법 포인트 수 때문에",
   "틀린 어법 찾기": "지문에 실제로 있는 문법 포인트 수 때문에",
@@ -3440,8 +3441,9 @@ function quizAnswerLabel(q) {
       .map((a, i) => `(${i + 1}) ${a}`)
       .join("　");
   }
-  if (fmt === "find") {
-    return (q.findItems || [])
+  if (fmt === "find" || fmt === "gloss") {
+    const list = fmt === "gloss" ? q.glossItems : q.findItems;
+    return (list || [])
       .filter((it) => it && it.en)
       .map((it, i) => `(${i + 1}) ${esc(it.en)}`)
       .join("　");
@@ -3534,6 +3536,23 @@ function quizBodyHtml(q) {
       .map((it, i) =>
         `<div class="qz-findline"><span class="qz-findko">(${i + 1}) ${esc(it.ko)}</span>` +
         `<span class="qz-findarrow">→</span>${wbBlank(240)}</div>`)
+      .join("");
+    return `
+      <div class="qz-passage">${safeHTML(q.passageHtml)}</div>
+      ${lines}`;
+  }
+
+  if (fmt === "gloss") {
+    /* 영영풀이 쓰기 — 표현 찾아 쓰기와 같은 원리(지문은 그대로, 목록만 따로)이지만
+       단서가 우리말 한 줄이 아니라 영어 정의라 한 줄에 다 안 들어가는 일이 잦다.
+       그래서 옆으로 붙이지 않고 정의를 한 줄로 두고 답란을 그 아래에 둔다 — 정의가
+       길어도 줄바꿈이 자연스럽고, 2단 인쇄에서도 폭 계산을 따로 손볼 일이 없다. */
+    const items = (q.glossItems || []).filter((it) => it && it.def);
+    const lines = items
+      .map((it, i) =>
+        `<div class="qz-glossitem">` +
+        `<div class="qz-glossdef"><span class="qz-num">(${i + 1})</span> ${esc(it.def)}</div>` +
+        `<div class="qz-writeline"></div></div>`)
       .join("");
     return `
       <div class="qz-passage">${safeHTML(q.passageHtml)}</div>

@@ -206,13 +206,14 @@ PRICE_EXAMSCAN_KRW = int(os.environ.get("PRICE_EXAMSCAN_KRW", "0"))
 # 만 답하고 본문은 서버가 원문에서 잘라 쓰므로 호출이 가볍다.
 PRICE_PDFSPLIT_KRW = int(os.environ.get("PRICE_PDFSPLIT_KRW", "0"))
 
-# 객관식 전용 유형 12개 — public/app.js의 MCQ_TYPES와 반드시 같은 목록을 유지한다.
+# 객관식 전용 유형 — public/app.js의 MCQ_TYPES와 반드시 같은 목록을 유지한다.
 # 이 집합에 없는 유형은 전부 주관식으로 보고 PRICE_SAQ_KRW를 매긴다(객관식·주관식
-# 유형 이름은 서로 겹치지 않는다).
+# 유형 이름은 서로 겹치지 않는다 — "영영풀이"(객관식)와 "영영풀이 쓰기"(주관식)처럼
+# 이름 끝을 달리해 구분한다).
 MCQ_ONLY_TYPES = {
     "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
-    "함축의미", "무관한 문장", "요약문",
+    "함축의미", "무관한 문장", "요약문", "영영풀이",
 }
 
 
@@ -762,6 +763,21 @@ QUIZ_SCHEMA = {
                             "propertyOrdering": ["ko", "en"],
                         },
                     },
+                    # 영영풀이 쓰기 — 영어 정의(def)와 그 정의가 가리키는, 지문에 실제로
+                    # 있는 영어 낱말/표현(en)의 짝. findItems와 짝이 우리말↔영어냐
+                    # 영어↔영어냐만 다르다.
+                    "glossItems": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "def": {"type": "STRING"},
+                                "en": {"type": "STRING"},
+                            },
+                            "required": ["def", "en"],
+                            "propertyOrdering": ["def", "en"],
+                        },
+                    },
                     "explanation": {"type": "STRING"},
                 },
                 # passageHtml은 required가 아니다 — 지문을 가공 없이 그대로 쓰는 유형
@@ -770,10 +786,10 @@ QUIZ_SCHEMA = {
                 # 문항끼리 지문이 미묘하게 달라지는 사고도 사라진다.
                 "required": ["no", "type", "format", "instruction",
                              "choices", "answer", "answerText", "tfItems", "fixes",
-                             "findItems", "explanation"],
+                             "findItems", "glossItems", "explanation"],
                 "propertyOrdering": ["no", "type", "format", "instruction", "passageHtml",
                                      "choices", "answer", "answerText", "tfItems", "fixes",
-                                     "findItems", "explanation"],
+                                     "findItems", "glossItems", "explanation"],
             },
         },
     },
@@ -783,11 +799,11 @@ QUIZ_SCHEMA = {
 
 QUIZ_TYPE_LABELS = [
     "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입", "함축의미",
-    "무관한 문장", "요약문",
+    "무관한 문장", "요약문", "영영풀이",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
     "서술형배열", "OX진위(영)", "OX진위(한)",
     "어휘 선택형", "어법 선택형", "틀린 어휘 찾기", "틀린 어법 찾기",
-    "동사형 쓰기", "빈칸 쓰기", "표현 찾아 쓰기",
+    "동사형 쓰기", "빈칸 쓰기", "표현 찾아 쓰기", "영영풀이 쓰기",
     "무관한 문장 쓰기", "요약문 완성",
 ]
 
@@ -795,8 +811,9 @@ QUIZ_TYPE_LABELS = [
 # 이 유형들의 passageHtml은 매번 지문 전문의 복사본이라, 유형 수만큼 지문이
 # 출력에 중복돼 실린다(12유형이면 지문 12벌). 모델에게는 비워서 보내게 하고
 # 서버가 지문으로 채워, 출력 토큰과 생성 시간을 함께 줄인다.
+# "영영풀이"도 여기 든다 — 영영풀이는 지문 옆에 정의를 얹을 뿐 지문 자체는 그대로다.
 QUIZ_PLAIN_PASSAGE_TYPES = {
-    "주제", "제목", "요지",
+    "주제", "제목", "요지", "영영풀이",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
     "OX진위(영)", "OX진위(한)",
 }
@@ -827,6 +844,7 @@ QUIZ_TYPE_MAX = {
     # 지문에 실제로 든 비유·반어 표현의 수가 한계다. 그보다 많이 시키면 평범한 사실
     # 문장에 밑줄을 긋고 '의미하는 바'를 묻게 되어, 정답과 오답이 갈리지 않는다.
     "함축의미": 2,
+    "영영풀이": 5,
     # 주관식 (전부 Flash로 처리되므로 어법 계열은 객관식보다 더 보수적으로 잡는다)
     "OX진위(영)": 8, "OX진위(한)": 8,
     "서술형배열": 6, "어휘 선택형": 6,
@@ -840,6 +858,9 @@ QUIZ_TYPE_MAX = {
     # 한 문항이 3~4개 표현을 가져간다. 겹치지 않으면서 뜻이 하나로 떨어지는 표현이
     # 지문 하나에 그리 많지 않다.
     "표현 찾아 쓰기": 2,
+    # 표현 찾아 쓰기와 같은 이유 — 한 문항이 2~4개 낱말을 가져가고, 영영풀이 하나로
+    # 뜻이 딱 정해지는 낱말이 지문 하나에 그리 많지 않다.
+    "영영풀이 쓰기": 2,
     # 무관한 문장·요약문 계열은 지문 하나에 1문항이 상한이다. 둘 다 '글 전체의 논지'
     # 하나에 걸려 있어서다 — 무관한 문장을 두 개 심으면 남은 문장만으로는 원래 흐름이
     # 이어지지 않아 어느 쪽이 무관한지 가릴 수 없고, 요약문은 글 하나에 요약이 하나뿐이라
@@ -928,7 +949,8 @@ in every other question.
 - `type`: one of the allowed type names, EXACTLY as given (e.g. "주제").
 - `format`: "mc" for 5-choice questions, "write" for 서술형배열, "tf" for OX진위(영)/OX진위(한),
   "pick" for 어휘/어법 선택형, "fix" for 틀린 어휘/어법 찾기, "verb" for 동사형 쓰기,
-  "fill" for 빈칸 쓰기, "find" for 표현 찾아 쓰기. Every other type is "mc".
+  "fill" for 빈칸 쓰기, "find" for 표현 찾아 쓰기, "gloss" for 영영풀이 쓰기.
+  Every other type (including "영영풀이") is "mc".
 - `instruction`: the exact Korean question line the student reads (수능 어투 그대로), e.g.
   "다음 글의 주제로 가장 적절한 것은?". For "문장삽입" also embed the sentence to insert,
   on its own line after the question line, like:
@@ -949,6 +971,8 @@ in every other question.
   For "mc" and "tf", set to "".
 - `tfItems`: for "tf", EXACTLY 5 items {text, isTrue}. For every other format, set to [].
 - `fixes`: for "fix", one {wrong, right} per planted error. For every other format, set to [].
+- `findItems`: for "find" (표현 찾아 쓰기), 3~4 items {ko, en}. For every other format, set to [].
+- `glossItems`: for "gloss" (영영풀이 쓰기), 2~4 items {def, en}. For every other format, set to [].
 - `explanation`: 2–4 Korean sentences (문어체) explaining why the answer is correct and why
   the others are wrong — specific, referencing the passage content.
 
@@ -1037,6 +1061,22 @@ the passage in full.
   actually contradicts, not a word that is merely odd. Do not use nonsense fillers.
   ⚠️ Do NOT put the correct pair first. Order the five pairs so the answer falls at ②, ③, ④,
   or ⑤ — a correct choice sitting at ① is a giveaway.
+- "영영풀이" (format "mc") — instruction "다음 영영풀이가 설명하는 낱말로 가장 적절한 것은?"
+  followed on its own line by the definition, embedded the same way "문장삽입" embeds its
+  given sentence:
+  다음 영영풀이가 설명하는 낱말로 가장 적절한 것은?<br><br>
+  <b>영영풀이:</b> The English definition text.
+  passageHtml = 지문 전문 (지문 재사용이면 OMIT — the passage itself is not touched).
+  Pick ONE content word or short fixed phrase that ACTUALLY APPEARS in the passage and matters
+  to its meaning (not a throwaway function word). Write an English dictionary-style definition
+  of it AS USED IN THIS PASSAGE — never use the word itself, an obvious cognate, or a word
+  built on the same root anywhere in the definition.
+  choices = 5 English words/short phrases, ALL of them content words that actually appear in
+  the passage (so a student who hasn't read the passage can't just recognize a random
+  dictionary word) — one is the word you defined, the other 4 are OTHER passage words of
+  similar part of speech and difficulty that the definition does NOT fit. answer = the defined
+  word's position. Never choose 5 near-synonyms — a careful reader must be able to rule out
+  4 of them by matching the definition, not by vocabulary trivia alone.
 - "내용일치(영)" — instruction "다음 글의 내용과 일치하는 것은?". passageHtml = 지문 전문.
   choices = 5 ENGLISH statements about the passage; EXACTLY ONE is true to the
   passage, the other 4 must CONTRADICT it (not merely be unmentioned). answer = the true one.
@@ -1094,7 +1134,7 @@ the passage in full.
   Same [정답|오답] mechanics as 어휘 선택형, but each pair tests a GRAMMAR point
   (수일치, 시제, 태, 준동사(to부정사/동명사/분사), 관계사, 대명사, 병렬구조 등).
   The wrong option must be a genuinely ungrammatical alternative, not just an odd word choice.
-  choices = [], answer = 0, answerText = "", fixes = [].
+  choices = [], answer = 0, answerText = "", fixes = [], findItems = [], glossItems = [].
 - "동사형 쓰기" (format "verb") — instruction
   "다음 글의 괄호 안에 주어진 말을 문맥과 어법에 맞게 알맞은 형태로 고쳐 쓰시오."
   `passageHtml` = 3~6 sentences taken from the passage, PLAIN TEXT ONLY (no HTML tags at all),
@@ -1110,7 +1150,7 @@ the passage in full.
   that needs no change) — the student must actually decide something.
   RULES: no nested parentheses; the left side never contains `|`; everything outside ( ) is
   identical to the passage, character for character.
-  choices = [], answer = 0, answerText = "", tfItems = [], fixes = [].
+  choices = [], answer = 0, answerText = "", tfItems = [], fixes = [], findItems = [], glossItems = [].
 - "표현 찾아 쓰기" (format "find") — instruction
   "아래 우리말과 뜻이 같은 영어 표현을 윗글에서 찾아 쓰시오."
   The ONLY type that leaves the passage alone and puts a list beside it.
@@ -1126,7 +1166,26 @@ the passage in full.
   ⚠️ Each `en` must occur EXACTLY ONCE in the passage, and no two items may overlap or share
   words. If a Korean meaning could point at two different phrases, the item has two answers —
   pick a different phrase instead.
-  choices = [], answer = 0, answerText = "", tfItems = [], fixes = [].
+  choices = [], answer = 0, answerText = "", tfItems = [], fixes = [], glossItems = [].
+- "영영풀이 쓰기" (format "gloss") — instruction
+  "다음 영영풀이에 해당하는 낱말을 윗글에서 찾아 쓰시오."
+  Same shape as "표현 찾아 쓰기" — the passage is left alone and a list sits beside it — but
+  the clue is an ENGLISH definition instead of a Korean meaning, and the answer is a single
+  WORD (occasionally a short fixed two-word unit — phrasal verb, compound), not a phrase.
+  · `passageHtml` = the passage in full, verbatim, PLAIN TEXT with no marking of any kind.
+    The answer word must still be visible in it — the student's job is to FIND it.
+  · `glossItems` = 2~4 items {def, en}:
+      en = ONE content word copied VERBATIM from the passage as it appears there (keep its
+           inflection — -s/-ed/-ing — exactly). Occasionally a fixed two-word unit (phrasal
+           verb like "give up") is fine; never a longer phrase and never a whole sentence.
+      def = an English dictionary-style definition of that word AS USED IN THIS PASSAGE —
+           NEVER use the word itself, an obvious cognate, or a word sharing its root anywhere
+           in the definition. Specific enough that exactly one word in the passage fits it.
+    List them in the order the words appear in the passage.
+  ⚠️ Each `en` must occur EXACTLY ONCE in the passage, and no two items may share the same
+  word or overlap. Pick words whose meaning is actually worth testing (관용표현·핵심 어휘) —
+  never an article, pronoun, or other function word.
+  choices = [], answer = 0, answerText = "", tfItems = [], fixes = [], findItems = [].
 - "빈칸 쓰기" (format "fill") — instruction
   "다음 글의 빈칸에 들어갈 알맞은 낱말을 윗글에서 찾아 쓰시오."
   `passageHtml` = the passage (or 4~8 consecutive sentences of it), PLAIN TEXT ONLY
@@ -1145,7 +1204,7 @@ the passage in full.
   Do not blank two words in the same clause, and never blank the same word twice.
   RULES: no nested parentheses; the left side is empty; everything outside ( ) is identical
   to the passage, character for character.
-  choices = [], answer = 0, answerText = "", tfItems = [], fixes = [].
+  choices = [], answer = 0, answerText = "", tfItems = [], fixes = [], findItems = [], glossItems = [].
 - "무관한 문장 쓰기" (format "short") — instruction
   "다음 글에서 전체 흐름과 관계 없는 문장을 찾아 그대로 옮겨 쓰시오."
   주관식판이다. 객관식 "무관한 문장"과 심는 방법은 같고, 번호를 붙이지 않는다 —
@@ -1162,7 +1221,7 @@ the passage in full.
   ⚠️ Change nothing else. If one of the passage's own sentences would read as more off-topic
   than the one you inserted, the item has no defensible answer — move the insertion and rewrite.
   `answerText` = the inserted sentence, character for character as it appears in passageHtml.
-  choices = [], answer = 0, tfItems = [], fixes = [], findItems = [].
+  choices = [], answer = 0, tfItems = [], fixes = [], findItems = [], glossItems = [].
 - "요약문 완성" (format "short") — instruction
   "다음 글의 내용을 한 문장으로 요약하고자 한다. <보기>에서 알맞은 낱말을 골라 빈칸 (A), (B)에 쓰시오."
   `passageHtml` = three parts joined by <br><br> :
@@ -1183,7 +1242,7 @@ the passage in full.
   ⚠️ No word in the bank may fit either blank except the intended one. If a distractor would
   also read correctly in (A) or (B), replace it.
   `answerText` = "(A) word  (B) word" using the two correct words.
-  choices = [], answer = 0, tfItems = [], fixes = [], findItems = [].
+  choices = [], answer = 0, tfItems = [], fixes = [], findItems = [], glossItems = [].
 - "틀린 어휘 찾기" (format "fix") — instruction
   "다음 글에서 문맥상 낱말의 쓰임이 적절하지 않은 것을 모두 찾아 바르게 고쳐 쓰시오."
   `passageHtml` = one paragraph of the passage, PLAIN TEXT ONLY, identical to the original
@@ -1191,13 +1250,13 @@ the passage in full.
   `fixes` = one {wrong, right} per replaced word: `wrong` = the word you planted (must appear
   VERBATIM in passageHtml), `right` = the original word from the passage.
   The app underlines the planted words and prints the correction lines.
-  choices = [], answer = 0, answerText = "".
+  choices = [], answer = 0, answerText = "", findItems = [], glossItems = [].
 - "틀린 어법 찾기" (format "fix") — instruction
   "다음 글에서 어법상 틀린 부분을 모두 찾아 바르게 고쳐 쓰시오."
   Same mechanics as 틀린 어휘 찾기, but plant 2~3 GRAMMAR errors instead
   (주어-동사 수일치 오류, 시제/태 오류, to부정사↔동명사 오용, 관계사 오용, 병렬 파괴 등).
   `fixes` = {wrong: the ungrammatical form you planted, right: the original correct form}.
-  choices = [], answer = 0, answerText = "".
+  choices = [], answer = 0, answerText = "", findItems = [], glossItems = [].
 - "OX진위(영)" (format "tf") — instruction
   "다음 글의 내용과 일치하면 O, 일치하지 않으면 X를 쓰시오."
   passageHtml = 지문 전문. `tfItems` = EXACTLY 5 objects {text, isTrue}:

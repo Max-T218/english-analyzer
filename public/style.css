@@ -489,6 +489,7 @@ v{
   .qz-fixline{font-size:11.5px; margin-top:6px;}
   .qz-writeline{height:1.7em;}
   .qz-writeline + .qz-writeline{margin-top:7px;}
+  .qz-glossdef{font-size:11.5px; line-height:1.5;}
 }
 
 /* ── 단어장 ── */
@@ -1315,6 +1316,12 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
 .qz-findline { display: flex; align-items: baseline; gap: 8px; margin: 6px 0; }
 .qz-findko { min-width: 190px; }
 .qz-findarrow { color: var(--muted, #64748b); }
+/* 영영풀이 쓰기 — 영어 정의는 우리말 한 줄(qz-findko)보다 훨씬 길어서 옆으로 붙이면
+   폭이 부족하다. 정의를 한 줄로 두고 답란(qz-writeline)을 그 아래에 둔다. */
+.qz-glossitem{margin-top:12px;}
+.qz-glossitem:first-child{margin-top:0;}
+.qz-glossdef{font-size:14px; line-height:1.65; color:var(--ink); font-style:italic;}
+.qz-glossdef .qz-num{font-style:normal; font-weight:700; color:var(--accent); margin-right:4px;}
 /* 빈칸 쓰기·동사형 쓰기 — 지문 속 빈칸 번호와 첫 철자 힌트 */
 .qz-blankno { color: var(--accent, #2563eb); }
 .qz-fillhint { white-space: nowrap; font-weight: 600; }
