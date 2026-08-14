@@ -879,6 +879,19 @@
   </div>
 </div>
 
+<!-- 지문을 불러올 때, 입력칸이 이미 차 있으면 어떻게 할지 묻는다 (저장함 위에 겹쳐 뜬다) -->
+<div class="print-guide" id="loadModeDialog" hidden>
+  <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="loadModeTitle">
+    <h3 id="loadModeTitle">📄 지문 불러오기</h3>
+    <p class="print-guide-lead" id="loadModeLead"></p>
+    <div class="print-guide-actions">
+      <button type="button" class="btn ghost" id="loadModeCancel">취소</button>
+      <button type="button" class="btn ghost" id="loadModeReplace">기존 지우고 불러오기</button>
+      <button type="button" class="btn" id="loadModeAppend">＋ 뒤에 붙이기</button>
+    </div>
+  </div>
+</div>
+
 <div class="print-guide" id="usageModal" hidden>
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="usageTitle">
     <h3 id="usageTitle">🧾 이용 내역</h3>

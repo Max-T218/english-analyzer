@@ -805,7 +805,9 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
   font-size:12.5px; line-height:1.6;
 }
 .print-guide-skip{display:inline-flex; align-items:center; gap:6px; font-size:13px;}
-.print-guide-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:16px;}
+.print-guide-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:16px; flex-wrap:wrap;}
+/* 불러오기 방식 묻는 창은 저장함 위에 겹쳐 뜬다 */
+#loadModeDialog{z-index:210;}
 @media print{ .print-guide{display:none !important;} }
 
 /* ── 밑줄 ──

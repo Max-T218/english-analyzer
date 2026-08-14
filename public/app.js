@@ -4441,11 +4441,7 @@ function savedItemRowHtml(item) {
       </div>
       <div class="saved-list-actions">
         <button type="button" class="btn ghost small saved-list-load"
-                title="지금 입력칸에 있는 지문을 이 저장본으로 바꿉니다.">불러오기</button>
-        ${item.tab === PASSAGE_TAB
-          ? `<button type="button" class="btn ghost small saved-list-append"
-                     title="지금 입력칸에 있는 지문은 그대로 두고, 이 저장본을 그 뒤에 이어 붙입니다.">＋ 뒤에 붙이기</button>`
-          : ""}
+                title="이 저장본을 입력칸으로 가져옵니다.">불러오기</button>
         <button type="button" class="btn ghost small danger saved-list-delete">삭제</button>
       </div>
     </div>`;
@@ -4457,8 +4453,8 @@ function savedItemRowHtml(item) {
 const LIBRARY = {
   passage: {
     title: "📄 지문 저장함",
-    lead: "저장해 둔 지문입니다. [불러오기]는 지금 입력칸을 이 저장본으로 바꾸고, " +
-          "[＋ 뒤에 붙이기]는 지금 것을 두고 뒤에 이어 붙입니다 — 나눠 저장한 지문을 한자리에 모을 때 쓰세요.",
+    lead: "저장해 둔 지문입니다. [불러오기]를 누르면 입력칸으로 가져옵니다 — 이미 입력해 둔 " +
+          "지문이 있으면, 뒤에 이어 붙일지 지우고 새로 넣을지 그때 물어봅니다.",
     empty: "아직 저장한 지문이 없습니다. 지문을 입력한 뒤 “💾 지문 저장”을 눌러 보세요.",
     match: (item) => item.tab === PASSAGE_TAB,
   },
@@ -4499,30 +4495,75 @@ async function openSavedList(kind) {
   }
 }
 
+/* 저장본 하나를 실제로 입력칸에 넣는다. mode는 "replace"(통째로 갈아 끼우기) 또는
+   "append"(지금 것을 두고 뒤에 이어 붙이기) — 지문 저장본만 append를 받는다. */
+async function loadSavedItem(id, mode) {
+  try {
+    const item = await getJson(`/api/saved/${encodeURIComponent(id)}`, "불러오기에 실패했습니다.");
+    const tab = item.tab;
+    if (!TAB_SAVE[tab]) return;
+    const append = mode === "append";
+    savedListModalEl.hidden = true;
+    const tabBtn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+    if (tabBtn) tabBtn.click();
+    /* 통째로 불러오면 지문이 다 바뀌므로 화면에 남아 있던 이전 제작 결과물을 모두
+       지운다 — 안 그러면 방금 불러온 지문과 맞지 않는 결과물이 그대로 남아 어느
+       지문으로 만든 것인지 알 수 없게 된다(지문만 불러온 경우가 특히 그랬다).
+       뒤에 붙일 때는 지우지 않는다. 앞서 있던 지문이 그 자리에 그대로 남으므로
+       그 지문으로 만든 결과물도 여전히 맞는 짝이다. */
+    if (!append) clearAllTabResults();
+    TAB_SAVE[tab].applyPayload(item.payload || {}, append ? "append" : "replace");
+  } catch (err) {
+    alert(err.message || "불러오기에 실패했습니다.");
+  }
+}
+
+/* 지문 저장본을 불러올 때, 입력칸이 이미 차 있으면 어떻게 할지 먼저 묻는다.
+   [뒤에 붙이기]를 목록의 별도 버튼으로 두었더니 "불러오기를 누르면 지금 것이
+   사라진다"는 사실이 눌러 봐야 드러났다 — 되돌릴 수 없는 쪽(덮어쓰기)이 기본으로
+   눌리기 쉬운 자리에 있었던 셈이다. 그래서 갈림길을 누른 뒤로 옮겼다. */
+const loadModeDialogEl = $("loadModeDialog");
+const loadModeLeadEl = $("loadModeLead");
+let pendingLoadId = null;
+
+function closeLoadModeDialog() {
+  loadModeDialogEl.hidden = true;
+  pendingLoadId = null;
+}
+function openLoadModeDialog(id, currentCount) {
+  pendingLoadId = id;
+  loadModeLeadEl.textContent =
+    `지금 입력칸에 지문 ${currentCount}개가 들어 있습니다. ` +
+    `불러올 지문을 그 뒤에 이어 붙일까요, 아니면 지금 것을 지우고 새로 넣을까요?`;
+  loadModeDialogEl.hidden = false;
+}
+$("loadModeCancel").addEventListener("click", closeLoadModeDialog);
+loadModeDialogEl.addEventListener("click", (e) => {
+  if (e.target === loadModeDialogEl) closeLoadModeDialog();
+});
+$("loadModeAppend").addEventListener("click", () => {
+  const id = pendingLoadId;
+  closeLoadModeDialog();
+  if (id) loadSavedItem(id, "append");
+});
+$("loadModeReplace").addEventListener("click", () => {
+  const id = pendingLoadId;
+  closeLoadModeDialog();
+  if (id) loadSavedItem(id, "replace");
+});
+
 savedListBodyEl.addEventListener("click", async (e) => {
   const row = e.target.closest(".saved-list-item");
   if (!row) return;
   const id = row.dataset.id;
 
-  const append = !!e.target.closest(".saved-list-append");
-  if (append || e.target.closest(".saved-list-load")) {
-    try {
-      const item = await getJson(`/api/saved/${encodeURIComponent(id)}`, "불러오기에 실패했습니다.");
-      const tab = item.tab;
-      if (!TAB_SAVE[tab]) return;
-      savedListModalEl.hidden = true;
-      const tabBtn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
-      if (tabBtn) tabBtn.click();
-      /* 통째로 불러오면 지문이 다 바뀌므로 화면에 남아 있던 이전 제작 결과물을 모두
-         지운다 — 안 그러면 방금 불러온 지문과 맞지 않는 결과물이 그대로 남아 어느
-         지문으로 만든 것인지 알 수 없게 된다(지문만 불러온 경우가 특히 그랬다).
-         뒤에 붙일 때는 지우지 않는다. 앞서 있던 지문이 그 자리에 그대로 남으므로
-         그 지문으로 만든 결과물도 여전히 맞는 짝이다. */
-      if (!append) clearAllTabResults();
-      TAB_SAVE[tab].applyPayload(item.payload || {}, append ? "append" : "replace");
-    } catch (err) {
-      alert(err.message || "불러오기에 실패했습니다.");
-    }
+  if (e.target.closest(".saved-list-load")) {
+    // 지문 저장본이고 입력칸이 이미 차 있을 때만 갈림길을 묻는다.
+    // 제작 자료는 지문·설정·결과가 한 벌이라 이어 붙일 수가 없어 늘 통째로 바꾼다.
+    const cached = savedItemsCache.find((it) => it.id === id);
+    const current = cached && cached.tab === PASSAGE_TAB ? passageMgr.getJobs().length : 0;
+    if (current) openLoadModeDialog(id, current);
+    else loadSavedItem(id, "replace");
     return;
   }
 
@@ -4642,6 +4683,8 @@ usageModalEl.addEventListener("click", (e) => {
 
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  // 불러오기 방식 창은 저장함 위에 겹쳐 있다 — 겹쳤을 때는 위엣것만 닫는다
+  if (!loadModeDialogEl.hidden) { closeLoadModeDialog(); return; }
   if (!saveDialogEl.hidden) closeSaveDialog();
   if (!savedListModalEl.hidden) savedListModalEl.hidden = true;
   if (!usageModalEl.hidden) usageModalEl.hidden = true;
