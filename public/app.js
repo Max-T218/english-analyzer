@@ -2326,22 +2326,27 @@ document.addEventListener("keydown", (e) => {
 });
 
 /* 직접 지정한 쪽 나눔을 저장/복원한다. 분석본은 저장해 둔 원본 data로 다시 그리므로
-   덩어리 순서가 늘 같다 — 지문마다 덩어리 순서대로 값을 적어 두면 그대로 되살아난다. */
+   덩어리 순서가 늘 같다 — 지문마다 덩어리 순서대로 값을 적어 두면 그대로 되살아난다.
+
+   지문마다 값을 '배열'로 담아 그 배열들을 다시 배열에 넣으면(배열 속의 배열)
+   Firestore가 거부한다 ("Property payload contains an invalid nested entity") —
+   실제로 저장이 이 자리에서 막혔다. 그래서 지문 하나의 값은 "|"로 이어붙인
+   문자열 하나로 담는다 — 최상위 배열의 원소가 문자열/null뿐이라 중첩이 없다. */
 function collectPageBreaks() {
   return lastAnalyzeEntries.map((_, idx) => {
     const block = resultEl.querySelector(`.passage-block[data-entry="${idx}"]`);
     if (!block) return null;
-    return [...block.querySelectorAll(".pg-blk")].map((b) => b.dataset.brk || "");
+    return [...block.querySelectorAll(".pg-blk")].map((b) => b.dataset.brk || "").join("|");
   });
 }
 
 function applyPageBreaks(list) {
-  (list || []).forEach((marks, idx) => {
-    if (!Array.isArray(marks)) return;
+  (list || []).forEach((packed, idx) => {
+    if (typeof packed !== "string" || !packed) return;
     const block = resultEl.querySelector(`.passage-block[data-entry="${idx}"]`);
     if (!block) return;
     const blks = [...block.querySelectorAll(".pg-blk")];
-    marks.forEach((m, i) => {
+    packed.split("|").forEach((m, i) => {
       if (!blks[i]) return;
       if (m === "page" || m === "auto") blks[i].dataset.brk = m;
     });
