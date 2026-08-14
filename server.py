@@ -2923,12 +2923,31 @@ For EACH such conjunction:
 ▸ 놓치기 쉬운 병렬 — 이 목록을 한 항목씩 짚어 가며 지문을 훑어라:
   1. 3개 이상 나열: "A, B, and C" → 쉼표로 이어진 앞의 것들까지 전부 num 부여 (1,2,3).
   2. **절·문장 병렬**: "S+V …, and S+V …" — 절을 잇는 and/but/or도 반드시 표시.
+     ⚠️ **여기서 가장 자주 틀린다: 절을 잇는데 동사만 묶는 것.** 기계로 대조한다.
+     ▸ 판정법 — 접속사 **뒤에 새 주어가 나오면 절 병렬이다.**
+         "…, and consequently, **they** are viewed as…"  → they가 새 주어 → 절 병렬
+         "they study and work"                          → 뒤가 바로 동사 → 동사구 병렬
+       주어가 대명사(they/it/this/we…)든 명사구든 마찬가지다.
+     ▸ 절 병렬이면 번호가 붙는 요소는 **그 절 전체**다. t를 절의 **첫 낱말(주어)부터**
+       잡아라. 동사부터 잡으면 학생은 '동사 둘이 병렬'이라고 거꾸로 배운다.
+         WRONG  They ¹convert the CO2 …, and consequently, they ²are viewed as …
+                (번호가 convert / are viewed as 에만 붙음)
+         RIGHT  ¹They convert the CO2 …, and consequently, ²they are viewed as …
+     ▸ 절이 길어 한 청크를 넘으면 조각마다 **같은 번호**를 붙여 이어라(위 8번).
+     ▸ note에 '절을 연결한다'고 썼으면 표시도 반드시 절 단위여야 한다. 왼쪽은 동사만
+       묶어 놓고 오른쪽에서 "두 절을 연결"이라고 하면 좌우가 어긋난다.
   3. **동사구 병렬**: "can help develop and improve" — 조동사 뒤 원형 두 개.
   4. **to부정사 병렬에서 두 번째 to 생략**: "to grow and (to) survive".
   5. 전치사구·분사구·형용사·부사의 병렬: "in schools and in homes", "growing and spreading".
   6. 명사구 병렬: "hundreds of chemical reactions and processes".
   7. 문두의 But/And/Or (앞 문장과 잇는 경우)도 conj로 표시한다.
   8. 병렬 요소가 여러 chunk에 걸쳐 있어도 각 chunk의 anns에 각각 번호를 넣어 이어 붙인다.
+     ▸ **한 요소가 끊겨 있으면 조각마다 같은 번호를 붙여라** — 번호를 나누지 마라.
+       청크를 넘어 끊겼든, 한 청크 안에서 다른 말에 끼여 끊겼든 마찬가지다.
+       서버는 '같은 번호가 연달아 나오면 한 요소'로 읽는다. 사이에 그 묶음의 다른
+       번호가 끼어들면 그때만 다른 요소로 본다.
+         예: ¹to grow in the wild / and ²there survive ²the winter
+             → "there survive"와 "the winter"는 둘 다 2번 요소의 조각이다.
 
 ▸ 제외(표시하지 않음): 굳어진 표현 안의 and/or/but —
   and so on / and so forth / as well as / all but / nothing but / anything but /
@@ -3024,6 +3043,15 @@ Only return JSON after all eight checks.
   note·examNote에서 어떤 단어의 문법 용어를 쓸 때는, 그 단어의 `anns` rt에 쓴 용어를
   **그대로** 쓴다. 쓰다가 rt가 틀렸다는 걸 알아차렸으면 note를 고치지 말고 **rt를 고쳐라**.
   note에 등장하지 않는 문법 포인트를 새로 지어내지도 말 것.
+- ⚠️ **빨강(g)·보라(gv)·주황(tg)으로 표시한 것은 하나도 빠짐없이 note에서 다뤄라**
+  (기계로 대조한다). 파랑(v)은 뜻만 보여 주는 표시라 루비로 끝나도 되지만, 어법 표시는
+  '왜 색이 칠해졌는지'를 학생이 왼쪽만 보고는 알 수 없다. 표시해 놓고 설명하지 않으면
+  그 색은 학생에게 수수께끼일 뿐이다.
+  · 특히 **생략·도치처럼 눈에 보이지 않는 것**은 무엇이 어디서 생략·도치됐는지 반드시
+    문장으로 밝혀라. 왼쪽에 "목적격 관대 생략"이라고만 떠 있고 note가 딴 이야기를 하면
+    학생은 어느 자리가 생략인지 끝내 알 수 없다.
+      RIGHT  note: "<code class="g">children</code> 뒤에 목적격 관계대명사가 생략되어…"
+  · 한 문장에 표시가 많으면 두세 문장으로 나눠 쓰되, 표시한 것을 빠뜨리지는 마라.
 
 ## summary (주제 & 흐름 요약)
 - First item: {label:"주제", content: an English topic sentence, then <br>, then the
@@ -3697,6 +3725,138 @@ def broken_parallel_numbers(result, limit=10):
 _TAIL_CONJ = {"and", "or", "but", "nor"}
 
 
+# 절 병렬 판정에 쓰는 조각들.
+# 접속사 뒤에 '새 주어'가 나오면 그 접속사는 동사가 아니라 절을 잇고 있다는 뜻이다.
+# 주어가 되풀이되지 않는 동사구 병렬("they study and work")과 갈리는 지점이 여기다.
+_SUBJ_PRON_RE = re.compile(
+    r"^(they|it|this|that|these|those|we|you|he|she|i|there)\b\s+[A-Za-z]", re.I
+)
+# 접속사와 새 주어 사이에 흔히 끼는 말 — 쉼표, 연결부사, 짧은 부사구
+_AFTER_CONJ_SKIP_RE = re.compile(
+    r"^(?:[,;\s]|consequently|therefore|thus|hence|then|also|moreover|furthermore|"
+    r"subsequently|meanwhile|instead|however|in turn|as a result|so|yet|still|"
+    r"[a-z]+ly)+", re.I
+)
+# 요소가 이 말로 시작하면 주어를 빼고 동사부터 묶은 것이다
+_FINITE_START = {
+    "is", "are", "was", "were", "am", "be", "been", "being",
+    "has", "have", "had", "does", "do", "did",
+    "can", "could", "will", "would", "shall", "should", "may", "might", "must",
+}
+# 요소 바로 앞이 이 말이면, 그 주어를 빼놓고 묶은 것이다
+_PRECEDING_SUBJ_RE = re.compile(
+    r"(?:^|[,;\s])(they|it|this|that|these|those|we|you|he|she|there)[,\s]+$", re.I
+)
+# 모델이 해설에서 스스로 '절을 연결한다'고 말한 경우
+_NOTE_CLAUSE_RE = re.compile(r"절[을를]?\s*(?:서로\s*)?(?:연결|잇|이어|병렬)")
+
+
+def _sentence_ann_positions(s):
+    """문장의 모든 청크를 한 줄로 이어, 각 주석이 그 줄의 어디에 걸리는지 돌려준다.
+
+    절 병렬인지 보려면 '접속사 뒤에 무엇이 오는가'를 읽어야 하는데, 그 뒤가 다음
+    청크에 있는 일이 흔하다. 청크 경계를 지워야 판정할 수 있다.
+    돌려주는 값은 (이어붙인 글, [(시작, 끝, 주석)…])."""
+    pieces = []
+    items = []
+    base = 0
+    for c in s.get("chunks", []) or []:
+        if not isinstance(c, dict):
+            continue
+        text = _TAG_STRIP_RE.sub("", c.get("text", "") or "")
+        used = [False] * len(text)
+        for a in c.get("anns", []) or []:
+            if not isinstance(a, dict):
+                continue
+            t = (a.get("t") or "").strip()
+            if not t:
+                continue
+            pos = _find_ann(text, t, used)
+            if pos < 0:
+                continue
+            for i in range(pos, pos + len(t)):
+                used[i] = True
+            items.append((base + pos, base + pos + len(t), a))
+        pieces.append(text)
+        base += len(text) + 1
+    items.sort(key=lambda x: x[0])
+    return " ".join(pieces), items
+
+
+def clause_parallel_problems(result, limit=10):
+    """절을 잇는 접속사인데 동사구만 묶어 놓은 자리를 찾는다.
+
+    "They ¹convert the CO2 …, and consequently, they ²are viewed as …"처럼
+    and가 완전한 절 둘을 잇는데 번호는 동사에만 붙는 일이 잦다. 그러면 학생은
+    무엇과 무엇이 병렬인지 거꾸로 배운다 — 동사 둘이 병렬인 줄 안다.
+
+    판정은 두 갈래다.
+      · 접속사 뒤에 **새 주어**가 나오면 절 병렬이다. 주어를 되풀이하지 않는
+        동사구 병렬("they study and work")과 여기서 갈린다 — 그쪽은 접속사 뒤가
+        바로 동사라 걸리지 않는다.
+      · 모델이 해설에서 스스로 '절을 연결한다'고 말했으면 그 말을 믿는다.
+    그 두 경우에, 번호가 붙은 요소가 동사(조동사·be)부터 시작하거나 바로 앞에
+    주어가 남아 있으면 '주어를 빼고 묶었다'로 본다."""
+    out = []
+    for s in result.get("sentences", []) or []:
+        if not isinstance(s, dict):
+            continue
+        note = (
+            _TAG_STRIP_RE.sub("", str(s.get("note") or "")) + " " +
+            _TAG_STRIP_RE.sub("", str(s.get("examNote") or ""))
+        )
+        note_says_clause = bool(_NOTE_CLAUSE_RE.search(note))
+        text, items = _sentence_ann_positions(s)
+        if not items:
+            continue
+
+        # 묶음별로 접속사 위치와 번호 요소를 모은다
+        groups = {}
+        for st, en, a in items:
+            g = groups.setdefault(_grp_no(a), {"conj": [], "els": []})
+            role = (a.get("role") or "").strip()
+            if role == "conj" and (a.get("t") or "").strip().lower() in _TAIL_CONJ:
+                g["conj"].append((st, en))
+            n = a.get("num")
+            if isinstance(n, (int, float)) and int(n) > 0:
+                g["els"].append((st, en, a))
+
+        for g in sorted(groups):
+            info = groups[g]
+            if not info["conj"] or len(info["els"]) < 2:
+                continue
+            # 접속사 뒤에 새 주어가 오는가
+            clause_level = note_says_clause
+            for _st, en in info["conj"]:
+                rest = text[en:en + 80].lstrip()
+                rest = _AFTER_CONJ_SKIP_RE.sub("", rest).lstrip()
+                if _SUBJ_PRON_RE.match(rest):
+                    clause_level = True
+                    break
+            if not clause_level:
+                continue
+
+            for st, en, a in info["els"]:
+                t = (a.get("t") or "").strip()
+                head = t.split()[0].lower().strip(",.;:") if t.split() else ""
+                left = text[max(0, st - 24):st]
+                if head in _FINITE_START:
+                    why = f'"{t}"가 동사부터 시작합니다'
+                elif _PRECEDING_SUBJ_RE.search(left):
+                    why = f'"{t}" 바로 앞에 주어가 빠져 있습니다'
+                else:
+                    continue
+                out.append(
+                    f'{s.get("no")}번 문장 {g}번 묶음: 이 접속사는 절 둘을 잇는데 '
+                    f'{why} — 번호가 붙는 요소를 **주어부터 절 전체**로 넓히세요. '
+                    f'(예: ¹They convert … and ²they are viewed as …) "{text[:90]}"'
+                )
+                if len(out) >= limit:
+                    return out
+                break   # 한 묶음에 한 번만 짚는다 — 고치는 방법은 어차피 같다
+    return out
+
+
 def conj_group_mixups(result, limit=10):
     """한 묶음(grp)에 등위접속사를 둘 이상 넣은 문장을 찾는다.
 
@@ -3741,6 +3901,117 @@ def conj_group_mixups(result, limit=10):
     return out
 
 
+def _renumber_parallel(result):
+    """묶음마다 병렬 번호를 글 순서대로 1,2,3…으로 다시 매긴다.
+
+    모델이 번호를 2부터 시작하거나, 한 묶음 안 서로 다른 요소에 같은 번호(²…²)를
+    붙여 오는 일이 있다. 그러면 화면에 짝 없는 위첨자가 떠서 무엇과 무엇이 병렬인지
+    알 수 없다. 번호만큼은 '읽는 순서'가 곧 정답이라 서버가 직접 고칠 수 있다 —
+    다시 물어보지 않는다(재요청은 느리고, 고쳐 온다는 보장도 없다).
+
+    ▸ 같은 번호를 **두 번 써야 하는 경우는 그대로 둔다.**
+      한 병렬 요소가 여러 조각으로 끊겨 있으면 각 조각에 같은 번호가 붙는다
+      ("to grow in the wild / and there survive" 처럼 청크를 넘거나, 한 청크 안에서
+      다른 말에 끼여 끊기거나). 그때 번호를 억지로 1·2로 갈라놓으면 한 요소가 둘로
+      쪼개져 보인다.
+      그래서 '같은 번호가 읽는 순서에서 **연달아** 나오면 한 요소'로 본다. 사이에
+      그 묶음의 다른 번호가 끼어들면 그때만 다른 요소로 갈라 다시 매긴다.
+      청크 경계는 보지 않는다 — 요소가 어디서 끊겼는지와 청크를 어디서 잘랐는지는
+      서로 상관없는 일이기 때문이다.
+
+    ▸ 짝이 아예 하나뿐인 묶음(모델이 병렬 상대를 못 찾은 경우)은 여기서 고치지
+      못한다. 그건 broken_parallel_numbers가 잡아 모델에게 되묻는다."""
+    for s in result.get("sentences", []) or []:
+        if not isinstance(s, dict):
+            continue
+        groups = {}
+        for ci, c in enumerate(s.get("chunks", []) or []):
+            if not isinstance(c, dict):
+                continue
+            text = _TAG_STRIP_RE.sub("", c.get("text", "") or "")
+            free = [False] * len(text)
+            for oi, a in enumerate(c.get("anns", []) or []):
+                if not isinstance(a, dict):
+                    continue
+                n = a.get("num")
+                if not (isinstance(n, (int, float)) and int(n) > 0):
+                    continue
+                pos = _find_ann(text, (a.get("t") or "").strip(), free)
+                groups.setdefault(_grp_no(a), []).append(
+                    (ci, pos if pos >= 0 else len(text) + oi, oi, int(n), a)
+                )
+        for items in groups.values():
+            items.sort(key=lambda x: (x[0], x[1], x[2]))
+            new_no = 0
+            prev_old = None   # 바로 앞 표시의 '원래' 번호
+            for _ci, _pos, _oi, old, a in items:
+                if old != prev_old:   # 번호가 바뀌는 자리에서만 다음 요소로 넘어간다
+                    new_no += 1
+                a["num"] = new_no     # 이어지는 조각이면 앞과 같은 번호를 그대로 받는다
+                prev_old = old
+    return result
+
+
+# 왼쪽 표시 중 오른쪽 해설이 반드시 다뤄야 하는 것 — 빨강(어법)과 보라(어법+어휘).
+# 파랑(v)은 뜻만 알려 주는 표시라 루비만으로 끝나도 되고, 노랑·형광은 연결어·병렬이라
+# 해설에서 따로 설명할 것이 없다.
+_NOTE_ROLES = ("g", "gv", "tg")
+_RT_TOKEN_RE = re.compile(r"[+\s/·,()\[\]~]+")
+
+
+def unexplained_marks(result, limit=10, per_sentence=3):
+    """왼쪽에 표시해 놓고 오른쪽 해설이 한마디도 하지 않은 자리를 찾는다.
+
+    화면이 왼쪽 표시와 오른쪽 해설을 나란히 붙여 보여 주므로, 색만 칠해져 있고
+    설명이 없으면 학생은 '왜 여기에 색이 있지'에서 막힌다. 실제로 목적격 관계대명사
+    생략을 왼쪽에만 표시하고 해설은 다른 이야기만 한 분석본이 나왔다.
+
+    설명했는지는 두 가지로 본다 — 해설이 그 영어를 인용했거나, 루비에 적은 말을
+    해설에서 다시 썼거나. 둘 다 아니면 설명이 빠진 것으로 본다."""
+    out = []
+    for s in result.get("sentences", []) or []:
+        if not isinstance(s, dict):
+            continue
+        note = (
+            _TAG_STRIP_RE.sub("", str(s.get("note") or "")) + " " +
+            _TAG_STRIP_RE.sub("", str(s.get("examNote") or ""))
+        ).strip()
+        note_low = note.lower()
+        found = 0
+        for c in s.get("chunks", []) or []:
+            if not isinstance(c, dict):
+                continue
+            for a in c.get("anns", []) or []:
+                if not isinstance(a, dict):
+                    continue
+                role = (a.get("role") or "").strip()
+                if role not in _NOTE_ROLES:
+                    continue
+                t = str(a.get("t") or "").strip()
+                rt = str(a.get("rt") or "").strip()
+                if not t or not rt:
+                    continue
+                if t.lower() in note_low:
+                    continue      # 해설이 그 영어를 인용했다
+                if any(tok and len(tok) >= 2 and tok in note
+                       for tok in _RT_TOKEN_RE.split(rt)):
+                    continue      # 루비에 적은 말을 해설에서 다시 썼다
+                colour = "보라(어법+어휘)" if role == "gv" else "빨강(어법)"
+                out.append(
+                    f'{s.get("no")}번 문장: 왼쪽에 "{t}"를 {colour}으로 표시하고 '
+                    f'"{rt}"라고 적었는데 해설에는 그 이야기가 없습니다 — '
+                    f'무엇이 왜 그런지 해설에 한 문장 넣으세요.'
+                )
+                found += 1
+                if len(out) >= limit:
+                    return out
+                if found >= per_sentence:
+                    break
+            if found >= per_sentence:
+                break
+    return out
+
+
 def english_incomplete(result, passage):
     """영어 원문 누락 감지: 한글은 있는데 영어가 빈 chunk가 있거나,
     전체 영어량이 원문의 60% 미만이면 True (재요청 필요)."""
@@ -3776,7 +4047,7 @@ def _analysis_regressed(retry, current, passage):
 
 def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=None,
                       english_fix=False, conj_hint=None, num_hint=None,
-                      ruby_hint=None, conflict_hint=None):
+                      ruby_hint=None, conflict_hint=None, note_hint=None):
     lines = []
     if mode == "student":
         lines.append("대상: 학생 자기주도 학습용. 해설은 이해하기 쉽게 쓰되 정확하게.")
@@ -3818,7 +4089,11 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
             "접속사마다 grp를 따로 주고(바깥 1, 안쪽 2), 바깥 묶음에는 안쪽 병렬 전체를 "
             "한 요소로 넣어 번호를 매기세요 — 예: 바깥 grp=1의 3번 요소 t=\"the challenges "
             "and triumphs\", 안쪽 grp=2는 challenges 1 / triumphs 2. 안쪽 ann과 자리가 "
-            "겹쳐도 그대로 두세요(서버가 번호만 앞에 꽂습니다)."
+            "겹쳐도 그대로 두세요(서버가 번호만 앞에 꽂습니다).\n"
+            "'절 둘을 잇는데'라고 나온 곳은 접속사가 동사가 아니라 **절**을 잇는 자리입니다. "
+            "번호가 붙는 요소를 동사구가 아니라 **주어부터 시작하는 절 전체**로 넓히세요 — "
+            "t를 그 절의 첫 낱말(주어)부터 잡습니다. 절이 길어 한 청크에 안 들어가면 조각마다 "
+            "같은 번호를 붙여 이어 주세요(번호를 나누지 마세요)."
         )
         for h in num_hint:
             lines.append("  · " + h)
@@ -3836,6 +4111,17 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
             "적당히 바꾸는 것이 아니라, 틀린 쪽(대개 루비)을 고쳐야 합니다."
         )
         for h in conflict_hint:
+            lines.append("  · " + h)
+    if note_hint:
+        lines.append(
+            "⚠️ 아래는 왼쪽에 표시(빨강 g·보라 gv)만 해 두고 오른쪽 해설(note)이 그 이야기를 "
+            "하지 않은 자리입니다. 화면이 둘을 나란히 붙여 보여 주므로, 색만 칠해져 있고 "
+            "설명이 없으면 학생은 왜 표시됐는지 알 수 없습니다. 해당 문장의 note에 그 표시를 "
+            "설명하는 문장을 넣으세요 — 무엇이(영어를 그대로 인용) 왜 그런 구조·뜻인지 "
+            "한 문장이면 됩니다. 특히 생략·도치처럼 눈에 보이지 않는 것은 무엇이 어디서 "
+            "생략·도치됐는지 반드시 밝히세요. 이미 있는 설명과 다른 표시는 그대로 두세요."
+        )
+        for h in note_hint:
             lines.append("  · " + h)
     if english_fix:
         lines.append(
@@ -4177,7 +4463,7 @@ def splice_sentences(result, fixed, targets):
 
 def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, complete_hint=None,
                 english_fix=False, conj_hint=None, num_hint=None,
-                ruby_hint=None, conflict_hint=None):
+                ruby_hint=None, conflict_hint=None, note_hint=None):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -4203,7 +4489,8 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
                 "role": "user",
                 "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior,
                                                      complete_hint, english_fix, conj_hint,
-                                                     num_hint, ruby_hint, conflict_hint)}],
+                                                     num_hint, ruby_hint, conflict_hint,
+                                                     note_hint)}],
             }
         ],
         "generationConfig": {
@@ -4226,16 +4513,21 @@ def finalize_analysis(result):
     # 고쳐 받을 때 '지금 이 문장이 어떤 상태인지' 보여 주려면 anns가 필요한데 아래
     # 조립 루프가 그것을 지운다. 그래서 지우기 전에 따로 떠 둔다(핸들러가 응답 전에
     # 지우는 다른 비공개 키들과 같은 취급이다).
+    # 병렬 번호는 읽는 순서가 곧 정답이라 서버가 먼저 바로잡는다. 검사·백업보다
+    # 앞에 두어야 고쳐 받을 때도, 화면에 나갈 때도 같은(바로잡힌) 번호를 본다.
+    _renumber_parallel(result)
     result["_rawSents"] = copy.deepcopy(result.get("sentences") or [])
     # 등위접속사 누락 검사는 조립 '전'에 해야 한다 — 아래 루프가 anns를 버리기 때문.
     # 결과는 비공개 키로 얹어 두고, 핸들러가 재요청 판단에 쓴 뒤 응답 전에 지운다.
     missed = unmarked_conjunctions(result)
     # 번호가 빠진 것과 묶음을 잘못 합친 것은 화면에서 같은 증상(짝 없는 위첨자)으로
     # 나타나고 고치는 방법도 같아, 한 목록으로 모아 같은 재요청에 실어 보낸다.
-    broken_nums = broken_parallel_numbers(result) + conj_group_mixups(result)
+    broken_nums = (broken_parallel_numbers(result) + conj_group_mixups(result)
+                   + clause_parallel_problems(result))
     # 루비 규칙 위반·좌우 용어 모순도 조립 '전'에 검사한다(아래 루프가 anns를 버린다)
     ruby_bad = ruby_term_problems(result)
     conflicts = term_conflicts(result)
+    note_miss = unexplained_marks(result)
     # AI 마크업 정화 + 한국어 루비 제거 (레이아웃 붕괴/오류 방어)
     for s in result.get("sentences", []):
         if not isinstance(s, dict):
@@ -4265,6 +4557,7 @@ def finalize_analysis(result):
     result["_numBroken"] = broken_nums
     result["_rubyBad"] = ruby_bad
     result["_conflicts"] = conflicts
+    result["_noteMiss"] = note_miss
     return result
 
 
@@ -4278,7 +4571,8 @@ _FIX_MAX_SHARE = 0.5
 
 
 def call_gemini_fix(passage, result, targets, api_key, model,
-                    conj_hint=None, num_hint=None, ruby_hint=None, conflict_hint=None):
+                    conj_hint=None, num_hint=None, ruby_hint=None, conflict_hint=None,
+                    note_hint=None):
     """지목된 문장만 고쳐 받아 원본에 끼워 넣은 분석본을 돌려준다.
 
     전체를 다시 만들지 않으므로 빠르고 싸며, 손대지 않은 문장은 바뀔 수가 없다.
@@ -4320,7 +4614,8 @@ def call_gemini_fix(passage, result, targets, api_key, model,
         "지적된 문제:",
     ]
     for label, hints in (("등위접속사 누락", conj_hint), ("병렬 번호", num_hint),
-                         ("루비 규칙 위반", ruby_hint), ("좌우 용어 모순", conflict_hint)):
+                         ("루비 규칙 위반", ruby_hint), ("좌우 용어 모순", conflict_hint),
+                         ("해설 누락", note_hint)):
         for h in hints or ():
             lines.append(f"  · [{label}] {h}")
 
@@ -5996,6 +6291,26 @@ class Handler(BaseHTTPRequestHandler):
                 if len(retry.get("_conflicts") or []) >= len(bad):
                     break
                 result = retry
+            # 표시만 하고 설명은 빠진 자리 방어 — 빨강(어법)·보라(어법+어휘)로 칠해 놓고
+            # 오른쪽 해설이 그 이야기를 하지 않으면 학생은 왜 색이 있는지 알 수 없다.
+            # 맨 뒤에 두는 이유: 앞의 보정들이 표시와 해설을 모두 건드리므로, 다 끝난
+            # 상태에서 세어야 헛일이 없다.
+            for _ in range(2):
+                bad = result.get("_noteMiss") or []
+                if not bad:
+                    break
+                if trace.blocked("해설"):
+                    break
+                retry, part = refine_analysis(
+                    passage, target_grammar, mode, api_key, model, result,
+                    note_hint=bad,
+                )
+                trace.retry("해설", part)
+                if _analysis_regressed(retry, result, passage):
+                    break
+                if len(retry.get("_noteMiss") or []) >= len(bad):
+                    break
+                result = retry
             # 비공개 키는 여기서 전부 턴다. _rawSents는 분석본을 통째로 한 벌 더 담고
             # 있어, 남겨 두면 화면으로 가는 응답이 두 배가 된다.
             result.pop("_rawSents", None)
@@ -6003,6 +6318,7 @@ class Handler(BaseHTTPRequestHandler):
             result.pop("_numBroken", None)
             result.pop("_rubyBad", None)
             result.pop("_conflicts", None)
+            result.pop("_noteMiss", None)
         except ProUnavailable as e:
             trace.log(model, passage, error="pro_unavailable")
             self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
