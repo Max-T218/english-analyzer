@@ -182,6 +182,10 @@ function showDoneGuide(what, canEdit) {
       "<b>고칠 곳이 있으면</b> 결과 위의 <b>✏️ 직접 수정</b> 버튼을 누르세요. " +
         "한글 해석·루비·해설을 그 자리에서 고칠 수 있고, 고친 그대로 인쇄됩니다."
     );
+    steps.push(
+      "<b>쪽 아래가 비어 보이면</b> <b>📄 쪽 구성</b>을 눌러 보세요. " +
+        "인쇄했을 때 쪽이 어디서 넘어가는지 보여 주고, 표·문장 카드 단위로 쪽을 옮길 수 있습니다."
+    );
   } else {
     steps.push(
       "<b>고칠 곳이 있으면</b> 유형·문항 수·지문을 바꿔 <b>다시 만들어</b> 주세요. " +
@@ -1910,6 +1914,8 @@ function syncFloatPrint() {
       "#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
     );
   floatPrintGroup.hidden = !(btn && btn.style.display !== "none");
+  // 되돌리기도 이 묶음 안에 있다 — 지문 분석 탭에서 고치는 중일 때만 보인다
+  syncUndoBtn();
 }
 // 떠 있는 버튼은 '지금 활성 탭'의 진짜 인쇄 버튼을 대신 눌러 준다.
 // 그러면 각 탭이 자기 파일명 규칙을 그대로 갖고 있으므로 여기서 따로 만들 필요가 없다.
@@ -1985,6 +1991,8 @@ const EDITABLE_SEL = "rt, .c-kor, .note";
 const LOCKED_SEL = ".note-title, .exam-why-title";
 
 function setEditMode(on) {
+  // 두 모드는 같은 화면을 만지므로 함께 켜지 않는다 (쪽 구성의 손잡이가 편집을 방해한다)
+  if (on && resultEl.classList.contains("paging")) setPagingMode(false);
   resultEl.spellcheck = false;               // 영어·한국어가 섞여 빨간 밑줄이 지저분해진다
   resultEl.classList.toggle("editing", on);
   resultEl.querySelectorAll(EDITABLE_SEL).forEach((el) => {
@@ -1995,19 +2003,350 @@ function setEditMode(on) {
   });
   editBtn.textContent = on ? "✅ 수정 끝내기" : "✏️ 직접 수정";
   editHintEl.textContent = on
-    ? "색칠된 곳(한글 해석 · 루비 · 해설)만 고칠 수 있습니다. 되돌리기는 Ctrl+Z."
+    ? "색칠된 곳(한글 해석 · 루비 · 해설)만 고칠 수 있습니다. 한 글자씩 무르려면 Ctrl+Z, 고친 묶음째 되돌리려면 ↩ 되돌리기."
     : "";
   if (on) {
     const first = resultEl.querySelector('[contenteditable="true"]');
     if (first) first.focus();
   }
+  syncUndoBtn(); // 고치는 중일 때만 뜨는 버튼이라 모드가 바뀌면 함께 바뀐다
 }
 
 editBtn.addEventListener("click", () => {
+  flushUndo(); // 고치다 만 묶음을 한 단계로 끊어 두고 모드를 바꾼다
   // 상태는 .editing 클래스로 판단한다. #result 자체는 더 이상 편집 대상이 아니라
   // contentEditable 값이 늘 "inherit"이어서 판단 근거가 될 수 없다.
   setEditMode(!resultEl.classList.contains("editing"));
 });
+
+/* ── 쪽 구성 (인쇄 지면 나눔) ──
+   분석본은 '쪼개지지 않는 덩어리'(.pg-blk — 표지 / 문장 카드 하나 / 표 하나)가 줄줄이
+   이어진 모양이다. 그래서 덩어리가 앞 쪽에 다 못 들어가면 통째로 다음 쪽으로 밀리고,
+   앞 쪽 아래가 텅 빈다. 여기서는 두 가지를 한다.
+
+   1) 인쇄했을 때 쪽이 어디서 넘어가는지 화면에 그려 준다. 결과 폭을 인쇄 폭(186mm)에
+      맞춘 뒤 덩어리 높이를 재서 A4 한 쪽(261mm)에 몇 개가 들어가는지 세고, 남는 자리를
+      실제 빈 칸으로 벌려 보여 준다. 브라우저·프린터에 따라 한두 줄 차이는 난다.
+   2) 덩어리마다 '여기서 새 쪽 / 쪽 나눔 해제'를 눌러 쪽 경계를 옮기게 한다. 순서는
+      바꾸지 않는다 — 문장 순서가 섞이면 분석본이 아니게 되기 때문이다.
+
+   실제 인쇄에 반영되는 것은 덩어리의 data-brk 하나뿐이고(style.css의 인쇄 규칙),
+   손잡이·경계선·빈 칸은 전부 화면 표시라 인쇄에서 빠진다. */
+const pageBtn = $("pageBtn");
+const pageResetBtn = $("pageResetBtn");
+const pageHintEl = $("pageHint");
+
+const PX_PER_MM = 96 / 25.4;              // CSS가 정한 환산값 (1in = 96px)
+const PAGE_W_MM = 210 - 12 * 2;           // A4 폭 - @page 좌우 여백
+// A4 높이 - 위 14mm - 아래 10mm - 매 쪽 하단에 반복되는 tfoot(.print-foot) 12mm.
+// 셋 다 style.css의 @page / .print-foot 값이다. 그쪽을 고치면 여기도 함께 고쳐야 한다.
+const PAGE_H_MM = 297 - 14 - 10 - 12;
+// 쪽 구성 중에만 덩어리 위에 비워 두는 손잡이 자리 (style.css의 #result.paging .pg-blk
+// padding-top과 같은 값이어야 한다). 화면에만 있는 자리이므로 쪽 계산에서는 빼고 센다.
+const HANDLE_PAD_PX = 34;
+
+function pagingOn() {
+  return resultEl.classList.contains("paging");
+}
+
+function pgBlocks() {
+  return [...resultEl.querySelectorAll(".pg-blk")];
+}
+
+// 지문의 첫 덩어리인가 — 지문마다 이미 새 쪽에서 시작하므로 쪽 나눔을 걸 자리가 없다
+function isPassageHead(blk) {
+  return blk.classList.contains("pg-head");
+}
+
+// 이 덩어리에서 반드시 쪽이 넘어가는가 (직접 지정했거나, 둘째 지문부터의 첫 덩어리거나)
+function forcedBreak(blk) {
+  if (blk.dataset.brk === "page") return true;
+  return isPassageHead(blk) && !!blk.parentElement.previousElementSibling;
+}
+
+function ensureHandles() {
+  pgBlocks().forEach((blk) => {
+    if (blk.querySelector(":scope > .pg-handle")) return;
+    const bar = document.createElement("div");
+    bar.className = "pg-handle";
+    bar.contentEditable = "false";
+    bar.innerHTML = isPassageHead(blk)
+      ? `<span class="pg-tag">지문 시작 · 항상 새 쪽</span>`
+      : `<button type="button" class="pg-brk-btn"></button><span class="pg-note"></span>`;
+    blk.prepend(bar);
+  });
+}
+
+function removeHandles() {
+  resultEl.querySelectorAll(".pg-handle").forEach((n) => n.remove());
+}
+
+// 경계선·빈 칸은 잴 때마다 지우고 다시 그린다 (남겨 두면 다음 측정이 그만큼 밀린다)
+function clearPageMarks() {
+  resultEl.querySelectorAll(".pg-gap, .pg-edge").forEach((n) => n.remove());
+}
+
+function layoutPages() {
+  if (!pagingOn()) return;
+  clearPageMarks();
+  const blks = pgBlocks();
+  if (!blks.length) {
+    pageHintEl.textContent = "";
+    return;
+  }
+
+  // 측정 — 덩어리의 높이와, 덩어리 사이 여백(바깥 여백은 접히므로 좌표 차로 구한다).
+  // boxH는 화면 상자(손잡이 자리 포함), hs는 종이에서 실제로 차지할 높이다.
+  const base = resultEl.getBoundingClientRect().top;
+  const rects = blks.map((b) => b.getBoundingClientRect());
+  const tops = rects.map((r) => r.top - base);
+  const boxH = rects.map((r) => r.height);
+  const hs = boxH.map((h) => Math.max(0, h - HANDLE_PAD_PX));
+  const pageH = PAGE_H_MM * PX_PER_MM;
+
+  // 쪽 나누기 — 브라우저가 인쇄할 때 하는 일을 그대로 흉내낸다
+  const pages = [];
+  let cur = { first: 0, last: 0, body: 0, used: 0, forced: true };
+  for (let i = 0; i < blks.length; i++) {
+    const forced = forcedBreak(blks[i]);
+    if (i > 0 && (forced || cur.used + hs[i] > pageH)) {
+      pages.push(cur);
+      cur = { first: i, last: i, body: 0, used: 0, forced, head: isPassageHead(blks[i]) };
+    }
+    const gap = i + 1 < blks.length ? Math.max(0, tops[i + 1] - (tops[i] + boxH[i])) : 0;
+    cur.used += hs[i];
+    cur.body = cur.used;   // 마지막 덩어리 아래 여백은 뺀 높이 — 남는 자리 계산용
+    cur.used += gap;
+    cur.last = i;
+  }
+  pages.push(cur);
+
+  // 그리기 — 쪽이 바뀌는 자리에 '앞 쪽의 남은 빈 자리'를 벌리고 경계선을 넣는다
+  pages.forEach((pg, p) => {
+    const blk = blks[pg.first];
+    const parent = blk.parentElement;
+    let left = 0;
+    if (p > 0) {
+      left = Math.max(0, pageH - pages[p - 1].body);
+      // 몇 px밖에 안 남았으면 빈 칸을 그리지 않는다 — 테두리만 남아 줄처럼 보인다.
+      // 다음 덩어리의 손잡이 자리도 빈 자리처럼 보이므로 그만큼 뺀다.
+      if (left - HANDLE_PAD_PX >= 6) {
+        const gapEl = document.createElement("div");
+        gapEl.className = "pg-gap";
+        gapEl.style.height = `${Math.round(left - HANDLE_PAD_PX)}px`;
+        gapEl.setAttribute("aria-hidden", "true");
+        parent.insertBefore(gapEl, blk);
+      }
+    }
+    const edge = document.createElement("div");
+    edge.className = "pg-edge";
+    const why = [];
+    if (p > 0) {
+      why.push(pg.head ? "새 지문 시작" : pg.forced ? "새 쪽 시작으로 지정한 자리" : "자리가 부족해 넘어감");
+      const mm = Math.round(left / PX_PER_MM);
+      if (mm >= 5) why.push(`앞 쪽 아래 약 ${mm}mm 빔`);
+    }
+    edge.innerHTML =
+      `<span class="pg-edge-no">${p + 1}쪽</span>` +
+      (why.length ? `<span class="pg-edge-why">${esc(why.join(" · "))}</span>` : "");
+    parent.insertBefore(edge, blk);
+  });
+
+  // 손잡이 상태 맞추기 — 어느 덩어리가 쪽 첫머리인지 알려 준다
+  const startAt = new Map();
+  pages.forEach((pg, p) => startAt.set(pg.first, p + 1));
+  blks.forEach((blk, i) => {
+    const btn = blk.querySelector(":scope > .pg-handle > .pg-brk-btn");
+    if (!btn) return;
+    const on = blk.dataset.brk === "page";
+    btn.textContent = on ? "⤴ 위로 올리기" : "✂ 새 쪽 시작";
+    btn.title = on
+      ? "앞 쪽에 이어 붙입니다 (앞 쪽 빈자리로 올라갑니다)."
+      : "여기부터 새 쪽에서 시작하게 합니다.";
+    const note = blk.querySelector(":scope > .pg-handle > .pg-note");
+    if (note) note.textContent = !on && startAt.has(i) ? `${startAt.get(i)}쪽 첫머리` : "";
+  });
+
+  const narrow = Math.abs(resultEl.clientWidth - PAGE_W_MM * PX_PER_MM) > 8;
+  pageHintEl.textContent =
+    `모두 ${pages.length}쪽 — 표·문장 카드 위의 [✂ 새 쪽 시작] · [⤴ 위로 올리기]로 옮기세요.` +
+    (narrow ? " (창이 좁아 실제 인쇄와 다를 수 있습니다)" : "");
+}
+
+function setPagingMode(on) {
+  if (on && resultEl.classList.contains("editing")) setEditMode(false);
+  resultEl.classList.toggle("paging", on);
+  pageBtn.textContent = on ? "✅ 쪽 구성 끝내기" : "📄 쪽 구성";
+  pageResetBtn.style.display = on ? "inline-flex" : "none";
+  if (on) {
+    ensureHandles();
+    layoutPages();
+  } else {
+    clearPageMarks();
+    removeHandles();
+    pageHintEl.textContent = "";
+  }
+  syncUndoBtn();
+}
+
+pageBtn.addEventListener("click", () => setPagingMode(!pagingOn()));
+
+pageResetBtn.addEventListener("click", () => {
+  flushUndo();
+  pgBlocks().forEach((b) => {
+    if (b.dataset.brkDef) b.dataset.brk = b.dataset.brkDef;
+    else delete b.dataset.brk;
+  });
+  layoutPages();
+  pushUndo(); // 되돌리기 한 단계 — '처음으로'도 무를 수 있어야 한다
+});
+
+resultEl.addEventListener("click", (e) => {
+  const btn = e.target.closest(".pg-brk-btn");
+  if (!btn || !pagingOn()) return;
+  const blk = btn.closest(".pg-blk");
+  if (!blk || isPassageHead(blk)) return;
+  flushUndo();
+  blk.dataset.brk = blk.dataset.brk === "page" ? "auto" : "page";
+  layoutPages();
+  pushUndo();
+});
+
+// 창 폭이 바뀌면 줄바꿈이 달라져 쪽 경계도 달라진다 — 잠잠해진 뒤 한 번만 다시 잰다
+let pageResizeTimer = 0;
+window.addEventListener("resize", () => {
+  if (!pagingOn()) return;
+  clearTimeout(pageResizeTimer);
+  pageResizeTimer = setTimeout(layoutPages, 200);
+});
+
+/* ── 되돌리기 ──
+   고칠 수 있는 곳이 둘(글자 직접 수정 · 쪽 구성)인데 되돌리는 방법이 서로 달랐다 —
+   글자는 브라우저의 Ctrl+Z, 쪽 구성은 '처음으로'뿐이라 한 단계만 무르는 길이 없었다.
+   여기서는 둘을 한 단추로 묶는다. 방법은 화면(결과 HTML)을 통째로 찍어 쌓아 두는 것이다.
+   분석본은 화면이 곧 결과물이고(인쇄도 저장도 이 화면을 되읽는다) 크기도 한 지문에
+   수백 KB라, 단계별로 무엇이 바뀌었는지 따지는 것보다 이 편이 단순하고 안전하다.
+
+   한 단계 = 손이 멈춘 묶음. 타이핑은 0.7초 쉬면 한 단계로 끊고, 쪽 나눔은 누를 때마다
+   한 단계다. 화면용 표시(손잡이·경계선·빈 칸·편집 표시)는 찍을 때 지운다 — 남겨 두면
+   되돌린 화면에 그것들이 겹쳐 쌓인다. */
+const undoBtn = $("undoBtn");
+const UNDO_MAX = 30;        // 지문이 여러 개면 한 장이 수백 KB다 — 무한정 쌓지 않는다
+const UNDO_MAX_CHARS = 20e6; // 쌓아 둔 화면의 총 글자 수 상한 (약 40MB 메모리)
+let undoStack = [];
+let undoBase = null;        // 마지막으로 '멈춘' 상태
+
+function resultSnapshot() {
+  const copy = resultEl.cloneNode(true);
+  copy.querySelectorAll(".pg-handle, .pg-gap, .pg-edge").forEach((n) => n.remove());
+  copy.querySelectorAll("[contenteditable]").forEach((n) => n.removeAttribute("contenteditable"));
+  return copy.innerHTML;
+}
+
+// 되돌리기 버튼은 떠 있는 인쇄 버튼 위에 붙어 있고, 고치는 중일 때만 보인다.
+// (고칠 곳은 화면 아래쪽인데 버튼 줄은 맨 위라, 되돌리려고 매번 올라가야 했다)
+function syncUndoBtn() {
+  if (!undoBtn) return;
+  const active = document.querySelector(".tab-page.active");
+  const onAnalyze = !!active && active.id === "tab-analyze";
+  const fixing = resultEl.classList.contains("editing") || pagingOn();
+  undoBtn.hidden = !(onAnalyze && fixing);
+  undoBtn.disabled = !undoStack.length;
+  undoBtn.title = undoStack.length
+    ? `방금 고친 것을 한 단계 되돌립니다 (되돌릴 수 있는 단계 ${undoStack.length})`
+    : "되돌릴 것이 없습니다.";
+}
+
+// 새로 그린 화면을 되돌리기의 출발점으로 삼는다 (이전 기록은 버린다)
+function resetUndo() {
+  undoStack = [];
+  undoBase = resultEl.innerHTML ? resultSnapshot() : null;
+  syncUndoBtn();
+}
+
+// 지금 화면을 한 단계로 확정한다. 바뀐 게 없으면 아무 일도 하지 않는다.
+function pushUndo() {
+  const now = resultSnapshot();
+  if (undoBase == null) {
+    undoBase = now;
+    return;
+  }
+  if (now === undoBase) return;
+  undoStack.push(undoBase);
+  // 지문을 여러 개 담으면 한 장이 메가바이트급이 된다 — 단계 수와 총량 둘 다로 자른다
+  while (
+    undoStack.length > 1 &&
+    (undoStack.length > UNDO_MAX || undoStack.reduce((n, s) => n + s.length, 0) > UNDO_MAX_CHARS)
+  ) {
+    undoStack.shift();
+  }
+  undoBase = now;
+  syncUndoBtn();
+}
+
+let undoTypeTimer = 0;
+resultEl.addEventListener("input", () => {
+  clearTimeout(undoTypeTimer);
+  undoTypeTimer = setTimeout(pushUndo, 700);
+});
+
+// 타이핑 중이었다면 그 묶음까지 먼저 한 단계로 끊는다
+function flushUndo() {
+  clearTimeout(undoTypeTimer);
+  pushUndo();
+}
+
+function undoOnce() {
+  flushUndo();
+  if (!undoStack.length) return;
+  const prev = undoStack.pop();
+  const editing = resultEl.classList.contains("editing");
+  const paging = pagingOn();
+  resultEl.innerHTML = prev;
+  undoBase = prev;
+  // 화면을 통째로 갈아 끼웠으므로 켜져 있던 모드의 표시를 다시 입힌다
+  if (editing) setEditMode(true);
+  else if (paging) {
+    ensureHandles();
+    layoutPages();
+  }
+  syncUndoBtn();
+}
+
+undoBtn.addEventListener("click", undoOnce);
+
+// Ctrl+Z — 글자를 고치는 중에는 브라우저의 되돌리기(한 글자씩)가 더 자연스러우므로
+// 가로채지 않는다. 쪽 구성 중일 때만 이 되돌리기가 받는다.
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.shiftKey) return;
+  if (String(e.key).toLowerCase() !== "z") return;
+  if (resultEl.classList.contains("editing") || !pagingOn()) return;
+  e.preventDefault();
+  undoOnce();
+});
+
+/* 직접 지정한 쪽 나눔을 저장/복원한다. 분석본은 저장해 둔 원본 data로 다시 그리므로
+   덩어리 순서가 늘 같다 — 지문마다 덩어리 순서대로 값을 적어 두면 그대로 되살아난다. */
+function collectPageBreaks() {
+  return lastAnalyzeEntries.map((_, idx) => {
+    const block = resultEl.querySelector(`.passage-block[data-entry="${idx}"]`);
+    if (!block) return null;
+    return [...block.querySelectorAll(".pg-blk")].map((b) => b.dataset.brk || "");
+  });
+}
+
+function applyPageBreaks(list) {
+  (list || []).forEach((marks, idx) => {
+    if (!Array.isArray(marks)) return;
+    const block = resultEl.querySelector(`.passage-block[data-entry="${idx}"]`);
+    if (!block) return;
+    const blks = [...block.querySelectorAll(".pg-blk")];
+    marks.forEach((m, i) => {
+      if (!blks[i]) return;
+      if (m === "page" || m === "auto") blks[i].dataset.brk = m;
+    });
+  });
+}
 
 analyzeBtn.addEventListener("click", analyze);
 printBtn.addEventListener("click", () => printDoc(() => passageBasedName("지문분석")));
@@ -2033,10 +2372,13 @@ async function analyze() {
   clearPassagesBtn.disabled = true;
   loadingEl.classList.add("on");
   setEditMode(false); // 새로 분석하면 이전 수정 상태를 끈다 (내용도 새로 덮어써진다)
+  setPagingMode(false);
   resultEl.innerHTML = "";
   printBtn.style.display = "none";
   editBtn.style.display = "none";
+  pageBtn.style.display = "none";
   saveBtn.style.display = "none";
+  resetUndo();
   syncFloatPrint();
 
   const total = jobs.length;
@@ -2094,8 +2436,10 @@ async function analyze() {
   if (okCount) {
     printBtn.style.display = "inline-flex";
     editBtn.style.display = "inline-flex";
+    pageBtn.style.display = "inline-flex";
     saveBtn.style.display = "inline-flex";
   }
+  resetUndo(); // 새 분석본이 되돌리기의 출발점 — 이전 분석본으로는 돌아가지 않는다
   syncFloatPrint();
   loadingEl.classList.remove("on");
   analyzeBtn.disabled = false;
@@ -2114,10 +2458,13 @@ function renderAnalyzeEntries(entries) {
   const htmlParts = entries.map(({ job, data }, i) => buildAnalysisHtml(data, job, total, i));
   if (total) htmlParts.push(`<footer>구문 단위 직독직해 분석본 · 자동 생성</footer>`);
   setEditMode(false);
+  setPagingMode(false);
   resultEl.innerHTML = htmlParts.join("");
   printBtn.style.display = total ? "inline-flex" : "none";
   editBtn.style.display = total ? "inline-flex" : "none";
+  pageBtn.style.display = total ? "inline-flex" : "none";
   saveBtn.style.display = total ? "inline-flex" : "none";
+  resetUndo();
   lastAnalyzeEntries = entries;
   syncFloatPrint();
   // 비우는 호출(entries가 빈 배열)일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
@@ -2187,12 +2534,15 @@ TAB_SAVE.analyze = {
     passages: passageMgr.getJobs(),
     settings: { targetGrammar: grammarEl.value, review: !!(reviewChk && reviewChk.checked) },
     entries: collectAnalysisEdits(),
+    pageBreaks: collectPageBreaks(),
   }),
   applyPayload: (payload) => {
     passageMgr.setJobs(payload.passages || []);
     grammarEl.value = (payload.settings && payload.settings.targetGrammar) || "";
     if (reviewChk) reviewChk.checked = !!(payload.settings && payload.settings.review);
     renderAnalyzeEntries(payload.entries || []);
+    applyPageBreaks(payload.pageBreaks); // 손봐 둔 쪽 구성까지 그대로 되살린다
+    resetUndo(); // 불러온 그 상태가 출발점 (되돌리기로 저장본 이전으로 가지 않게)
   },
   clearResults: () => renderAnalyzeEntries([]),
 };
@@ -2248,10 +2598,17 @@ function buildAnalysisHtml(d, job, total, idx) {
   const parts = [];
   const mark = Number.isInteger(idx) ? ` data-entry="${idx}"` : "";
   parts.push(`<section class="passage-block"${mark}>`);
-  parts.push(passageBanner(job, total));
 
   // 표지
+  // .pg-blk = '쪽 구성'이 통째로 옮길 수 있는 최소 덩어리. 표지·문장 카드 하나·표 하나가
+  // 각각 한 덩어리다. 인쇄에서 쪼개지지 않는 단위와 일부러 같게 맞춰 두었다.
+  // .pg-head = 지문의 첫 덩어리. 지문은 이미 새 쪽에서 시작하므로 쪽 나눔을 걸지 않는다.
+  // 지문 이름표(37번 …)를 이 안에 함께 넣는 이유: 덩어리 밖에 두면 쪽 계산에서 빠져
+  // 쪽 경계선이 이름표 아래에 그어진다. 그러면 화면에서는 이름표가 앞 쪽 끝에 붙어
+  // 보이는데 인쇄하면 다음 쪽으로 넘어가, 화면과 종이가 어긋난다.
   parts.push(`
+    <div class="pg-blk pg-head">
+    ${passageBanner(job, total)}
     <div class="cover">
       <h2>${esc(d.englishTitle)}</h2>
       <div class="ko-title">${esc(d.koreanTitle)}</div>
@@ -2265,6 +2622,7 @@ function buildAnalysisHtml(d, job, total, idx) {
         ${grammarEl.value.trim() ? `<b><span class="dot" style="background:var(--target-hl)"></span><span class="tg" style="padding:0 3px;border-radius:3px">목표 어법</span></b>` : ""}
         <b><span class="sep">/</span> 의미 단위 끊어읽기</b>
       </div>
+    </div>
     </div>
   `);
 
@@ -2285,6 +2643,7 @@ function buildAnalysisHtml(d, job, total, idx) {
       .map((t) => `<span class="exam-tag et-${examCls(t)}">${esc(t)}</span>`)
       .join("");
     parts.push(`
+      <div class="pg-blk">
       <div class="sent${topic}">
         <div class="sent-head"><span class="sent-no">${esc(s.no)}</span><span class="tag">${esc(s.tag)}</span><span class="exam-tags">${topicBadge}${examBadges}</span></div>
         <div class="chunks">${chunksHtml}</div>
@@ -2294,6 +2653,7 @@ function buildAnalysisHtml(d, job, total, idx) {
             : ""
         }</div>
       </div>
+      </div>
     `);
   });
 
@@ -2302,9 +2662,14 @@ function buildAnalysisHtml(d, job, total, idx) {
     const rows = d.summary.map(
       (r) => `<tr><td>${esc(r.label)}</td><td>${safeHTML(r.content)}</td></tr>`
     ).join("");
+    // 제목과 표는 한 덩어리로 묶는다 — 따로 움직이면 제목만 남은 쪽이 생긴다.
+    // data-brk="page"가 기존의 '요약표는 늘 새 쪽에서 시작'을 이어받는다. 다만 이제는
+    // '쪽 구성'에서 끌 수 있는 기본값이고, data-brk-def가 [처음 상태로]의 되돌릴 값이다.
     parts.push(`
-      <h3 class="section page-break"><span class="num">Ⅱ.</span> 주제 &amp; 흐름 요약</h3>
+      <div class="pg-blk" data-brk="page" data-brk-def="page">
+      <h3 class="section"><span class="num">Ⅱ.</span> 주제 &amp; 흐름 요약</h3>
       <div class="table-wrap"><table class="flow"><tbody>${rows}</tbody></table></div>
+      </div>
     `);
   }
 
@@ -2317,11 +2682,13 @@ function buildAnalysisHtml(d, job, total, idx) {
       </tr>`
     ).join("");
     parts.push(`
+      <div class="pg-blk">
       <h3 class="section"><span class="num">Ⅲ.</span> 핵심 어휘 &amp; 표현</h3>
       <div class="table-wrap"><table class="vocab">
         <thead><tr><th>단어 / 표현</th><th>품사</th><th>뜻</th><th>유의어</th><th>반의어</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
+      </div>
     `);
   }
 

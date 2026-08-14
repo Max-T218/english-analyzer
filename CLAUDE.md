@@ -98,7 +98,11 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `createPassageManager`(지문 입력칸 관리) · `TAB_SAVE`(탭별 저장 배선) · `runActiveTab` ·
 `runOcr`(사진) · `runPdfImport`(PDF — 공용 칸과 시험 범위 칸 양쪽을 채운다) ·
 `buildAnalysisHtml` · `MCQ_TYPES` / `SAQ_TYPES` / `TYPE_MAX` ·
-`renderAccount`(잔액 표시) · `setEditMode`(결과물 직접 수정) · `printDoc`
+`renderAccount`(잔액 표시) · `setEditMode`(결과물 직접 수정) · `printDoc` ·
+`undoOnce` / `pushUndo`(되돌리기 — 결과 화면 HTML을 통째로 찍어 쌓는다. 글자 수정과 쪽 구성이
+같은 스택을 쓴다) ·
+`setPagingMode` / `layoutPages`(지문 분석 '쪽 구성' — 덩어리 `.pg-blk` 단위로 쪽 경계를 옮긴다.
+인쇄에 남는 건 `data-brk`뿐이고, 쪽 높이는 `PAGE_H_MM`이 `@page`·`.print-foot` 값을 그대로 따른다)
 
 지문 칸 상한은 `MAX_PASSAGES`(40, 공용)와 `EXAM_PAPER_MAX_PASSAGES`(40, 시험지)입니다.
 많이 담은 채 실행하면 시간이 지문 수만큼 곱해지므로 `costConfirmed`가 실행 직전에

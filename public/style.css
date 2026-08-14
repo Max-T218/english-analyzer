@@ -769,6 +769,15 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
   box-shadow:0 6px 20px rgba(20,30,45,.28); display:inline-flex; align-items:center; gap:7px;
   transition:transform .06s, box-shadow .15s, opacity .15s;
 }
+/* .float-print의 display가 [hidden]의 display:none을 이기므로 따로 눌러 준다 */
+.float-print[hidden]{display:none;}
+/* 되돌리기 — 인쇄 버튼과 나란히 뜨지만 주인공은 인쇄 쪽이므로 흰 버튼으로 낮춘다 */
+.float-undo{
+  background:var(--card); color:var(--accent); border:1px solid var(--line);
+  font-size:13px; padding:11px 17px;
+}
+.float-undo:hover:not([disabled]){border-color:var(--accent);}
+.float-undo[disabled]{opacity:.5; cursor:default; box-shadow:none;}
 .float-print:hover{box-shadow:0 8px 26px rgba(20,30,45,.36);}
 .float-print:active{transform:translateY(1px);}
 .float-print:focus-visible{outline:2px solid var(--accent); outline-offset:3px;}
@@ -878,6 +887,52 @@ u{
 @media print{
   #result.editing [contenteditable]{outline:none !important; background:none !important;}
 }
+
+/* ── 쪽 구성 (지면 나눔) ──
+   .pg-blk = 인쇄에서 쪼개지지 않는 최소 덩어리(표지 / 문장 카드 하나 / 표 하나).
+   평소에는 아무 모양도 주지 않는다 — '쪽 구성'을 켰을 때만 손잡이와 경계선이 보인다.
+   결과 폭을 인쇄 폭(210 - 좌우 12mm)에 맞춰야 화면에서 잰 쪽 경계가 실제와 비슷해진다. */
+#result.paging{width:186mm; max-width:100%; margin:0 auto;}
+/* 덩어리마다 위쪽 34px을 손잡이 자리로 비운다. 예전처럼 손잡이를 내용 위에 겹쳐 놓으면
+   표 제목('Ⅱ. 주제 & 흐름 요약')을 가려 읽을 수 없었다.
+   이 자리는 화면에만 있으므로 쪽 계산에서는 빼고 센다 — app.js의 HANDLE_PAD_PX와
+   같은 값이어야 한다. 단추 높이(글자 13px + 위아래 8px + 테두리)보다 커야 한다. */
+#result.paging .pg-blk{position:relative; padding-top:34px;}
+.pg-handle{
+  position:absolute; top:1px; left:12px; z-index:4;
+  display:flex; align-items:center; gap:8px;
+}
+.pg-brk-btn{
+  font:inherit; font-size:13px; font-weight:800; line-height:1; white-space:nowrap;
+  padding:8px 15px; border-radius:999px; cursor:pointer;
+  border:2px solid var(--accent); background:var(--card); color:var(--accent);
+  box-shadow:0 2px 8px rgba(20,30,45,.16);
+}
+.pg-brk-btn:hover{background:var(--accent-soft); box-shadow:0 4px 12px rgba(20,30,45,.24);}
+/* 새 쪽으로 지정해 둔 덩어리 — 지정한 자리가 한눈에 보이도록 채운 색으로 */
+.pg-blk[data-brk="page"] .pg-brk-btn{background:var(--g); color:#fff; border-color:var(--g);}
+.pg-blk[data-brk="page"] .pg-brk-btn:hover{background:#a81f1f;}
+.pg-tag,.pg-note{
+  font-size:12px; font-weight:800; padding:5px 11px; border-radius:999px;
+  background:var(--accent-soft); color:var(--accent); border:1px solid var(--accent);
+  white-space:nowrap;
+}
+.pg-note:empty{display:none;}
+/* 앞 쪽 아래에 남는 빈 자리 — 실제 높이만큼 벌려서 '이만큼 비었다'를 눈으로 보여 준다 */
+.pg-gap{
+  border:1px dashed var(--line); border-radius:10px; margin-top:4px;
+  background:repeating-linear-gradient(135deg, transparent 0 9px, var(--line-soft) 9px 18px);
+}
+.pg-edge{
+  display:flex; align-items:center; gap:10px;
+  margin:14px 0 18px; font-size:12.5px; font-weight:700; color:var(--accent);
+}
+.pg-edge::before,.pg-edge::after{content:""; flex:1; border-top:2px dashed var(--accent); opacity:.55;}
+.pg-edge-no{
+  padding:5px 13px; border-radius:999px; white-space:nowrap;
+  background:var(--accent); color:#fff; font-size:13px; font-weight:800;
+}
+.pg-edge-why{white-space:nowrap;}
 
 /* ── 문장 카드 (좌우 7:3) ── */
 .sent{
@@ -1047,8 +1102,16 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   .passage-block{break-before:page; page-break-before:always;}
   .passage-block:first-child{break-before:auto; page-break-before:auto;}
   .passage-banner{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
-  /* '주제 & 흐름 요약'부터 새 페이지에서 시작 */
+  /* 새 쪽에서 시작 (문제 탭의 '정답 및 해설' 등) */
   .page-break{break-before:page; page-break-before:always;}
+  /* ── 쪽 구성 ──
+     화면에서 지정한 것 중 지면에 남는 것은 이 표시 하나뿐이다. 손잡이·경계선·빈 칸은
+     전부 화면용이므로 지운다. 지문의 첫 덩어리는 .passage-block이 이미 쪽을 넘기므로
+     여기서 또 넘기면 빈 쪽이 생긴다 — 그 경우만 무시한다. */
+  .pg-handle,.pg-gap,.pg-edge{display:none !important;}
+  #result.paging{width:auto; max-width:none;}
+  .pg-blk[data-brk="page"]{break-before:page; page-break-before:always;}
+  .pg-blk.pg-head[data-brk="page"]{break-before:auto; page-break-before:auto;}
   h3.section{break-after:avoid; page-break-after:avoid;}
   /* 문장 카드·표 행이 페이지 경계에서 쪼개지지 않도록 */
   .sent{break-inside:avoid; page-break-inside:avoid;}

@@ -391,9 +391,14 @@
                 title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
         <button class="btn ghost" id="editBtn" style="display:none"
                 title="분석본을 직접 고칠 수 있습니다. 해석·해설·어휘표 모두 수정 가능하고, 수정한 내용 그대로 인쇄됩니다.">✏️ 직접 수정</button>
+        <button class="btn ghost" id="pageBtn" style="display:none"
+                title="인쇄했을 때 쪽이 어디서 넘어가는지 보여 주고, 표·문장 카드 단위로 쪽을 옮길 수 있습니다.">📄 쪽 구성</button>
         <button class="btn ghost" id="saveBtn" style="display:none"
                 title="로그인한 계정에 이 분석본과 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 저장</button>
+        <button class="btn ghost" id="pageResetBtn" style="display:none"
+                title="직접 지정한 쪽 나눔을 모두 지우고 처음 상태로 되돌립니다.">↺ 쪽 구성 처음으로</button>
         <span class="edit-hint" id="editHint"></span>
+        <span class="edit-hint" id="pageHint"></span>
         <label class="chk" title="1차 분석 후 AI가 한 번 더 검토해 빠진 어법·어휘를 보강합니다. 지문당 요청이 2배가 됩니다.">
           <input type="checkbox" id="reviewChk"> 꼼꼼 검토 <span class="chk-sub">(2차 검토·사용량 2배)</span>
         </label>
@@ -789,6 +794,10 @@
 </td></tr></tbody>
 </table>
 <div class="float-print-group" id="floatPrintGroup" hidden>
+  <!-- 되돌리기는 '직접 수정'이나 '쪽 구성'을 켰을 때만 인쇄 버튼 위에 뜬다.
+       고치는 자리가 화면 아래쪽이라, 맨 위 버튼 줄까지 올라가지 않아도 되게 한 것. -->
+  <button type="button" class="float-print float-undo" id="undoBtn" hidden disabled
+          title="방금 고친 것을 한 단계 되돌립니다.">↩ 되돌리기</button>
   <button type="button" class="float-print" id="floatPrintBtn">🖨️ 인쇄 / PDF 저장</button>
 </div>
 
