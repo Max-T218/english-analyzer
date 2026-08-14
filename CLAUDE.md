@@ -206,7 +206,5 @@ curl.exe -s -o NUL -w "%{http_code}`n" http://localhost:8000/
 
 - `README.md` 환경변수 표는 `DEFAULT_USER_KRW`를 3,000원으로 적었지만 `server.py`의 기본값은
   50,000원입니다.
-- `README.md` 도입부는 모델을 `gemini-2.5-flash`로 적었지만 실제 기본값은 `gemini-3.6-flash`
-  (Pro는 `gemini-3.1-pro-preview`)입니다.
 - `DEPLOY.md`는 "선생님마다 본인 Gemini 키를 화면에 입력"하는 옛 방식으로 쓰여 있습니다.
   현재 구조는 관리자 키 하나를 모든 로그인 사용자가 공유하고, 화면에는 키 입력칸이 없습니다.

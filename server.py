@@ -70,7 +70,10 @@ def _env(name, default, cast=str):
 # 배포(Render 등)에서는 0.0.0.0 바인딩이 필요. 로컬에서도 localhost로 접속됨.
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8000"))
-MODEL = _env("GEMINI_MODEL", "gemini-3.6-flash")
+# 2026-08-14: 3.6 → 3.7. 두 모델의 토큰 단가는 같다(올해 말까지 100만 토큰당 입력
+# $0.75·출력 $3.75, 2027-01-01부터 $1.50·$7.50). 값이 같으니 새 쪽을 쓴다.
+# 되돌리려면 Render 환경변수 GEMINI_MODEL에 gemini-3.6-flash를 넣으면 된다.
+MODEL = _env("GEMINI_MODEL", "gemini-3.7-flash")
 # 정확도가 더 필요한 작업에만 쓰는 Pro 모델. 사용자가 모델을 직접 고르지 않고, 기능마다
 # 서버가 이 중 하나를 고정해 쓴다 — 정찰 요금과 실제 원가가 어긋나지 않도록 하기 위해서다.
 # 지금 Pro로 가는 것: 지문을 변형해 만드는 문제(객관식·주관식 모두), 지문변형 '5개 이상'.

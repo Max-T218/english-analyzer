@@ -6,7 +6,7 @@
 
 - **백엔드**: 거의 Python 표준 라이브러리 (pip 의존성은 `requirements.txt`의 두 개 —
   로그인·저장용 `google-cloud-firestore`, PDF에서 지문 꺼내기용 `pdfminer.six`)
-- **AI**: Google Gemini API (`gemini-2.5-flash`)
+- **AI**: Google Gemini API (`gemini-3.7-flash`, 일부 기능만 `gemini-3.1-pro-preview`)
 - **프런트엔드**: 정적 HTML/CSS/JS (`public/`)
 
 ## 1. 준비물
@@ -159,7 +159,7 @@ Gemini 실사용량을 그때그때 재는 대신, **행동 하나당 고정 가
 | `GEMINI_API_KEY` | (필수) | 관리자의 Gemini API 키. 없으면 AI 기능 전체가 막힘 |
 | `PORT` | `8000` | 서버 포트 |
 | `HOST` | `0.0.0.0` | 바인딩 주소 |
-| `GEMINI_MODEL` | `gemini-3.6-flash` | 기본(Flash) 모델 — 지문 분석·워크북·주관식·객관식(지문유지형)·OCR·지문변형(light)에 씀 |
+| `GEMINI_MODEL` | `gemini-3.7-flash` | 기본(Flash) 모델 — 지문 분석·워크북·주관식·객관식(지문유지형)·OCR·지문변형(light)에 씀 |
 | `GEMINI_MODEL_PRO` | `gemini-3.1-pro-preview` | 정확도가 더 필요한 작업 전용 모델 — 객관식(지문변형형)·지문변형(heavy)에만 씀 |
 | `GEMINI_TIMEOUT` | `300` | Gemini 호출 1회의 소켓 타임아웃(초) |
 | `MAX_RETRY_TOTAL` | `150` | 누적 재시도 대기 상한(초). 넘으면 한국어 오류로 안내 |
