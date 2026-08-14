@@ -2843,6 +2843,19 @@ words. So for English your only job is: give the plain text, then list what to m
   HARD LIMITS: "g" rt=문법용어만(뜻 0%) / "v" rt=뜻만 / "gv" rt=뜻(문법 범주 이름 금지)
               / "gv"는 2단어 이상만 / rt는 문장 해석이 아니라 아주 짧게.
   WRONG rt <재배하다(과거 수동태)>  →  RIGHT rt <과거 수동태>.
+  ▸ **rt에 후보를 늘어놓지 마라 — 그 자리에 실제로 쓰인 것 하나로 판정해 적는다.**
+    "형용사/분사", "명사/동명사", "현재분사/동명사"처럼 빗금으로 둘을 적으면 학생은
+    둘 중 무엇인지 끝내 알 수 없다. 형태를 보고 하나를 골라라.
+      WRONG  with half of the forests gone → "with+명사+형용사/분사"
+      RIGHT  with half of the forests gone → "with+명사+과거분사"
+    오른쪽 note도 같은 이름으로 불러라 — 왼쪽이 "과거분사"인데 note가 "형용사"라고
+    하면 좌우가 어긋난다.
+  ▸ **생략된 말(목적격 관계대명사·접속사 that·주격관계사+be)은 '생략된 자리 바로 뒤
+    낱말'에 표시한다.** 관계절의 끝 낱말에 붙이면 생략이 어디서 일어났는지 알 수 없다.
+      the children (that) you are supporting
+        RIGHT  t="you",         rt="목적격 관대 생략"
+        WRONG  t="supporting",  rt="목적격 관대 생략"
+    note가 "children 뒤에 생략"이라고 썼으면 표시도 그 바로 다음 낱말에 있어야 한다.
 
 ### 등위·상관접속사 병렬 (MANDATORY — 가장 자주 빠뜨리는 항목, 기계 검사로 대조된다)
 DEFAULT = MARK IT. 지문에 나오는 "and / or / but / nor / yet"은 아래 '제외 목록'에 해당하지
@@ -2863,6 +2876,18 @@ DEFAULT = MARK IT. 지문에 나오는 "and / or / but / nor / yet"은 아래 '�
       and(accesses/takes)가 두 번째 접속사    grp=2: accesses num=1, takes num=2
       or(tastes/beliefs)가 세 번째 접속사     grp=3: tastes num=1, beliefs num=2
     문장에 접속사가 하나뿐이면 그 하나가 grp=1이다(지금까지와 똑같다).
+  ⚠️ **한 묶음(grp)에 and/or/but/nor를 둘 이상 넣지 마라.** 서버가 기계로 센다.
+    특히 **병렬 안에 병렬**이 있을 때 둘을 한 묶음으로 묶어 오는 실수가 잦다 —
+    "A, B, and C₁ and C₂"에서 바깥 and는 A·B·(C₁ and C₂ 통째)를 잇고, 안쪽 and는
+    C₁·C₂를 잇는다. 서로 다른 묶음이다.
+    예: "the depths of human emotion, the nuances of relationships,
+         and the challenges and triumphs of the human spirit"
+      → 바깥 and grp=1: depths num=1, nuances num=2,
+                        **"the challenges and triumphs" num=3** (안쪽 병렬을 통째로)
+        안쪽 and grp=2: challenges num=1, triumphs num=2
+    바깥 묶음의 마지막 번호(3)를 빠뜨리면 화면에 ¹²만 남아, 나열된 셋 중 하나가
+    사라진 것처럼 보인다. 안쪽 요소에 이미 ann이 있어도 바깥 요소 ann을 따로 만들어라
+    — 자리가 겹쳐도 서버가 번호만 앞에 꽂아 준다.
 
 For EACH such conjunction:
   · 접속사 자체에 ann: {t:"and", role:"conj", rt:"", num:0, grp:<이 접속사의 묶음 번호>}
@@ -3280,7 +3305,18 @@ def _ann_spans(text, anns):
     조립(assemble_eng)과 누락 검사(unmarked_conjunctions)가 같은 결과를 보도록 공유한다."""
     used = [False] * len(text)
     spans = []
-    for a in anns or []:
+    # 자리 다툼에서는 색·루비 주석이 '번호만 붙이는' 주석(role "num")보다 먼저 자리를 잡는다.
+    # 번호는 자리를 못 잡아도 assemble_eng이 앞에 꽂아 주지만, 색·루비는 자리를 잃으면
+    # 통째로 사라진다. 병렬 안에 병렬일 때 바깥 요소의 번호 주석이 안쪽 구간을 통째로
+    # 삼켜, 안쪽의 색·뜻이 화면에서 사라지던 것을 막는다.
+    ordered = sorted(
+        enumerate(anns or []),
+        key=lambda p: (
+            1 if isinstance(p[1], dict) and (p[1].get("role") or "").strip() == "num" else 0,
+            p[0],
+        ),
+    )
+    for _, a in ordered:
         if not isinstance(a, dict):
             continue
         t = a.get("t") or ""
@@ -3296,6 +3332,59 @@ def _ann_spans(text, anns):
     return spans
 
 
+def _grp_no(a):
+    """주석의 묶음 번호를 정수로. 없거나 이상하면 1번 묶음(_conj_group_class와 같은 규칙)."""
+    try:
+        n = int(a.get("grp"))
+    except (TypeError, ValueError):
+        n = 1
+    return max(n, 1)
+
+
+def _ann_number_marks(text, anns, spans):
+    """자리를 못 잡아 버려진 병렬 번호를 '번호만' 꽂아 되살린다.
+
+    병렬 안에 병렬이 있으면(A, B, and C₁ and C₂) 바깥 묶음의 세 번째 요소가
+    "C₁ and C₂" 통째다. 그런데 그 안쪽 요소들이 먼저 자리를 차지하고 있어서
+    바깥 요소의 주석이 겹침 방지에 걸려 통째로 버려졌다. 화면에는 ¹²만 남고 ³이
+    사라져, 나열된 셋 중 하나가 없는 것처럼 보였다(실제로 나던 문제).
+
+    번호는 낱말을 감싸지 않고 앞에 붙이기만 하므로, 자리가 겹쳐도 꽂을 수 있다.
+    돌려주는 값은 (꽂을 위치, 번호 HTML) 목록이며 위치 오름차순이다."""
+    placed = {id(a) for _, _, a in spans}
+    shown = set()   # 이미 화면에 뜬 (묶음, 번호) — 같은 번호를 두 번 꽂지 않는다
+    for _, _, a in spans:
+        n = a.get("num")
+        if isinstance(n, (int, float)) and int(n) > 0:
+            shown.add((_grp_no(a), int(n)))
+    free = [False] * len(text)   # 낱말 경계만 보고, 자리 다툼은 하지 않는다
+    marks = []
+    for a in anns or []:
+        if not isinstance(a, dict) or id(a) in placed:
+            continue
+        n = a.get("num")
+        if not (isinstance(n, (int, float)) and int(n) > 0):
+            continue
+        key = (_grp_no(a), int(n))
+        if key in shown:
+            continue
+        t = (a.get("t") or "").strip()
+        if not t:
+            continue
+        idx = _find_ann(text, t, free)
+        if idx == -1:
+            # 대상이 여러 chunk에 걸쳐 잘렸을 수 있다 — 첫 낱말만으로 다시 찾는다
+            head = t.split()[0] if t.split() else ""
+            idx = _find_ann(text, head, free) if head else -1
+        if idx == -1:
+            continue
+        marks.append((idx, f'<sup class="conj-num-top {_conj_group_class(a.get("grp"))}">'
+                           f'{int(n)}</sup>'))
+        shown.add(key)
+    marks.sort()
+    return marks
+
+
 def assemble_eng(text, anns):
     """모델이 준 평문 영어(text) 위에, 주석 목록(anns)의 대상 문자열을 찾아
     색상/루비/병렬번호를 겹쳐 최종 영어 HTML을 만든다. 매칭 안 되는 주석은 무시하되
@@ -3304,12 +3393,28 @@ def assemble_eng(text, anns):
     if not text:
         return ""
     spans = _ann_spans(text, anns)
+    marks = _ann_number_marks(text, anns, spans)
     out = []
     pos = 0
+    mi = 0
+
+    def flush_marks(upto):
+        """upto 앞에 있는 번호들을 먼저 꽂는다. 이미 지나간 자리(다른 주석 속)는 버린다."""
+        nonlocal pos, mi
+        while mi < len(marks) and marks[mi][0] <= upto:
+            off, html = marks[mi]
+            if off >= pos:
+                out.append(_esc_html(text[pos:off]))
+                out.append(html)
+                pos = off
+            mi += 1
+
     for st, en, a in spans:
+        flush_marks(st)
         out.append(_esc_html(text[pos:st]))
         out.append(_wrap_ann(text[st:en], a))
         pos = en
+    flush_marks(len(text))
     out.append(_esc_html(text[pos:]))
     return "".join(out)
 
@@ -3408,6 +3513,27 @@ _CONFUSABLE_TERMS = (
 )
 
 
+# 빗금으로 늘어놓으면 안 되는 '형태 이름'. 학생이 알고 싶은 것이 바로 둘 중 어느
+# 쪽인지라, "형용사/분사"처럼 적으면 루비가 알려 주는 정보가 0이 된다.
+_FORM_NAMES = {
+    "형용사", "부사", "명사", "동사", "분사", "현재분사", "과거분사", "동명사",
+    "부정사", "to부정사", "전치사", "접속사", "관계대명사", "관계부사", "보어",
+}
+
+
+def _slashed_forms(rt):
+    """rt가 형태 이름 둘 이상을 빗금으로 늘어놓았는지. ("with+명사+형용사/분사" → True)"""
+    if "/" not in rt:
+        return False
+    hits = 0
+    for part in rt.split("/"):
+        # "with+명사+형용사"처럼 앞에 틀이 붙어 있으면 마지막 조각만 본다
+        tail = re.split(r"[+\s]", part.strip())[-1].strip()
+        if tail in _FORM_NAMES:
+            hits += 1
+    return hits >= 2
+
+
 def ruby_term_problems(result, limit=10):
     """루비(rt)가 규칙을 어긴 자리를 찾는다 — 지금은 보라(gv)만 본다.
 
@@ -3425,10 +3551,20 @@ def ruby_term_problems(result, limit=10):
             for a in c.get("anns", []) or []:
                 if not isinstance(a, dict):
                     continue
-                if (a.get("role") or "").strip() != "gv":
-                    continue
                 t = str(a.get("t") or "").strip()
                 rt = str(a.get("rt") or "").strip()
+                # 형태 후보를 빗금으로 늘어놓은 rt("형용사/분사")는 역할을 가리지 않고 걸러낸다.
+                # 둘 중 무엇인지가 바로 학생이 알고 싶은 것이라, 나열하면 아무것도 알려 주지 못한다.
+                if _slashed_forms(rt):
+                    out.append(
+                        f'{no}번 문장 "{t}" → 설명이 "{rt}"입니다. '
+                        f"빗금으로 후보를 늘어놓지 말고 이 자리에 실제로 쓰인 형태 "
+                        f"하나만 적으세요(예: 과거분사). 오른쪽 해설도 같은 이름으로 부르세요."
+                    )
+                    if len(out) >= limit:
+                        return out
+                if (a.get("role") or "").strip() != "gv":
+                    continue
                 if rt in _GV_CATEGORY_ONLY:
                     out.append(
                         f'{no}번 문장 "{t}" → 설명이 "{rt}"입니다. '
@@ -3553,6 +3689,55 @@ def broken_parallel_numbers(result, limit=10):
     return out
 
 
+# 등위접속사의 '뒤짝'. 상관접속사(both…and)는 앞짝+뒤짝이 한 묶음인 게 맞으므로,
+# 한 묶음에 접속사가 몇 개인지는 이 뒤짝만 세어 판단한다.
+_TAIL_CONJ = {"and", "or", "but", "nor"}
+
+
+def conj_group_mixups(result, limit=10):
+    """한 묶음(grp)에 등위접속사를 둘 이상 넣은 문장을 찾는다.
+
+    접속사마다 묶음을 나누라고 일러 두어도, 병렬 안에 병렬이 있으면
+    ("A, B, and C₁ and C₂") 두 접속사를 한 묶음으로 묶어 오는 일이 잦다.
+    그러면 서버가 두 접속사에 같은 색을 칠하고 번호도 1,2,1,2로 겹쳐 매겨,
+    화면에서 무엇과 무엇이 짝인지 알 수 없다 — 실제로 나던 문제다."""
+    out = []
+    for s in result.get("sentences", []) or []:
+        if not isinstance(s, dict):
+            continue
+        groups = {}
+        for c in s.get("chunks", []) or []:
+            if not isinstance(c, dict):
+                continue
+            for a in c.get("anns", []) or []:
+                if not isinstance(a, dict):
+                    continue
+                if (a.get("role") or "").strip() != "conj":
+                    continue
+                word = str(a.get("t") or "").strip().lower()
+                if word not in _TAIL_CONJ:
+                    continue
+                groups.setdefault(_grp_no(a), []).append(word)
+        for g in sorted(groups):
+            words = groups[g]
+            if len(words) < 2:
+                continue
+            eng = " ".join(
+                _TAG_STRIP_RE.sub("", (c.get("text") or ""))
+                for c in (s.get("chunks") or [])
+                if isinstance(c, dict)
+            ).strip()
+            out.append(
+                f'{s.get("no")}번 문장 {g}번 묶음에 접속사가 {len(words)}개'
+                f'({", ".join(words)}) 들어 있습니다 — 접속사마다 묶음을 나누고'
+                f'(grp 1,2,…), 바깥 묶음에는 안쪽 병렬 전체를 한 요소로 넣어 번호를'
+                f' 빠짐없이 매기세요. "{eng[:90]}"'
+            )
+            if len(out) >= limit:
+                return out
+    return out
+
+
 def english_incomplete(result, passage):
     """영어 원문 누락 감지: 한글은 있는데 영어가 빈 chunk가 있거나,
     전체 영어량이 원문의 60% 미만이면 True (재요청 필요)."""
@@ -3625,7 +3810,12 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
             "'번호가 하나뿐'이라고 나온 묶음은 짝이 다른 grp로 잘못 흩어진 것이니, "
             "같은 접속사가 잇는 요소들이 모두 같은 grp를 갖도록 맞추세요. "
             "다시 보니 병렬이 아니었다면(앞말을 바꿔 말하는 동격의 or 등) "
-            "붙어 있는 번호와 conj 표시를 모두 지우세요."
+            "붙어 있는 번호와 conj 표시를 모두 지우세요.\n"
+            "'한 묶음에 접속사가 2개'라고 나온 곳은 병렬 안에 병렬이 있는 자리입니다. "
+            "접속사마다 grp를 따로 주고(바깥 1, 안쪽 2), 바깥 묶음에는 안쪽 병렬 전체를 "
+            "한 요소로 넣어 번호를 매기세요 — 예: 바깥 grp=1의 3번 요소 t=\"the challenges "
+            "and triumphs\", 안쪽 grp=2는 challenges 1 / triumphs 2. 안쪽 ann과 자리가 "
+            "겹쳐도 그대로 두세요(서버가 번호만 앞에 꽂습니다)."
         )
         for h in num_hint:
             lines.append("  · " + h)
@@ -4037,7 +4227,9 @@ def finalize_analysis(result):
     # 등위접속사 누락 검사는 조립 '전'에 해야 한다 — 아래 루프가 anns를 버리기 때문.
     # 결과는 비공개 키로 얹어 두고, 핸들러가 재요청 판단에 쓴 뒤 응답 전에 지운다.
     missed = unmarked_conjunctions(result)
-    broken_nums = broken_parallel_numbers(result)
+    # 번호가 빠진 것과 묶음을 잘못 합친 것은 화면에서 같은 증상(짝 없는 위첨자)으로
+    # 나타나고 고치는 방법도 같아, 한 목록으로 모아 같은 재요청에 실어 보낸다.
+    broken_nums = broken_parallel_numbers(result) + conj_group_mixups(result)
     # 루비 규칙 위반·좌우 용어 모순도 조립 '전'에 검사한다(아래 루프가 anns를 버린다)
     ruby_bad = ruby_term_problems(result)
     conflicts = term_conflicts(result)
