@@ -5773,11 +5773,18 @@ def upsert_user(sub, email, name):
         ref.set({"email": email, "name": name}, merge=True)
 
 
-def delete_user_account(user_id):
+def delete_user_account(user_id, by_admin=False):
     """계정 탈퇴 — 계정 문서와 그 계정이 저장해 둔 자료를 전부 지운다.
     되돌릴 수 없다(잔액도 함께 사라진다). 같은 이메일로 재가입해도 시작 잔액을
     다시 받지 못하도록 deleted_accounts에 이메일을 남겨 둔다(어뷰징 방지).
-    세션은 호출부(로그아웃과 동일하게)에서 지운다."""
+
+    by_admin: 관리자가 강제로 내보낸 경우. deleted_accounts에 남겨 두는 기록에만
+    쓴다 — 나중에 '왜 이 이메일이 막혀 있나'를 가릴 근거가 된다.
+
+    지운 계정의 세션도 여기서 함께 지운다. 본인 탈퇴는 호출부가 자기 토큰 하나를
+    지우지만 그것만으로는 다른 기기에 남아 있는 세션이 살아 있고, 관리자 강제 탈퇴는
+    애초에 지울 토큰을 손에 쥐고 있지도 않다. 남겨 두면 계정이 없는 채로 로그인
+    상태만 유지되는 이상한 상태가 된다."""
     _require_db()
     snap = DB.collection("users").document(user_id).get()
     email = (snap.to_dict() or {}).get("email") if snap.exists else None
@@ -5787,11 +5794,15 @@ def delete_user_account(user_id):
     # 계정이 없어진 뒤에도 남아 있을 이유가 없다.
     for row in DB.collection(POINT_LEDGER).where("user_id", "==", user_id).stream():
         row.reference.delete()
+    for sess in DB.collection("sessions").where("user_id", "==", user_id).stream():
+        sess.reference.delete()
     DB.collection("users").document(user_id).delete()
     if email:
         DB.collection("deleted_accounts").document(email.strip().lower()).set({
             "deleted_at": _now_iso(),
+            "by_admin": bool(by_admin),
         })
+    return email
 
 
 def get_user_krw(user_id):
@@ -6525,7 +6536,8 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
                         "/api/account/recharge",
                         "/api/saved", "/api/saved/delete",
-                        "/api/admin/login", "/api/admin/logout", "/api/admin/recharge"):
+                        "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
+                        "/api/admin/delete-user"):
             self.send_error(404, "Not found")
             return
         try:
@@ -6816,6 +6828,47 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"충전에 실패했습니다: {e}"}, 500)
                 return
             self._send_json({"krwRemaining": new_balance})
+            return
+
+        # 관리자가 회원을 강제로 내보낸다. 되돌릴 수 없다 — 계정·저장 자료·이용 내역·
+        # 잔액이 함께 사라진다. 그래서 대상 이메일을 함께 받아 서버가 한 번 더 대조한다.
+        # 화면의 확인 창만 믿지 않는 이유: 목록이 낡아 있으면(그 사이 다른 창에서 지우고
+        # 새로 가입했다면) 같은 자리에 다른 사람이 앉아 있을 수 있다. 그때는 지우지 않고
+        # 409로 돌려보내 목록을 다시 받게 한다.
+        if path == "/api/admin/delete-user":
+            if not _admin_session_valid(self):
+                self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
+                return
+            if DB is None:
+                self._send_json({"error": "로그인 기능이 아직 설정되지 않았습니다."}, 503)
+                return
+            user_id = (req.get("userId") or "").strip()
+            confirm_email = (req.get("email") or "").strip().lower()
+            if not user_id or not confirm_email:
+                self._send_json({"error": "회원과 이메일을 지정하세요."}, 400)
+                return
+            try:
+                snap = DB.collection("users").document(user_id).get()
+            except Exception as e:
+                self._send_json({"error": f"회원을 조회하지 못했습니다: {e}"}, 500)
+                return
+            if not snap.exists:
+                self._send_json({"error": "이미 없는 회원입니다. 목록을 새로 고쳐 주세요."}, 404)
+                return
+            actual = ((snap.to_dict() or {}).get("email") or "").strip().lower()
+            if actual != confirm_email:
+                self._send_json({
+                    "error": "화면의 회원 정보가 서버와 다릅니다. 목록을 새로 고친 뒤 "
+                             "다시 확인해 주세요.",
+                }, 409)
+                return
+            try:
+                delete_user_account(user_id, by_admin=True)
+            except Exception as e:
+                self._send_json({"error": f"탈퇴 처리에 실패했습니다: {e}"}, 500)
+                return
+            print(f"[관리자] 회원 강제 탈퇴: {actual}", flush=True)
+            self._send_json({"deleted": True, "email": actual})
             return
 
         if path == "/api/saved":

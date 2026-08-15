@@ -257,10 +257,58 @@ function renderUsers() {
           </select>
           <button type="button" class="btn ghost small recharge-btn">충전</button>
           <button type="button" class="btn ghost small usage-btn">내역</button>
+          <!-- 되돌릴 수 없는 작업이라 다른 버튼과 눈에 띄게 구분해 둔다.
+               실수로 옆 버튼을 누르는 일이 없도록 간격도 벌린다. -->
+          <button type="button" class="btn ghost small danger delete-btn"
+                  style="margin-left:10px;">탈퇴</button>
         </div>
       </td>
     </tr>
   `).join("") || `<tr><td colspan="6" style="padding:16px 6px; color:var(--ink-soft);">회원이 없습니다.</td></tr>`;
+}
+
+/* 회원 강제 탈퇴 — 되돌릴 수 없다. 계정·저장 자료·이용 내역·잔액이 함께 사라지고,
+   그 이메일은 재가입해도 시작 잔액을 다시 받지 못한다(deleted_accounts에 남는다).
+
+   확인을 두 단계로 둔 이유: 목록의 줄이 촘촘해 옆 회원을 누르기 쉽고, 한 번 지우면
+   되돌릴 방법이 없다. 그래서 무엇이 사라지는지 먼저 보여 주고, 이메일을 직접 입력해
+   대상을 확인하게 한다. 서버도 같은 이메일을 다시 받아 대조한다 — 화면 목록이 낡아
+   있으면 같은 자리에 다른 사람이 있을 수 있기 때문이다. */
+async function forceDelete(row) {
+  const uid = row.dataset.uid;
+  const user = currentUsers.find((x) => x.id === uid);
+  if (!user) return;
+
+  const balance = Number(user.krwRemaining || 0).toLocaleString();
+  if (!confirm(
+      `${user.email} 회원을 강제 탈퇴시킵니다.\n\n` +
+      `함께 사라지는 것\n` +
+      `· 저장한 지문과 제작 자료 전부\n` +
+      `· 이용 내역 전부\n` +
+      `· 남은 잔액 ${balance}원\n\n` +
+      `이 이메일은 다시 가입해도 시작 잔액을 받지 못합니다.\n` +
+      `되돌릴 수 없습니다. 계속할까요?`)) {
+    return;
+  }
+  const typed = prompt(`확인을 위해 이메일을 그대로 입력하세요.\n\n${user.email}`);
+  if (typed === null) return;
+  if (typed.trim().toLowerCase() !== String(user.email).trim().toLowerCase()) {
+    alert("이메일이 일치하지 않아 취소했습니다.");
+    return;
+  }
+
+  const btn = row.querySelector(".delete-btn");
+  btn.disabled = true;
+  btn.textContent = "처리 중…";
+  try {
+    await postJson("/api/admin/delete-user", { userId: uid, email: user.email });
+    alert(`${user.email} 회원을 탈퇴 처리했습니다.`);
+    loadUsers();
+  } catch (err) {
+    alert(err.message || "탈퇴 처리에 실패했습니다.");
+    btn.disabled = false;
+    btn.textContent = "탈퇴";
+  }
 }
 
 // 회원별 이용 내역 — 문의가 들어왔을 때 무엇에 얼마가 나갔는지 확인하는 용도.
@@ -304,6 +352,11 @@ $("userTableBody").addEventListener("click", async (e) => {
   if (usageBtn) {
     const row = usageBtn.closest("tr");
     toggleUsage(row, row.dataset.uid);
+    return;
+  }
+  const delBtn = e.target.closest(".delete-btn");
+  if (delBtn) {
+    forceDelete(delBtn.closest("tr"));
     return;
   }
   const btn = e.target.closest(".recharge-btn");
