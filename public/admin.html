@@ -7,7 +7,10 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<div class="wrap" style="max-width:760px;">
+<!-- 본문 폭을 기본(900px)보다 넓게 잡는다. 회원 목록이 이메일·이름·가입일·잔액에
+     충전 컨트롤과 버튼 셋까지 한 줄에 담아야 해서, 읽기용 폭으로는 가로 스크롤이
+     생기고 오른쪽 끝의 '탈퇴'가 화면 밖으로 밀린다. -->
+<div class="wrap" style="max-width:1180px;">
 
   <header class="app-head">
     <h1 class="eyebrow">English Lab · 관리자</h1>
@@ -47,16 +50,28 @@
       <div id="pendingList" style="margin-top:8px; font-size:12.5px; line-height:1.9;"></div>
     </div>
 
-    <div class="panel" style="overflow-x:auto;">
-      <table id="userTable" style="width:100%; border-collapse:collapse; font-size:13.5px;">
+    <!-- 가로 스크롤이 생기면 오른쪽 끝의 '탈퇴'가 화면 밖으로 밀려 보이지 않는다.
+         칸마다 폭을 지정해(table-layout:fixed) 표가 화면 폭 안에 들어오게 하고,
+         길어질 수 있는 값(이메일·이름)만 넘칠 때 …로 줄인다. -->
+    <div class="panel">
+      <table id="userTable"
+             style="width:100%; table-layout:fixed; border-collapse:collapse; font-size:13px;">
+        <colgroup>
+          <col style="width:21%">
+          <col style="width:10%">
+          <col style="width:6%">
+          <col style="width:12%">
+          <col style="width:12%">
+          <col style="width:39%">
+        </colgroup>
         <thead>
           <tr style="text-align:left; border-bottom:1px solid var(--line);">
             <th style="padding:8px 6px;">이메일</th>
             <th style="padding:8px 6px;">이름</th>
-            <th style="padding:8px 6px;">가입방식</th>
+            <th style="padding:8px 6px;">가입</th>
             <th style="padding:8px 6px;">가입일</th>
             <th style="padding:8px 6px; text-align:right;">잔액(원)</th>
-            <th style="padding:8px 6px;">잔액 충전</th>
+            <th style="padding:8px 6px;">관리</th>
           </tr>
         </thead>
         <tbody id="userTableBody"></tbody>
@@ -169,11 +184,16 @@ function refreshIfStale() {
 document.addEventListener("visibilitychange", refreshIfStale);
 window.addEventListener("focus", refreshIfStale);
 
+/* 가입일. '2026. 8. 14. 오후 02:43'은 한 줄에 20자가 넘어 표를 넓히는 주범이라
+   '26.08.14 14:43'으로 줄인다 — 관리자가 보는 값이라 연도 앞 두 자리와 24시간제로
+   충분하고, 폭이 절반이 된다. */
 function fmtDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(d)) return iso;
-  return d.toLocaleDateString("ko-KR") + " " + d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getFullYear() % 100)}.${p(d.getMonth() + 1)}.${p(d.getDate())} `
+       + `${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 let currentUsers = [];
@@ -241,26 +261,33 @@ function renderUsers() {
 
   $("userTableBody").innerHTML = currentUsers.map((u) => `
     <tr style="border-bottom:1px solid var(--line-soft);" data-uid="${esc(u.id)}">
-      <td style="padding:8px 6px;">${esc(u.email)}</td>
-      <td style="padding:8px 6px;">${esc(u.name)}</td>
-      <td style="padding:8px 6px;">${u.provider === "google" ? "구글" : "이메일"}</td>
+      <td style="padding:8px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+          title="${esc(u.email)}">${esc(u.email)}</td>
+      <td style="padding:8px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+          title="${esc(u.name)}">${esc(u.name)}</td>
+      <td style="padding:8px 6px; white-space:nowrap;">${u.provider === "google" ? "구글" : "이메일"}</td>
       <td style="padding:8px 6px; white-space:nowrap; color:var(--ink-soft); font-size:12px;">${esc(fmtDate(u.createdAt))}</td>
-      <td style="padding:8px 6px; text-align:right; font-weight:700;" class="cell-krw">${u.krwRemaining.toLocaleString()}원</td>
+      <td style="padding:8px 6px; text-align:right; font-weight:700; white-space:nowrap;" class="cell-krw">${u.krwRemaining.toLocaleString()}원</td>
       <td style="padding:8px 6px;">
-        <div style="display:flex; gap:6px; align-items:center;">
-          <input type="number" class="recharge-input" placeholder="±원" style="width:100px; padding:6px 8px; font-size:12.5px;">
+        <!-- flex-wrap: 창이 좁아지면 넘치는 대신 아래로 접히게 한다. 넘치면 오른쪽 끝의
+             '탈퇴'가 화면 밖으로 밀려 아예 보이지 않는다. -->
+        <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
+          <input type="number" class="recharge-input" placeholder="±원"
+                 style="width:64px; padding:4px 6px; font-size:12px;">
           <!-- 유상(돈을 받고 넣어 준 것)인지 무상 지급인지 구분해 둔다.
-               유상분만 환불 대상이라, 나중에 환불 요청이 오면 이 구분이 근거가 된다. -->
-          <select class="recharge-kind" style="padding:6px 8px; font-size:12.5px;">
-            <option value="grant">무상 지급</option>
-            <option value="charge">유상 충전(입금 확인)</option>
+               유상분만 환불 대상이라, 나중에 환불 요청이 오면 이 구분이 근거가 된다.
+               글자를 줄인 것은 폭 때문이다 — 뜻은 title로 남긴다. -->
+          <select class="recharge-kind" title="무상 지급 / 유상 충전(입금 확인)"
+                  style="padding:4px 2px; font-size:12px; width:54px;">
+            <option value="grant">무상</option>
+            <option value="charge">유상</option>
           </select>
-          <button type="button" class="btn ghost small recharge-btn">충전</button>
-          <button type="button" class="btn ghost small usage-btn">내역</button>
+          <button type="button" class="btn ghost small recharge-btn" style="padding:4px 7px;">충전</button>
+          <button type="button" class="btn ghost small usage-btn" style="padding:4px 7px;">내역</button>
           <!-- 되돌릴 수 없는 작업이라 다른 버튼과 눈에 띄게 구분해 둔다.
                실수로 옆 버튼을 누르는 일이 없도록 간격도 벌린다. -->
           <button type="button" class="btn ghost small danger delete-btn"
-                  style="margin-left:10px;">탈퇴</button>
+                  style="padding:4px 7px; margin-left:6px;">탈퇴</button>
         </div>
       </td>
     </tr>
