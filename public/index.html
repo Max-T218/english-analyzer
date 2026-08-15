@@ -315,7 +315,12 @@
         <button type="button" class="btn ghost small" id="passageLibraryBtn">📄 지문 저장함</button>
         <button type="button" class="btn ghost small" id="materialLibraryBtn">📦 제작 자료 저장함</button>
         <button type="button" class="btn ghost small" id="usageHistoryBtn">🧾 이용 내역</button>
-      <button type="button" class="btn small" id="openRechargeBtn">💳 충전</button>
+        <!-- 사용자가 스스로 충전하는 버튼은 지금 내려 두었다. 결제사 연동 전이라
+             누르면 그냥 잔액이 늘어나는 상태였다. 잔액이 모자란 사용자는 화면 안내대로
+             관리자에게 문의하고, 충전은 /admin.html에서 해 준다.
+             되살리려면 아래 한 줄의 주석을 풀면 된다 — 모달·API·app.js 배선은 그대로 있다.
+        <button type="button" class="btn small" id="openRechargeBtn">💳 충전</button>
+        -->
         <button type="button" class="btn ghost small" id="logoutBtn">로그아웃</button>
         <button type="button" class="btn ghost small danger" id="deleteAccountBtn">회원 탈퇴</button>
         <span class="hint">공용 컴퓨터라면 사용 후 반드시 로그아웃하세요.</span>

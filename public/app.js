@@ -632,12 +632,19 @@ async function submitRecharge(amount) {
   }
 }
 
-$("openRechargeBtn").addEventListener("click", () => {
-  rechargeErrorEl.textContent = "";
-  rechargeCustomForm.hidden = true;
-  rechargeCustomAmountEl.value = "";
-  openModal(rechargeModalEl);
-});
+/* 충전 버튼은 지금 index.html에서 주석으로 내려 두었다(결제사 연동 전이라 누르면 그냥
+   잔액이 늘어나는 상태였다). 여기서 없는 요소에 addEventListener를 걸면 그 자리에서
+   app.js가 통째로 죽으므로 — 버튼 하나 때문에 화면 전체가 멎는다 — 있을 때만 건다.
+   버튼을 되살리면 이 배선도 그대로 다시 동작한다. */
+const openRechargeBtn = $("openRechargeBtn");
+if (openRechargeBtn) {
+  openRechargeBtn.addEventListener("click", () => {
+    rechargeErrorEl.textContent = "";
+    rechargeCustomForm.hidden = true;
+    rechargeCustomAmountEl.value = "";
+    openModal(rechargeModalEl);
+  });
+}
 $("rechargePresets").addEventListener("click", (e) => {
   const btn = e.target.closest(".recharge-preset-btn");
   if (!btn) return;
