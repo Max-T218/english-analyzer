@@ -1069,6 +1069,13 @@ table.flow tr:last-child td, table.vocab tr:last-child td{border-bottom:none;}
 table.vocab td:first-child{font-weight:600; color:var(--ink);}
 table.vocab td.pos{color:var(--ink-soft); font-style:italic; white-space:nowrap;}
 
+/* 지문 요약 인포그래픽 — 16:9 가로 그림. .table-wrap 안에 넣어 표와 테두리를 맞춘다.
+   min-width가 걸린 table과 달리 그림은 폭에 맞춰 줄여야 하므로 여기서 다시 푼다. */
+.infographic{display:block; width:100%; height:auto; min-width:0;}
+.info-caution{margin:8px 2px 0; font-size:11.5px; line-height:1.6; color:var(--ink-soft);}
+/* 종이에는 안내문을 빼고 그림만 나간다 — 교사에게 하는 말이지 학생 유인물이 아니다 */
+@media print{ .info-caution{display:none !important;} }
+
 footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-soft);}
 #result:empty{display:none;}
 

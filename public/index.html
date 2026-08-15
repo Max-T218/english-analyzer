@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>English Lab</title>
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=%%ASSET_V%%">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -388,19 +388,22 @@
       <div class="actions">
         <button class="btn" id="analyzeBtn">분석하기</button>
         <button class="btn ghost" id="printBtn" style="display:none"
-                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
         <button class="btn ghost" id="editBtn" style="display:none"
                 title="분석본을 직접 고칠 수 있습니다. 해석·해설·어휘표 모두 수정 가능하고, 수정한 내용 그대로 인쇄됩니다.">✏️ 직접 수정</button>
         <button class="btn ghost" id="pageBtn" style="display:none"
                 title="인쇄했을 때 쪽이 어디서 넘어가는지 보여 주고, 표·문장 카드 단위로 쪽을 옮길 수 있습니다.">📄 쪽 구성</button>
         <button class="btn ghost" id="saveBtn" style="display:none"
-                title="로그인한 계정에 이 분석본과 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 저장</button>
+                title="로그인한 계정에 이 분석본과 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
         <button class="btn ghost" id="pageResetBtn" style="display:none"
                 title="직접 지정한 쪽 나눔을 모두 지우고 처음 상태로 되돌립니다.">↺ 쪽 구성 처음으로</button>
         <span class="edit-hint" id="editHint"></span>
         <span class="edit-hint" id="pageHint"></span>
         <label class="chk" title="1차 분석 후 AI가 한 번 더 검토해 빠진 어법·어휘를 보강합니다. 지문당 요청이 2배가 됩니다.">
           <input type="checkbox" id="reviewChk"> 꼼꼼 검토 <span class="chk-sub">(2차 검토·사용량 2배)</span>
+        </label>
+        <label class="chk" title="지문 내용을 한 장으로 요약한 가로형 그림을 분석본 맨 뒤에 넣습니다. 지문 1개에 8~12초가 더 걸리고, 만들어진 그림 속 글자는 '직접 수정'으로 고칠 수 없으며 저장함에도 담기지 않습니다.">
+          <input type="checkbox" id="infoChk"> 요약 이미지 <span class="chk-sub" id="infoChkPrice">(지문당 추가)</span>
         </label>
         <span class="hint">Ctrl+Enter 로도 실행됩니다.</span>
       </div>
@@ -447,9 +450,9 @@
       <div class="actions">
         <button class="btn" id="mcqBtn">문제 만들기</button>
         <button class="btn ghost" id="mcqPrintBtn" style="display:none"
-                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
         <button class="btn ghost" id="mcqSaveBtn" style="display:none"
-                title="로그인한 계정에 이 문제 세트와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 저장</button>
+                title="로그인한 계정에 이 문제 세트와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
         <span class="hint">유형마다 <b>− +</b> 로 문항 수를 정할 수 있습니다. 순서·문장삽입이 섞이면 시간이 더 걸릴 수 있어요.</span>
       </div>
       <div class="error" id="mcqError"></div>
@@ -487,9 +490,9 @@
       <div class="actions">
         <button class="btn" id="saqBtn">문제 만들기</button>
         <button class="btn ghost" id="saqPrintBtn" style="display:none"
-                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
         <button class="btn ghost" id="saqSaveBtn" style="display:none"
-                title="로그인한 계정에 이 문제 세트와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 저장</button>
+                title="로그인한 계정에 이 문제 세트와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
         <span class="hint">유형마다 <b>− +</b> 로 문항 수를 정할 수 있습니다. 학생이 직접 쓰는 서술형·단답형 문제를 만듭니다.</span>
       </div>
       <div class="error" id="saqError"></div>
@@ -534,11 +537,11 @@
       <div class="actions">
         <button class="btn" id="wbBtn">워크북 만들기</button>
         <button class="btn ghost" id="workbookPrintBtn" style="display:none"
-                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
         <button class="btn ghost" id="wbAnswerPrintBtn" style="display:none"
                 title="문제 내용은 빼고 번호와 정답만 지면에 올립니다. '정답 표시' 설정과 무관하게 항상 정답이 나옵니다.">🔑 답지만</button>
         <button class="btn ghost" id="workbookSaveBtn" style="display:none"
-                title="로그인한 계정에 이 워크북과 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 저장</button>
+                title="로그인한 계정에 이 워크북과 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
         <label class="chk" title="켜면 정답이 지면에 함께 인쇄됩니다(교사용). 끄면 학생용 문제지가 됩니다.">
           <input type="checkbox" id="wbAnswerChk"> 정답 표시 <span class="chk-sub">(교사용)</span>
         </label>
@@ -589,9 +592,9 @@
       <div class="actions">
         <button class="btn" id="vocabBtn">단어장 만들기</button>
         <button class="btn ghost" id="vocabPrintBtn" style="display:none"
-                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
         <button class="btn ghost" id="vocabSaveBtn" style="display:none"
-                title="로그인한 계정에 이 단어장을 저장해 나중에 다시 불러올 수 있습니다.">💾 저장</button>
+                title="로그인한 계정에 이 단어장을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
         <label class="chk" title="여러 지문에 같은 단어가 나오면 하나로 합칩니다.">
           <input type="checkbox" id="vocabDedup" checked> 중복 단어 합치기
         </label>
@@ -654,7 +657,7 @@
       <p class="hint" id="examPaperSpec" role="status" aria-live="polite"></p>
 
       <!-- 분석만 끝내고 저장해 두는 자리. 시험지를 한 부라도 만들면 감춘다 —
-           그때는 아래 '💾 저장'이 시험지와 구성표를 함께 담으므로 저장 버튼이
+           그때는 아래 '💾 사이트 저장'이 시험지와 구성표를 함께 담으므로 저장 버튼이
            둘로 보일 이유가 없다. -->
       <div class="actions" id="examSpecSaveRow" hidden>
         <button type="button" class="btn ghost small" id="examSpecSaveBtn"
@@ -780,9 +783,9 @@
 
     <div class="actions" id="examPaperActions">
       <button class="btn ghost" id="examPaperPrintBtn" style="display:none"
-              title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 저장</button>
+              title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
       <button class="btn ghost" id="examPaperSaveBtn" style="display:none"
-              title="만든 시험지와 배분표를 저장합니다. 배분표가 있어야 나중에 다른 부를 겹치지 않게 만들 수 있습니다.">💾 저장</button>
+              title="만든 시험지와 배분표를 저장합니다. 배분표가 있어야 나중에 다른 부를 겹치지 않게 만들 수 있습니다.">💾 사이트 저장</button>
     </div>
 
     <div id="examPaperResult"></div>
@@ -798,7 +801,7 @@
        고치는 자리가 화면 아래쪽이라, 맨 위 버튼 줄까지 올라가지 않아도 되게 한 것. -->
   <button type="button" class="float-print float-undo" id="undoBtn" hidden disabled
           title="방금 고친 것을 한 단계 되돌립니다.">↩ 되돌리기</button>
-  <button type="button" class="float-print" id="floatPrintBtn">🖨️ 인쇄 / PDF 저장</button>
+  <button type="button" class="float-print" id="floatPrintBtn">🖨️ 인쇄 / PDF 변환</button>
 </div>
 
 <!-- 인쇄 안내 창 — 종이 인쇄와 PDF 저장은 어차피 같은 인쇄 대화상자에서 갈리므로,
@@ -826,7 +829,7 @@
 <!-- 저장 전 제목 입력 -->
 <div class="print-guide" id="saveDialog" hidden>
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="saveDialogTitle">
-    <h3 id="saveDialogTitle">💾 저장</h3>
+    <h3 id="saveDialogTitle">💾 사이트 저장</h3>
     <p class="print-guide-lead" id="saveDialogLead">나중에 저장함에서 이 제목으로 다시 찾을 수 있습니다.</p>
     <div class="field">
       <label for="saveTitleInput">제목</label>
@@ -912,6 +915,6 @@
     </div>
   </div>
 </div>
-<script src="/app.js"></script>
+<script src="/app.js?v=%%ASSET_V%%"></script>
 </body>
 </html>

@@ -79,6 +79,16 @@ MODEL = _env("GEMINI_MODEL", "gemini-3.7-flash")
 # 지금 Pro로 가는 것: 지문을 변형해 만드는 문제(객관식·주관식 모두), 지문변형 '5개 이상'.
 # 분석본·워크북·사진 옮기기는 Flash다(분석본은 서버가 여섯 가지로 기계 검사해 보완한다).
 MODEL_PRO = _env("GEMINI_MODEL_PRO", "gemini-3.1-pro-preview")
+# 지문 요약 인포그래픽을 '그리는' 모델(나노바나나 프로). 글자를 그림 안에 찍는 작업이라
+# 한글이 깨지지 않는 모델이 필요해 Pro로 고정한다 — Flash 계열은 검증하지 않았다.
+# 위의 두 모델과 달리 부르는 곳이 다르다: :generateContent가 아니라 Interactions API다
+# (GEMINI_IMAGE_URL 참고).
+MODEL_IMAGE = _env("GEMINI_MODEL_IMAGE", "gemini-3-pro-image")
+# 가로형 인포그래픽. 4K인 이유는 인쇄물이기 때문이다 — A4 가로(297mm)에 깔면
+# 2K는 175dpi로 작은 글자가 뭉개지고, 4K는 350dpi가 나온다. 요금은 두 배다
+# (2K $0.134 / 4K $0.24 per image).
+IMAGE_ASPECT = _env("GEMINI_IMAGE_ASPECT", "16:9")
+IMAGE_SIZE = _env("GEMINI_IMAGE_SIZE", "4K")
 # 모델명은 URL 경로에 들어가므로 안전한 형식만 허용 (하드코딩 목록 대신 형식 검증)
 _MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]+$")
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
@@ -116,6 +126,11 @@ KST = timezone(timedelta(hours=9))
 # 관리자 입장에서도 "이 버튼 한 번 = 얼마"가 분명해진다. 실제 Gemini 비용과의 차액은
 # 관리자가 마진으로 흡수한다. 값은 전부 원(KRW) 단위이며 환경변수로 조정 가능하다.
 PRICE_ANALYZE_KRW = int(os.environ.get("PRICE_ANALYZE_KRW", "300"))        # 지문분석, 지문 1개당
+# 지문 요약 인포그래픽, 지문 1개당(분석에 얹는 값). 다른 항목과 달리 마진이 얇다 —
+# 여기만 원가가 크다. 4K 이미지 1장이 $0.24라 환율 1,400원이면 원가만 약 339원이고
+# (1단계 Flash 호출은 그에 비하면 무시할 수준), 남는 건 60원 남짓이다.
+# 환율이 오르거나 구글이 단가를 올리면 곧바로 역마진이 되니 그때는 이 값을 올려야 한다.
+PRICE_INFOGRAPHIC_KRW = int(os.environ.get("PRICE_INFOGRAPHIC_KRW", "400"))
 PRICE_MCQ_PLAIN_KRW = int(os.environ.get("PRICE_MCQ_PLAIN_KRW", "250"))    # 객관식·지문유지, (지문×유형) 1개당
 PRICE_MCQ_TRANSFORM_KRW = int(os.environ.get("PRICE_MCQ_TRANSFORM_KRW", "250"))  # 객관식·지문변형, (지문×유형) 1개당
 # 주관식, (지문×유형) 1개당. 객관식과 같은 250원으로 맞춘다 — 주관식도 일곱 유형 중
@@ -463,6 +478,29 @@ GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models?pageS
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 )
+
+# 그림을 만드는 모델은 부르는 곳이 다르다 — 모델명이 URL이 아니라 본문에 들어가고,
+# 응답도 텍스트가 아니라 base64 이미지로 온다(_image_from_interaction 참고).
+GEMINI_IMAGE_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+
+
+def _asset_version():
+    """app.js·style.css가 바뀔 때마다 달라지는 짧은 표식.
+
+    index.html이 <script src="/app.js?v=…">로 이걸 달고 나간다. 캐시 헤더만으로는
+    부족했다 — 헤더가 없던 시절에 이미 받아 둔 app.js를 브라우저가 계속 쥐고 있으면
+    새 헤더를 볼 기회 자체가 없기 때문이다(그 파일을 다시 요청하지 않으므로).
+    주소가 달라지면 브라우저에게 '처음 보는 파일'이 되어 반드시 새로 받는다.
+
+    빌드 도구가 없으니 파일이 고쳐진 시각(mtime)을 표식으로 쓴다. 읽지 못하면 지금
+    시각으로 떨어뜨린다 — 캐시가 덜 되는 쪽이 옛 코드가 도는 쪽보다 안전하다."""
+    stamp = 0.0
+    for name in ("app.js", "style.css"):
+        try:
+            stamp = max(stamp, (PUBLIC_DIR / name).stat().st_mtime)
+        except OSError:
+            return str(int(time.time()))
+    return str(int(stamp))
 
 # --- 요청 본문 상한 ---------------------------------------------------------
 # 본문은 통째로 메모리에 올라간다. 상한이 없으면 큰 요청 몇 개에 인스턴스가
@@ -1794,6 +1832,469 @@ def call_gemini_ocr(file, api_key, model, partial=False):
             note or "사진에서 영어 지문을 찾지 못했습니다. 지문이 잘 보이게 다시 찍어 올려 주세요."
         )
     return {"text": text, "note": note}
+
+
+# ══════════════ 지문 요약 인포그래픽 ══════════════
+# 지문을 한 장의 가로형 그림으로 요약한다. 두 번 부르는 것이 핵심이다.
+#
+#   1단계 (Flash)  지문 → 구조와 문구를 JSON으로 확정한다. 여기가 '글을 쓰는' 단계다.
+#   2단계 (Pro 이미지) 그 문구를 넘겨 '그대로 조판만' 시킨다. 여기는 '그리는' 단계다.
+#
+# 한 번에 시키면 안 되는 이유가 있다. 이미지 모델에게 지문을 주고 알아서 요약하게 하면
+# 그림 안의 글자에서 어법·철자 오류가 난다 — 실제로 "COSMEPOLITAN COSMOPOLITAN"처럼
+# 같은 낱말을 오타 한 번, 정타 한 번 두 벌 찍어 놓는 사고가 있었다. 글은 글 쓰는 모델이
+# 짓게 하고 그림 모델에게는 문자열을 못박아 넘기면 이런 오류가 크게 준다.
+#
+# 다만 0이 되지는 않는다. 조판 단계에서도 드물게 글자가 뭉개지므로, 결과는 픽셀이라
+# sanitize_* 로 걸러낼 수도 setEditMode로 고칠 수도 없다 — 인쇄 전에 눈으로 한 번
+# 보는 절차가 반드시 남는다. 화면도 그렇게 안내한다.
+
+# 지문의 짜임에 따라 고르는 배치. 색·글꼴·캐릭터 같은 '겉모습'은 어느 것을 골라도
+# 같고(한 벌로 인쇄되므로), 달라지는 것은 칸을 어떻게 늘어놓고 화살표를 그리느냐뿐이다.
+#
+# 나누는 이유는 보기 좋으라고가 아니다. 화살표는 '그다음' 또는 '그래서'라고 주장한다.
+# 지문이 그렇게 말하지 않았는데 화살표를 그리면 그림이 없는 관계를 지어내는 것이다.
+# 교과서 본문은 시간 순 서사라 흐름이 맞지만, 모의고사·수능 지문은 논증문이라
+# 근거들이 대등하다 — 거기에 번호를 붙여 이으면 없던 순서가 생긴다.
+INFOGRAPHIC_LAYOUTS = ("flow", "claim", "contrast")
+
+INFOGRAPHIC_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "layout": {"type": "STRING", "enum": list(INFOGRAPHIC_LAYOUTS)},
+        "title": {"type": "STRING"},
+        "stages": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "label_en": {"type": "STRING"},
+                    "body_ko": {"type": "STRING"},
+                    "bold_en": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "icon": {"type": "STRING"},
+                },
+                "required": ["label_en", "body_ko", "bold_en", "icon"],
+                "propertyOrdering": ["label_en", "body_ko", "bold_en", "icon"],
+            },
+        },
+        # 하위 갈래는 '있을 때만' 쓰지만, 구조화 출력은 required를 비워 두면 모델이
+        # 제멋대로 생략한다. 그래서 항상 받되 parent=0이면 없는 것으로 읽는다.
+        "branch": {
+            "type": "OBJECT",
+            "properties": {
+                "parent": {"type": "INTEGER"},
+                "label_en": {"type": "STRING"},
+                "items": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "body_ko": {"type": "STRING"},
+                            "bold_en": {"type": "ARRAY", "items": {"type": "STRING"}},
+                            "icon": {"type": "STRING"},
+                        },
+                        "required": ["body_ko", "bold_en", "icon"],
+                        "propertyOrdering": ["body_ko", "bold_en", "icon"],
+                    },
+                },
+            },
+            "required": ["parent", "label_en", "items"],
+            "propertyOrdering": ["parent", "label_en", "items"],
+        },
+        "note": {"type": "STRING"},
+    },
+    "required": ["layout", "title", "stages", "branch", "note"],
+    "propertyOrdering": ["layout", "title", "stages", "branch", "note"],
+}
+
+INFOGRAPHIC_SYSTEM_PROMPT = r"""You plan a ONE-PAGE horizontal infographic that helps a Korean
+high-school student understand an English reading passage. You do NOT draw it — you decide the
+structure and write the exact strings that will be typeset into the image later.
+Return ONLY the structured JSON in the schema — no markdown, no commentary.
+
+## The reader
+A Korean student who has just read the English passage. The explanations are in Korean so the
+meaning lands immediately; the key English wording stays in English so the student connects the
+Korean to the words actually on the page.
+
+## Use ONLY the passage
+Every claim must come from the passage. Add no examples, no background facts, no advice, no
+moral, no conclusion the passage does not state. If the passage is too short or too fragmentary
+to structure, still do your best with what is there and say so in `note`.
+
+## layout — decide what the passage's parts actually are
+This choice decides whether the picture draws ARROWS between the parts. An arrow asserts
+"and then" or "and therefore". If the passage does not actually say that, an arrow makes the
+picture claim something the passage never claimed. Choose by what the passage does, not by
+what would look nice.
+
+- `flow` — the parts happen in a real order: a sequence in time, a process, stages of a
+  change, a narrative. Typical of textbook reading passages.
+  ONLY choose this if reordering the parts would make the passage wrong.
+- `claim` — the passage argues something: one main point supported by reasons, evidence, or
+  examples that sit BESIDE each other rather than after each other. Typical of exam passages
+  (모의고사·수능). The reasons are equal in rank; none comes "after" another.
+- `contrast` — the passage sets two things against each other: a common belief versus the
+  truth, before versus after, A versus B. Exactly two sides.
+
+When you are not sure, choose `claim`. Drawing no arrow says nothing; drawing the wrong arrow
+says something false. `claim` is the safe default.
+
+For `contrast`, the two sides go in `stages` as exactly two entries — the first is the side
+the passage introduces first (often the common belief), the second is the side it argues for.
+
+## title
+The passage's overall point, in ENGLISH, ALL CAPS. Max 60 characters.
+Prefer the passage's own vocabulary over invented phrasing.
+
+## stages — the parts of the passage
+How many, and what they are, depends on the layout you chose:
+
+- `flow` — 3 to 5 stages, in the order the passage puts them.
+- `claim` — the FIRST entry is the passage's main point; the entries after it are the reasons
+  or examples that support it (2 to 4 of them). They are equal in rank, so do not write them
+  as if one follows another — no "먼저/그다음/마지막으로".
+- `contrast` — EXACTLY 2 entries, the two sides being set against each other.
+
+Do not force a number — use as many as the passage actually has, within those limits.
+Fewer, clearer parts beat more, thinner ones. Each entry:
+
+- `label_en` — the part's name in ENGLISH, ALL CAPS. Max 30 characters. This is a heading,
+  not a sentence: no final period.
+- `body_ko` — ONE Korean sentence explaining that stage. Max 45 characters INCLUDING spaces.
+  This goes inside a picture, so length is a hard limit, not a suggestion. Write natural
+  Korean (해요체가 아니라 문어체 — "~한다", "~이다"). Never translate word-for-word if it
+  produces awkward Korean.
+- `bold_en` — 0 to 2 English words or short phrases, taken VERBATIM from the passage, that
+  will be shown in bold. CRITICAL: every string here must appear EXACTLY as written inside
+  this stage's `body_ko`. If you want to bold "K-drama", then `body_ko` must literally
+  contain "K-drama". If nothing English belongs in this sentence, use an empty array.
+- `icon` — what to DRAW for this part, in English. Max 80 characters. This is the part that
+  actually carries the meaning, so make it worth looking at: a scene, a moment, a place, a
+  gesture, an object, a visual metaphor — whatever would make this part click for someone
+  who has not read the passage. "A commuter checking a phone while the train empties around
+  them" is good; "a phone" is weak; "communication" is unusable.
+  It must be something a person could actually draw — never an abstraction on its own.
+  Prefer what the passage itself describes; invent an image only when the passage is abstract,
+  and then make sure the image still says exactly what the passage says.
+
+## branch — only when one part really splits
+Some passages list two or more parallel things under a single part (e.g. three things the
+writer wants to do). When that happens, fill `branch`:
+- `parent` — the 1-based index of the part that splits.
+- `label_en` — ENGLISH, ALL CAPS heading for the group. Max 30 characters.
+- `items` — 2 to 3 entries, each with the same `body_ko` / `bold_en` / `icon` rules as a stage
+  (but `body_ko` max 30 characters — these sit in narrow columns).
+
+When nothing splits, set `parent` to 0, `label_en` to "", and `items` to [].
+Use at most ONE branch per passage. Never branch a part that has only one item.
+Do not use a branch with `contrast` — the two sides are already the split.
+
+## note (Korean, short)
+"" when the passage structured cleanly. Otherwise one sentence naming the concrete problem:
+지문이 너무 짧아 나누기 어려웠음, 논증문이라 흐름 대신 주장·근거로 묶었음 등.
+
+## Above all
+The strings you write here are typeset into an image as-is and CANNOT be corrected afterwards.
+Check spelling, spacing, and grammar in both languages before you answer.
+
+Return valid JSON only."""
+
+
+# 2단계에 넘기는 그림 지시.
+#
+# 여기에 판(레이아웃)을 적지 않는 것이 요점이다. 처음에는 배치·색·테두리까지 못박아
+# 두었는데, 그러면 지문이 무엇이든 같은 틀에 글자만 갈아 끼운 그림이 나온다.
+# 실제로 만화풍 틀에서 도표풍 틀로 바꿔 봐도 '고정된 틀'이라는 성질은 그대로였다.
+#
+# 그래서 구도는 통째로 모델에게 맡기고, 여기에는 어겨서는 안 되는 것만 남긴다.
+#   - 글자는 준 문자열 그대로 (어법 오류가 나는 자리라 이것만은 못박는다)
+#   - 없는 말을 그려 넣지 않기
+#   - 인쇄해서 읽을 수 있는 크기와 여백
+# 색·배치·그림체는 목록에 없다 — 지문마다 달라지라고 일부러 비워 둔 자리다.
+INFOGRAPHIC_RULES = r"""
+HOW TO COMPOSE
+Compose this image however best explains THIS passage. There is no template and no house
+style — a passage about a journey, a passage arguing a point, and a passage comparing two
+things should end up looking nothing like each other. Decide the composition, the palette,
+the illustration style, and the arrangement yourself, from what this passage is about.
+
+Let the pictures carry the meaning. A student should grasp what the passage is about from
+the artwork alone, before reading a single line. The given text lines are labels ON that
+artwork — they are not the content, and they must never become rows of captioned boxes.
+Draw real things: scenes, people, places, objects, metaphors, whatever this passage calls
+for. Fill the frame with the idea.
+
+WHAT YOU MUST NOT CHANGE
+- Render every supplied string EXACTLY as given, character for character. Do not translate,
+  rephrase, shorten, correct, re-spell, or duplicate any word. Korean must be rendered in
+  correct Hangul exactly as written; English exactly as written.
+- Every supplied string must appear somewhere in the image, and must be legible.
+- Add NO text that is not supplied — no labels of your own, no captions, no watermark,
+  no logo, no page number, no signature.
+- Draw nothing the passage does not support. No invented facts, no added examples.
+- No text may be smaller than 1/50 of the image height. If the text does not fit, make the
+  artwork simpler — never shrink the text.
+- Leave at least 4% margin on every edge and crop nothing.
+"""
+
+_INFOGRAPHIC_TRUNC_MSG = "지문이 너무 길어 요약 구조를 만들다가 잘렸습니다. 지문을 나눠 시도해 주세요."
+
+
+def _clip(text, limit):
+    """그림에 들어갈 문자열을 상한 길이로 자른다.
+
+    프롬프트에 글자 수 상한을 적어도 모델이 넘길 때가 있는데, 긴 문자열이 그림에
+    들어가면 글자가 작아지거나 테두리 밖으로 잘려 나간다. 잘라 내는 쪽이 낫다."""
+    s = " ".join(str(text or "").split())
+    return s if len(s) <= limit else s[:limit].rstrip()
+
+
+def _clean_infographic_plan(plan):
+    """1단계 결과를 그림에 넘길 수 있는 형태로 다듬는다.
+
+    가장 중요한 일은 bold_en 검사다. 볼드로 칠할 영어 표현은 반드시 그 칸의 한국어
+    문장 안에 그대로 들어 있어야 한다. 없는 표현을 '굵게 하라'고 시키면 그림 모델이
+    문장에 없는 낱말을 새로 그려 넣는다 — 지문에 없는 말이 결과물에 나타나는 경로가
+    되므로, 문장에서 찾지 못한 것은 조용히 버린다."""
+    def _one(d, body_limit):
+        body = _clip(d.get("body_ko"), body_limit)
+        bold = [
+            b for b in (_clip(x, 40) for x in (d.get("bold_en") or []))
+            if b and b in body
+        ][:2]
+        return {"body_ko": body, "bold_en": bold, "icon": _clip(d.get("icon"), 80)}
+
+    # 모르는 값이 오면 claim으로 떨어뜨린다 — 화살표를 안 그리는 쪽이 늘 안전하다
+    layout = plan.get("layout")
+    if layout not in INFOGRAPHIC_LAYOUTS:
+        layout = "claim"
+
+    stages = []
+    for st in (plan.get("stages") or [])[:5]:
+        item = _one(st, 45)
+        item["label_en"] = _clip(st.get("label_en"), 30).upper().rstrip(".")
+        if item["body_ko"] and item["label_en"]:
+            stages.append(item)
+    if len(stages) < 2:
+        raise RuntimeError(
+            "지문에서 요약할 내용을 찾지 못했습니다. 지문이 너무 짧은 것 같습니다."
+        )
+    # 대조는 두 쪽이라야 성립한다. 셋 이상이 오면 좌우로 나눌 수가 없으므로,
+    # 배치를 바꾸는 대신 claim으로 내린다(앞의 것을 억지로 버리면 내용이 사라진다).
+    if layout == "contrast" and len(stages) != 2:
+        layout = "claim"
+
+    raw_branch = plan.get("branch") or {}
+    parent = raw_branch.get("parent") or 0
+    items = [_one(x, 30) for x in (raw_branch.get("items") or [])[:3]]
+    items = [x for x in items if x["body_ko"]]
+    # parent가 범위를 벗어나면(모델이 없는 단계를 가리킴) 갈래를 통째로 버린다 —
+    # 어느 칸에 매달지 모르는 채로 그리게 두면 자리가 엉킨다.
+    branch = None
+    if 1 <= parent <= len(stages) and len(items) >= 2:
+        branch = {
+            "parent": parent,
+            "label_en": _clip(raw_branch.get("label_en"), 30).upper().rstrip(".") or "DETAILS",
+            "items": items,
+        }
+    # 대조는 좌우 두 쪽이 곧 나뉜 모습이라, 거기 또 갈래를 달면 한쪽만 무거워진다
+    if layout == "contrast":
+        branch = None
+    return {
+        "layout": layout,
+        "title": _clip(plan.get("title"), 60).upper(),
+        "stages": stages,
+        "branch": branch,
+        "note": _clip(plan.get("note"), 200),
+    }
+
+
+def _infographic_prompt(plan):
+    """다듬은 구조를 그림 모델이 읽을 지시문으로 편다.
+
+    구도는 적지 않는다 — 무엇을 담을지(문자열과 그릴 것)만 넘기고 어떻게 배치할지는
+    모델이 지문마다 정하게 둔다. 칸 이름도 'STAGE 1' 같은 자리 이름 대신 그냥 번호로
+    부른다(자리 이름을 주면 그 이름대로 상자를 만들어 늘어놓는다)."""
+    # 관계는 '이렇게 그려라'가 아니라 '지문이 이렇다'는 정보로만 넘긴다.
+    # 순서가 아닌 지문에 순서를 그려 넣지 않게 하려는 것이지, 판을 정해 주는 게 아니다.
+    relation = {
+        "flow": "These parts happen in a real order — one leads to the next.",
+        "claim": "The first part is the passage's point; the rest are reasons that support "
+                 "it. The reasons are equal in rank — none comes before or causes another.",
+        "contrast": "These two are set against each other — opposed, not sequential.",
+    }.get(plan.get("layout", "claim"))
+
+    out = [
+        "Create one horizontal image that summarizes an English reading passage",
+        "for a Korean high-school student.",
+        "",
+        f"WHAT THE PASSAGE IS LIKE: {relation}",
+        "",
+        "TEXT TO PLACE IN THE IMAGE",
+        f'  Title: {plan["title"]}',
+    ]
+    for i, st in enumerate(plan["stages"], 1):
+        out.append("")
+        out.append(f'  {i}. English label: {st["label_en"]}')
+        out.append(f'     Korean line:   {st["body_ko"]}')
+        if st["bold_en"]:
+            out.append(
+                '     Set these exact substrings in bold inside that Korean line: '
+                + " | ".join(st["bold_en"])
+            )
+        out.append(f'     Draw: {st["icon"]}')
+    br = plan.get("branch")
+    if br:
+        out.append("")
+        out.append(
+            f'  These belong under "{plan["stages"][br["parent"] - 1]["label_en"]}", '
+            f'grouped as: {br["label_en"]}'
+        )
+        for it in br["items"]:
+            out.append(f'     Korean line: {it["body_ko"]}')
+            if it["bold_en"]:
+                out.append(
+                    '     Bold inside it: ' + " | ".join(it["bold_en"])
+                )
+            out.append(f'     Draw: {it["icon"]}')
+    out.append(INFOGRAPHIC_RULES)
+    return "\n".join(out)
+
+
+def _image_from_interaction(body):
+    """응답 어디에 있든 base64 이미지를 찾아낸다.
+
+    Interactions API의 응답 JSON 구조는 문서에 나와 있지 않다(파이썬 SDK의
+    `interaction.output_image`는 편의 속성이라 원본이 어디에 담기는지 알려주지 않는다).
+    그래서 자리를 짚어 꺼내는 대신 응답 전체를 훑어 '이미지로 보이는 것'을 찾는다.
+
+    이미지로 보이는 것 = data(또는 bytes_base64_encoded) 값이 충분히 긴 문자열인 dict.
+    길이로 거르는 이유는 id·token 같은 짧은 문자열을 이미지로 오인하지 않기 위해서다
+    (가장 작은 1K JPEG도 base64로 수만 자다). 형제 키에서 mime을 같이 주워 온다."""
+    found = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key in ("data", "bytes_base64_encoded", "bytesBase64Encoded", "b64_json"):
+                val = node.get(key)
+                if isinstance(val, str) and len(val) > 5000:
+                    mime = (node.get("mime_type") or node.get("mimeType")
+                            or node.get("media_type") or node.get("mediaType"))
+                    found.append((val, mime))
+                    return  # 이 dict는 다 본 것으로 친다
+            for val in node.values():
+                walk(val)
+        elif isinstance(node, list):
+            for val in node:
+                walk(val)
+
+    walk(body)
+    if not found:
+        return None, None
+    # 여러 장이 오면 가장 큰 것을 고른다 — 미리보기 섬네일이 함께 오는 경우가 있다
+    data, mime = max(found, key=lambda pair: len(pair[0]))
+    return data, mime
+
+
+def _describe_json(node, depth=0):
+    """응답의 '모양'만 짧게 적는다 — 원인을 찾으려면 어떤 키가 왔는지 알아야 하는데,
+    응답을 통째로 찍으면 base64가 섞여 로그가 터진다. 값은 길이만 남긴다."""
+    pad = "  " * depth
+    if isinstance(node, dict):
+        if depth > 4:
+            return f"{pad}{{…{len(node)}개 키}}"
+        return "\n".join(
+            f"{pad}{k}:\n{_describe_json(v, depth + 1)}" for k, v in list(node.items())[:20]
+        )
+    if isinstance(node, list):
+        if not node:
+            return f"{pad}[]"
+        return f"{pad}[{len(node)}개]\n{_describe_json(node[0], depth + 1)}"
+    if isinstance(node, str):
+        return f"{pad}<문자열 {len(node)}자>" if len(node) > 80 else f"{pad}{node!r}"
+    return f"{pad}{node!r}"
+
+
+def call_gemini_infographic(passage, api_key, model=None):
+    """지문 1개 → 가로형 요약 인포그래픽 1장.
+
+    두 번 부른다: Flash가 문구를 확정하고(_infographic_plan), Pro 이미지 모델이
+    그것을 조판한다. 돌려주는 것은 {image, mime, plan, note}이고 image는 base64다.
+    요금 차감은 여기서 하지 않는다 — 성공해서 돌아간 뒤 라우트가 한다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    text = (passage or "").strip()
+    if len(text) < 40:
+        raise RuntimeError("지문이 너무 짧습니다. 요약할 내용이 있는 지문을 넣어 주세요.")
+
+    # --- 1단계: 무엇을 어떤 문구로 그릴지 정한다 (Flash) ---
+    plan_payload = {
+        "systemInstruction": {"parts": [{"text": INFOGRAPHIC_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": text}]}],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 4096,
+            "responseMimeType": "application/json",
+            "responseSchema": INFOGRAPHIC_SCHEMA,
+        },
+    }
+    plan = _clean_infographic_plan(
+        _gemini_json(plan_payload, api_key, MODEL, _INFOGRAPHIC_TRUNC_MSG)
+    )
+
+    # --- 2단계: 그 문구를 그대로 조판시킨다 (나노바나나 프로) ---
+    use_model = model if (model and _MODEL_RE.match(model)) else MODEL_IMAGE
+    img_payload = {
+        "model": use_model,
+        "input": [{"type": "text", "text": _infographic_prompt(plan)}],
+        "response_format": {
+            "type": "image",
+            # PNG는 4K에서 파일이 몇 MB로 뛴다. 브라우저로 실어 나르고 인쇄까지 해야 해서
+            # JPEG로 받는다(평면 일러스트라 화질 손해가 눈에 띄지 않는다).
+            "mime_type": "image/jpeg",
+            "aspect_ratio": IMAGE_ASPECT,
+            "image_size": IMAGE_SIZE,
+        },
+    }
+    data = json.dumps(img_payload, ensure_ascii=False).encode("utf-8")
+    try:
+        body = _gemini_call_with_retry(
+            data, api_key, use_model,
+            url=GEMINI_IMAGE_URL,
+            # 그림 모델을 글자 모델로 갈아탈 수는 없다 — 없으면 없다고 말해야 한다
+            allow_fallback=False,
+        )
+    except ProUnavailable:
+        # 공통 처리기의 안내문은 '모델 목록에서 Flash를 고르라'고 하는데, 이 기능에는
+        # 모델을 고르는 자리가 없고 대체할 그림 모델도 없다. 상황에 맞게 다시 말한다.
+        raise ProUnavailable(
+            f"이 API 키로는 그림 모델({use_model})을 사용할 수 없습니다. "
+            "요약 이미지는 결제(billing)가 설정된 키에서만 만들 수 있습니다 — "
+            "무료 등급 키에는 이미지 할당량이 없습니다. 관리자에게 문의하세요."
+        )
+
+    image, mime = _image_from_interaction(body)
+    if not image:
+        # 응답은 200으로 왔는데 그 안에 이미지가 없다. 형식이 바뀐 것인지, 모델이
+        # 거절한 것인지(안전 필터 등) 응답 모양을 봐야 알 수 있으므로 로그에 남긴다.
+        # 값은 길이만 적으므로 base64가 로그를 덮지 않는다.
+        print("[인포그래픽] 이미지를 찾지 못했다. 응답 모양:", flush=True)
+        print(_describe_json(body), flush=True)
+        raise RuntimeError(
+            "그림 모델이 이미지를 돌려주지 않았습니다. "
+            "서버 로그에 응답 모양을 남겼으니 확인해 주세요."
+        )
+    return {
+        "image": image,
+        "mime": mime or "image/jpeg",
+        "plan": plan,
+        "note": plan.get("note") or "",
+    }
 
 
 # ══════════════ PDF에서 지문 꺼내기 ══════════════
@@ -4213,17 +4714,24 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
     return "\n".join(lines)
 
 
-def _gemini_call_with_retry(data, api_key, model):
+def _gemini_call_with_retry(data, api_key, model, url=None, allow_fallback=True):
     """페이로드(JSON bytes)를 모델에 전송하고 재시도·모델 대체를 공통 처리한다
     (지문분석·문제제작 등 모든 Gemini 호출이 공유).
     - flash 429(속도 제한), 5xx(서버 과부하), 네트워크 오류 → 대기 후 자동 재시도
       (누적 대기가 MAX_RETRY_TOTAL을 넘으면 포기하고 명확한 한국어 오류로 안내)
     - 모델이 사라졌거나(400/404) 비-flash 429(할당량 0) → 사용 가능한 flash 모델로 자동 대체
+
+    url: 기본값(None)이면 :generateContent로 보낸다. 인포그래픽처럼 부르는 곳이 다른
+         기능은 여기에 주소를 넘긴다(모델명이 URL이 아니라 본문에 들어간다).
+    allow_fallback: 모델이 없어졌을 때 다른 모델로 갈아타도 되는가. 이미지 생성처럼
+         '대체할 만한 같은 종류의 모델'이 없는 호출은 False로 꺼야 한다 —
+         그림 모델 자리에 글자 모델을 넣으면 엉뚱한 실패가 된다.
+
     성공 시 Gemini 응답 바디(dict)를 반환한다."""
 
     def _post(use_model):
         req = urllib.request.Request(
-            GEMINI_URL.format(model=use_model),
+            url or GEMINI_URL.format(model=use_model),
             data=data,
             method="POST",
             headers={"content-type": "application/json", "x-goog-api-key": api_key},
@@ -4311,7 +4819,7 @@ def _gemini_call_with_retry(data, api_key, model):
                 "잠시 후 다시 시도하거나, 위 '모델' 목록에서 Flash 모델을 선택해 주세요."
             )
         # 모델 자체가 없어졌거나 지원 종료된 경우에만 사용 가능한 모델로 자동 대체
-        if model_gone:
+        if model_gone and allow_fallback:
             try:
                 avail = list_models(api_key)["models"]
             except Exception:
@@ -5421,6 +5929,8 @@ class Handler(BaseHTTPRequestHandler):
             # 로그인 여부와 무관하게 조회 가능(가격표일 뿐 실제 과금은 아니다).
             self._send_json({
                 "analyze": PRICE_ANALYZE_KRW,
+                # 지문 요약 인포그래픽 — 분석과 따로 부르므로 값도 따로 매긴다
+                "infographic": PRICE_INFOGRAPHIC_KRW,
                 "mcqPlain": PRICE_MCQ_PLAIN_KRW,
                 "mcqTransform": PRICE_MCQ_TRANSFORM_KRW,
                 "saq": PRICE_SAQ_KRW,
@@ -5541,9 +6051,21 @@ class Handler(BaseHTTPRequestHandler):
         if target.name == "index.html":
             # 클라이언트 ID는 비밀값이 아니라 화면(구글 로그인 버튼)에 그대로 넣어도 된다.
             body = body.replace(b"%%GOOGLE_CLIENT_ID%%", GOOGLE_CLIENT_ID.encode("utf-8"))
+            body = body.replace(b"%%ASSET_V%%", _asset_version().encode("utf-8"))
         self.send_response(200)
         self.send_header("content-type", ctype)
         self.send_header("content-length", str(len(body)))
+        # 앱을 이루는 세 파일은 캐시하지 않는다.
+        # 여기에 아무 헤더도 안 붙이던 때는 브라우저가 제 나름의 기준으로 캐싱해서,
+        #   로컬에서 - app.js를 고치고 새로고침해도 옛 코드가 돌아 '고쳤는데 안 바뀐다'가 되고
+        #   배포에서 - 재배포 뒤 돌아온 사용자가 옛 JS로 새 API를 불러 엉뚱하게 실패했다.
+        # 파일이름에 판(version)을 붙이는 방식이 정석이지만 빌드 도구가 없는 구조라,
+        # 매번 받게 하는 쪽을 택한다(셋을 합쳐 200KB 남짓이라 감당할 수 있다).
+        if target.suffix in (".html", ".js", ".css"):
+            self.send_header("cache-control", "no-store, must-revalidate")
+        else:
+            # 그림·아이콘·폰트는 좀처럼 바뀌지 않으니 하루 동안 재사용하게 둔다
+            self.send_header("cache-control", "public, max-age=86400")
         self.end_headers()
         self.wfile.write(body)
 
@@ -5586,6 +6108,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit",
+                        "/api/infographic",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
                         "/api/account/recharge",
@@ -5621,7 +6144,8 @@ class Handler(BaseHTTPRequestHandler):
         # 그중 실제로 콘텐츠를 생성하는 여섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/quiz", "/api/workbook",
-                           "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit")
+                           "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit",
+                           "/api/infographic")
         if path in GENERATE_PATHS + ("/api/models",):
             if DB is None:
                 self._send_json(
@@ -5639,6 +6163,11 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/api/analyze":
                     cost = PRICE_ANALYZE_KRW
                     self._pending_label = "지문 분석"
+                elif path == "/api/infographic":
+                    # 지문 1개에 그림 1장. 분석과 달리 한 번에 여러 장을 받지 않는다 —
+                    # 1장에 8~12초가 걸려서 여러 장을 한 요청에 묶으면 프록시가 끊는다.
+                    cost = PRICE_INFOGRAPHIC_KRW
+                    self._pending_label = "요약 이미지"
                 elif path == "/api/quiz":
                     quiz_items = parse_quiz_items(req.get("types"))
                     cost = _quiz_action_cost(quiz_items)
@@ -5986,6 +6515,28 @@ class Handler(BaseHTTPRequestHandler):
             except Recitation as e:
                 # 화면이 '사진을 조각내어 다시 시도'로 넘어갈 수 있게 식별자를 붙인다
                 self._send_json({"error": str(e), "code": "recitation"}, 502)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        # 지문 요약 인포그래픽. 지문 '하나'만 받는다 — 한 장에 8~12초가 걸려서 여러 장을
+        # 한 요청에 묶으면 배포 프록시가 응답을 기다리다 끊는다. 여러 지문은 화면이
+        # 한 장씩 차례로 부른다.
+        if path == "/api/infographic":
+            passage = req.get("passage")
+            if not isinstance(passage, str) or not passage.strip():
+                self._send_json({"error": "요약할 지문을 넣어 주세요."}, 400)
+                return
+            try:
+                result = call_gemini_infographic(passage, req.get("apiKey") or "")
+                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
+                self._send_json(result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
             except ProUnavailable as e:

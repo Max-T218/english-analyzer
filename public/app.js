@@ -192,7 +192,7 @@ function showDoneGuide(what, canEdit) {
         "이 탭은 화면에서 직접 고치는 기능이 아직 없습니다."
     );
   }
-  steps.push("확인이 끝나면 <b>🖨️ 인쇄 / PDF 저장</b>, 나중에 다시 쓰려면 <b>💾 저장</b>.");
+  steps.push("확인이 끝나면 <b>🖨️ 인쇄 / PDF 변환</b>, 나중에 다시 쓰려면 <b>💾 사이트 저장</b>.");
   doneGuideStepsEl.innerHTML = steps.map((s) => `<li>${s}</li>`).join("");
   doneGuideNoteEl.textContent = canEdit
     ? "수정한 내용은 저장·인쇄에 그대로 반영됩니다."
@@ -2365,9 +2365,15 @@ async function analyze() {
     errorEl.textContent = "분석할 영어 지문을 입력하세요.";
     return;
   }
+  // 요약 이미지를 함께 만들면 지문당 값이 얹힌다 — 확인 창에 합친 금액이 나가야 한다
+  const withInfo = !!(infoChk && infoChk.checked);
+  const perPassage =
+    (PRICING ? PRICING.analyze : 0) + (withInfo && PRICING ? PRICING.infographic : 0);
   if (!costConfirmed(
-        billableJobCount() * (PRICING ? PRICING.analyze : 0),
-        "지문 분석을 시작합니다.",
+        billableJobCount() * perPassage,
+        withInfo
+          ? "지문 분석과 요약 이미지를 함께 만듭니다. (이미지는 지문당 8~12초가 더 걸립니다)"
+          : "지문 분석을 시작합니다.",
         jobs.length)) {
     return;
   }
@@ -2378,6 +2384,7 @@ async function analyze() {
   loadingEl.classList.add("on");
   setEditMode(false); // 새로 분석하면 이전 수정 상태를 끈다 (내용도 새로 덮어써진다)
   setPagingMode(false);
+  revokeInfographics(); // 이전 분석본에 붙어 있던 그림을 메모리에서 놓아준다
   resultEl.innerHTML = "";
   printBtn.style.display = "none";
   editBtn.style.display = "none";
@@ -2452,8 +2459,121 @@ async function analyze() {
   clearPassagesBtn.disabled = false;
   resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
   refreshTokenDisplay(); // 성공한 만큼 차감됐을 잔액 표시를 갱신
+
+  // '요약 이미지'를 켜 두었으면 분석이 끝난 뒤 이어서 만든다.
+  // 분석과 한 요청에 묶지 않는 이유는 시간이다 — 그림 한 장이 8~12초라 지문 수만큼
+  // 곱해지면 요청 하나가 몇 분씩 열려 있게 되고 배포 프록시가 먼저 끊는다.
+  // 사용자에게는 버튼 한 번으로 보이지만, 실제로는 지문마다 따로 부른다.
+  // 금액은 위 확인 창에서 이미 합쳐 물었으므로 여기서 다시 묻지 않는다.
+  if (withInfo && entries.length) {
+    await makeInfographics(entries.map((_e, i) => i));
+  }
   // 지문 분석은 '직접 수정'이 있는 유일한 탭이라 고치는 방법까지 안내한다
   if (okCount) showDoneGuide(`지문 ${okCount}개의 분석본`, true);
+}
+
+/* ══════════════════════════ 지문 요약 인포그래픽 ══════════════════════════ */
+// 지문 내용을 한 장으로 요약한 가로형 그림을 분석본 맨 뒤(핵심 어휘 표 다음)에 붙인다.
+//
+// 분석과 같은 요청에 묶지 않는다. 그림 한 장에 8~12초가 걸려서 지문이 여러 개면 요청
+// 하나가 몇 분씩 열려 있게 되고, 그전에 배포 프록시가 먼저 끊는다. 서버는 지문 하나만
+// 받고, 여러 장이면 여기서 한 장씩 차례로 부른다(실패한 지문은 건너뛰고 계속한다).
+//
+// 저장함(💾)에는 넣지 않는다 — Firestore 문서 하나가 1MiB인데 4K 그림은 base64로 그보다
+// 크다. 넣으면 저장 자체가 실패하므로, 그림은 인쇄하거나 내려받아 쓰는 것으로 둔다.
+// 다시 필요하면 다시 만들어야 하고 그때 다시 과금된다 — 버튼 안내문에 그렇게 적어 두었다.
+
+/* 받은 base64를 blob URL로 바꿔서 DOM에 넣는다. data URI를 그대로 쓰면 안 되는 이유:
+   되돌리기(undoOnce)가 결과 화면 HTML을 통째로 문자열로 찍어 쌓는 구조라, 4K 그림이
+   data URI로 박혀 있으면 스냅샷 한 장이 몇 MB가 된다. 그러면
+     ① UNDO_MAX_CHARS(20M자) 상한을 한두 단계 만에 먹어 되돌리기가 사실상 죽고,
+     ② '직접 수정'에서 글자를 칠 때마다 그 몇 MB를 매번 복사해 편집이 느려진다.
+   blob URL은 DOM에 50자 남짓만 남고 그림 실체는 메모리에 한 벌만 있으므로 둘 다 없다.
+   대신 만든 URL은 스스로 사라지지 않아 결과를 갈아엎을 때 직접 반납해야 한다. */
+let infographicUrls = [];
+
+function b64ToBlobUrl(b64, mime) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  infographicUrls.push(url);
+  return url;
+}
+
+// 결과 화면을 새로 그리기 전에 부른다 — 안 부르면 만든 그림이 탭을 닫을 때까지 메모리에 남는다
+function revokeInfographics() {
+  infographicUrls.forEach((u) => URL.revokeObjectURL(u));
+  infographicUrls = [];
+}
+
+function infographicBlockHtml(idx, src) {
+  // data-brk="page" — 가로로 꽉 차는 그림이라 앞 내용에 이어 붙이면 반쪽이 잘린다.
+  // '쪽 구성'에서 끌 수 있는 기본값이고, data-brk-def가 [처음 상태로]의 되돌릴 값이다.
+  return `
+    <div class="pg-blk" data-brk="page" data-brk-def="page" data-infographic="${idx}">
+      <h3 class="section"><span class="num">Ⅳ.</span> 한눈에 보는 요약</h3>
+      <div class="table-wrap"><img class="infographic" src="${src}" alt="지문 요약 인포그래픽"></div>
+      <p class="info-caution">그림 속 글자는 AI가 그린 것이라 '직접 수정'으로 고칠 수 없습니다.
+        인쇄하기 전에 오탈자가 없는지 한 번 확인해 주세요.</p>
+    </div>`;
+}
+
+const infoChk = $("infoChk");
+// 가격표는 화면이 다 그려진 뒤에 도착하므로, 도착하면 체크박스 옆 금액을 채워 넣는다
+onPricingReady(() => {
+  const el = $("infoChkPrice");
+  if (el && PRICING) el.textContent = `(지문당 +${PRICING.infographic.toLocaleString()}원 · 8~12초)`;
+});
+
+/* 분석이 끝난 뒤 이어서 그림을 만든다. 부르는 곳은 analyze() 하나뿐이고, 금액은
+   거기 확인 창에서 이미 합쳐 물었으므로 여기서 다시 묻지 않는다.
+   todo: 그림을 넣을 지문의 번호 목록 (lastAnalyzeEntries의 자리번호) */
+async function makeInfographics(todo) {
+  const entries = lastAnalyzeEntries;
+  if (!todo || !todo.length) return;
+
+  analyzeBtn.disabled = true;
+  setEditMode(false);   // 그림이 끼어들면 수정 중이던 자리가 어긋난다
+  setPagingMode(false); // 쪽 경계도 다시 잡아야 한다
+  loadingEl.classList.add("on");
+
+  let okCount = 0;
+  for (let n = 0; n < todo.length; n++) {
+    const idx = todo[n];
+    const job = entries[idx].job;
+    loadingTextEl.textContent =
+      todo.length > 1
+        ? `${job.name} 요약 이미지 만드는 중… (${n + 1}/${todo.length})`
+        : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
+    try {
+      const data = await postJson(
+        "/api/infographic",
+        { passage: job.text },
+        "요약 이미지를 만들지 못했습니다."
+      );
+      const host = resultEl.querySelector(`section.passage-block[data-entry="${idx}"]`);
+      if (host) {
+        const src = b64ToBlobUrl(data.image, data.mime || "image/jpeg");
+        host.insertAdjacentHTML("beforeend", infographicBlockHtml(idx, src));
+        okCount++;
+      }
+    } catch (err) {
+      // 한 지문이 실패해도 나머지는 계속 만든다. 다만 한도 소진은 기다려도 안 풀린다.
+      errorEl.textContent = `${job.name}: ${err.message || String(err)}`;
+      if (isQuotaError(err)) break;
+    }
+  }
+
+  loadingEl.classList.remove("on");
+  analyzeBtn.disabled = false;
+  resetUndo();            // 그림이 붙은 상태가 새 출발점이다
+  syncFloatPrint();
+  refreshTokenDisplay();  // 성공한 장수만큼 차감됐을 잔액 갱신
+  if (okCount) {
+    const last = resultEl.querySelector(`[data-infographic]:last-of-type`);
+    if (last) last.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 }
 
 // "내 저장함"에서 불러온 분석 결과를 화면에 되살린다 — API를 다시 부르지 않고,
@@ -2464,11 +2584,14 @@ function renderAnalyzeEntries(entries) {
   if (total) htmlParts.push(`<footer>구문 단위 직독직해 분석본 · 자동 생성</footer>`);
   setEditMode(false);
   setPagingMode(false);
+  revokeInfographics(); // 불러오기로 화면을 갈아엎기 전에 이전 그림을 놓아준다
   resultEl.innerHTML = htmlParts.join("");
   printBtn.style.display = total ? "inline-flex" : "none";
   editBtn.style.display = total ? "inline-flex" : "none";
   pageBtn.style.display = total ? "inline-flex" : "none";
   saveBtn.style.display = total ? "inline-flex" : "none";
+  // 그림은 저장함에 담기지 않으므로(1MiB 제한) 불러온 분석본에는 그림이 없다.
+  // 다시 넣으려면 '요약 이미지'를 켜고 분석을 다시 돌려야 한다.
   resetUndo();
   lastAnalyzeEntries = entries;
   syncFloatPrint();
@@ -4852,7 +4975,7 @@ const LIBRARY = {
   material: {
     title: "📦 제작 자료 저장함",
     lead: "저장해 둔 분석본·문제·워크북·단어장입니다. 불러오면 지문·설정과 결과가 함께 되돌아와 다시 인쇄하거나 수정할 수 있습니다.",
-    empty: "아직 저장한 제작 자료가 없습니다. 자료를 만든 뒤 각 탭의 “💾 저장”을 눌러 보세요.",
+    empty: "아직 저장한 제작 자료가 없습니다. 자료를 만든 뒤 각 탭의 “💾 사이트 저장”을 눌러 보세요.",
     match: (item) => item.tab !== PASSAGE_TAB,
   },
 };
@@ -5955,7 +6078,7 @@ function examSheetHeadHtml(set) {
 }
 
 /* '이 기출 구성 저장' 줄은 분석은 끝났는데 아직 시험지를 안 만들었을 때만 보인다.
-   한 부라도 만들면 아래 '💾 저장'이 시험지와 구성표를 함께 담으므로 여기서 감춘다 —
+   한 부라도 만들면 아래 '💾 사이트 저장'이 시험지와 구성표를 함께 담으므로 여기서 감춘다 —
    저장 버튼이 둘 보이면 어느 쪽이 무엇을 담는지 알 수 없다. */
 function syncExamSpecSave() {
   const row = $("examSpecSaveRow");
