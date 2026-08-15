@@ -102,7 +102,7 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30일
 # 계정을 새로 만들 때 지급하는 잔액(원). 필요에 맞게 환경변수로 조정하고, 특정
 # 사용자에게 더 주고 싶으면 관리자 페이지(/admin.html)에서 충전하거나 Firestore
 # 콘솔에서 users/<id> 문서의 krw_remaining 값을 직접 고치면 된다.
-DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "50000"))
+DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "10000"))
 
 # --- 포인트 원장(이용 내역) ------------------------------------------------
 # 잔액은 숫자 하나로만 남아 있어서 "언제 무엇에 얼마를 썼는지"를 아무도 알 수 없었다.
@@ -5307,6 +5307,16 @@ CONTENT_TYPES = {
     ".json": "application/json; charset=utf-8",
     ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
+    # png이 빠져 있어 logo.png·mark.png가 application/octet-stream으로 나가고 있었다.
+    # 브라우저는 <img>라면 알아서 알아보지만, 카톡·페이스북이 미리보기 그림을 가져갈
+    # 때는 형식을 보고 판단하므로 octet-stream이면 썸네일이 뜨지 않는다.
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    # 검색 로봇용 두 파일
+    ".txt": "text/plain; charset=utf-8",
+    ".xml": "application/xml; charset=utf-8",
 }
 
 

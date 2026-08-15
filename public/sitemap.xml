@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 색인해도 되는 주소 목록. 이 사이트는 첫 화면 하나가 전부다 —
+     탭 전환도 저장함도 전부 같은 주소 안에서 일어나는 한 쪽짜리 앱이라,
+     구글에 알릴 주소도 이 하나뿐이다. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://englishlab.ai.kr/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>
