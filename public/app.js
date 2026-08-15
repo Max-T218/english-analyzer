@@ -132,6 +132,77 @@ function printDoc(nameFn, opts) {
   showPrintGuide(() => runPrint(nameFn, opts && opts.before, opts && opts.after));
 }
 
+/* ── 워드(.docx)로 내려받기 ──
+   인쇄는 PDF로 되므로 이쪽의 목적은 오직 '편집'이다.
+
+   화면이 이미 그려 놓은 결과 HTML을 그대로 보낸다. 데이터를 보내고 서버가 다시 그리게
+   하면 문항 모양을 만드는 로직(quizBodyHtml의 format별 분기, 워크북 단계별 렌더링)이
+   파이썬에 한 벌 더 생겨 두 곳이 조용히 어긋난다 — 그리는 곳은 app.js 하나로 둔다.
+
+   따라서 '지금 화면에 보이는 그대로' 담긴다. 워크북의 '정답 표시'처럼 화면 상태를 바꾸는
+   설정은 누르기 전에 맞춰 두면 그대로 반영된다.
+
+   AI를 부르지 않으므로 요금도, 비용 확인 창도 없다. */
+async function downloadDocx({ resultEl, name, answerHeading, btn, errorEl, strip, columns }) {
+  if (errorEl) errorEl.textContent = "";
+  if (!resultEl || !resultEl.innerHTML.trim()) {
+    if (errorEl) errorEl.textContent = "먼저 자료를 만들어 주세요.";
+    return;
+  }
+  /* strip: 보내기 전에 덜어 낼 선택자들.
+     화면에서 '숨김'은 대개 CSS로 처리하므로(워크북 정답이 대표적이다 — .wb-ans는 늘
+     HTML에 있고 .show-answers가 붙었을 때만 보인다) innerHTML을 그대로 보내면 화면에
+     안 보이던 것이 워드에는 찍힌다. 복제본에서 실제로 지워 보낸다. */
+  let source = resultEl.innerHTML;
+  if (strip && strip.length) {
+    const clone = resultEl.cloneNode(true);
+    clone.querySelectorAll(strip.join(",")).forEach((el) => el.remove());
+    source = clone.innerHTML;
+  }
+  const label = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "만드는 중…";
+  }
+  try {
+    const res = await fetch("/api/docx", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        html: source,
+        title: name,
+        filename: name,
+        answerHeading: answerHeading || "정답 및 해설",
+        columns: columns === 1 ? 1 : 2,
+      }),
+    });
+    if (!res.ok) {
+      // 실패는 JSON으로 온다 (성공했을 때만 파일이 온다)
+      let msg = "워드 파일을 만들지 못했습니다.";
+      try {
+        msg = (await res.json()).error || msg;
+      } catch (_) {}
+      throw new Error(msg);
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}.docx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // 곧바로 반납하면 내려받기가 시작되기 전에 끊기는 브라우저가 있다
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (err) {
+    if (errorEl) errorEl.textContent = err.message || String(err);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+}
+
 /* ── 제작 완료 안내 ──
    만들기가 끝나면 뜬다. AI가 만든 결과를 그대로 인쇄해 학생에게 나눠 주기 전에,
    화면에서 한 번 검토하게 하는 것이 목적이다.
@@ -3027,6 +3098,7 @@ function setupQuizTab({ prefix, types, footer }) {
   const btn = $(prefix + "Btn");
   const printBtn = $(prefix + "PrintBtn");
   const saveBtn = $(prefix + "SaveBtn");
+  const docxBtn = $(prefix + "DocxBtn");
   let lastEntries = []; // 저장/불러오기용 — {job, label, set, total}
   const docName = prefix === "mcq" ? "객관식문제" : "주관식문제";
   const errorEl = $(prefix + "Error");
@@ -3308,6 +3380,7 @@ function setupQuizTab({ prefix, types, footer }) {
     resultEl.innerHTML = "";
     printBtn.style.display = "none";
     saveBtn.style.display = "none";
+    docxBtn.style.display = "none";
     syncFloatPrint();
 
     // 완성될 때마다 화면에 붙인다. 도중에 멈추거나 창을 닫아도 그때까지 만든
@@ -3318,6 +3391,7 @@ function setupQuizTab({ prefix, types, footer }) {
       }
       printBtn.style.display = "inline-flex";
       saveBtn.style.display = "inline-flex";
+      docxBtn.style.display = "inline-flex";
       syncFloatPrint();
     };
     const append = (html) => {
@@ -3463,6 +3537,7 @@ function setupQuizTab({ prefix, types, footer }) {
     }
     printBtn.style.display = entries.length ? "inline-flex" : "none";
     saveBtn.style.display = entries.length ? "inline-flex" : "none";
+    docxBtn.style.display = entries.length ? "inline-flex" : "none";
     lastEntries = entries;
     syncFloatPrint();
     // 비우는 호출일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
@@ -3520,6 +3595,17 @@ function setupQuizTab({ prefix, types, footer }) {
 
   btn.addEventListener("click", generate);
   printBtn.addEventListener("click", () => printDoc(() => passageBasedName(docName)));
+
+  // 주관식 해설지는 '정답'만 싣는다(buildQuizHtml이 해설 열을 빼는 것과 같은 기준)
+  docxBtn.addEventListener("click", () =>
+    downloadDocx({
+      resultEl,
+      name: passageBasedName(docName),
+      answerHeading: prefix === "saq" ? "정답" : "정답 및 해설",
+      btn: docxBtn,
+      errorEl,
+    })
+  );
 
   // 기출 유형 분석 탭이 분석 결과대로 이 탭의 유형 칸을 채울 수 있게 손잡이를 내준다.
   // 문제 생성 자체는 여기 있는 것을 그대로 쓴다 — 만드는 길이 둘이 되면 한쪽만 고쳐져
@@ -3987,6 +4073,7 @@ const workbookDocEl = $("workbookDoc");
 const workbookPrintBtn = $("workbookPrintBtn");
 const wbAnswerPrintBtn = $("wbAnswerPrintBtn");
 const workbookSaveBtn = $("workbookSaveBtn");
+const workbookDocxBtn = $("workbookDocxBtn");
 let lastWorkbookEntries = []; // 저장/불러오기용 — {job, data} 성공한 것만
 
 // 머리말(시험명)은 다음에 열 때도 그대로 쓰도록 기억해 둔다
@@ -4011,6 +4098,24 @@ wbAnswerChk.addEventListener("change", () => {
 
 wbBtn.addEventListener("click", generateWorkbook);
 workbookPrintBtn.addEventListener("click", () => printDoc(() => titledName("워크북", "wbTitle")));
+
+/* 워크북 워드 내보내기.
+   '정답 표시'가 꺼져 있으면 .wb-ans를 덜어 내고 보낸다 — 이 토글은 다시 그리지 않고
+   CSS 클래스(show-answers)만 바꾸는 방식이라, 정답이 화면에 안 보일 뿐 HTML에는 늘
+   들어 있다. 그대로 보내면 학생용으로 뽑았는데 정답이 찍혀 나온다.
+   뒤쪽 '정답 모음' 별지(.wb-answerbook)는 그 체크박스가 만들 때 결정하므로 그대로 둔다. */
+workbookDocxBtn.addEventListener("click", () =>
+  downloadDocx({
+    resultEl: workbookDocEl,
+    name: titledName("워크북", "wbTitle"),
+    answerHeading: "정답",
+    btn: workbookDocxBtn,
+    errorEl: wbErrorEl,
+    strip: wbAnswerChk.checked ? [] : [".wb-ans"],
+    // 워크북만 1단이다 — 단계마다 답을 적는 칸이 있어 2단으로 좁히면 쓸 자리가 모자란다
+    columns: 1,
+  })
+);
 
 // 답지만 — 문제 내용을 감추고 뒤쪽 '정답' 모음만 지면에 올린다.
 // 다시 그리지 않고 클래스만 바꾸므로, 섞인 보기·순서가 학생용 문제지와 정확히 일치한다.
@@ -4047,6 +4152,7 @@ async function generateWorkbook() {
   workbookPrintBtn.style.display = "none";
   wbAnswerPrintBtn.style.display = "none";
   workbookSaveBtn.style.display = "none";
+  workbookDocxBtn.style.display = "none";
   syncFloatPrint();
 
   const total = jobs.length;
@@ -4123,6 +4229,7 @@ async function generateWorkbook() {
     // '답지만'은 뒤쪽 정답 모음을 지면에 올리는 기능이라, 그게 없으면 쓸 수 없다
     wbAnswerPrintBtn.style.display = hasAnswerBook ? "inline-flex" : "none";
     workbookSaveBtn.style.display = "inline-flex";
+    workbookDocxBtn.style.display = "inline-flex";
   }
   lastWorkbookEntries = entries; // 저장 버튼이 이 값을 그대로 payload로 보낸다
   syncFloatPrint();
@@ -4176,6 +4283,7 @@ function renderWorkbookEntries(entries) {
   workbookPrintBtn.style.display = total ? "inline-flex" : "none";
   wbAnswerPrintBtn.style.display = total && hasAnswerBook ? "inline-flex" : "none";
   workbookSaveBtn.style.display = total ? "inline-flex" : "none";
+  workbookDocxBtn.style.display = total ? "inline-flex" : "none";
   lastWorkbookEntries = entries;
   syncFloatPrint();
   // 비우는 호출일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
@@ -6092,6 +6200,7 @@ function renderExamPaperSets() {
   const showBtns = (on) => {
     $("examPaperPrintBtn").style.display = on ? "inline-flex" : "none";
     $("examPaperSaveBtn").style.display = on ? "inline-flex" : "none";
+    $("examPaperDocxBtn").style.display = on ? "inline-flex" : "none";
   };
   if (!examPaperSets.length) {
     examPaperResultEl.innerHTML = "";
@@ -6131,6 +6240,19 @@ Object.values(examHeadEls).forEach((el) => {
 $("examPlanBtn").addEventListener("click", runExamPaperFlow);
 $("examPaperPrintBtn").addEventListener("click", () =>
   printDoc(() => ["시험지", todayStr()].filter(Boolean).join("_"))
+);
+
+/* 시험지 워드 내보내기. 시험지 본문은 문제 탭과 같은 buildQuizHtml이 그리므로 변환도
+   그대로 통한다. 배분표(.exam-plan)는 서버가 빼는데, 인쇄에서 빠지는 것과 같은 이유다 —
+   '어느 문항을 어느 지문으로 만들었나'를 적은 제작 기록이라 학생에게 나갈 것이 아니다. */
+$("examPaperDocxBtn").addEventListener("click", () =>
+  downloadDocx({
+    resultEl: examPaperResultEl,
+    name: ["시험지", todayStr()].filter(Boolean).join("_"),
+    answerHeading: "정답 및 해설",
+    btn: $("examPaperDocxBtn"),
+    errorEl: $("examPaperError") || null,
+  })
 );
 
 /* ══════════════ 기출 구성표 — 저장할 수 있는 모양으로 ══════════════

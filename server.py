@@ -30,7 +30,12 @@ import traceback
 import urllib.request
 import urllib.error
 import urllib.parse
+import zipfile
 from collections import Counter
+# 워드 내보내기에 쓴다. 모듈 이름 html은 이 파일 곳곳에서 매개변수 이름으로 쓰고 있어
+# (sanitize_inline(html) 등) 통째로 import하면 그 안에서 가려진다 — 필요한 것만 꺼내 온다.
+from html import unescape as _html_unescape
+from html.parser import HTMLParser
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -5300,6 +5305,403 @@ def list_models(api_key):
     return {"models": models[:5]}
 
 
+# ══════════════ 워드(.docx)로 내보내기 ══════════════
+# 만든 문제지를 선생님이 워드에서 직접 고칠 수 있게 내려준다. 인쇄는 이미 PDF로 되므로
+# 이쪽의 목적은 오직 '편집'이다.
+#
+# .docx는 사실 XML 몇 개를 담은 ZIP이라 표준 zipfile만으로 만든다 — 새 pip 의존성이 없다.
+# python-docx를 쓰지 않는 이유는 의존성도 있지만, 2단 조판(w:cols)처럼 정작 필요한 것을
+# 결국 raw XML로 넣어야 해서 얻는 게 크지 않기 때문이다.
+#
+# ── 왜 데이터가 아니라 '화면이 그린 HTML'을 받는가 ──
+# 문항 모양을 만드는 로직(보기 섞기·답란 그리기·빈칸 번호 매기기 등 8가지 format 분기)은
+# app.js의 quizBodyHtml에 있다. 서버가 데이터에서 다시 그리려면 그 로직을 파이썬으로 한 벌
+# 더 옮겨야 하는데, 문제 유형은 계속 늘어나므로(최근에도 영영풀이가 추가됐다) 두 벌이
+# 조용히 어긋나게 된다. 그래서 그리는 곳은 app.js 하나로 두고, 여기서는 이미 그려진
+# 결과를 Word 문단으로 옮기기만 한다.
+#
+# 표(정답 및 해설)는 여기서 다루지 않고 문단으로 편다 — 워드 표는 편집할 때 오히려
+# 성가시고, 답지는 어차피 맨 뒤 별지라 표가 아니어도 읽힌다.
+
+DOCX_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+# A4 세로. 단위는 twip(1/1440인치)다. 여백 2cm = 1134.
+_DOCX_PAGE = (
+    '<w:pgSz w:w="11906" w:h="16838"/>'
+    '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"'
+    ' w:header="708" w:footer="708" w:gutter="0"/>'
+)
+
+
+def _docx_esc(text):
+    """XML 텍스트 이스케이프. 워드가 못 읽는 제어문자도 함께 턴다."""
+    s = str(text if text is not None else "")
+    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return "".join(ch for ch in s if ch >= " " or ch in "\t\n")
+
+
+def _docx_run(text, bold=False, under=False, size=None, color=None):
+    """글자 한 덩어리(run). size는 half-point라 10pt면 20이다."""
+    if not text:
+        return ""
+    props = []
+    if bold:
+        props.append("<w:b/>")
+    if under:
+        props.append('<w:u w:val="single"/>')
+    if color:
+        props.append(f'<w:color w:val="{color}"/>')
+    if size:
+        props.append(f'<w:sz w:val="{size}"/><w:szCs w:val="{size}"/>')
+    rpr = f"<w:rPr>{''.join(props)}</w:rPr>" if props else ""
+    # xml:space="preserve" — 앞뒤 공백이 살아야 낱말이 붙지 않는다
+    return f'<w:r>{rpr}<w:t xml:space="preserve">{_docx_esc(text)}</w:t></w:r>'
+
+
+def _docx_para(runs_xml, style=None, align=None, space_after=120,
+               keep_next=False, page_break=False, border_bottom=False):
+    """문단 하나. runs_xml은 _docx_run들을 이어 붙인 문자열."""
+    props = []
+    if style:
+        props.append(f'<w:pStyle w:val="{style}"/>')
+    if keep_next:
+        props.append("<w:keepNext/>")
+    if border_bottom:
+        props.append(
+            '<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="2" w:color="BFBFBF"/></w:pBdr>'
+        )
+    props.append(f'<w:spacing w:after="{space_after}" w:line="264" w:lineRule="auto"/>')
+    if align:
+        props.append(f'<w:jc w:val="{align}"/>')
+    ppr = f"<w:pPr>{''.join(props)}</w:pPr>"
+    brk = '<w:r><w:br w:type="page"/></w:r>' if page_break else ""
+    return f"<w:p>{ppr}{brk}{runs_xml}</w:p>"
+
+
+def _docx_sect(cols=1, next_page=False):
+    """섹션 속성. 문단의 <w:pPr> 안에 넣으면 '그 문단까지'가 한 섹션이 되고,
+    <w:body> 직속으로 두면 마지막 섹션에 적용된다.
+
+    2단은 여기 w:cols로 낸다. 표로 2칸을 흉내 내면 칸 사이로 글이 흐르지 않아
+    문항 하나를 지웠을 때 뒤가 따라 올라오지 않는다 — 편집이 목적이라 그건 못 쓴다."""
+    kind = "nextPage" if next_page else "continuous"
+    col = ('<w:cols w:num="2" w:space="425" w:equalWidth="1"/>' if cols == 2
+           else '<w:cols w:space="425"/>')
+    return f'<w:sectPr><w:type w:val="{kind}"/>{_DOCX_PAGE}{col}</w:sectPr>'
+
+
+def _docx_blank_line():
+    """답을 적는 빈 줄.
+
+    글자(밑줄 친 공백)로 그리면 안 된다. 전각 공백은 폭이 두 배인 데다 줄바꿈이 걸리지
+    않는 문자라, 한 줄에 빈칸이 두어 개만 들어가도 오른쪽 여백을 넘어가 줄이 무너진다.
+    화면 CSS(.wb-writeline)가 하는 것과 같이 문단 아래 테두리로 그리면 폭이 늘 지면에
+    맞고, 단이 1단이든 2단이든 알아서 그 폭을 따른다."""
+    return (
+        "<w:p><w:pPr>"
+        '<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="808080"/></w:pBdr>'
+        '<w:spacing w:before="140" w:after="220" w:line="360" w:lineRule="auto"/>'
+        "</w:pPr></w:p>"
+    )
+
+
+def _docx_sect_break(cols=1, next_page=False):
+    """앞 섹션을 여기서 끊는 빈 문단. sectPr은 반드시 <w:pPr> 안에 들어가야 한다."""
+    return f"<w:p><w:pPr>{_docx_sect(cols, next_page)}</w:pPr></w:p>"
+
+
+_DOCX_STYLES = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{DOCX_NS}">
+  <w:docDefaults><w:rPrDefault><w:rPr>
+    <w:rFonts w:ascii="Malgun Gothic" w:hAnsi="Malgun Gothic"
+              w:eastAsia="맑은 고딕" w:cs="Malgun Gothic"/>
+    <w:sz w:val="20"/><w:szCs w:val="20"/>
+  </w:rPr></w:rPrDefault></w:docDefaults>
+  <w:style w:type="paragraph" w:styleId="Title1">
+    <w:name w:val="DocTitle"/>
+    <w:pPr><w:spacing w:after="240"/></w:pPr>
+    <w:rPr><w:b/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="QNo">
+    <w:name w:val="QuestionNo"/>
+    <w:pPr><w:keepNext/><w:spacing w:before="180" w:after="60"/></w:pPr>
+    <w:rPr><w:b/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>
+  </w:style>
+</w:styles>"""
+
+_DOCX_CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>"""
+
+_DOCX_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"""
+
+_DOCX_DOC_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>"""
+
+
+class _QuizDocxParser(HTMLParser):
+    """화면이 그린 문제지 HTML을 훑어 Word 문단 목록으로 옮긴다.
+
+    구조를 클래스 이름으로 알아본다(app.js의 buildQuizHtml이 붙이는 것들):
+        .qz-card       문항 한 개          .qz-no/.qz-type  번호·유형
+        .qz-instruction 발문              .qz-passage      지문
+        .qz-choices li  보기 ①~⑤          .qz-writeline    답 쓰는 줄
+        .qz-answer-box  정답·해설         table.answerkey  뒤쪽 답지표
+
+    굵게·밑줄은 <b>/<u>를 세어 겹침을 처리한다(문제 HTML에 허용된 태그는
+    _QUIZ_ALLOWED_TAGS = br·u·b 뿐이라 이 셋만 보면 된다).
+
+    답지(.qz-answer-box, table.answerkey)는 여기서 따로 모아 두었다가 맨 뒤에 붙인다 —
+    문항 사이에 끼우지 않는 것은 학생용으로 뒷장만 떼어 낼 수 있게 하기 위해서다."""
+
+    # 화면에만 필요한 것들 — 워드에는 옮기지 않는다.
+    #   section     '정답 및 해설' 제목줄. 답지 제목은 이쪽에서 따로 붙이므로 두면 두 번 찍힌다
+    #   exam-plan   배분표. '어느 문항을 어느 지문으로 만들었나'를 적은 제작 기록이라
+    #               인쇄에서도 빠진다(examPlanTableHtml 주석 참고) — 워드도 같이 뺀다
+    #   wb-answerbook-head  워크북 정답 별지의 '정답' 제목. 위 section과 같은 이유로 뺀다
+    SKIP_CLASSES = ("qz-reveal-btn", "print-foot", "legend", "qz-scramble-tag",
+                    "section", "exam-plan", "wb-answerbook-head")
+
+    # 뒤에 구분 문자를 붙여야 하는 조각들 — 화면에서는 CSS 여백으로 떨어져 있지만
+    # 글자만 뽑으면 "1주제", "①the value of travel"처럼 달라붙는다.
+    SEP_AFTER = {"qz-no": ". ", "qz-num": " ", "qz-type": "  ", "qz-findko": " ",
+                 "wb-no": ". ", "wb-ab-label": "  ", "wb-ab-stage": "  ",
+                 # 단계 머리말의 좌·우 조각 (화면에서는 양끝으로 갈라져 있다)
+                 "wb-run-l": "   ┃   "}
+
+    # CSS로 선을 그려 두던 '답 쓰는 칸'. 워드에는 선이 안 넘어가므로 밑줄 친 공백으로 만든다.
+    BLANK_CLASSES = ("qz-writeline", "qz-fixline", "qz-findline",
+                     "wb-writeline", "wb-orderline", "wb-fixline")
+
+    # 맨 뒤 별지로 모을 것들. 문항 사이에 끼우지 않는 이유는 학생용으로 뒷장만
+    # 떼어 낼 수 있게 하기 위해서다.
+    ANSWER_CLASSES = ("qz-answer-box", "answerkey", "wb-answerbook")
+
+    # 새 쪽에서 시작할 것들. 워크북은 지문 하나가 section.wb-passage 한 벌이고
+    # 그 안이 '제목(wb-titlebar) → 단계들(table.wb-page)'로 되어 있다.
+    #
+    #   PAGE_START  지문이 바뀌면 새 쪽. 제목이 그 쪽 맨 위에 온다.
+    #   PAGE_ITEM   단계가 바뀌면 새 쪽. 단, 지문의 '첫' 단계는 제목과 같은 쪽에 붙인다 —
+    #               떼어 놓으면 제목만 있는 쪽이 생기고 본문은 다음 쪽으로 넘어간다.
+    #
+    # 맨 처음 덩어리 앞에는 넣지 않는다(빈 쪽이 생긴다).
+    PAGE_START_CLASSES = ("wb-passage",)
+    PAGE_ITEM_CLASSES = ("wb-page",)
+
+    # 문장 '안'에 들어가는 빈칸. 위의 BLANK_CLASSES와 달리 문단을 끊지 않는다.
+    # qz-ox(진위형 괄호)는 여기 넣지 않는다 — HTML에 이미 '(　　)' 글자가 들어 있어
+    # 따로 그려 주면 두 벌이 된다.
+    INLINE_BLANK_CLASSES = ("wb-blank", "qz-fillrule")
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.body = []        # 문항 쪽 문단
+        self.answers = []     # 답지 쪽 문단
+        self._runs = []       # 지금 쌓는 중인 문단의 run들
+        self._bold = 0
+        self._under = 0
+        self._skip = 0        # 0보다 크면 이 안의 글자는 버린다
+        self._in_answer = 0   # 0보다 크면 답지 쪽으로 담는다
+        self._pending = None  # 다음 문단에 줄 스타일
+        self._depth_stack = []
+        self._pages = 0       # 새 쪽에서 시작한 덩어리 수 (첫 덩어리 판별용)
+        self._fresh_page = False  # 방금 지문 제목으로 쪽을 열었는가 (첫 단계 판별용)
+
+    def _new_page(self):
+        """여기서부터 새 쪽. 맨 처음에는 넣지 않는다 — 빈 쪽이 생긴다."""
+        if self._pages:
+            (self.answers if self._in_answer else self.body).append(
+                _docx_para("", page_break=True, space_after=0)
+            )
+        self._pages += 1
+
+    # ── 문단 경계 ────────────────────────────────────────────────
+    def _flush(self, style=None, space_after=120):
+        if not self._runs:
+            return
+        xml = _docx_para("".join(self._runs), style=style or self._pending,
+                         space_after=space_after)
+        (self.answers if self._in_answer else self.body).append(xml)
+        self._runs = []
+        self._pending = None
+
+    def _add(self, text):
+        if self._skip or not text:
+            return
+        self._runs.append(_docx_run(text, bold=self._bold > 0, under=self._under > 0))
+
+    def _classes(self, attrs):
+        d = dict(attrs)
+        return (d.get("class") or "").split()
+
+    # style="min-width:150px" 에서 숫자만 꺼낸다
+    _WIDTH_RE = re.compile(r"(?:min-)?width\s*:\s*(\d+)\s*px")
+
+    def _blank_text(self, attrs):
+        """문장 한가운데 빈칸을 그릴 글자.
+
+        밑줄 친 '공백'으로 그리면 안 된다. 줄 끝에 걸린 공백은 조판 규칙상 오른쪽 여백
+        바깥에 매달리므로, 빈칸이 줄 끝에 오면 밑줄이 지면 밖으로 삐져나가 잘린다.
+        밑줄 문자(_)는 공백이 아니라 내용이라 여백을 넘지 않고, 남은 자리에 못 들어가면
+        통째로 다음 줄로 내려간다.
+
+        길이는 화면과 맞춘다 — 화면은 정답 길이에 비례해 폭을 잡으므로
+        (blankWidth = 답 글자수 × 9px, 70~230px) 그 값을 읽어 옮긴다. 전부 같은 길이면
+        긴 답은 쓸 자리가 모자라고 짧은 답은 자리가 남는다."""
+        m = self._WIDTH_RE.search(dict(attrs).get("style") or "")
+        px = int(m.group(1)) if m else 90
+        # 밑줄 문자는 폭이 평균 글자와 비슷하다 — 9px(답 한 글자)당 1.2자로 잡아
+        # 쓸 자리를 조금 넉넉히 준다.
+        return "_" * max(6, min(28, round(px / 9 * 1.2)))
+
+    # ── 태그 ─────────────────────────────────────────────────────
+    def handle_starttag(self, tag, attrs):
+        cls = self._classes(attrs)
+        if self._skip or any(c in self.SKIP_CLASSES for c in cls):
+            self._skip += 1
+            return
+        if tag == "b" or tag == "strong":
+            self._bold += 1
+        elif tag == "u":
+            self._under += 1
+        elif tag == "span":
+            if any(c in self.INLINE_BLANK_CLASSES for c in cls):
+                # 문장 한가운데라 문단 테두리를 쓸 수 없다 — 밑줄 문자로 그린다
+                # (_blank_text에 왜 공백이 아닌지 적어 두었다).
+                # 밑줄 문자 자체가 선이므로 under는 걸지 않는다(걸면 선이 두 겹이 된다).
+                self._runs.append(_docx_run(self._blank_text(attrs)))
+            sep = next((self.SEP_AFTER[c] for c in cls if c in self.SEP_AFTER), None)
+            self._depth_stack.append((("sep", sep) if sep else None, tag))
+            return
+        elif tag in ("td", "th"):
+            # 답지표의 칸. 표를 만들지 않고 한 줄로 펴므로 칸 사이를 띄워 준다
+            # (표는 워드에서 고치기 성가시고, 답지는 읽기만 하면 된다).
+            self._depth_stack.append((("sep", "   "), tag))
+            return
+        elif tag == "br":
+            # 문단 안 줄바꿈
+            self._runs.append('<w:r><w:br/></w:r>')
+        elif tag in ("div", "p", "li", "tr", "h1", "h2", "h3", "section", "ul", "table"):
+            self._flush()
+            if any(c in self.PAGE_START_CLASSES for c in cls):
+                self._new_page()
+                self._fresh_page = True   # 이 쪽의 첫 단계는 제목 아래에 이어 붙인다
+            elif any(c in self.PAGE_ITEM_CLASSES for c in cls):
+                if self._fresh_page:
+                    self._fresh_page = False
+                else:
+                    self._new_page()
+            if any(c in self.ANSWER_CLASSES for c in cls):
+                self._in_answer += 1
+                self._depth_stack.append(("answer", tag))
+                return
+            if any(c in self.BLANK_CLASSES for c in cls):
+                # 글자가 아니라 테두리로 그린다 (_docx_blank_line 참고)
+                (self.answers if self._in_answer else self.body).append(_docx_blank_line())
+                return
+            if "qz-no" in cls or "wb-no" in cls:
+                self._pending = "QNo"
+            if any(c in ("wb-heading", "wb-titlebar") for c in cls):
+                self._pending = "QNo"
+            if "qz-card" in cls or "wb-q" in cls:
+                self._pending = None
+        self._depth_stack.append((None, tag))
+
+    def handle_endtag(self, tag):
+        if self._skip:
+            self._skip -= 1
+            return
+        if tag in ("b", "strong"):
+            self._bold = max(0, self._bold - 1)
+            return
+        if tag == "u":
+            self._under = max(0, self._under - 1)
+            return
+        if tag in ("span", "td", "th"):
+            while self._depth_stack:
+                kind, name = self._depth_stack.pop()
+                if name == tag:
+                    if isinstance(kind, tuple) and kind[0] == "sep":
+                        self._add(kind[1])
+                    break
+            return
+        if tag in ("div", "p", "li", "tr", "h1", "h2", "h3", "section", "ul", "table"):
+            self._flush()
+            while self._depth_stack:
+                kind, name = self._depth_stack.pop()
+                if name == tag:
+                    if kind == "answer":
+                        self._in_answer = max(0, self._in_answer - 1)
+                    break
+
+    def handle_data(self, data):
+        text = re.sub(r"\s+", " ", data)
+        if text.strip() or (self._runs and text == " "):
+            self._add(text)
+
+    def result(self):
+        self._flush()
+        return self.body, self.answers
+
+
+def quiz_html_to_docx(result_html, title, answer_heading="정답 및 해설", columns=2):
+    """결과 HTML → .docx bytes.
+
+    쪽 구성: 제목(1단) → 본문(columns단) → 쪽 넘김 → 답지(1단).
+    답지를 맨 뒤 별지로 빼는 것은 학생용으로 뒷장만 떼어 쓰기 위해서다.
+
+    columns는 탭마다 다르다. 문제지·시험지는 2단이 기출 시험지 모양에 가깝지만,
+    워크북은 한 단으로 낸다 — 단계마다 답을 적는 칸이 있어서 2단으로 좁히면 쓸 자리가
+    모자라고, 단계가 여럿이라 칸을 넘나들며 읽는 것도 번거롭다."""
+    # 1을 콕 집어 준 경우만 1단이다. 기본값이 2이므로 엉뚱한 값도 2로 떨어져야 앞뒤가 맞다.
+    columns = 1 if columns == 1 else 2
+    parser = _QuizDocxParser()
+    parser.feed(result_html or "")
+    body, answers = parser.result()
+
+    out = []
+    # 1) 제목 — 한 단으로 전체 폭을 쓴다
+    out.append(_docx_para(_docx_run(title, bold=True, size=32),
+                          style="Title1", border_bottom=True))
+    out.append(_docx_sect_break(cols=1))
+    # 2) 본문. 이 섹션은 nextPage로 끊어 답지가 새 쪽에서 시작하게 한다
+    out.extend(body or [_docx_para(_docx_run("(내용이 없습니다)"))])
+    out.append(_docx_sect_break(cols=columns, next_page=True))
+    # 3) 답지 — 새 쪽, 한 단
+    if answers:
+        out.append(_docx_para(_docx_run(answer_heading, bold=True, size=28),
+                              border_bottom=True))
+        out.extend(answers)
+    # 마지막 섹션 속성은 body 직속으로 둔다
+    out.append(_docx_sect(cols=1))
+    return build_docx("".join(out))
+
+
+def build_docx(body_xml):
+    """문단 XML을 받아 .docx 한 벌(bytes)로 묶는다."""
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<w:document xmlns:w="{DOCX_NS}"><w:body>{body_xml}</w:body></w:document>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", _DOCX_CONTENT_TYPES)
+        z.writestr("_rels/.rels", _DOCX_RELS)
+        z.writestr("word/_rels/document.xml.rels", _DOCX_DOC_RELS)
+        z.writestr("word/styles.xml", _DOCX_STYLES)
+        z.writestr("word/document.xml", document)
+    return buf.getvalue()
+
+
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
@@ -6118,7 +6520,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit",
-                        "/api/infographic",
+                        "/api/infographic", "/api/docx",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
                         "/api/account/recharge",
@@ -6156,7 +6558,9 @@ class Handler(BaseHTTPRequestHandler):
         GENERATE_PATHS = ("/api/analyze", "/api/quiz", "/api/workbook",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit",
                            "/api/infographic")
-        if path in GENERATE_PATHS + ("/api/models",):
+        # /api/docx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
+        # 않는다(그래서 GENERATE_PATHS가 아니라 여기 따로 붙는다).
+        if path in GENERATE_PATHS + ("/api/models", "/api/docx"):
             if DB is None:
                 self._send_json(
                     {"error": "로그인 기능이 아직 설정되지 않았습니다 (관리자에게 문의하세요)."}, 503
@@ -6533,6 +6937,47 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e), "code": "quota"}, 429)
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
+            return
+
+        # 만든 문제지를 워드로 내려준다. AI를 부르지 않으므로 요금도 대기도 없다.
+        # 화면이 이미 그려 놓은 HTML을 그대로 보내온다 — 왜 데이터가 아니라 HTML인지는
+        # quiz_html_to_docx 위의 주석 참고.
+        if path == "/api/docx":
+            source = req.get("html")
+            if not isinstance(source, str) or not source.strip():
+                self._send_json({"error": "내보낼 내용이 없습니다. 먼저 문제를 만들어 주세요."}, 400)
+                return
+            if len(source) > MAX_BODY_BYTES:
+                self._send_json({"error": "내용이 너무 큽니다."}, 413)
+                return
+            title = str(req.get("title") or "문제지").strip()[:120]
+            answer_heading = str(req.get("answerHeading") or "정답 및 해설").strip()[:60]
+            filename = str(req.get("filename") or title or "문제지").strip()[:120]
+            # 단 수는 화면이 정한다 — 워크북만 1단이고 나머지는 2단이다
+            columns = 1 if req.get("columns") == 1 else 2
+            try:
+                blob = quiz_html_to_docx(source, title, answer_heading, columns)
+            except Exception as e:
+                traceback.print_exc()
+                self._send_json({"error": f"워드 파일을 만들지 못했습니다: {e}"}, 500)
+                return
+            # 파일명에 한글이 들어가므로 RFC 5987로도 함께 적는다. filename= 쪽은 옛
+            # 브라우저용이라 아스키만 남기고, 실제로 쓰이는 것은 filename*= 쪽이다.
+            ascii_name = re.sub(r"[^A-Za-z0-9._-]", "_", filename) or "document"
+            quoted = urllib.parse.quote(f"{filename}.docx")
+            self.send_response(200)
+            self.send_header(
+                "content-type",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+            self.send_header(
+                "content-disposition",
+                f'attachment; filename="{ascii_name}.docx"; filename*=UTF-8\'\'{quoted}',
+            )
+            self.send_header("content-length", str(len(blob)))
+            self.send_header("cache-control", "no-store")
+            self.end_headers()
+            self.wfile.write(blob)
             return
 
         # 지문 요약 인포그래픽. 지문 '하나'만 받는다 — 한 장에 8~12초가 걸려서 여러 장을

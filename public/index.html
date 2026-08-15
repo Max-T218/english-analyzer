@@ -474,6 +474,8 @@
                 title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
         <button class="btn ghost" id="mcqSaveBtn" style="display:none"
                 title="로그인한 계정에 이 문제 세트와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
+        <button class="btn ghost" id="mcqDocxBtn" style="display:none"
+                title="워드에서 직접 고칠 수 있는 .docx 파일로 내려받습니다. 문항은 2단, 정답과 해설은 맨 뒤 별지로 들어갑니다.">📝 워드 다운로드</button>
         <span class="hint">유형마다 <b>− +</b> 로 문항 수를 정할 수 있습니다. 순서·문장삽입이 섞이면 시간이 더 걸릴 수 있어요.</span>
       </div>
       <div class="error" id="mcqError"></div>
@@ -514,6 +516,8 @@
                 title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
         <button class="btn ghost" id="saqSaveBtn" style="display:none"
                 title="로그인한 계정에 이 문제 세트와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
+        <button class="btn ghost" id="saqDocxBtn" style="display:none"
+                title="워드에서 직접 고칠 수 있는 .docx 파일로 내려받습니다. 문항은 2단, 정답과 해설은 맨 뒤 별지로 들어갑니다.">📝 워드 다운로드</button>
         <span class="hint">유형마다 <b>− +</b> 로 문항 수를 정할 수 있습니다. 학생이 직접 쓰는 서술형·단답형 문제를 만듭니다.</span>
       </div>
       <div class="error" id="saqError"></div>
@@ -563,6 +567,8 @@
                 title="문제 내용은 빼고 번호와 정답만 지면에 올립니다. '정답 표시' 설정과 무관하게 항상 정답이 나옵니다.">🔑 답지만</button>
         <button class="btn ghost" id="workbookSaveBtn" style="display:none"
                 title="로그인한 계정에 이 워크북과 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
+        <button class="btn ghost" id="workbookDocxBtn" style="display:none"
+                title="워드에서 직접 고칠 수 있는 .docx 파일로 내려받습니다. 지금 화면에 보이는 그대로 담기므로, 정답을 넣을지는 아래 '정답 표시'로 정하세요.">📝 워드 다운로드</button>
         <label class="chk" title="켜면 정답이 지면에 함께 인쇄됩니다(교사용). 끄면 학생용 문제지가 됩니다.">
           <input type="checkbox" id="wbAnswerChk"> 정답 표시 <span class="chk-sub">(교사용)</span>
         </label>
@@ -807,6 +813,8 @@
               title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
       <button class="btn ghost" id="examPaperSaveBtn" style="display:none"
               title="만든 시험지와 배분표를 저장합니다. 배분표가 있어야 나중에 다른 부를 겹치지 않게 만들 수 있습니다.">💾 사이트 저장</button>
+      <button class="btn ghost" id="examPaperDocxBtn" style="display:none"
+              title="워드에서 직접 고칠 수 있는 .docx 파일로 내려받습니다. 문항은 2단, 정답과 해설은 맨 뒤 별지로 들어가고 배분표는 빠집니다.">📝 워드 다운로드</button>
     </div>
 
     <div id="examPaperResult"></div>
