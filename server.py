@@ -184,6 +184,8 @@ QUIZ_KIND_HINTS = {
     "표현 찾아 쓰기": "주어진 우리말과 뜻이 같은 영어 표현을 지문에서 찾아 옮겨 쓴다",
     "무관한 문장 쓰기": "글의 흐름과 관계 없는 문장을 찾아 그대로 옮겨 쓴다(번호 없음)",
     "요약문 완성": "글을 한 문장으로 요약한 문장의 빈칸 두 곳을 <보기>의 낱말로 채운다",
+    "조건 영작": "밑줄 친 우리말을 <보기>의 낱말(원형)과 <조건>에 맞게 직접 영작한다",
+    "문장 전환": "밑줄 친 문장을 수동태·분사구문 등 <조건>이 지정한 구조로 바꿔 쓴다",
 }
 
 
@@ -821,6 +823,14 @@ QUIZ_SCHEMA = {
                             "propertyOrdering": ["def", "en"],
                         },
                     },
+                    # 조건 영작·문장 전환 — 학생에게 거는 <조건> 줄들(우리말).
+                    # 조건 영작의 '총 N단어로 쓸 것'은 여기 넣지 않는다. 모델이 낱말을
+                    # 세다 틀리면 모범답안이 제 조건을 어기게 되므로, 서버가 answerText를
+                    # 직접 세어 뒤에 붙인다(_append_word_count_condition).
+                    "conditions": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    # 조건 영작 — 학생에게 주는 <보기> 낱말. 반드시 사전형(원형)이라
+                    # 형태 결정은 학생 몫으로 남는다. 굴절형을 주면 배열 문제가 된다.
+                    "wordBank": {"type": "ARRAY", "items": {"type": "STRING"}},
                     "explanation": {"type": "STRING"},
                 },
                 # passageHtml은 required가 아니다 — 지문을 가공 없이 그대로 쓰는 유형
@@ -829,10 +839,12 @@ QUIZ_SCHEMA = {
                 # 문항끼리 지문이 미묘하게 달라지는 사고도 사라진다.
                 "required": ["no", "type", "format", "instruction",
                              "choices", "answer", "answerText", "tfItems", "fixes",
-                             "findItems", "glossItems", "explanation"],
+                             "findItems", "glossItems", "conditions", "wordBank",
+                             "explanation"],
                 "propertyOrdering": ["no", "type", "format", "instruction", "passageHtml",
                                      "choices", "answer", "answerText", "tfItems", "fixes",
-                                     "findItems", "glossItems", "explanation"],
+                                     "findItems", "glossItems", "conditions", "wordBank",
+                                     "explanation"],
             },
         },
     },
@@ -847,7 +859,7 @@ QUIZ_TYPE_LABELS = [
     "서술형배열", "OX진위(영)", "OX진위(한)",
     "어휘 선택형", "어법 선택형", "틀린 어휘 찾기", "틀린 어법 찾기",
     "동사형 쓰기", "빈칸 쓰기", "표현 찾아 쓰기", "영영풀이 쓰기",
-    "무관한 문장 쓰기", "요약문 완성",
+    "무관한 문장 쓰기", "요약문 완성", "조건 영작", "문장 전환",
 ]
 
 # 지문을 '가공 없이 통째로' 보여 주는 유형 — 빈칸·밑줄·블록 분할이 전혀 없다.
@@ -866,7 +878,8 @@ QUIZ_PLAIN_PASSAGE_TYPES = {
 # 시험에 그대로 내기 위한 것이다. 문법 포인트를 직접 묻는 유형만 넣는다.
 # 주제·제목·빈칸처럼 문법과 무관한 유형에는 지시를 아예 실어 보내지 않는다
 # (엉뚱한 곳에 문법을 끼워 넣으려 드는 것을 막는다).
-QUIZ_GRAMMAR_TYPES = {"어법", "어법 선택형", "틀린 어법 찾기", "동사형 쓰기"}
+QUIZ_GRAMMAR_TYPES = {"어법", "어법 선택형", "틀린 어법 찾기", "동사형 쓰기",
+                      "조건 영작", "문장 전환"}
 
 # 한 지문에서 유형별로 뽑을 수 있는 최대 문항 수.
 # public/app.js의 TYPE_MAX와 반드시 같은 값을 유지한다(화면은 이 값으로 +버튼을 막고,
@@ -910,6 +923,13 @@ QUIZ_TYPE_MAX = {
     # 두 번째 문항은 같은 문장을 다른 낱말로 뚫은 중복이 된다.
     "무관한 문장": 1, "요약문": 1,
     "무관한 문장 쓰기": 1, "요약문 완성": 1,
+    # 한 문항이 지문의 문장 하나를 통째로 가져간다. 그 문장은 조건을 걸 만한 문법
+    # 구조(관계사·분사구문·수동태 …)를 실제로 갖고 있어야 하는데, 지문 하나에 그런
+    # 문장이 그리 많지 않다. 더 시키면 평범한 문장에 억지 조건을 붙이게 된다.
+    "조건 영작": 3,
+    # 전환은 원문이 그 구조를 이미 갖고 있을 때만 성립한다(수동태로 바꾸려면 타동사와
+    # 목적어가, 분사구문으로 바꾸려면 부사절이 있어야 한다). 조건 영작보다 더 좁다.
+    "문장 전환": 3,
 }
 # 한 번의 /api/quiz 호출에 넣을 수 있는 총 문항 수 상한.
 # 화면은 문항 수로 끊어 보내므로(app.js의 QUIZ_QUESTIONS_PER_CALL=6, 한 유형이 그보다
@@ -992,7 +1012,8 @@ in every other question.
 - `type`: one of the allowed type names, EXACTLY as given (e.g. "주제").
 - `format`: "mc" for 5-choice questions, "write" for 서술형배열, "tf" for OX진위(영)/OX진위(한),
   "pick" for 어휘/어법 선택형, "fix" for 틀린 어휘/어법 찾기, "verb" for 동사형 쓰기,
-  "fill" for 빈칸 쓰기, "find" for 표현 찾아 쓰기, "gloss" for 영영풀이 쓰기.
+  "fill" for 빈칸 쓰기, "find" for 표현 찾아 쓰기, "gloss" for 영영풀이 쓰기,
+  "compose" for 조건 영작, "convert" for 문장 전환.
   Every other type (including "영영풀이") is "mc".
 - `instruction`: the exact Korean question line the student reads (수능 어투 그대로), e.g.
   "다음 글의 주제로 가장 적절한 것은?". For "문장삽입" also embed the sentence to insert,
@@ -1011,11 +1032,17 @@ in every other question.
 - `answer`: for "mc", integer 1–5 = the 1-based index of the correct choice.
   For "write" and "tf", set `answer` to 0.
 - `answerText`: for "write", the correct English sentence (verbatim from the passage).
+  For "compose", the same — the passage's own sentence, verbatim (that is the 모범답안).
+  For "convert", the TRANSFORMED sentence you wrote (NOT the passage's original).
   For "mc" and "tf", set to "".
 - `tfItems`: for "tf", EXACTLY 5 items {text, isTrue}. For every other format, set to [].
 - `fixes`: for "fix", one {wrong, right} per planted error. For every other format, set to [].
 - `findItems`: for "find" (표현 찾아 쓰기), 3~4 items {ko, en}. For every other format, set to [].
 - `glossItems`: for "gloss" (영영풀이 쓰기), 2~4 items {def, en}. For every other format, set to [].
+- `conditions`: for "compose" and "convert", the Korean <조건> lines (see those types below).
+  For every other format, set to [].
+- `wordBank`: for "compose" only, the <보기> words in DICTIONARY form. For every other
+  format, set to [].
 - `explanation`: 2–4 Korean sentences (문어체) explaining why the answer is correct and why
   the others are wrong — specific, referencing the passage content.
 
@@ -1164,6 +1191,56 @@ the passage in full.
     The Korean translation must be natural 문어체 that maps clearly onto the English word
     order the student has to produce (어순 단서가 되도록 직역에 가깝게).
   · choices = [], answer = 0.
+- "조건 영작" (format "compose") — instruction
+  "위 글의 밑줄 친 우리말과 뜻이 같도록, <보기>의 낱말을 모두 사용하여 <조건>에 맞게 영작하시오."
+  지문을 만드는 방법은 "서술형배열"과 똑같고, 학생이 하는 일이 다르다 — 낱말이 원형으로
+  주어져 형태를 스스로 정해야 하고, 문법 조건이 함께 걸린다.
+  Pick ONE sentence of the passage (8~20 words) that ACTUALLY USES a grammar structure worth
+  demanding (관계사절, 분사구문, 수동태, to부정사, 비교급, 가정법, 도치 …).
+  · `answerText` = that English sentence, VERBATIM from the passage. 이것이 모범답안이다.
+  · `passageHtml` = the WHOLE passage, with ONLY that one sentence replaced by its Korean
+    translation wrapped in <u><b>…</b></u> — same rules as "서술형배열":
+    그 문장의 영어는 `passageHtml` 어디에도 남아 있으면 안 되고, 밑줄 친 곳은 지문 전체에
+    정확히 하나뿐이며, 나머지 문장은 전부 영어 원문 그대로 제자리에 둔다.
+    우리말 번역은 영어 어순이 비치는 문어체로 쓴다(학생이 어순 단서를 얻을 수 있게).
+  · `wordBank` = 4~8개. `answerText`의 내용어(동사·명사·형용사·부사)를 골라 **사전형**으로
+    적는다 — be, have, go, child (was, had, went, children이 아니다).
+    관사·전치사·대명사 같은 기능어는 넣지 않는다. 학생이 채워야 할 몫이다.
+    ⚠️ 굴절형을 그대로 주면 낱말을 늘어놓기만 하면 되는 배열 문제가 되어 버린다.
+    ⚠️ `answerText`에 실제로 들어 있는 낱말만 넣어라. 쓰이지 않는 낱말을 끼우면
+    '모두 사용할 것' 조건과 모범답안이 어긋난다.
+  · `conditions` = 2개. 이 순서로 적는다:
+      ① "<보기>의 낱말을 모두 사용하되, 필요하면 형태를 바꿀 것"
+      ② 그 문장이 **실제로 쓰고 있는** 문법 하나를 집어 요구한다
+         (예: "관계대명사를 사용할 것", "분사구문으로 쓸 것", "수동태로 쓸 것").
+         ⚠️ `answerText`가 정말 그 구조인지 확인하고 적어라. 쓰지 않는 문법을 요구하면
+         모범답안이 제 조건을 어긴 셈이 되어 채점이 불가능하다.
+      낱말 수 조건("총 N단어로 쓸 것")은 **적지 마라** — 앱이 answerText를 세어 붙인다.
+  · choices = [], answer = 0, tfItems = [], fixes = [], findItems = [], glossItems = [].
+- "문장 전환" (format "convert") — instruction
+  "다음 글의 밑줄 친 문장을 <조건>에 맞게 바꿔 쓰시오."
+  Pick ONE sentence of the passage (8~25 words) that GENUINELY ADMITS the transformation you
+  are about to demand. 원문에 그 구조가 없으면 그 문장은 고르지 마라.
+  · `passageHtml` = the WHOLE passage, verbatim, with ONLY that one sentence wrapped in
+    <u><b>…</b></u>. 영어는 그대로 둔다 — 학생은 눈에 보이는 문장을 고쳐 쓴다.
+    밑줄 친 곳은 지문 전체에 정확히 하나뿐이고, 그 밖의 것은 무엇도 바꾸지 않는다.
+  · `answerText` = 바꿔 쓴 문장(모범답안). 어법상 완전해야 하고, 뜻이 원문과 같아야 한다.
+  · `conditions` = 1~2줄. 무엇으로 바꾸는지 우리말로 적는다. 예:
+      "수동태 문장으로 바꿔 쓸 것" / "분사구문을 사용할 것" /
+      "관계대명사를 사용하여 한 문장으로 쓸 것" / "가주어 It으로 시작할 것" /
+      "간접의문문으로 바꿔 쓸 것" / "too ~ to 구문으로 바꿔 쓸 것"
+  · 고를 수 있는 전환 — 원문이 그 구조를 갖고 있을 때만:
+      능동태 → 수동태 (타동사와 목적어가 있어야 한다)
+      부사절 → 분사구문 (When/Because/While/As + S + V 가 있어야 한다)
+      두 문장·관계절 ↔ 한 문장 (같은 대상을 가리키는 명사가 있어야 한다)
+      to부정사·that절 주어 → 가주어 It ~ (또는 그 반대)
+      so ~ that … → too ~ to / enough to (뜻이 같아지는 경우에만)
+      직접의문문 → 간접의문문 (의문사절이 목적어 자리에 들어갈 수 있어야 한다)
+  ⚠️ `answerText`는 밑줄 친 원문과 **반드시 달라야** 한다. 같으면 바꾼 것이 없다.
+  ⚠️ 원문에 없는 정보를 더하거나 빼지 마라 — 뜻이 그대로여야 채점할 수 있다.
+  ⚠️ 한 지문에서 여러 문항을 낼 때는 **문장도 전환 종류도 서로 겹치지 않게** 하라.
+  · choices = [], answer = 0, tfItems = [], fixes = [], findItems = [], glossItems = [],
+    wordBank = [].
 - "어휘 선택형" (format "pick") — instruction
   "다음 각 네모 안에서 문맥상 알맞은 낱말을 골라 쓰시오."
   `passageHtml` = 3~6 sentences taken from the passage, PLAIN TEXT ONLY (no HTML tags at all),
@@ -1414,7 +1491,9 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
             f"목표 어법: {target_grammar} — {', '.join(sorted(set(grammar_types)))} 문항은 "
             "학생이 찾아내야 하는 자리(정답이 되는 밑줄·네모·괄호)를 이 문법 포인트로 "
             "잡으세요. 나머지 보기는 다른 포인트로 채워 무엇을 묻는 문제인지 흐려지지 "
-            "않게 합니다. 목표 어법을 쉼표로 여럿 적었으면 문항마다 하나씩 돌아가며 "
+            "않게 합니다. 조건 영작·문장 전환은 찾아내는 자리가 없는 대신 <조건>으로 "
+            "요구하는 문법을 이 포인트로 잡고, 그 문법을 실제로 쓰고 있는 문장을 고르세요. "
+            "목표 어법을 쉼표로 여럿 적었으면 문항마다 하나씩 돌아가며 "
             "배정하세요. 다만 지문에 그 문법이 쓰인 곳이 없으면 억지로 지문을 고쳐 넣지 "
             "말고, 지문에 실제로 있는 문법으로 평소대로 출제하세요."
         )
@@ -1483,6 +1562,32 @@ def fix_underline_bounds(html):
     html = _U_TAIL_RE.sub(r"\1</u>", html)  # </u> 뒤에 붙은 글자를 안으로
     html = _U_HEAD_RE.sub(r"<u>\1", html)   # <u> 앞에 붙은 글자를 안으로
     return html
+
+
+_WORD_COUNT_RE = re.compile(r"[A-Za-z0-9']+(?:-[A-Za-z0-9']+)*")
+
+
+def count_english_words(text):
+    """영어 문장의 낱말 수 — 조건 영작의 '총 N단어로 쓸 것'에 쓴다.
+
+    모델에게 세라고 시키지 않는 이유: 낱말 세기는 자주 틀리는데, 이 숫자가 틀리면
+    모범답안이 제 조건을 어긴 셈이 되어 채점 자체가 불가능해진다. answerText만 있으면
+    기계로 정확히 셀 수 있는 값이므로 여기서 센다.
+    하이픈으로 묶인 말(well-being)은 시험지 관행대로 한 낱말로 세고, 문장부호는 세지 않는다."""
+    return len(_WORD_COUNT_RE.findall(str(text or "")))
+
+
+def attach_word_count_condition(q):
+    """조건 영작의 <조건>에 '총 N단어로 쓸 것'을 붙인다(N은 모범답안에서 직접 센다).
+
+    모델이 적어 온 낱말 수 조건이 있으면 버리고 다시 센다 — 세다 틀리면 모범답안이
+    제 조건을 어긴 셈이 되어 채점이 불가능해지기 때문이다."""
+    n = count_english_words(q.get("answerText"))
+    conds = q.get("conditions")
+    conds = [c for c in conds if isinstance(c, str) and c.strip()] if isinstance(conds, list) else []
+    conds = [c for c in conds if "단어로 쓸 것" not in c]
+    q["conditions"] = conds + ([f"총 {n}단어로 쓸 것"] if n else [])
+    return q
 
 
 def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
@@ -1561,6 +1666,13 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
                 for k in ("wrong", "right"):
                     if fx.get(k):
                         fx[k] = sanitize_quiz_html(fx[k])
+        for key in ("conditions", "wordBank"):
+            lst = q.get(key)
+            if isinstance(lst, list):
+                q[key] = [sanitize_quiz_html(s) if isinstance(s, str) else s for s in lst]
+        # 조건 영작의 낱말 수 조건은 모델이 아니라 여기서 붙인다
+        if q.get("type") == "조건 영작":
+            attach_word_count_condition(q)
     return result
 
 
