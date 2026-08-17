@@ -677,9 +677,14 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 /* 버튼이 늘어 좁은 화면에서는 한 줄에 다 들어가지 않는다 — 넘치는 대신 아래로 접는다 */
 .passage-item-head{display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;}
 .passage-item-no{font-size:12.5px; font-weight:700; color:var(--accent); letter-spacing:.02em;}
-/* 지문 이름 — 비워두면 '지문 1', '지문 2' 가 자동으로 쓰인다 */
+/* 지문 이름 — 비워두면 '지문 1', '지문 2' 가 자동으로 쓰인다.
+   flex-basis를 260px가 아니라 90px로 두고 늘어나게 한 이유: flex는 줄을 나눌지를
+   '줄이기 전 크기'로 먼저 정하므로, basis가 260px이면 이름칸이 줄어들 여지가 있는데도
+   버튼이 먼저 아랫줄로 접힌다. 글자 수(1,024자 · 173단어)가 길어지는 것만으로 버튼 위치가
+   달라 보이던 것이 이 때문이다. 작게 잡아 두면 한 줄에 다 들어간 뒤 남는 자리를 이름칸이
+   먹으므로, 넓을 때는 지금과 같은 260px이고 좁아지면 이름칸만 줄어든다. */
 .passage-name{
-  flex:0 1 260px; min-width:0; width:auto;
+  flex:1 1 90px; min-width:60px; max-width:260px; width:auto;
   font:inherit; font-size:13px; font-weight:700; color:var(--accent);
   background:transparent; border:none; border-bottom:1px dashed var(--line);
   border-radius:0; padding:3px 2px;
@@ -694,6 +699,9 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 .passage-merge-up,
 .passage-merge-down,
 .passage-split{padding:4px 10px; font-size:12px; line-height:1; white-space:nowrap;}
+/* 남는 자리는 이름칸이 먹는다 — 버튼과 글자 수는 줄어들지 않게 못 박는다 */
+.passage-item-head > .btn,
+.passage-count{flex:0 0 auto;}
 /* 합치기·나누기는 지문을 통째로 옮기는 동작이라 눈에 덜 띄게 둔다 —
    삭제(✕)와 나란히 있어도 실수로 먼저 눌리지 않도록 */
 .passage-merge-up,
