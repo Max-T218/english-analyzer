@@ -73,7 +73,7 @@ Gemini 실사용량을 그때그때 재는 대신, **행동 하나당 고정 가
   | 지문 분석 | `PRICE_ANALYZE_KRW` (기본 300원) | 지문 1개당 |
   | 객관식 · 지문유지형 (주제·제목·요지·내용일치 등) | `PRICE_MCQ_PLAIN_KRW` (기본 250원) | (지문×유형) 1개당 |
   | 객관식 · 지문변형형 (빈칸·어법·순서·문장삽입 등) | `PRICE_MCQ_TRANSFORM_KRW` (기본 250원) | (지문×유형) 1개당 |
-  | 주관식 (전 유형 동일가) | `PRICE_SAQ_KRW` (기본 200원) | (지문×유형) 1개당 |
+  | 주관식 (전 유형 동일가) | `PRICE_SAQ_KRW` (기본 250원) | (지문×유형) 1개당 |
   | └ 같은 유형의 2문항째부터 | `PRICE_EXTRA_QUESTION_KRW` (기본 100원) | 추가 문항 1개당 |
   | 워크북 | `PRICE_WORKBOOK_STAGE_KRW` (기본 100원) | 지문 1개당, 고른 단계 1개마다. 8단계를 다 고르면 `PRICE_WORKBOOK_MAX_KRW`(기본 700원)에서 멈춘다 |
   | 지문 변형(문제 생성 전 재작성) | `PRICE_REWORD_KRW` (기본 0원, 미정) | 호출 1회당 |
@@ -179,7 +179,7 @@ Gemini 실사용량을 그때그때 재는 대신, **행동 하나당 고정 가
 | `PRICE_ANALYZE_KRW` | `300` | 지문 분석, 지문 1개당 가격(원) |
 | `PRICE_MCQ_PLAIN_KRW` | `250` | 객관식·지문유지형, (지문×유형) 1개당 가격(원) |
 | `PRICE_MCQ_TRANSFORM_KRW` | `250` | 객관식·지문변형형, (지문×유형) 1개당 가격(원) |
-| `PRICE_SAQ_KRW` | `200` | 주관식, (지문×유형) 1개당 가격(원) |
+| `PRICE_SAQ_KRW` | `250` | 주관식, (지문×유형) 1개당 가격(원) |
 | `PRICE_EXTRA_QUESTION_KRW` | `100` | 같은 유형에서 2문항째부터 추가되는 가격(원) |
 | `QUIZ_MAX_QUESTIONS_PER_CALL` | `30` | `/api/quiz` 호출 하나의 총 문항 수 상한 — 화면을 우회한 대량 요청 방어용 |
 | `PRICE_WORKBOOK_STAGE_KRW` | `100` | 워크북, 고른 단계 1개당 가격(원) |

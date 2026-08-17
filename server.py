@@ -138,9 +138,10 @@ PRICE_ANALYZE_KRW = int(os.environ.get("PRICE_ANALYZE_KRW", "300"))        # 지
 PRICE_INFOGRAPHIC_KRW = int(os.environ.get("PRICE_INFOGRAPHIC_KRW", "400"))
 PRICE_MCQ_PLAIN_KRW = int(os.environ.get("PRICE_MCQ_PLAIN_KRW", "250"))    # 객관식·지문유지, (지문×유형) 1개당
 PRICE_MCQ_TRANSFORM_KRW = int(os.environ.get("PRICE_MCQ_TRANSFORM_KRW", "250"))  # 객관식·지문변형, (지문×유형) 1개당
-# 주관식, (지문×유형) 1개당. 객관식과 같은 250원으로 맞춘다 — 주관식도 일곱 유형 중
-# 다섯이 지문을 변형해 만들고(선택형·오류찾기·배열), 그 유형들은 객관식과 똑같이 Pro로
-# 생성한다. 원가가 같은데 값만 싸게 받을 이유가 없다.
+# 주관식, (지문×유형) 1개당. 객관식과 같은 250원으로 맞춘다 — 주관식도 열다섯 유형 중
+# 열셋이 지문을 손대 만들고(선택형·오류찾기·배열·영작·전환 …), 그 유형들은 객관식과
+# 똑같이 Pro로 생성한다. 원가가 같은데 값만 싸게 받을 이유가 없다.
+# (지문을 그대로 싣는 주관식은 OX진위 둘뿐이다.)
 PRICE_SAQ_KRW = int(os.environ.get("PRICE_SAQ_KRW", "250"))
 # 워크북 — 지문 1개당, 고른 단계 수로 매긴다. 8단계를 다 고르면 상한(700원)에 걸려
 # 800원이 아니라 700원이다(전부 고르는 쪽이 단계당으로는 싸진다).
