@@ -170,6 +170,26 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 .gate-preview .qz-reveal-btn{display:none;}
 .gate-preview table.vocab{font-size:12.5px;}
 .gate-preview .wb-q:first-of-type{padding-top:4px;}
+/* 지문 분석(넓은 카드)만은 실제 지면 그대로 보여 준다 — 가입 전 방문자가 무엇을 받게 되는지
+   판단하는 근거라, 잘라내거나 배치를 바꾸면 '실제 출력물의 일부'라는 말과 어긋난다. */
+.gate-show-wide .gate-preview{
+  max-height:none; -webkit-mask-image:none; mask-image:none;
+}
+/* 좁은 화면에서는 위아래로 쌓는다(기본값 유지). 폭이 나올 때만 본문처럼 좌우로 벌린다. */
+@media (min-width:760px){
+  .gate-show-wide .gate-preview .sent{
+    grid-template-columns:1fr 34%;
+    grid-template-areas:"head note" "body note";
+  }
+  .gate-show-wide .gate-preview .note{border-left:1px dashed var(--line); border-top:none;}
+}
+.gate-show-wide .gate-preview .sent{margin-bottom:14px;}
+.gate-show-wide .gate-preview h3.section{margin-top:22px;}
+/* '선택' 꼬리표 — 요약 이미지는 분석에 딸린 선택 항목이라 제목 옆에서 그것만 알린다 */
+.gate-opt{
+  font-size:10.5px; font-weight:700; color:#fff; background:var(--ink-soft);
+  padding:2px 8px; border-radius:20px; vertical-align:middle; margin-left:4px;
+}
 
 /* 이 사이트가 어떤 점에 신경 썼는지 — 결과물만으로는 안 보이는 것들 */
 .gate-notes{
