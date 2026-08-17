@@ -816,6 +816,31 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
 }
 @media print{ .float-print-group{display:none !important;} }
 
+/* ── 페이지 단위 이동(▲▼) ──
+   인쇄·되돌리기와 같은 묶음에 담겨 오른쪽 아래에 함께 쌓인다. 화면 가운데에 따로
+   띄우면 본문 폭이 넓은 화면에서 오른쪽 해설 칸 위에 올라앉는다. */
+.float-pager{display:flex; gap:8px;}
+.float-pager[hidden]{display:none;}
+.float-pager button{
+  font:inherit; font-size:15px; line-height:1; cursor:pointer;
+  width:42px; height:42px; border-radius:50%;
+  color:var(--accent); background:var(--card); border:1px solid var(--line);
+  box-shadow:0 4px 14px rgba(20,30,45,.18);
+  display:inline-flex; align-items:center; justify-content:center;
+  transition:transform .06s, box-shadow .15s, opacity .15s;
+}
+.float-pager button svg{width:15px; height:15px; fill:currentColor; display:block;}
+.float-pager button:hover:not([disabled]){border-color:var(--accent); box-shadow:0 6px 18px rgba(20,30,45,.26);}
+.float-pager button:active:not([disabled]){transform:translateY(1px);}
+.float-pager button:focus-visible{outline:2px solid var(--accent); outline-offset:3px;}
+/* 맨 위·맨 아래에서는 눌러도 갈 데가 없다 — 눌리지 않는다는 것을 흐리게 알린다 */
+.float-pager button[disabled]{opacity:.35; cursor:default; box-shadow:none;}
+@media (max-width:560px){
+  .float-pager{gap:6px;}
+  .float-pager button{width:38px; height:38px; font-size:14px;}
+}
+@media print{ .float-pager{display:none !important;} }
+
 /* ── 인쇄 안내 창 ──
    인쇄 버튼을 누르면 먼저 뜨는 안내. 인쇄 대화상자에서 '대상(프린터)'을 무엇으로
    고르면 종이/PDF가 되는지 알려 준다. (브라우저가 그 목록을 정하므로 앱이 대신

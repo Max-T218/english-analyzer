@@ -1991,7 +1991,8 @@ function syncFloatPrint() {
     active.querySelector(
       "#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
     );
-  floatPrintGroup.hidden = !(btn && btn.style.display !== "none");
+  // 묶음은 페이지 이동 버튼도 담고 있으므로 통째로 감추지 않고 인쇄 버튼만 여닫는다
+  floatPrintBtn.hidden = !(btn && btn.style.display !== "none");
   // 되돌리기도 이 묶음 안에 있다 — 지문 분석 탭에서 고치는 중일 때만 보인다
   syncUndoBtn();
 }
@@ -2007,6 +2008,52 @@ floatPrintBtn.addEventListener("click", () => {
   );
   if (b) b.click();
 });
+
+/* ── 페이지 단위 이동(▲▼) ──
+   움직이는 양을 크롬이 PgUp/PgDn에 쓰는 값과 같게 맞췄다 — '화면 높이의 87.5%'와
+   '화면 높이 − 40px' 중 큰 쪽. 40px은 앞 화면의 끝줄을 남겨 두는 겹침이다.
+   여기서 양을 임의로 정하면 키보드로 넘길 때와 달라져, 두 방법을 번갈아 쓰는 순간
+   어디까지 읽었는지 놓친다. */
+const floatPager = $("floatPager");
+const topBtn = $("topBtn");
+const pageUpBtn = $("pageUpBtn");
+const pageDownBtn = $("pageDownBtn");
+const bottomBtn = $("bottomBtn");
+const PAGE_OVERLAP_PX = 40;
+const PAGE_MIN_FRACTION = 0.875;
+
+function pageStep() {
+  const h = window.innerHeight;
+  return Math.max(h * PAGE_MIN_FRACTION, h - PAGE_OVERLAP_PX);
+}
+function scrollPage(dir) {
+  window.scrollBy({ top: dir * pageStep(), behavior: "smooth" });
+}
+// 스크롤할 것이 있을 때만 띄우고, 끝에 닿은 쪽은 잠근다
+function syncPager() {
+  const max = document.documentElement.scrollHeight - window.innerHeight;
+  floatPager.hidden = max < 80; // 한 화면도 넘치지 않으면 있을 이유가 없다
+  if (floatPager.hidden) return;
+  const y = window.scrollY;
+  const atTop = y <= 2;
+  const atBottom = y >= max - 2;
+  topBtn.disabled = atTop;
+  pageUpBtn.disabled = atTop;
+  pageDownBtn.disabled = atBottom;
+  bottomBtn.disabled = atBottom;
+}
+topBtn.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+bottomBtn.addEventListener("click", () =>
+  window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" })
+);
+pageUpBtn.addEventListener("click", () => scrollPage(-1));
+pageDownBtn.addEventListener("click", () => scrollPage(1));
+addEventListener("scroll", syncPager, { passive: true });
+addEventListener("resize", syncPager);
+// 결과물이 그려지거나 지문칸이 늘면 문서 높이가 바뀐다 — 그때도 다시 판단한다.
+// (버튼은 position:fixed라 감췄다 띄웠다 해도 본문 높이에 영향을 주지 않는다)
+new ResizeObserver(syncPager).observe(document.body);
+syncPager();
 /* ── 기출 탭에서는 탭 바깥의 공용 칸 두 개를 치운다 ──
    공용 지문칸과 학원 마크 칸은 탭 바깥(탭 버튼보다 위)에 있어서 어느 탭에서나 화면
    맨 위에 뜬다. 그런데 시험지 제작은 이 둘을 그 자리에서 쓰지 않는다 —

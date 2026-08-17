@@ -934,12 +934,38 @@
 </div>
 </td></tr></tbody>
 </table>
-<div class="float-print-group" id="floatPrintGroup" hidden>
+<!-- 떠 있는 버튼은 모두 이 묶음에 모아 오른쪽 아래 한 자리에서만 뜬다 — 화면 가운데에
+     따로 띄우면 본문(특히 분석본의 오른쪽 해설 칸) 위에 올라앉는다.
+     묶음 자체는 늘 있고, 필요 없는 버튼만 각자 숨는다. -->
+<div class="float-print-group" id="floatPrintGroup">
+  <!-- 페이지 단위 이동 — 분석본·문제지는 한 지문만 넣어도 화면 수십 개 분량이라 휠로 훑기 멀다.
+       키보드 PgUp/PgDn과 같은 양만큼 움직인다(화면 높이에서 조금 겹쳐 남긴 만큼). -->
+  <!-- 아이콘을 글자(▲ 따위) 대신 SVG로 그린 이유: '맨 위로'는 삼각형에 가로줄을 얹은
+       모양인데, 그 글자(⤒ 등)는 글꼴에 없으면 네모로 깨진다. 네 개가 나란히 서므로
+       굵기·크기도 서로 맞아야 한다. -->
+  <div class="float-pager" id="floatPager" hidden>
+    <button type="button" id="topBtn" aria-label="맨 위로"
+            title="맨 위로 (키보드 Home과 같습니다)">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2h10v1.7H3z"/><path d="M8 5.4l5 7.1H3z"/></svg>
+    </button>
+    <button type="button" id="pageUpBtn" aria-label="한 화면 위로"
+            title="한 화면 위로 (키보드 PgUp과 같습니다)">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.8l5.5 8.4h-11z"/></svg>
+    </button>
+    <button type="button" id="pageDownBtn" aria-label="한 화면 아래로"
+            title="한 화면 아래로 (키보드 PgDn과 같습니다)">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.2L2.5 3.8h11z"/></svg>
+    </button>
+    <button type="button" id="bottomBtn" aria-label="맨 아래로"
+            title="맨 아래로 (키보드 End와 같습니다)">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 12.3h10V14H3z"/><path d="M8 10.6L3 3.5h10z"/></svg>
+    </button>
+  </div>
   <!-- 되돌리기는 '직접 수정'이나 '쪽 구성'을 켰을 때만 인쇄 버튼 위에 뜬다.
        고치는 자리가 화면 아래쪽이라, 맨 위 버튼 줄까지 올라가지 않아도 되게 한 것. -->
   <button type="button" class="float-print float-undo" id="undoBtn" hidden disabled
           title="방금 고친 것을 한 단계 되돌립니다.">↩ 되돌리기</button>
-  <button type="button" class="float-print" id="floatPrintBtn">🖨️ 인쇄 / PDF 변환</button>
+  <button type="button" class="float-print" id="floatPrintBtn" hidden>🖨️ 인쇄 / PDF 변환</button>
 </div>
 
 <!-- 인쇄 안내 창 — 종이 인쇄와 PDF 저장은 어차피 같은 인쇄 대화상자에서 갈리므로,
