@@ -542,7 +542,49 @@ function renderAccount(info) {
   if (info.name || info.email) lastAccountLabel = info.name || info.email;
   const krwText = currentKrw !== null ? ` · 잔액 ${currentKrw.toLocaleString()}원` : "";
   accountNameEl.textContent = `${lastAccountLabel || "로그인됨"}님${krwText}`;
+  // 서버가 이 계정이 아직 못 본 업데이트를 함께 내려준다(/api/me·로그인 응답 공통).
+  // refreshTokenDisplay()도 같은 info 모양으로 renderAccount를 부르므로, 만들기를
+  // 한 번 눌렀다고 또 뜨는 일이 없게 이번 페이지가 열린 뒤 한 번만 띄운다 —
+  // 정말 안 봤는지는 서버의 last_seen_changelog가 로그인마다 다시 판단한다.
+  if (Array.isArray(info.updates) && info.updates.length && !updatePanelShown) {
+    updatePanelShown = true;
+    showUpdatePanel(info.updates);
+  }
 }
+
+/* ── 업데이트 소식 ──
+   로그인(또는 세션이 살아 있어 자동으로 들어오는 새로고침)마다 서버가 "이 계정이
+   아직 못 본 업데이트"를 함께 보내준다. localStorage로 '봤음'을 남기지 않는 이유는
+   파일 맨 위에서 열 때마다 localStorage를 통째로 비우기 때문이다(공용 PC 보호) —
+   그러면 매번 다시 뜬다. 대신 계정(Firestore)에 남기므로 다른 기기로 로그인해도
+   이미 확인했으면 다시 뜨지 않는다. */
+const updatePanelEl = $("updatePanel");
+const updatePanelBodyEl = $("updatePanelBody");
+let updatePanelShown = false; // 이 페이지가 열린 뒤 이미 한 번 띄웠는지
+
+function showUpdatePanel(updates) {
+  updatePanelBodyEl.innerHTML = updates
+    .map(
+      (u) => `
+      <div class="update-panel-version">
+        <div class="update-panel-date">${esc(u.date || "")}</div>
+        <ul>${(u.items || []).map((it) => `<li>${esc(it)}</li>`).join("")}</ul>
+      </div>`
+    )
+    .join("");
+  updatePanelEl.hidden = false;
+}
+
+async function dismissUpdatePanel() {
+  updatePanelEl.hidden = true;
+  try {
+    await postJson("/api/account/ack-update", {}, "");
+  } catch (_) {
+    /* 확인 처리가 안 돼도 화면은 이미 닫힌다 — 다음 로그인에서 다시 뜰 뿐, 막지 않는다 */
+  }
+}
+$("updatePanelClose").addEventListener("click", dismissUpdatePanel);
+$("updatePanelOkBtn").addEventListener("click", dismissUpdatePanel);
 
 async function refreshAccount() {
   try {

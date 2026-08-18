@@ -469,6 +469,8 @@ def complete_signup(email, code):
         # 가입 축하금은 돈을 받은 적이 없으므로 전액 무상이다(환불 대상이 아니다)
         "krw_free": starting_krw,
         "krw_paid": 0,
+        # upsert_user와 같은 이유 — 방금 가입했으니 지난 업데이트 소식은 최신으로 맞춰 둔다
+        "last_seen_changelog": CHANGELOG[0]["version"] if CHANGELOG else 0,
     })
     ref.delete()
     _log_signup_grant(user_id, starting_krw)
@@ -6133,6 +6135,9 @@ def upsert_user(sub, email, name):
             "krw_remaining": starting_krw,
             # 가입 축하금은 돈을 받은 적이 없으므로 전액 무상이다(환불 대상이 아니다)
             "krw_free": starting_krw, "krw_paid": 0,
+            # 방금 가입했으니 지금까지의 업데이트 소식은 이미 다 겪은 셈이다 —
+            # 첫 로그인부터 지난 소식이 쏟아지지 않게 최신 번호로 맞춰 둔다.
+            "last_seen_changelog": CHANGELOG[0]["version"] if CHANGELOG else 0,
         })
         _log_signup_grant(sub, starting_krw)
     else:
@@ -6182,6 +6187,41 @@ def get_user_krw(user_id):
         return 0
 
 
+# 로그인했을 때 "업데이트 소식" 플로팅 창에 띄우는 내용. 새로 든 것이 있으면 위에
+# 새 항목을 추가한다(항상 이 목록의 첫 자리 = 최신). version은 순전히 순서 비교용
+# 정수라 날짜와 무관하게 그냥 하나씩 늘리면 된다 — 날짜 문자열을 쓰면 같은 날
+# 두 번 배포했을 때 비교가 애매해진다. 계정마다 얼마나 봤는지는 Firestore의
+# last_seen_changelog(정수)로 추적한다 — localStorage는 열 때마다 통째로 비워지므로
+# (파일 맨 위 주석 참고) 여기 쓰면 로그인마다 다시 뜬다.
+CHANGELOG = [
+    {
+        "version": 1,
+        "date": "2026-08-19",
+        "items": [
+            "단어장 — 지문 분석 없이도 직접 입력·사진·PDF로 단어장을 만들 수 있습니다. "
+            "사진·PDF는 화면에 끌어다 놓거나 붙여넣기(Ctrl+V)만 하면 됩니다.",
+            "단어장 — 워드(.docx) 파일로 내려받고, 무작위로 섞어 시험지를 만들 수 있습니다.",
+            "지문 분석 — 인쇄했을 때 쪽이 어디서 넘어가는지 미리 보여주고, 표·문장 카드 "
+            "단위로 쪽 경계를 옮기는 '쪽 구성' 기능이 생겼습니다.",
+            "지문 분석 — 직접 수정하거나 쪽 구성을 바꾼 내용을 한 단계씩 무르는 "
+            "'↩ 되돌리기' 버튼이 생겼습니다.",
+            "문제 제작 — 영어 정의를 보고 낱말을 맞히는 '영영풀이' 유형이 "
+            "객관식·주관식에 추가됐습니다.",
+        ],
+    },
+]
+
+
+def _unseen_updates(last_seen):
+    """CHANGELOG 중 이 사용자가 아직 못 본 것만, 오래된 순으로 돌려준다.
+    last_seen이 없으면(가입이 이 기능보다 오래된 계정) 전부 못 본 것으로 본다."""
+    try:
+        last_seen = int(last_seen or 0)
+    except (TypeError, ValueError):
+        last_seen = 0
+    return [c for c in reversed(CHANGELOG) if c["version"] > last_seen]
+
+
 def _account_payload(user_id):
     """/api/me와 로그인·회원가입 성공 응답이 공유하는 계정 정보 — 화면이 이름·잔액을
     표시하는 데 쓴다."""
@@ -6196,6 +6236,8 @@ def _account_payload(user_id):
         # 유상/무상 구분 — 환불 대상은 유상분뿐이라 화면에서도 나눠 보여 준다
         "krwFree": free,
         "krwPaid": paid,
+        # 로그인마다 함께 내려준다 — 비어 있으면 화면이 아무것도 띄우지 않는다
+        "updates": _unseen_updates(info.get("last_seen_changelog")),
     }
 
 
@@ -6903,7 +6945,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
-                        "/api/account/recharge",
+                        "/api/account/recharge", "/api/account/ack-update",
                         "/api/saved", "/api/saved/delete",
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
                         "/api/admin/delete-user"):
@@ -7143,6 +7185,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 404)
                 return
             self._send_json({"krwRemaining": new_krw})
+            return
+
+        # '업데이트 소식' 플로팅 창을 닫을 때 부른다. 지금 CHANGELOG의 맨 앞(최신) 번호로
+        # last_seen_changelog를 맞춰 두면, 이 계정은 그 번호까지는 봤다고 다음 로그인부터
+        # 간주된다 — 다른 기기로 로그인해도 다시 뜨지 않는다(세션이 아니라 계정에 남기 때문).
+        if path == "/api/account/ack-update":
+            if DB is None:
+                self._send_json({"error": "로그인 기능이 아직 설정되지 않았습니다."}, 503)
+                return
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요한 서비스입니다."}, 401)
+                return
+            if CHANGELOG:
+                DB.collection("users").document(user_id).set(
+                    {"last_seen_changelog": CHANGELOG[0]["version"]}, merge=True
+                )
+            self._send_json({"ok": True})
             return
 
         if path == "/api/admin/login":

@@ -1010,6 +1010,24 @@
   <button type="button" class="float-print" id="floatPrintBtn" hidden>🖨️ 인쇄 / PDF 변환</button>
 </div>
 
+<!-- ── 업데이트 소식 ──
+     로그인할 때(또는 세션이 살아 있어 자동으로 들어올 때) 그동안 못 본 새 기능이
+     있으면 화면 가운데에 뜬다. 로그인·회원가입 창과 같은 모달 틀(.modal-overlay/
+     .modal-box)을 그대로 쓰지만, 배경을 눌러도 안 닫힌다 — "확인했습니다"(또는 ✕)를
+     눌러야만 닫히고, 그래야 서버에 '봤다'고 남겨 다음 로그인부터 다시 뜨지 않는다.
+     (loginModalEl 등을 한꺼번에 닫는 closeAllModals()의 목록에는 일부러 넣지 않는다 —
+     넣으면 enterWorkspace()가 부르는 순간 열자마자 닫혀 버린다.) -->
+<div class="modal-overlay" id="updatePanel" hidden>
+  <div class="modal-box">
+    <button type="button" class="modal-close" id="updatePanelClose" aria-label="닫기">&times;</button>
+    <h3 class="modal-title">🎉 업데이트 소식</h3>
+    <div class="update-panel-body" id="updatePanelBody"></div>
+    <div class="update-panel-foot">
+      <button type="button" class="btn" id="updatePanelOkBtn">확인했습니다</button>
+    </div>
+  </div>
+</div>
+
 <!-- 인쇄 안내 창 — 종이 인쇄와 PDF 저장은 어차피 같은 인쇄 대화상자에서 갈리므로,
      버튼을 나누는 대신 누를 때 '대상(프린터)'에서 무엇을 고르면 되는지 알려 준다. -->
 <div class="print-guide" id="printGuide" hidden>

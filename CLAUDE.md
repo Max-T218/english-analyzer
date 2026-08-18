@@ -142,8 +142,22 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 **POST** — `/api/analyze` `/api/quiz` `/api/workbook` `/api/reword` `/api/ocr` `/api/pdfsplit`
 `/api/vocabocr` `/api/vocabpdf` `/api/models`
 `/api/auth/google` `/api/auth/signup` `/api/auth/verify` `/api/auth/login` `/api/auth/delete`
-`/api/logout` `/api/account/recharge` `/api/saved` `/api/saved/delete` `/api/admin/login`
-`/api/admin/logout` `/api/admin/recharge`
+`/api/logout` `/api/account/recharge` `/api/account/ack-update` `/api/saved` `/api/saved/delete`
+`/api/admin/login` `/api/admin/logout` `/api/admin/recharge`
+
+## 업데이트 소식(로그인 시 플로팅 창)
+
+교사가 새 기능을 알아채도록, 로그인(또는 세션이 살아 있는 새로고침)마다 서버가
+`server.py`의 `CHANGELOG`(`_account_payload` 바로 위) 중 그 계정이 아직 못 본 항목을
+`/api/me`·로그인 응답의 `updates`에 실어 보냅니다. 화면은 `public/app.js`의
+`showUpdatePanel`이 오른쪽 위 카드로 띄우고, "확인했습니다"를 누르면
+`/api/account/ack-update`가 그 계정의 `last_seen_changelog`를 갱신해 다음부터
+안 뜹니다(계정에 남기지 localStorage가 아닙니다 — 파일 맨 위에서 열 때마다
+localStorage를 통째로 비우기 때문입니다).
+
+**사용자가 눈에 띄게 체감할 기능을 배포할 때는 `CHANGELOG`에 새 항목을 추가하세요**
+(`version`을 1씩 늘리고, `date`와 교사가 이해할 수 있는 한두 문장의 `items`를 적습니다).
+내부 버그 수정·리팩터링처럼 화면에 드러나지 않는 변경은 넣지 않습니다.
 
 ## 하지 말 것
 

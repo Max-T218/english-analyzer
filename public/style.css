@@ -881,6 +881,21 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
 }
 @media print{ .float-print-group{display:none !important;} }
 
+/* ── 업데이트 소식 ──
+   #updatePanel 자체는 로그인 모달과 같은 .modal-overlay/.modal-box 틀을 그대로 쓴다
+   (가운데·반투명 배경·닫기 ×는 공짜로 따라온다). 여기서는 그 안에 들어가는
+   본문(목록)·확인 버튼만 꾸민다. */
+.update-panel-body{
+  max-height:min(360px, 55vh); overflow-y:auto;
+  font-size:13.5px; line-height:1.7; color:var(--ink);
+}
+.update-panel-version + .update-panel-version{margin-top:16px; padding-top:14px; border-top:1px dashed var(--line);}
+.update-panel-date{font-size:11.5px; font-weight:700; color:var(--accent); margin-bottom:6px;}
+.update-panel-body ul{margin:0; padding-left:19px;}
+.update-panel-body li + li{margin-top:8px;}
+.update-panel-foot{margin-top:18px;}
+.update-panel-foot .btn{width:100%; justify-content:center;}
+
 /* ── 페이지 단위 이동(▲▼) ──
    인쇄·되돌리기와 같은 묶음에 담겨 오른쪽 아래에 함께 쌓인다. 화면 가운데에 따로
    띄우면 본문 폭이 넓은 화면에서 오른쪽 해설 칸 위에 올라앉는다. */
