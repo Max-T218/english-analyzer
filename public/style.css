@@ -953,6 +953,15 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
   background:var(--line-soft); color:var(--ink-soft);
   font-size:12.5px; line-height:1.6;
 }
+/* 요약 이미지가 저장되지 않는다는 경고. 놓치면 400원을 다시 내고 그림을 만들어야 하므로
+   안내(회색)와 확실히 갈라 보이게 빨간 테두리·바탕을 준다. */
+.print-guide-warn{
+  margin:0 0 14px; padding:11px 13px; border-radius:8px;
+  background:rgba(207,46,46,.07); border:1px solid var(--g);
+  color:var(--g); font-size:13.5px; line-height:1.7; font-weight:600;
+}
+.print-guide-warn[hidden]{display:none;}
+.print-guide-warn b{font-weight:800;}
 .print-guide-skip{display:inline-flex; align-items:center; gap:6px; font-size:13px;}
 .print-guide-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:16px; flex-wrap:wrap;}
 /* 불러오기 방식 묻는 창은 저장함 위에 겹쳐 뜬다 */

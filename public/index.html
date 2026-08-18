@@ -1039,6 +1039,14 @@
       <li><b>PDF 파일로 저장</b> — ‘대상’을 <b>‘PDF로 저장’</b>으로 바꾸고 <b>[저장]</b><br>
         <span class="print-guide-sub">(Windows에서는 ‘Microsoft Print to PDF’로 보이기도 합니다. 저장 위치를 고르는 창이 이어서 뜹니다.)</span></li>
     </ul>
+    <!-- 요약 이미지가 화면에 있을 때만 뜬다. 그림은 사이트 저장함에 담기지 않으므로
+         (Firestore 문서 1MiB 제한) 여기서 PDF로 받아 두지 않으면 다시 만들어야 하고,
+         다시 만들면 요금이 또 나간다. 그래서 '다시 보지 않기'를 켜 둔 사람에게도
+         이 경고가 있을 때는 창을 띄운다. -->
+    <p class="print-guide-warn" id="printGuideWarn" hidden>
+      ⚠️ <b>요약 이미지는 사이트 저장함에 저장되지 않습니다.</b><br>
+      지금 <b>PDF로 저장</b>해 두지 않으면 그림은 사라지고, 다시 만들려면 <b>요금이 또 나갑니다.</b>
+    </p>
     <p class="print-guide-note">파일 이름은 지문·제목과 날짜로 미리 채워 둡니다. 인쇄 창에 어떤 프린터가 먼저 떠 있을지는 브라우저가 정하므로(보통 마지막에 쓰던 설정) 앱에서 대신 골라 둘 수는 없습니다.</p>
     <label class="chk print-guide-skip">
       <input type="checkbox" id="printGuideSkip"> 이 안내 다시 보지 않기 <span class="chk-sub">(창을 닫으면 초기화)</span>
@@ -1055,6 +1063,12 @@
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="saveDialogTitle">
     <h3 id="saveDialogTitle">💾 사이트 저장</h3>
     <p class="print-guide-lead" id="saveDialogLead">나중에 저장함에서 이 제목으로 다시 찾을 수 있습니다.</p>
+    <!-- 지문 분석에 요약 이미지가 붙어 있을 때만 뜬다 (app.js의 openSaveDialog) -->
+    <p class="print-guide-warn" id="saveDialogWarn" hidden>
+      ⚠️ <b>요약 이미지는 저장되지 않습니다.</b><br>
+      글자(분석본)만 저장되고 <b>그림은 빠집니다.</b> 그림이 필요하시면 저장과 별개로
+      <b>🖨️ 인쇄 / PDF 변환</b>으로 <b>PDF를 먼저 받아 두세요</b> — 나중에 다시 만들면 요금이 또 나갑니다.
+    </p>
     <div class="field">
       <label for="saveTitleInput">제목</label>
       <input type="text" id="saveTitleInput" placeholder="예: 3월 모의고사 1번 지문 분석">

@@ -76,8 +76,19 @@ function closePrintGuide() {
   printGuideEl.hidden = true;
   printGuideRun = null;
 }
+/* 지금 인쇄할 화면에 요약 이미지가 붙어 있는가.
+   그림은 사이트 저장함에 담기지 않으므로(Firestore 1MiB 제한) 이 인쇄가 사실상 그림을
+   건질 마지막 기회다. 다시 만들면 요금이 또 나가므로 경고를 띄운다. */
+function docHasInfographic() {
+  return !!document.querySelector("#result [data-infographic]");
+}
 function showPrintGuide(run) {
-  if (localStorage.getItem(PRINT_GUIDE_SKIP) === "1") {
+  const warn = docHasInfographic();
+  const warnEl = $("printGuideWarn");
+  if (warnEl) warnEl.hidden = !warn;
+  // 경고가 있을 때는 '다시 보지 않기'를 켜 둔 사람에게도 반드시 보여 준다 —
+  // 놓치면 되돌릴 수 없는(요금이 다시 나가는) 손해라서 건너뛰게 두면 안 된다.
+  if (!warn && localStorage.getItem(PRINT_GUIDE_SKIP) === "1") {
     run();
     return;
   }
@@ -5560,6 +5571,10 @@ function openSaveDialog(tab) {
   saveDialogLeadEl.textContent = customLead || (tab === PASSAGE_TAB
     ? "지금 입력칸에 있는 지문만 저장합니다. 나중에 \"📄 지문 저장함\"에서 그대로 되불러올 수 있습니다."
     : "지문과 만든 결과를 함께 저장합니다. 나중에 \"📦 제작 자료 저장함\"에서 이 제목으로 다시 찾을 수 있습니다.");
+  // 지문 분석에 요약 이미지가 붙어 있으면, 저장해도 그림은 빠진다는 것을 여기서 알린다.
+  // 저장하고 나서야 알면 그림을 다시 만들어야 하고 그때 요금이 또 나간다.
+  const warnEl = $("saveDialogWarn");
+  if (warnEl) warnEl.hidden = !(tab === "analyze" && docHasInfographic());
   const blocked = TAB_SAVE[tab] && TAB_SAVE[tab].canSave ? TAB_SAVE[tab].canSave() : "";
   if (!isLoggedIn) {
     saveDialogErrorEl.textContent = "저장하려면 먼저 구글 로그인을 해주세요.";
