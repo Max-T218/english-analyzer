@@ -3016,7 +3016,10 @@ const SAQ_TYPES = [
   { id: "틀린 어휘 찾기", def: false }, { id: "틀린 어법 찾기", def: false },
   { id: "동사형 쓰기", def: false }, { id: "빈칸 쓰기", def: false },
   { id: "표현 찾아 쓰기", def: false }, { id: "영영풀이 쓰기", def: false },
-  { id: "무관한 문장 쓰기", def: false }, { id: "요약문 완성", def: false },
+  // label: 칸에 보일 이름만 줄인 것 — 실제 유형 이름("무관한 문장 쓰기")은 그대로다.
+  // 이 유형만 유독 길어(7글자) 칩 안에서 줄바꿈되는데, 이 탭 전체가 '서술형·단답형'이라
+  // 문맥상 '쓰기'가 없어도 뜻이 통한다. id를 줄이면 서버·저장본과 어긋나므로 표시만 줄인다.
+  { id: "무관한 문장 쓰기", label: "무관한 문장", def: false }, { id: "요약문 완성", def: false },
 ];
 
 // select 대신 '체크박스처럼 보이는 라디오 그룹'으로 값을 관리할 때 쓰는 어댑터.
@@ -3234,13 +3237,16 @@ function setupQuizTab({ prefix, types, footer }) {
     const chip = document.createElement("div");
     chip.className = "type-chip";
     chip.dataset.id = t.id;
+    // label이 있으면 칸에는 그것만 보이고, 실제 유형 이름(t.id)은 값·상한 조회·서버
+    // 전송에만 쓴다 — 화면 표시와 데이터를 분리해 표시만 줄여도 안전하게 한다.
+    const shown = t.label || t.id;
     chip.innerHTML =
       `<label><input type="checkbox" value="${esc(t.id)}" ${t.def ? "checked" : ""}>` +
-      `<span class="type-name">${esc(t.id)}</span></label>` +
+      `<span class="type-name">${esc(shown)}</span></label>` +
       `<div class="type-count" title="${esc(typeMaxNote(t.id))}">` +
-      `<button type="button" class="type-step" data-step="-1" aria-label="${esc(t.id)} 문항 수 줄이기">−</button>` +
+      `<button type="button" class="type-step" data-step="-1" aria-label="${esc(shown)} 문항 수 줄이기">−</button>` +
       `<span class="type-n" aria-live="polite" data-n="1"></span>` +
-      `<button type="button" class="type-step" data-step="1" aria-label="${esc(t.id)} 문항 수 늘리기">+</button>` +
+      `<button type="button" class="type-step" data-step="1" aria-label="${esc(shown)} 문항 수 늘리기">+</button>` +
       `</div>`;
     chip.querySelector(".type-n").dataset.max = max;
     gridEl.appendChild(chip);
