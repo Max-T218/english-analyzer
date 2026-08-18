@@ -4871,8 +4871,19 @@ const vocabSortEl = radioGroup("vocabSort");
 // select였을 땐 값만 읽으면 됐지만 라디오는 선택 표시(.picked)를 직접 갱신해야 한다
 syncPicked("vocabFormat");
 syncPicked("vocabSort");
-vocabFormatEl.addEventListener("change", () => {});
-vocabSortEl.addEventListener("change", () => {});
+// 형식을 바꾸면 이미 만들어 둔 결과를 즉시 다시 그린다 — buildVocab()은 AI를
+// 부르지 않고 모아 둔 데이터로 화면만 다시 그리는 것이라 매번 눌러도 비용이 없다.
+// 아직 한 번도 "만들기"를 안 눌렀으면(#vocabDoc이 비어 있으면) 반응하지 않는다 —
+// 그러면 데이터가 없다는 오류 문구가 라디오를 누를 때마다 뜬다.
+vocabFormatEl.addEventListener("change", () => {
+  if (vocabDocEl.innerHTML.trim()) buildVocab();
+});
+// 정렬도 형식과 같은 원칙 — 이미 만든 결과가 있으면 즉시 다시 그린다.
+// "무작위 섞기"를 고르면 이 순간 바로 한 번 섞인 모습을 보여준다(buildVocab이 매번
+// 새로 섞으므로, 형식을 눌러 다시 그릴 때도 또 섞인다 — 그때그때 다른 순서가 정상이다).
+vocabSortEl.addEventListener("change", () => {
+  if (vocabDocEl.innerHTML.trim()) buildVocab();
+});
 const vocabTitleEl = $("vocabTitle");
 const vocabDedupEl = $("vocabDedup");
 const vocabAnswerChk = $("vocabAnswerChk");
@@ -5055,10 +5066,14 @@ vocabDocxBtn.addEventListener("click", () =>
 );
 
 /* ── 나만의 단어장 만들기: 직접 입력 · 사진 인식 · PDF 가져오기 ──
-   세 통로가 전부 같은 편집 표(#vocabEditor) 하나로 모인다. 직접 입력은 빈 표를,
-   사진·PDF는 인식한 결과로 채운 표를 연다 — 인식 결과를 바로 믿지 않고 사람이
-   한 번 보고 고친 뒤에야 단어장에 들어간다(지문 분석의 '직접 수정'과 같은 원칙 —
-   OCR·PDF 인식은 항상 오탈자가 날 수 있다). "이 단어장에 추가"를 눌러야 확정된다. */
+   세 통로가 전부 같은 편집 표(#vocabEditor) 하나로 모인다. 처음 여는 순간(직접 입력
+   버튼을 누르든, 사진·PDF 인식이 처음 끝나든) vocabSets에 세트 하나를 곧바로 만들어
+   두고, 그 뒤로 하는 모든 일 — 더 붙여넣기·더 끌어다 놓기·타이핑·줄 삭제 —
+   은 전부 그 세트 하나를 실시간으로 갱신한다. 예전에는 "이 단어장에 추가"를 눌러야
+   확정됐는데, 사진 여러 장을 잇달아 붙여넣을 때마다 그 버튼을 눌러야 해서 번거로웠다
+   — 이제 붙여넣는 즉시 저장되고, 편집 표는 그 저장된 내용을 보여주며 고치는 자리다.
+   "완료"는 그저 표를 닫을 뿐이고(이미 다 저장돼 있다), 아무것도 안 채운 채 닫으면
+   빈 세트만 남지 않도록 그때는 지운다. */
 const vocabManualBtn = $("vocabManualBtn");
 const vocabClearBtn = $("vocabClearBtn");
 const vocabDropEl = $("vocabDrop");
@@ -5069,7 +5084,6 @@ const vocabSetNameEl = $("vocabSetName");
 const vocabEditRowsEl = $("vocabEditRows");
 const vocabAddRowBtn = $("vocabAddRowBtn");
 const vocabEditHintEl = $("vocabEditHint");
-const vocabCommitBtn = $("vocabCommitBtn");
 const vocabCancelEditBtn = $("vocabCancelEditBtn");
 
 function vocabBuildStatus(html, tone) {
@@ -5110,31 +5124,66 @@ function vocabRowEl(v) {
   return row;
 }
 
-// rows: 미리 채울 항목들(없으면 빈 줄 하나). name: 이름칸 기본값. 표를 항상 비우고 새로 연다
-// — "직접 입력"처럼 사용자가 명시적으로 새로 시작하려는 경우에 쓴다.
-function vocabEditorOpen(rows, name) {
+// 지금 편집 표가 연결된 세트의 식별자. null이면 표가 닫혀 있거나 아직 아무 세트도
+// 만들지 않은 상태다. 배열 순서(index)가 아니라 값을 쓰는 이유 — 순서는 다른 세트가
+// 지워지면 밀리지만, 이 값은 그 세트 자신을 계속 정확히 가리킨다.
+let vocabEditorSetId = null;
+
+// 표에 있는 그대로(단어·뜻을 함께 채운 줄만)를 vocabEditorSetId가 가리키는 세트에
+// 그대로 옮겨 적는다. 줄을 고치거나, 지우거나, 인식 결과가 새로 도착할 때마다 부른다
+// — 그래서 화면에 보이는 표가 곧 저장된 내용이다(따로 "저장" 단계가 없다).
+function vocabEditorSync() {
+  if (!vocabEditorSetId) return;
+  const sets = getVocabSets();
+  const idx = sets.findIndex((s) => s._id === vocabEditorSetId);
+  if (idx === -1) return;
+  const rows = [...vocabEditRowsEl.querySelectorAll(".vocab-row:not(.vocab-row-head)")]
+    .map((r) => ({
+      word: r.querySelector(".ve-word").value.trim(),
+      pos: r.querySelector(".ve-pos").value.trim(),
+      meaning: r.querySelector(".ve-meaning").value.trim(),
+      synonym: r.querySelector(".ve-synonym").value.trim(),
+      antonym: r.querySelector(".ve-antonym").value.trim(),
+    }))
+    .filter((v) => v.word && v.meaning);
+  const name = vocabSetNameEl.value.trim() || sets[idx].name;
+  sets[idx] = { ...sets[idx], name, vocab: rows };
+  saveVocabSets(sets);
+}
+
+// 편집 표를 새 세트로 연다 — vocabSets에 빈 세트를 그 자리에서 만들어 둔다.
+// 이미 표가 열려 있으면(직접 입력이든, 방금 들어온 인식 결과든) 새로 만들지 않고
+// 그 세트를 계속 쓴다 — "붙여넣을 때마다 뒤에 이어 붙인다"가 여기서 나온다.
+function vocabEditorEnsureOpen(name, src) {
+  if (vocabEditorSetId && !vocabEditorEl.hidden) return;
   vocabEditRowsEl.querySelectorAll(".vocab-row:not(.vocab-row-head)").forEach((r) => r.remove());
-  (rows && rows.length ? rows : [null]).forEach((v) => vocabEditRowsEl.appendChild(vocabRowEl(v)));
+  const id = `v${Date.now()}${Math.floor(Math.random() * 1e6)}`;
+  vocabEditorSetId = id;
+  appendVocabSet({ name: name || `직접 입력 · ${todayStr()}`, vocab: [], src: src || "manual", _id: id });
   vocabSetNameEl.value = name || "";
-  vocabEditHintEl.textContent = "단어·뜻을 채운 줄만 저장됩니다.";
+  vocabEditHintEl.textContent = "단어·뜻을 채운 줄만 저장됩니다. 고치는 즉시 반영됩니다.";
   vocabEditorEl.hidden = false;
+}
+
+// rows: 채울 항목들([null]이면 빈 줄 하나). 표가 닫혀 있으면 새 세트로 열고,
+// 열려 있으면 그 세트 뒤에 이어 붙인다. 어느 쪽이든 끝나면 곧바로 저장된다.
+function vocabEditorAdd(rows, name, src) {
+  vocabEditorEnsureOpen(name, src);
+  (rows && rows.length ? rows : [null]).forEach((v) => vocabEditRowsEl.appendChild(vocabRowEl(v)));
+  vocabEditorSync();
   vocabEditorEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-// 사진·PDF 인식 결과를 표에 채운다. 표가 이미 열려 있으면 지우지 않고 뒤에 이어 붙인다 —
-// 사진과 PDF를 한꺼번에 끌어다 놓거나 붙여넣으면 두 결과가 따로따로 도착하는데,
-// vocabEditorOpen을 그대로 두 번 부르면 나중 결과가 먼저 온 결과를 지워 버린다.
-function vocabEditorMerge(rows, name) {
-  if (vocabEditorEl.hidden) {
-    vocabEditRowsEl.querySelectorAll(".vocab-row:not(.vocab-row-head)").forEach((r) => r.remove());
-    vocabSetNameEl.value = name || "";
-    vocabEditorEl.hidden = false;
-  }
-  rows.forEach((v) => vocabEditRowsEl.appendChild(vocabRowEl(v)));
-  vocabEditHintEl.textContent = "단어·뜻을 채운 줄만 저장됩니다.";
-  vocabEditorEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
-}
+// 표를 닫는다. 이미 다 저장돼 있으므로 "취소"가 아니라 "완료"다 — 다만 단어를 하나도
+// 못 채운 채 닫으면(직접 입력을 열었다가 그냥 닫는 경우 등) 빈 세트만 남기지 않게 지운다.
 function vocabEditorClose() {
+  vocabEditorSync();
+  const sets = getVocabSets();
+  const mine = sets.find((s) => s._id === vocabEditorSetId);
+  if (mine && (!mine.vocab || !mine.vocab.length)) {
+    saveVocabSets(sets.filter((s) => s._id !== vocabEditorSetId));
+  }
+  vocabEditorSetId = null;
   vocabEditorEl.hidden = true;
   vocabEditRowsEl.querySelectorAll(".vocab-row:not(.vocab-row-head)").forEach((r) => r.remove());
 }
@@ -5143,10 +5192,16 @@ vocabAddRowBtn.addEventListener("click", () => {
   vocabEditRowsEl.appendChild(vocabRowEl(null));
 });
 vocabCancelEditBtn.addEventListener("click", vocabEditorClose);
+// 표 안(줄 값이든 이름칸이든) 어디를 고쳐도 그 즉시 저장한다.
+vocabEditorEl.addEventListener("input", vocabEditorSync);
+// 줄 삭제(✕)는 vocabRowEl 안에서 DOM만 지우므로, 그 지운 결과도 반영되게 여기서 한 번 더 듣는다.
+vocabEditRowsEl.addEventListener("click", (e) => {
+  if (e.target.closest(".ve-del")) vocabEditorSync();
+});
 
 vocabManualBtn.addEventListener("click", () => {
   vocabBuildStatus("");
-  vocabEditorOpen([], `직접 입력 · ${todayStr()}`);
+  vocabEditorAdd([null], `직접 입력 · ${todayStr()}`, "manual");
 });
 
 // 모아 둔 단어(지문 분석·직접 입력·사진·PDF 전부)를 지우고 새로 시작한다.
@@ -5163,26 +5218,6 @@ vocabClearBtn.addEventListener("click", () => {
   vocabBuildStatus("");
   vocabErrorEl.textContent = "";
   TAB_SAVE.vocab.clearResults();
-});
-
-vocabCommitBtn.addEventListener("click", () => {
-  const rows = [...vocabEditRowsEl.querySelectorAll(".vocab-row:not(.vocab-row-head)")]
-    .map((r) => ({
-      word: r.querySelector(".ve-word").value.trim(),
-      pos: r.querySelector(".ve-pos").value.trim(),
-      meaning: r.querySelector(".ve-meaning").value.trim(),
-      synonym: r.querySelector(".ve-synonym").value.trim(),
-      antonym: r.querySelector(".ve-antonym").value.trim(),
-    }))
-    .filter((v) => v.word && v.meaning);
-  if (!rows.length) {
-    vocabEditHintEl.textContent = "단어와 뜻을 함께 채운 줄이 없습니다.";
-    return;
-  }
-  const name = vocabSetNameEl.value.trim() || `직접 입력 · ${todayStr()}`;
-  appendVocabSet({ name, vocab: rows, src: "manual" });
-  vocabEditorClose();
-  vocabBuildStatus(`<b>${rows.length}단어</b>를 "${esc(name)}"(으)로 저장했습니다. 이제 단어장을 만들 수 있습니다.`, "ok");
 });
 
 // 드롭존을 잠근다 — 사진·PDF 중 하나라도 처리 중이면 더 올리지 못하게 한다
@@ -5244,9 +5279,9 @@ async function runVocabOcr(fileList) {
   notes.forEach((n) => parts.push(`⚠️ ${esc(n)}`));
   fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
   if (rows.length) {
-    parts.push(`<b>${rows.length}단어</b>를 읽었습니다. 사진과 대조해 확인한 뒤 추가하세요.`);
+    parts.push(`<b>${rows.length}단어</b>를 단어장에 저장했습니다. 사진과 대조해 확인하세요.`);
     vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
-    vocabEditorMerge(rows, `사진 인식 · ${todayStr()}`);
+    vocabEditorAdd(rows, `사진 인식 · ${todayStr()}`, "photo");
   } else {
     if (!parts.length) parts.push("단어를 찾지 못했습니다.");
     vocabBuildStatus(parts.join("<br>"), "warn");
@@ -5320,9 +5355,9 @@ async function runVocabPdf(fileList) {
   notes.forEach((n) => parts.push(`⚠️ ${esc(n)}`));
   fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
   if (rows.length) {
-    parts.push(`<b>${rows.length}단어</b>를 읽었습니다. PDF와 대조해 확인한 뒤 추가하세요.`);
+    parts.push(`<b>${rows.length}단어</b>를 단어장에 저장했습니다. PDF와 대조해 확인하세요.`);
     vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
-    vocabEditorMerge(rows, `${files[0].name.replace(/\.pdf$/i, "")} · ${todayStr()}`);
+    vocabEditorAdd(rows, `${files[0].name.replace(/\.pdf$/i, "")} · ${todayStr()}`, "pdf");
   } else {
     if (!parts.length) parts.push("단어를 찾지 못했습니다.");
     vocabBuildStatus(parts.join("<br>"), "warn");
