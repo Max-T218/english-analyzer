@@ -300,6 +300,54 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 }
 .passage-panel .field-head .hint{font-size:11.5px;}
 
+/* ── 단어장 탭 — 직접 입력 · 사진 · PDF 검토용 편집 표 ──
+   다섯 칸(단어·품사·뜻·유의어·반의어) + 삭제 단추를 grid로 맞춘다. 헤더 줄(.vocab-row-head)도
+   같은 grid-template-columns를 써서 칸이 데이터 줄과 어긋나지 않게 한다. */
+.vocab-editor{
+  margin-top:14px; padding:14px 16px; border:1px solid var(--line); border-radius:11px;
+  background:var(--paper);
+}
+.vocab-editor .field{margin-bottom:10px;}
+.vocab-edit-table{display:flex; flex-direction:column; gap:6px;}
+.vocab-row{
+  /* 헤더 줄과 데이터 줄은 각각 독립된 grid다(줄마다 별도 컨테이너). fr 칸은 기본으로
+     '내용이 필요로 하는 최소 폭'(auto 최소값)을 먼저 챙기고 남는 자리만 비율로 나누는데,
+     헤더는 짧은 글자칸(<span>)이고 데이터 줄은 <input>이라 최소 폭 요구가 서로 달라
+     같은 비율을 줘도 실제 픽셀 폭이 어긋났다(실측, 최대 2px). minmax(0, Nfr)로 그
+     최소값을 0으로 눌러 두 grid가 내용과 무관하게 같은 폭으로 나뉘게 한다.
+     마지막 칸은 auto 대신 삭제 단추 폭(28px)에 고정한다 — 헤더 쪽은 빈 칸이라
+     auto로 두면 0px로 접혀 버린다. */
+  display:grid;
+  grid-template-columns:minmax(0,1.1fr) minmax(0,.6fr) minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr) 28px;
+  gap:6px; align-items:center;
+}
+.vocab-row input[type=text]{padding:7px 9px; font-size:13px;}
+.vocab-row-head{
+  /* 데이터 줄과 같은 grid이므로 좌우 패딩을 두지 않는다 — 패딩이 있으면 그만큼
+     칸 시작점이 안으로 밀려 데이터 줄과 어긋난다(실측 2px). 칸 안 글자는
+     span에 패딩을 줘서 띄운다. */
+  font-size:11px; font-weight:700; color:var(--ink-soft); letter-spacing:.02em;
+}
+.vocab-row-head span{padding:0 2px;}
+.ve-del{
+  font:inherit; font-size:12px; line-height:1; cursor:pointer; color:var(--ink-soft);
+  background:transparent; border:1px solid var(--line); border-radius:7px;
+  width:28px; height:28px; display:inline-flex; align-items:center; justify-content:center;
+}
+.ve-del:hover{border-color:var(--g); color:var(--g);}
+@media (max-width:620px){
+  /* 칸이 여섯 개라 좁은 화면에서는 grid를 접고 두 칸씩 쌓는다(단어는 혼자 한 줄 전부).
+     placeholder(단어·품사·뜻…)가 라벨을 대신하므로 헤더 줄은 이 너비에서 감춘다 —
+     그대로 두면 값 없이 라벨만 늘어서 표 위에 뜬금없는 줄이 생긴다. */
+  .vocab-row{
+    grid-template-columns:1fr 1fr; grid-template-rows:auto auto auto auto;
+    row-gap:6px; padding:8px 0; border-bottom:1px dashed var(--line);
+  }
+  .vocab-row-head{display:none;}
+  .vocab-row .ve-word{grid-column:1 / -1;}
+  .ve-del{grid-column:1 / -1; width:100%; height:32px;}
+}
+
 /* ── 탭 내비게이션 ──
    탭이 6개가 되면서 한 줄에 878px이 필요해졌는데 본문 폭은 856px이라 22px이 모자란다.
    줄바꿈에 맡기면 마지막 하나만 둘째 줄로 떨어져 5+1로 어긋나 보인다.
@@ -1282,6 +1330,8 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   background: var(--soft, #f8fafc); transition: border-color .15s, background .15s;
 }
 .exam-drop:hover, .exam-drop.over { border-color: var(--accent, #2563eb); background: #eff6ff; }
+/* 단어장 탭 — 인식 중에는 더 올리지 못하게 잠근다(눌러도, 끌어다 놓아도 반응 없음) */
+.exam-drop.busy { opacity: .55; cursor: default; pointer-events: none; }
 .exam-drop-sub { font-size: .86rem; color: var(--muted, #64748b); }
 
 .exam-status { margin-top: 8px; font-size: .9rem; color: var(--muted, #64748b); }

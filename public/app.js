@@ -2054,14 +2054,17 @@ addEventListener("resize", syncPager);
 // (버튼은 position:fixed라 감췄다 띄웠다 해도 본문 높이에 영향을 주지 않는다)
 new ResizeObserver(syncPager).observe(document.body);
 syncPager();
-/* ── 기출 탭에서는 탭 바깥의 공용 칸 두 개를 치운다 ──
+/* ── 기출·단어장 탭에서는 탭 바깥의 공용 지문칸을 치운다 ──
    공용 지문칸과 학원 마크 칸은 탭 바깥(탭 버튼보다 위)에 있어서 어느 탭에서나 화면
-   맨 위에 뜬다. 그런데 시험지 제작은 이 둘을 그 자리에서 쓰지 않는다 —
-     · 지문은 자기 입력칸(examPaperMgr)을 쓴다. 상한이 달라서다(공용 10개 / 시험지 40개).
-       두 칸이 동시에 보이면 어디에 넣어야 하는지 알 수 없고, 잘못 넣으면 아무 일도
-       일어나지 않는다.
-     · 학원 마크는 '만들기 직전' 단계로 옮겨 보여 준다(#examBrandSlot).
-   그래서 기출 탭에 들어오면 둘 다 감추고, 분석이 끝나면 시험지 칸 안에서 다시 꺼낸다.
+   맨 위에 뜬다. 두 탭은 이 지문칸을 쓰지 않는다 —
+     · 기출(시험지 제작)은 자기 입력칸(examPaperMgr)을 쓴다. 상한이 달라서다
+       (공용 10개 / 시험지 40개). 두 칸이 동시에 보이면 어디에 넣어야 하는지 알 수
+       없고, 잘못 넣으면 아무 일도 일어나지 않는다.
+     · 단어장은 지문칸을 아예 읽지 않는다 — 지문 분석 결과(이미 저장된 값)나
+       직접 입력·사진·PDF로만 채운다. 지문칸이 떠 있으면 '여기다 지문을 넣어야
+       하나' 하고 헷갈리게 되므로, 쓰지도 않는 칸을 보여줄 이유가 없다.
+   학원 마크는 기출 탭에서만 '만들기 직전' 단계로 옮겨 보여 준다(#examBrandSlot) —
+   단어장도 인쇄 문서를 만들므로 마크 칸은 그대로 둔다.
    탭을 벗어나면 원래 자리(#brandHome 앞)로 돌려놓는다 — 다른 탭은 이 칸을 계속 쓴다. */
 const sharedPassagePanel = document.querySelector(".passage-panel");
 const brandPanelEl = document.querySelector(".brand-panel");
@@ -2076,7 +2079,7 @@ function moveBrandPanel(intoExam) {
 
 function syncTabChrome(tab) {
   const onExam = tab === "exam";
-  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam;
+  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || tab === "vocab";
   // 기출 탭에서는 분석이 끝나 시험지 칸이 열렸을 때만 마크 칸을 보여 준다
   moveBrandPanel(onExam && !examPaperPanelEl.hidden);
   if (brandPanelEl) brandPanelEl.hidden = onExam && examPaperPanelEl.hidden;
@@ -2550,7 +2553,7 @@ async function analyze() {
       htmlParts.push(buildAnalysisHtml(data, job, total, entries.length));
       entries.push({ job, data });
       if (Array.isArray(data.vocab) && data.vocab.length) {
-        vocabSets.push({ name: job.name, vocab: data.vocab });
+        vocabSets.push({ name: job.name, vocab: data.vocab, src: "analyze" });
       }
       okCount++;
     } catch (err) {
@@ -2566,7 +2569,9 @@ async function analyze() {
   }
 
   if (okCount) htmlParts.push(`<footer>구문 단위 직독직해 분석본 · 자동 생성</footer>`);
-  if (vocabSets.length) saveVocabSets(vocabSets); // 단어장 탭에서 재사용
+  // 단어장 탭에서 재사용 — 이번 분석의 결과로 src:"analyze" 세트만 바꾸고,
+  // 직접 입력·사진·PDF로 만든 단어장은 그대로 둔다.
+  if (vocabSets.length) replaceAnalyzeVocabSets(vocabSets);
   lastAnalyzeEntries = entries; // 저장 버튼이 이 값을 그대로 payload로 보낸다
   // 모든 지문 분석이 끝난 뒤 한 번에 렌더 (중간에 화면이 바뀌지 않도록)
   resultEl.innerHTML = htmlParts.join("");
@@ -4850,8 +4855,14 @@ function buildStage9(po, sentences) {
 }
 
 /* ══════════════════════════ 단어장 탭 ══════════════════════════ */
-// 지문 분석 결과의 '핵심 어휘'를 모아 단어장·단어시험지를 만든다.
-// 이미 받아둔 분석 데이터를 재사용하므로 AI 호출(사용량)이 전혀 없다.
+// 단어 목록(vocabSets)을 모아 단어장·단어시험지를 만든다. 목록은 네 갈래에서 온다 —
+// 지문 분석 결과(자동), 직접 입력, 사진 인식, PDF 가져오기. 아래 만들기·인쇄·저장
+// 로직은 출처를 가리지 않고 vocabSets를 그대로 쓴다.
+//
+// 세트마다 src를 붙여 둔다("analyze"/"manual"/"photo"/"pdf") — 지문을 다시 분석하면
+// 그 결과(vocab)가 통째로 새로 오는데, 그때 src:"analyze" 세트만 새 것으로 바꾸고
+// 나머지(직접 입력·사진·PDF로 만든 것)는 그대로 둔다. src가 없으면(예전에 저장된
+// 데이터) "analyze"로 본다 — 그동안 이 값의 유일한 출처가 지문 분석이었기 때문이다.
 
 const VOCAB_STORE = "gemini_vocab_sets";
 const vocabSourceEl = $("vocabSource");
@@ -4868,6 +4879,7 @@ const vocabAnswerChk = $("vocabAnswerChk");
 const vocabBtn = $("vocabBtn");
 const vocabPrintBtn = $("vocabPrintBtn");
 const vocabSaveBtn = $("vocabSaveBtn");
+const vocabDocxBtn = $("vocabDocxBtn");
 const vocabErrorEl = $("vocabError");
 const vocabDocEl = $("vocabDoc");
 
@@ -4884,14 +4896,27 @@ function saveVocabSets(sets) {
   renderVocabSource();
 }
 
+// 지문 분석이 새로 끝났을 때 쓴다 — src:"analyze" 세트만 이번 결과로 바꾸고,
+// 직접 입력·사진·PDF로 만든 세트는 그대로 둔다(분석을 다시 돌렸다고 지워지면 안 된다).
+function replaceAnalyzeVocabSets(analyzeSets) {
+  const kept = getVocabSets().filter((s) => (s.src || "analyze") !== "analyze");
+  saveVocabSets([...kept, ...analyzeSets]);
+}
+
+// 직접 입력·사진·PDF로 만든 단어장 한 세트를 기존 목록 뒤에 이어 붙인다.
+function appendVocabSet(set) {
+  saveVocabSets([...getVocabSets(), set]);
+}
+
 // 현재 쓸 수 있는 어휘가 얼마나 되는지 안내
 function renderVocabSource() {
   if (!vocabSourceEl) return;
   const sets = getVocabSets();
   const words = sets.reduce((n, s) => n + (s.vocab || []).length, 0);
   vocabSourceEl.textContent = sets.length
-    ? `📖 지문 분석 결과 ${sets.length}개 지문 · 어휘 ${words}개를 사용합니다. (지문을 다시 분석하면 갱신됩니다)`
-    : "아직 분석 결과가 없습니다. 먼저 '지문 분석' 탭에서 분석을 실행하세요.";
+    ? `📖 단어장 ${sets.length}개 · 어휘 ${words}개를 쓸 수 있습니다. ` +
+      `(지문을 다시 분석하면 그 결과만 갱신되고, 직접 만든 단어장은 남습니다)`
+    : "아직 단어장이 없습니다. '지문 분석'을 실행하거나, 아래에서 직접 만들어 보세요.";
 }
 renderVocabSource();
 
@@ -4913,7 +4938,8 @@ function buildVocab() {
   vocabErrorEl.textContent = "";
   const sets = getVocabSets();
   if (!sets.length) {
-    vocabErrorEl.textContent = "먼저 '지문 분석' 탭에서 지문을 분석하세요.";
+    vocabErrorEl.textContent =
+      "쓸 수 있는 단어장이 없습니다. '지문 분석'을 실행하거나, 위에서 직접 만들어 보세요.";
     return;
   }
 
@@ -4942,6 +4968,12 @@ function buildVocab() {
     rows.sort((a, b) =>
       String(a.word).toLowerCase().localeCompare(String(b.word).toLowerCase())
     );
+  } else if (vocabSortEl.value === "shuffle") {
+    // 시험지(뜻 쓰기·영어 쓰기)를 낼 때 쓴다 — 단어장(참고용 표)은 입력한 순서가
+    // 그대로 유용하지만, 시험지는 순서를 외워 풀지 못하게 매번 새로 섞는다.
+    // 저장해 둔 시드가 아니라 누를 때마다 새 무작위 값을 써서, 같은 단어장으로도
+    // 다시 만들 때마다 다른 순서가 나온다(A형/B형처럼 여러 벌을 낼 때 쓸 수 있다).
+    rows = seededShuffle(rows, Math.floor(Math.random() * 1e9));
   }
   if (!rows.length) {
     vocabErrorEl.textContent = "분석 결과에 어휘가 없습니다.";
@@ -4997,17 +5029,363 @@ function buildVocab() {
       </table></div>`);
   }
 
-  parts.push(`<footer>핵심 어휘 단어장 · 지문 분석 결과로 자동 생성</footer>`);
+  parts.push(`<footer>핵심 어휘 단어장 · 자동 생성</footer>`);
   vocabDocEl.innerHTML = parts.join("");
   applyVocabAnswer();
   vocabPrintBtn.style.display = "inline-flex";
   vocabSaveBtn.style.display = "inline-flex";
+  vocabDocxBtn.style.display = "inline-flex";
   syncFloatPrint();
   vocabDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-// 단어장은 API 호출이 없어 저장할 때 지문 분석 결과(vocabSets)와 설정만 담으면
-// 되고, 불러올 때도 buildVocab()을 그대로 다시 호출하면 똑같이 재현된다.
+// 워드(.docx)로 내려받기 — downloadDocx()가 화면에 그려진 그대로 서버로 보낸다(app.js:135).
+// '정답 표시'가 꺼져 있으면 .wb-ans(시험지 형식의 답)를 덜어 내고 보낸다 — 그 토글은
+// 다시 그리지 않고 CSS 클래스만 바꾸는 방식이라, 정답이 화면에 안 보일 뿐 HTML에는
+// 늘 들어 있다(워크북의 같은 토글과 이유가 같다). 표 하나뿐이라 2단이 아니라 1단으로 낸다.
+vocabDocxBtn.addEventListener("click", () =>
+  downloadDocx({
+    resultEl: vocabDocEl,
+    name: titledName("단어장", "vocabTitle"),
+    btn: vocabDocxBtn,
+    errorEl: vocabErrorEl,
+    strip: vocabAnswerChk.checked ? [] : [".wb-ans"],
+    columns: 1,
+  })
+);
+
+/* ── 나만의 단어장 만들기: 직접 입력 · 사진 인식 · PDF 가져오기 ──
+   세 통로가 전부 같은 편집 표(#vocabEditor) 하나로 모인다. 직접 입력은 빈 표를,
+   사진·PDF는 인식한 결과로 채운 표를 연다 — 인식 결과를 바로 믿지 않고 사람이
+   한 번 보고 고친 뒤에야 단어장에 들어간다(지문 분석의 '직접 수정'과 같은 원칙 —
+   OCR·PDF 인식은 항상 오탈자가 날 수 있다). "이 단어장에 추가"를 눌러야 확정된다. */
+const vocabManualBtn = $("vocabManualBtn");
+const vocabClearBtn = $("vocabClearBtn");
+const vocabDropEl = $("vocabDrop");
+const vocabFileEl = $("vocabFile");
+const vocabBuildStatusEl = $("vocabBuildStatus");
+const vocabEditorEl = $("vocabEditor");
+const vocabSetNameEl = $("vocabSetName");
+const vocabEditRowsEl = $("vocabEditRows");
+const vocabAddRowBtn = $("vocabAddRowBtn");
+const vocabEditHintEl = $("vocabEditHint");
+const vocabCommitBtn = $("vocabCommitBtn");
+const vocabCancelEditBtn = $("vocabCancelEditBtn");
+
+function vocabBuildStatus(html, tone) {
+  vocabBuildStatusEl.innerHTML = html;
+  vocabBuildStatusEl.className = "ocr-status" + (tone ? " " + tone : "");
+  vocabBuildStatusEl.hidden = !html;
+}
+
+// 한 줄(단어·품사·뜻·유의어·반의어·삭제단추)을 DOM으로 직접 만든다. innerHTML에
+// 값을 끼워 넣지 않는 이유 — 사진·PDF에서 온 단어는 AI가 만든 글자라, 따옴표가
+// 섞여 있으면 속성 밖으로 빠져나가는 사고가 날 수 있다. .value로 넣으면 무엇이
+// 들어오든 항상 순수한 값으로만 취급된다.
+function vocabRowEl(v) {
+  const row = document.createElement("div");
+  row.className = "vocab-row";
+  const mk = (cls, ph, val) => {
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.className = cls;
+    inp.placeholder = ph;
+    inp.value = val || "";
+    return inp;
+  };
+  row.append(
+    mk("ve-word", "단어", v && v.word),
+    mk("ve-pos", "품사", v && v.pos),
+    mk("ve-meaning", "뜻", v && v.meaning),
+    mk("ve-synonym", "유의어", v && v.synonym),
+    mk("ve-antonym", "반의어", v && v.antonym)
+  );
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "ve-del";
+  del.setAttribute("aria-label", "줄 삭제");
+  del.textContent = "✕";
+  del.addEventListener("click", () => row.remove());
+  row.append(del);
+  return row;
+}
+
+// rows: 미리 채울 항목들(없으면 빈 줄 하나). name: 이름칸 기본값. 표를 항상 비우고 새로 연다
+// — "직접 입력"처럼 사용자가 명시적으로 새로 시작하려는 경우에 쓴다.
+function vocabEditorOpen(rows, name) {
+  vocabEditRowsEl.querySelectorAll(".vocab-row:not(.vocab-row-head)").forEach((r) => r.remove());
+  (rows && rows.length ? rows : [null]).forEach((v) => vocabEditRowsEl.appendChild(vocabRowEl(v)));
+  vocabSetNameEl.value = name || "";
+  vocabEditHintEl.textContent = "단어·뜻을 채운 줄만 저장됩니다.";
+  vocabEditorEl.hidden = false;
+  vocabEditorEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// 사진·PDF 인식 결과를 표에 채운다. 표가 이미 열려 있으면 지우지 않고 뒤에 이어 붙인다 —
+// 사진과 PDF를 한꺼번에 끌어다 놓거나 붙여넣으면 두 결과가 따로따로 도착하는데,
+// vocabEditorOpen을 그대로 두 번 부르면 나중 결과가 먼저 온 결과를 지워 버린다.
+function vocabEditorMerge(rows, name) {
+  if (vocabEditorEl.hidden) {
+    vocabEditRowsEl.querySelectorAll(".vocab-row:not(.vocab-row-head)").forEach((r) => r.remove());
+    vocabSetNameEl.value = name || "";
+    vocabEditorEl.hidden = false;
+  }
+  rows.forEach((v) => vocabEditRowsEl.appendChild(vocabRowEl(v)));
+  vocabEditHintEl.textContent = "단어·뜻을 채운 줄만 저장됩니다.";
+  vocabEditorEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+function vocabEditorClose() {
+  vocabEditorEl.hidden = true;
+  vocabEditRowsEl.querySelectorAll(".vocab-row:not(.vocab-row-head)").forEach((r) => r.remove());
+}
+
+vocabAddRowBtn.addEventListener("click", () => {
+  vocabEditRowsEl.appendChild(vocabRowEl(null));
+});
+vocabCancelEditBtn.addEventListener("click", vocabEditorClose);
+
+vocabManualBtn.addEventListener("click", () => {
+  vocabBuildStatus("");
+  vocabEditorOpen([], `직접 입력 · ${todayStr()}`);
+});
+
+// 모아 둔 단어(지문 분석·직접 입력·사진·PDF 전부)를 지우고 새로 시작한다.
+// 만든 결과물(#vocabDoc)이 화면에 남아 있으면 무엇이 이미 들어 있는지 헷갈려
+// 새로 만들기 어렵다는 요청으로 추가했다 — TAB_SAVE.vocab.clearResults가 결과물
+// 쪽을, 이 핸들러가 그 결과물의 재료(vocabSets) 쪽을 함께 비운다.
+vocabClearBtn.addEventListener("click", () => {
+  if (!confirm(
+    "모아 둔 단어장을 모두 지우시겠습니까?\n" +
+      "지문 분석·직접 입력·사진·PDF로 만든 것이 전부 사라지며, 되돌릴 수 없습니다."
+  )) return;
+  saveVocabSets([]);
+  vocabEditorClose();
+  vocabBuildStatus("");
+  vocabErrorEl.textContent = "";
+  TAB_SAVE.vocab.clearResults();
+});
+
+vocabCommitBtn.addEventListener("click", () => {
+  const rows = [...vocabEditRowsEl.querySelectorAll(".vocab-row:not(.vocab-row-head)")]
+    .map((r) => ({
+      word: r.querySelector(".ve-word").value.trim(),
+      pos: r.querySelector(".ve-pos").value.trim(),
+      meaning: r.querySelector(".ve-meaning").value.trim(),
+      synonym: r.querySelector(".ve-synonym").value.trim(),
+      antonym: r.querySelector(".ve-antonym").value.trim(),
+    }))
+    .filter((v) => v.word && v.meaning);
+  if (!rows.length) {
+    vocabEditHintEl.textContent = "단어와 뜻을 함께 채운 줄이 없습니다.";
+    return;
+  }
+  const name = vocabSetNameEl.value.trim() || `직접 입력 · ${todayStr()}`;
+  appendVocabSet({ name, vocab: rows, src: "manual" });
+  vocabEditorClose();
+  vocabBuildStatus(`<b>${rows.length}단어</b>를 "${esc(name)}"(으)로 저장했습니다. 이제 단어장을 만들 수 있습니다.`, "ok");
+});
+
+// 드롭존을 잠근다 — 사진·PDF 중 하나라도 처리 중이면 더 올리지 못하게 한다
+// (둘이 겹쳐 돌아가도 각자 안전하지만, 사용자가 처리 중인 줄 모르고 또 올리는 걸 막는다).
+let vocabOcrBusy = false;
+let vocabPdfBusy = false;
+function syncVocabDropBusy() {
+  vocabDropEl.classList.toggle("busy", vocabOcrBusy || vocabPdfBusy);
+}
+
+// ── 사진으로 인식 ──
+async function runVocabOcr(fileList) {
+  const files = [...fileList].filter((f) => f && isPhoto(f));
+  if (!files.length) {
+    vocabBuildStatus("사진(JPG·PNG·WEBP)만 올릴 수 있습니다.", "warn");
+    return;
+  }
+  if (vocabOcrBusy) return;
+  vocabOcrBusy = true;
+  syncVocabDropBusy();
+
+  const rows = [];
+  const notes = [];
+  const fails = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const who = file.name || `사진 ${i + 1}`;
+    vocabBuildStatus(`<span class="spinner"></span> ${esc(who)} 읽는 중… (${i + 1}/${files.length})`);
+    try {
+      const part = await photoToPart(file);
+      if (part.data.length > OCR_MAX_UPLOAD) {
+        fails.push(`${who} — 사진이 너무 큽니다. 더 작게 찍어 올려 주세요.`);
+        continue;
+      }
+      const data = await postJson(
+        "/api/vocabocr",
+        { file: part },
+        "사진에서 단어 목록을 읽지 못했습니다."
+      );
+      rows.push(...(data.items || []));
+      if (data.note) notes.push(`${who}: ${data.note}`);
+    } catch (err) {
+      const msg = err.message || String(err);
+      fails.push(`${who} — ${msg}`);
+      if (isQuotaError(err)) {
+        const left = files.length - (i + 1);
+        if (left > 0) fails.push(`한도 초과로 중단했습니다. 남은 ${left}장은 시도하지 않았습니다.`);
+        break;
+      }
+    }
+  }
+
+  vocabOcrBusy = false;
+  syncVocabDropBusy();
+  vocabFileEl.value = "";
+  refreshTokenDisplay();
+
+  const parts = [];
+  notes.forEach((n) => parts.push(`⚠️ ${esc(n)}`));
+  fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
+  if (rows.length) {
+    parts.push(`<b>${rows.length}단어</b>를 읽었습니다. 사진과 대조해 확인한 뒤 추가하세요.`);
+    vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
+    vocabEditorMerge(rows, `사진 인식 · ${todayStr()}`);
+  } else {
+    if (!parts.length) parts.push("단어를 찾지 못했습니다.");
+    vocabBuildStatus(parts.join("<br>"), "warn");
+  }
+}
+
+// ── PDF에서 가져오기 ──
+// 규칙(정규식)으로 먼저 시도한다(무료). 표 모양이 불규칙해 규칙이 못 뽑으면
+// 'AI로 다시 시도'를 값이 매겨져 있을 때만 확인한 뒤 넘어간다 — PDF 지문 가져오기와
+// 같은 얼개다.
+async function runVocabPdf(fileList) {
+  const files = [...fileList].filter(isPdf);
+  if (!files.length) {
+    vocabBuildStatus("PDF 파일만 올릴 수 있습니다.", "warn");
+    return;
+  }
+  if (vocabPdfBusy) return;
+  vocabPdfBusy = true;
+  syncVocabDropBusy();
+
+  const rows = [];
+  const notes = [];
+  const fails = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const who = file.name || `PDF ${i + 1}`;
+    vocabBuildStatus(`<span class="spinner"></span> ${esc(who)} 읽는 중… (${i + 1}/${files.length})`);
+    try {
+      const data = await blobToBase64(file);
+      if (data.length > PDF_MAX_UPLOAD) {
+        fails.push(`${who} — 파일이 너무 큽니다. 쪽을 나눠 올려 주세요.`);
+        continue;
+      }
+      const payload = { file: { mime: "application/pdf", data } };
+      let res = await postJson("/api/vocabpdf", payload, "PDF에서 단어 목록을 꺼내지 못했습니다.");
+      if (!res.items.length && res.canAi) {
+        if (!costConfirmed(PRICING ? PRICING.vocabPdf : 0,
+                           `${who}\n\n표 모양을 규칙으로 읽지 못했습니다. AI로 다시 찾아볼까요?`)) {
+          fails.push(`${who} — 단어 목록을 규칙으로 읽지 못했습니다.`);
+          continue;
+        }
+        vocabBuildStatus(`<span class="spinner"></span> ${esc(who)} AI가 단어 목록을 정리하는 중…`);
+        res = await postJson("/api/vocabpdf", Object.assign({ ai: true }, payload),
+                             "PDF에서 단어 목록을 꺼내지 못했습니다.");
+        notes.push(`${who}: 규칙으로 못 읽어 AI가 정리했습니다. 짝이 맞는지 특히 잘 확인하세요.`);
+      }
+      if (!res.items.length) {
+        fails.push(`${who} — 단어 목록을 찾지 못했습니다.`);
+        continue;
+      }
+      rows.push(...res.items);
+      if (res.note) notes.push(`${who}: ${res.note}`);
+    } catch (err) {
+      const msg = err.message || String(err);
+      fails.push(`${who} — ${msg}`);
+      if (err.code === "no_text") continue; // 스캔본 — 위 메시지가 이미 사진 인식을 안내한다
+      if (isQuotaError(err)) {
+        const left = files.length - (i + 1);
+        if (left > 0) fails.push(`한도 초과로 중단했습니다. 남은 ${left}개는 시도하지 않았습니다.`);
+        break;
+      }
+    }
+  }
+
+  vocabPdfBusy = false;
+  syncVocabDropBusy();
+  vocabFileEl.value = "";
+  refreshTokenDisplay();
+
+  const parts = [];
+  notes.forEach((n) => parts.push(`⚠️ ${esc(n)}`));
+  fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
+  if (rows.length) {
+    parts.push(`<b>${rows.length}단어</b>를 읽었습니다. PDF와 대조해 확인한 뒤 추가하세요.`);
+    vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
+    vocabEditorMerge(rows, `${files[0].name.replace(/\.pdf$/i, "")} · ${todayStr()}`);
+  } else {
+    if (!parts.length) parts.push("단어를 찾지 못했습니다.");
+    vocabBuildStatus(parts.join("<br>"), "warn");
+  }
+}
+
+// 사진·PDF를 한 군데로 받아 종류별로 나눠 보낸다 — 눌러서 고르기·끌어다 놓기·
+// 붙여넣기가 전부 이 함수 하나로 모인다(기출 탭의 examAddFiles와 같은 자리).
+function vocabAddFiles(fileList) {
+  const files = [...fileList];
+  const pdfs = files.filter(isPdf);
+  const shots = files.filter((f) => !isPdf(f)); // 나머지는 사진으로 시도 — runVocabOcr가 한 번 더 거른다
+  if (!pdfs.length && !shots.length) {
+    vocabBuildStatus("사진(JPG·PNG·WEBP) 또는 PDF만 올릴 수 있습니다.", "warn");
+    return;
+  }
+  if (pdfs.length) runVocabPdf(pdfs);
+  if (shots.length) runVocabOcr(shots);
+}
+
+vocabDropEl.addEventListener("click", () => vocabFileEl.click());
+vocabFileEl.addEventListener("change", () => {
+  if (vocabFileEl.files && vocabFileEl.files.length) vocabAddFiles(vocabFileEl.files);
+});
+["dragover", "dragenter"].forEach((ev) =>
+  vocabDropEl.addEventListener(ev, (e) => {
+    e.preventDefault();
+    vocabDropEl.classList.add("over");
+  })
+);
+["dragleave", "drop"].forEach((ev) =>
+  vocabDropEl.addEventListener(ev, (e) => {
+    e.preventDefault();
+    vocabDropEl.classList.remove("over");
+  })
+);
+vocabDropEl.addEventListener("drop", (e) => {
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+    vocabAddFiles(e.dataTransfer.files);
+  }
+});
+
+// ── 붙여넣기(Ctrl+V)로 사진·PDF 넣기 ──
+// 드롭존을 눌러 파일 창을 여는 대신, 캡처한 사진이나 복사해 둔 PDF를 그대로 붙여넣을
+// 수 있게 한다. document에 걸어 두되 두 가지는 반드시 가려야 한다.
+//   ① 단어장 탭이 지금 열려 있을 때만 반응한다 — 다른 탭에서 무언가 붙여넣었는데
+//      단어장이 끼어들면 안 된다.
+//   ② 공용 지문칸(.passage-panel)은 탭 구분 없이 화면 위쪽에 늘 떠 있고 자기만의
+//      붙여넣기 처리(캡처 이미지 → runOcr)를 이미 갖고 있다. 그 칸 안에서 붙여넣은
+//      것까지 가로채면 지문 붙여넣기와 단어장 붙여넣기가 동시에 발동한다.
+document.addEventListener("paste", (e) => {
+  const active = document.querySelector(".tab-page.active");
+  if (!active || active.id !== "tab-vocab") return;
+  if (passagePanelEl && e.target && passagePanelEl.contains(e.target)) return;
+  const files = [...((e.clipboardData && e.clipboardData.files) || [])];
+  if (!files.length) return;
+  e.preventDefault();
+  vocabAddFiles(files);
+});
+
+// 단어장 저장은 API 호출이 없어(사진·PDF 인식은 이미 위에서 끝나고 편집 표를 거쳐
+// 확정된 뒤라) 저장할 때 지금의 vocabSets와 설정만 담으면 되고, 불러올 때도
+// buildVocab()을 그대로 다시 호출하면 똑같이 재현된다.
 TAB_SAVE.vocab = {
   saveBtn: vocabSaveBtn,
   getPayload: () => ({
@@ -5041,6 +5419,7 @@ TAB_SAVE.vocab = {
     vocabDocEl.innerHTML = "";
     vocabPrintBtn.style.display = "none";
     vocabSaveBtn.style.display = "none";
+    vocabDocxBtn.style.display = "none";
     syncFloatPrint();
   },
 };

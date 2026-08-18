@@ -228,6 +228,13 @@ PRICE_EXAMSCAN_KRW = int(os.environ.get("PRICE_EXAMSCAN_KRW", "0"))
 # 시도'를 누른 경우에만 이 값을 매긴다. 그때도 AI는 '지문이 몇째 줄부터 몇째 줄까지인지'
 # 만 답하고 본문은 서버가 원문에서 잘라 쓰므로 호출이 가볍다.
 PRICE_PDFSPLIT_KRW = int(os.environ.get("PRICE_PDFSPLIT_KRW", "0"))
+# 단어장 탭 — 사진에서 단어 목록 인식. 지문 사진(PRICE_OCR_KRW)과 같은 자리이지만
+# 값은 따로 매긴다(단어장은 지문 분석 없이도 쓸 수 있어 씀씀이가 다르다).
+PRICE_VOCAB_OCR_KRW = int(os.environ.get("PRICE_VOCAB_OCR_KRW", "0"))
+# 단어장 탭 — PDF에서 AI로 단어 목록 정리. 규칙(정규식)만으로 뽑히는 깔끔한 표는
+# 이 값과 무관하게 언제나 0원이다(PRICE_PDFSPLIT_KRW와 같은 원칙). 규칙이 못 뽑아
+# '단어 인식(AI)'을 다시 눌렀을 때만 매겨진다.
+PRICE_VOCAB_PDF_KRW = int(os.environ.get("PRICE_VOCAB_PDF_KRW", "0"))
 
 # 객관식 전용 유형 — public/app.js의 MCQ_TYPES와 반드시 같은 목록을 유지한다.
 # 이 집합에 없는 유형은 전부 주관식으로 보고 PRICE_SAQ_KRW를 매긴다(객관식·주관식
@@ -1952,6 +1959,204 @@ def call_gemini_ocr(file, api_key, model, partial=False):
     return {"text": text, "note": note}
 
 
+# ══════════════ 단어장 탭 — 사진·PDF에서 단어 목록 가져오기 ══════════════
+# 지문 분석 없이도 단어장을 만들 수 있게, 사진(교과서 단어장 페이지·손글씨 목록)과
+# PDF(교과서 단원 끝 단어장 등)에서 곧바로 단어 목록을 뽑아낸다. 출력 모양은 지문
+# 분석의 vocab 항목({word, pos, meaning, synonym, antonym})과 같다 — 단어장 탭
+# 아래쪽(정렬·중복 합치기·인쇄) 로직을 그대로 재사용하기 위해서다.
+VOCAB_ITEMS_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "items": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "word": {"type": "STRING"},
+                    "pos": {"type": "STRING"},
+                    "meaning": {"type": "STRING"},
+                    "synonym": {"type": "STRING"},
+                    "antonym": {"type": "STRING"},
+                },
+                "required": ["word", "pos", "meaning", "synonym", "antonym"],
+                "propertyOrdering": ["word", "pos", "meaning", "synonym", "antonym"],
+            },
+        },
+        "note": {"type": "STRING"},
+    },
+    "required": ["items", "note"],
+    "propertyOrdering": ["items", "note"],
+}
+
+VOCAB_OCR_SYSTEM_PROMPT = r"""You transcribe a vocabulary list from ONE photo of Korean
+school material — a textbook 단어장 page, a teacher-made word list, flashcards, or a
+handwritten word list. Return ONLY the structured JSON in the schema — no markdown, no
+commentary.
+
+## Output — one entry per word, in the order they appear in the photo
+- `word`: the English word or fixed expression, copied exactly as printed/written. Keep the
+  base form shown — do not add or remove endings, do not fix spelling.
+- `pos`: the part of speech ONLY if explicitly marked (e.g. "n.", "v.", "adj.", "adv.") —
+  otherwise "". NEVER guess a part of speech that isn't marked in the photo.
+- `meaning`: the Korean meaning exactly as printed/written next to the word. If more than one
+  meaning is given, join them with "; ". NEVER invent or add a meaning the photo doesn't show,
+  and never translate the word yourself when no Korean meaning appears — set `meaning` to ""
+  and mention it in `note` instead.
+- `synonym` / `antonym`: ONLY if the photo explicitly marks them (e.g. "유=", "반=", "syn:",
+  "ant:", "↔"); otherwise "".
+
+## Transcribe, don't invent
+- If handwriting or a smudge makes a word or its meaning unreadable, SKIP that entry entirely
+  rather than guessing — a wrong entry silently corrupts the teacher's word list. Count how
+  many you skipped and say why in `note`.
+- If the photo has no vocabulary list at all (it's a passage, a worksheet, something else),
+  set `items` to [] and say so in `note`.
+
+## note (Korean, short)
+- "" when the photo was clean and every entry was read.
+- Otherwise one sentence stating the concrete problem: 흐려서 못 읽은 항목 수, 필기에 가려진
+  항목, 뜻이 안 보여 비워 둔 단어 수 등.
+
+Return valid JSON only."""
+
+VOCAB_PDF_SYSTEM_PROMPT = r"""You receive raw text mechanically extracted from a PDF page
+(a textbook vocabulary list or teacher-made word list). The extraction can scramble reading
+order — a 2-column page may come through as all English words first, then all Korean meanings
+after, or lines can be split oddly — and it can merge or drop whitespace. Your job is to
+recover the intended word↔meaning pairs. Return ONLY the structured JSON in the schema — no
+markdown, no commentary.
+
+## Output — one entry per word
+Same field rules as reading from a photo:
+- `word`: the English word/expression, copied from the text as given (fix nothing).
+- `pos`: ONLY if explicitly marked in the text (e.g. "n.", "v.") — otherwise "".
+- `meaning`: the Korean meaning as given, joined with "; " if there are several. NEVER invent
+  a meaning that isn't in the text.
+- `synonym` / `antonym`: ONLY if explicitly marked (e.g. "유=", "반=", "syn:", "ant:") —
+  otherwise "".
+
+## When order is scrambled
+If a word's meaning was clearly separated from it by column-scrambling (e.g. a run of English
+words followed by a run of Korean meanings in the same count and rough order), re-pair them by
+position. If you cannot pair a word with its meaning confidently, DROP that entry rather than
+guessing — a wrong word next to a wrong meaning is worse than a missing entry. Say how many you
+dropped in `note`.
+
+## Ignore
+Page headers/footers, unit/lesson titles, instructions, and example sentences that aren't
+themselves the word+meaning pair (a word followed by its own usage example is fine — just keep
+the word and its meaning, drop the example sentence).
+
+## note (Korean, short)
+- "" if every line was clearly a word entry and none were dropped.
+- Otherwise one sentence: 몇 개는 짝을 다시 맞추지 못해 제외함, 본문처럼 보이는 줄이 섞여 있어
+  일부만 추림 등.
+
+Return valid JSON only."""
+
+_VOCAB_OCR_TRUNC_MSG = "사진의 글자가 너무 많아 옮기다가 잘렸습니다. 나눠 찍어 올려 주세요."
+_VOCAB_PDF_TRUNC_MSG = "PDF의 글자가 너무 많아 정리하다가 잘렸습니다. 쪽을 나눠 올려 주세요."
+
+
+def _clean_vocab_items(raw):
+    """모델이 준 항목을 다듬는다 — 단어가 빈 항목은 버리고, 나머지 필드는 앞뒤 공백만 뗀다.
+    화면이 이 값을 표에 넣을 때 esc()로 이스케이프하므로(지문 분석 vocab과 같은 경로),
+    여기서 태그를 더 벗겨낼 필요는 없다."""
+    out = []
+    for it in raw or ():
+        if not isinstance(it, dict):
+            continue
+        word = str(it.get("word") or "").strip()
+        if not word:
+            continue
+        out.append({
+            "word": word,
+            "pos": str(it.get("pos") or "").strip(),
+            "meaning": str(it.get("meaning") or "").strip(),
+            "synonym": str(it.get("synonym") or "").strip(),
+            "antonym": str(it.get("antonym") or "").strip(),
+        })
+    return out
+
+
+def call_gemini_vocab_ocr(file, api_key, model):
+    """사진 1장(base64)에서 단어 목록을 읽어 {items, note}를 돌려준다.
+    file: {"mime": "image/jpeg", "data": "<base64>"} — 화면이 이미 축소해 보낸다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+
+    mime = (file.get("mime") or "").lower().split(";")[0].strip()
+    data = file.get("data") or ""
+    if mime not in OCR_MIMES:
+        raise RuntimeError(
+            f"지원하지 않는 파일 형식입니다({mime or '알 수 없음'}). "
+            "JPG·PNG·WEBP 사진만 올릴 수 있습니다."
+        )
+    if not data:
+        raise RuntimeError("사진 내용이 비어 있습니다.")
+    if len(data) > MAX_FILE_BYTES:
+        raise RuntimeError(
+            f"사진이 너무 큽니다 (최대 {MAX_FILE_BYTES // 1048576}MB). "
+            "해상도를 낮춰 다시 올려 주세요."
+        )
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": VOCAB_OCR_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [
+            {"inlineData": {"mimeType": mime, "data": data}},
+            {"text": "이 사진에서 단어 목록을 읽어 옮겨 적으세요."},
+        ]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 16384,
+            "responseMimeType": "application/json",
+            "responseSchema": VOCAB_ITEMS_SCHEMA,
+        },
+    }
+    result = _gemini_json(payload, api_key, model, _VOCAB_OCR_TRUNC_MSG)
+    items = _clean_vocab_items(result.get("items"))
+    note = str(result.get("note") or "").strip()
+    if not items:
+        raise RuntimeError(
+            note or "사진에서 단어 목록을 찾지 못했습니다. 잘 보이게 다시 찍어 올려 주세요."
+        )
+    return {"items": items, "note": note}
+
+
+def call_gemini_vocab_pdf(text, api_key, model):
+    """PDF에서 미리 뽑아 둔 글자(text)를 넘겨 단어 목록으로 정리시킨다.
+    이미지가 아니라 글자만 보내므로 사진 인식보다 원가가 훨씬 낮다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": VOCAB_PDF_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": text}]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 16384,
+            "responseMimeType": "application/json",
+            "responseSchema": VOCAB_ITEMS_SCHEMA,
+        },
+    }
+    result = _gemini_json(payload, api_key, model, _VOCAB_PDF_TRUNC_MSG)
+    items = _clean_vocab_items(result.get("items"))
+    note = str(result.get("note") or "").strip()
+    if not items:
+        raise RuntimeError(note or "이 PDF에서 단어 목록을 찾지 못했습니다.")
+    return {"items": items, "note": note}
+
+
 # ══════════════ 지문 요약 인포그래픽 ══════════════
 # 지문을 한 장의 가로형 그림으로 요약한다. 두 번 부르는 것이 핵심이다.
 #
@@ -2741,6 +2946,54 @@ def split_pdf_passages(pages):
         if len(found) >= 2:
             return {"mode": "question", "passages": found}
     return {"mode": "paragraph", "passages": _pdf_split_by_paragraph(pages)}
+
+
+# ── PDF에서 단어 목록 규칙으로 뽑기 ──
+# 교과서 단원 끝 '단어장' 페이지처럼 "단어    뜻"이 줄마다 규칙적인 깔끔한 표만
+# 여기서 무료로 잡는다. _pdf_page_lines가 이미 같은 높이(±2pt)·가까운 간격(30pt 이내)의
+# 조각을 한 줄로 붙여 두므로, 그 결과로 나온 한 줄 안에서 "영어 낱말 + 큰 간격 + 한글 뜻"
+# 모양만 찾으면 된다. 2단으로 벌어진 자료(영어 칸을 전부 읽은 뒤 한글 칸을 잇는 경우)나
+# 표 모양이 불규칙한 자료는 여기서 못 잡고 canAi로 넘어간다 — AI에게는 원문 줄을 그대로
+# 보내 순서를 다시 맞추게 한다(call_gemini_vocab_pdf).
+_VOCAB_LEAD_NO_RE = re.compile(r"^[①-⑳0-9]{1,3}[.)\s]+")
+_VOCAB_SPLIT_RE = re.compile(r"\s{2,}|\t+")
+_VOCAB_WORD_RE = re.compile(r"^[A-Za-z][A-Za-z .'\-]{0,40}$")
+_VOCAB_POS_RE = re.compile(r"^\(([A-Za-z.]{1,6})\)\s*(.*)$")
+
+
+def _parse_vocab_line(line):
+    """줄 하나가 '단어 — 뜻' 모양이면 항목으로, 아니면 None."""
+    line = _VOCAB_LEAD_NO_RE.sub("", line.strip()).strip()
+    if not line:
+        return None
+    parts = _VOCAB_SPLIT_RE.split(line, maxsplit=1)
+    if len(parts) != 2:
+        return None
+    word, rest = parts[0].strip(), parts[1].strip()
+    if not word or not rest or not _VOCAB_WORD_RE.match(word):
+        return None
+    if not _HANGUL_RE.search(rest):
+        return None
+    pos = ""
+    m = _VOCAB_POS_RE.match(rest)
+    if m:
+        pos, rest = m.group(1), m.group(2).strip()
+    if not rest:
+        return None
+    return {"word": word, "pos": pos, "meaning": rest, "synonym": "", "antonym": ""}
+
+
+def parse_vocab_lines_rule(pages):
+    """쪽별 줄 목록에서 '단어 — 뜻' 모양의 줄만 규칙으로 골라낸다.
+    걸린 줄이 전체 중 상당수(3개 이상 그리고 35% 이상)를 차지해야 '표 형태의 단어
+    목록'이라고 믿고 돌려준다 — 몇 줄만 우연히 이 모양에 맞으면 본문 문장 사이에서
+    잘못 골라낸 것일 수 있다. 못 미더우면 빈 목록을 돌려줘 canAi로 넘어가게 한다."""
+    lines = [r["t"] for page in pages for r in page]
+    items = [v for v in (_parse_vocab_line(t) for t in lines) if v]
+    total = sum(1 for t in lines if t.strip())
+    if total and len(items) >= 3 and len(items) >= total * 0.35:
+        return items
+    return []
 
 
 # ── AI 보조: 규칙이 못 나눈 PDF의 경계만 찾아 준다 ──
@@ -6481,6 +6734,9 @@ class Handler(BaseHTTPRequestHandler):
                 # PDF에서 지문 꺼내기 — 규칙으로 나눌 때는 언제나 0원이고,
                 # 'AI로 다시 시도'를 눌렀을 때만 이 값이 매겨진다
                 "pdfSplit": PRICE_PDFSPLIT_KRW,
+                # 단어장 탭 — 사진 인식은 매번, PDF는 규칙이 못 뽑아 AI로 다시 시도할 때만
+                "vocabOcr": PRICE_VOCAB_OCR_KRW,
+                "vocabPdf": PRICE_VOCAB_PDF_KRW,
             })
             return
 
@@ -6644,7 +6900,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit",
-                        "/api/infographic", "/api/docx",
+                        "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
                         "/api/account/recharge",
@@ -6682,7 +6938,7 @@ class Handler(BaseHTTPRequestHandler):
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/quiz", "/api/workbook",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit",
-                           "/api/infographic")
+                           "/api/infographic", "/api/vocabocr", "/api/vocabpdf")
         # /api/docx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
         # 않는다(그래서 GENERATE_PATHS가 아니라 여기 따로 붙는다).
         if path in GENERATE_PATHS + ("/api/models", "/api/docx"):
@@ -6730,6 +6986,13 @@ class Handler(BaseHTTPRequestHandler):
                     # 'AI로 다시 시도'(ai=true)일 때만 값을 매긴다.
                     cost = PRICE_PDFSPLIT_KRW if req.get("ai") else 0
                     self._pending_label = "PDF에서 지문 꺼내기"
+                elif path == "/api/vocabocr":
+                    cost = PRICE_VOCAB_OCR_KRW
+                    self._pending_label = "사진에서 단어장 인식"
+                elif path == "/api/vocabpdf":
+                    # PDF도 지문과 같은 원칙 — 규칙으로 뽑히면 0원, AI로 다시 시도할 때만 값을 매긴다.
+                    cost = PRICE_VOCAB_PDF_KRW if req.get("ai") else 0
+                    self._pending_label = "PDF에서 단어장 정리"
                 else:  # /api/ocr
                     cost = PRICE_OCR_KRW
                     self._pending_label = "사진에서 지문 옮기기"
@@ -7103,6 +7366,94 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e), "code": "quota"}, 429)
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
+            return
+
+        # 단어장 탭 — 사진에서 단어 목록 인식.
+        if path == "/api/vocabocr":
+            file = req.get("file")
+            if not isinstance(file, dict):
+                self._send_json({"error": "올릴 사진을 선택하세요."}, 400)
+                return
+            api_key = req.get("apiKey") or ""
+            model = MODEL  # 항상 Flash — 사용자가 모델을 고르지 않는다
+            try:
+                result = call_gemini_vocab_ocr(file, api_key, model)
+                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
+                self._send_json(result)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        # 단어장 탭 — PDF에서 단어 목록 가져오기. 기본 경로는 Gemini를 부르지 않는다 —
+        # 글자층을 그대로 꺼내 규칙으로 뽑는다(요금 0원, 오타 없음). 규칙이 못 뽑은
+        # 파일만 화면이 ai=true로 다시 보내 정리를 맡긴다.
+        if path == "/api/vocabpdf":
+            file = req.get("file")
+            if not isinstance(file, dict):
+                self._send_json({"error": "올릴 PDF를 선택하세요."}, 400)
+                return
+            mime = (file.get("mime") or "").lower().split(";")[0].strip()
+            data = file.get("data") or ""
+            if mime != PDF_MIME:
+                self._send_json({"error": "PDF 파일만 올릴 수 있습니다."}, 400)
+                return
+            if not data:
+                self._send_json({"error": "PDF 내용이 비어 있습니다."}, 400)
+                return
+            if len(data) > MAX_FILE_BYTES:
+                self._send_json({
+                    "error": f"PDF가 너무 큽니다 (최대 {MAX_FILE_BYTES // 1048576}MB). "
+                             "쪽을 나눠 올려 주세요."
+                }, 413)
+                return
+            try:
+                raw_pdf = base64.b64decode(data)
+            except Exception:
+                self._send_json({"error": "PDF를 읽지 못했습니다 (파일이 손상된 것 같습니다)."}, 400)
+                return
+            try:
+                pages = read_pdf_pages(raw_pdf)
+            except RuntimeError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            if not any(pages):
+                self._send_json({
+                    "error": "이 PDF에는 글자가 들어 있지 않습니다 (사진을 찍어 만든 스캔본). "
+                             "쪽을 사진으로 저장해 '📷 사진으로 인식'으로 올려 주세요.",
+                    "code": "no_text",
+                }, 422)
+                return
+            if req.get("ai"):
+                # 원문 줄을 그대로 이어 보낸다 — 본문을 옮겨 적는 게 아니라 이미 뽑힌
+                # 글자의 순서만 다시 맞추는 일이라 이미지보다 훨씬 가볍다.
+                text = "\n".join(r["t"] for page in pages for r in page)
+                if len(text) > 60000:
+                    text = text[:60000]
+                try:
+                    found = call_gemini_vocab_pdf(text, req.get("apiKey") or "", MODEL)
+                except QuotaExceeded as e:
+                    self._send_json({"error": str(e), "code": "quota"}, 429)
+                    return
+                except Exception as e:
+                    self._send_json({"error": str(e)}, 502)
+                    return
+                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
+                self._send_json({"mode": "ai", "items": found["items"], "note": found["note"]})
+                return
+            items = parse_vocab_lines_rule(pages)
+            self._send_json({
+                "mode": "rule",
+                "items": items,
+                # 규칙으로 못 뽑았다 — 화면이 'AI로 다시 시도'를 권할 수 있게 알린다
+                "canAi": not items,
+                "note": "",
+            })
             return
 
         # 만든 문제지를 워드로 내려준다. AI를 부르지 않으므로 요금도 대기도 없다.

@@ -86,8 +86,9 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | Firestore 연결 | `_load_firestore` |
 | 회원가입·인증코드·비밀번호 | `start_signup`, `complete_signup`, `login_with_password`, `_hash_password` |
 | Gemini 호출 공통(재시도·시간 예산) | `RETRY_MIN_WAIT`, `MAX_RETRY_TOTAL`, `_over_budget`, `RefineTrace`, `_parse_retry_delay` |
-| 기능별 프롬프트·스키마·호출 | `*_SCHEMA` / `*_SYSTEM_PROMPT` / `call_gemini_*` 3종 세트 — quiz, reword, ocr, workbook. 지문 분석만 이름에 접두어가 없어 `GEMINI_SCHEMA` / `SYSTEM_PROMPT`입니다 |
+| 기능별 프롬프트·스키마·호출 | `*_SCHEMA` / `*_SYSTEM_PROMPT` / `call_gemini_*` 3종 세트 — quiz, reword, ocr, workbook, vocab(`VOCAB_ITEMS_SCHEMA` 하나를 `call_gemini_vocab_ocr`/`call_gemini_vocab_pdf` 둘이 같이 씁니다). 지문 분석만 이름에 접두어가 없어 `GEMINI_SCHEMA` / `SYSTEM_PROMPT`입니다 |
 | PDF에서 지문 꺼내기 | `read_pdf_pages`(글자층+좌표 읽기), `_pdf_columns`(단 나누기), `split_pdf_passages`(문항형/문단형 판정), `_pdf_clean_passage`(번호·보기·정답교정 정리). 여기까지는 Gemini를 부르지 않습니다 — 규칙이 실패했을 때만 `call_gemini_pdf_split`이 '경계 줄 번호'만 물어봅니다 |
+| 단어장 — 사진·PDF에서 단어 목록 가져오기 | `call_gemini_vocab_ocr`(사진), `parse_vocab_lines_rule`(PDF, 규칙만으로 "단어 — 뜻" 줄을 골라냄 · 0원), `call_gemini_vocab_pdf`(규칙이 못 뽑을 때만, `read_pdf_pages`가 이미 뽑아 둔 글자를 다시 보냄) |
 | 출력 HTML 정리 | `sanitize_inline`, `sanitize_quiz_html`, `clean_korean`, `clean_note`, `normalize_ruby`, `fix_underline_bounds` |
 | 라우팅 | `_handle_get`, 그리고 POST 쪽의 `if path == "/api/..."` 나열 |
 
@@ -102,7 +103,12 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `undoOnce` / `pushUndo`(되돌리기 — 결과 화면 HTML을 통째로 찍어 쌓는다. 글자 수정과 쪽 구성이
 같은 스택을 쓴다) ·
 `setPagingMode` / `layoutPages`(지문 분석 '쪽 구성' — 덩어리 `.pg-blk` 단위로 쪽 경계를 옮긴다.
-인쇄에 남는 건 `data-brk`뿐이고, 쪽 높이는 `PAGE_H_MM`이 `@page`·`.print-foot` 값을 그대로 따른다)
+인쇄에 남는 건 `data-brk`뿐이고, 쪽 높이는 `PAGE_H_MM`이 `@page`·`.print-foot` 값을 그대로 따른다) ·
+`getVocabSets` / `replaceAnalyzeVocabSets` / `appendVocabSet`(단어장 저장소 — 지문 분석·직접
+입력·사진·PDF 네 출처가 같은 `vocabSets`를 쓴다. `src` 태그로 구분해, 재분석은 `src:"analyze"`
+세트만 갈아 끼우고 나머지는 남긴다) ·
+`vocabEditorOpen` / `runVocabOcr` / `runVocabPdf`(단어장 직접 입력·사진·PDF — 인식 결과는
+바로 저장되지 않고 편집 표를 거쳐 "이 단어장에 추가"를 눌러야 확정된다)
 
 지문 칸 상한은 `MAX_PASSAGES`(40, 공용)와 `EXAM_PAPER_MAX_PASSAGES`(40, 시험지)입니다.
 많이 담은 채 실행하면 시간이 지문 수만큼 곱해지므로 `costConfirmed`가 실행 직전에
@@ -134,7 +140,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `/api/admin/users` `/api/admin/usage` `/api/_probe`(임시, 아래 참고)
 
 **POST** — `/api/analyze` `/api/quiz` `/api/workbook` `/api/reword` `/api/ocr` `/api/pdfsplit`
-`/api/models`
+`/api/vocabocr` `/api/vocabpdf` `/api/models`
 `/api/auth/google` `/api/auth/signup` `/api/auth/verify` `/api/auth/login` `/api/auth/delete`
 `/api/logout` `/api/account/recharge` `/api/saved` `/api/saved/delete` `/api/admin/login`
 `/api/admin/logout` `/api/admin/recharge`
