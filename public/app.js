@@ -25,7 +25,6 @@ const analyzeBtn = $("analyzeBtn");
 const printBtn = $("printBtn");
 const floatPrintGroup = $("floatPrintGroup");
 const floatPrintBtn = $("floatPrintBtn");
-const reviewChk = $("reviewChk");
 const errorEl = $("error");
 const loadingEl = $("loading");
 const loadingTextEl = $("loadingText");
@@ -925,9 +924,9 @@ function updatePassageCount(ta) {
 // 40개로 맞췄다.
 //
 // 대신 '넣는 것'과 '한 번에 돌리는 것'은 다르다 — 여기 탭들은 지문마다 고른 유형을
-// 전부 만들므로 시간·요금이 지문 수에 곱해진다. 지문 10개면 분석에 대략 3~10분
-// (꼼꼼 검토 시 2배)이고, 40개면 그 네 배다. 그래서 많이 담긴 상태로 실행할 때는
-// 실행 직전에 한 번 더 알린다(runActiveTab의 안내 참고).
+// 전부 만들므로 시간·요금이 지문 수에 곱해진다. 지문 10개면 분석에 대략 3~10분이고,
+// 40개면 그 네 배다. 그래서 많이 담긴 상태로 실행할 때는 실행 직전에 한 번 더
+// 알린다(runActiveTab의 안내 참고).
 const MAX_PASSAGES = 40;
 // 이 수를 넘겨 한 번에 실행하려 하면 시간이 얼마나 걸릴지 먼저 알린다.
 const MANY_PASSAGES_WARN = 10;
@@ -2136,15 +2135,6 @@ tabBtns.forEach((btn) => {
   });
 });
 
-// '꼼꼼 검토' 체크 상태 기억
-const REVIEW_STORE = "gemini_review";
-if (reviewChk) {
-  reviewChk.checked = localStorage.getItem(REVIEW_STORE) === "1";
-  reviewChk.addEventListener("change", () =>
-    localStorage.setItem(REVIEW_STORE, reviewChk.checked ? "1" : "0")
-  );
-}
-
 /* ── 분석본 직접 수정 ──
    결과는 이미 화면에 HTML로 그려져 있으므로, 그 영역을 편집 가능 상태로 바꾸기만 하면
    해석·해설·어휘표를 그 자리에서 고칠 수 있다. 되돌리기(Ctrl+Z)는 브라우저가 처리하고,
@@ -2564,18 +2554,16 @@ async function analyze() {
   syncFloatPrint();
 
   const total = jobs.length;
-  const reviewOn = !!(reviewChk && reviewChk.checked);
   let okCount = 0;
   const htmlParts = []; // 결과를 모아뒀다가 모두 끝난 뒤 한 번에 렌더
   const vocabSets = []; // 단어장 탭이 쓸 지문별 핵심 어휘
   const entries = []; // 저장 기능이 쓸 {job, data} — 성공한 것만
   for (let i = 0; i < total; i++) {
     const job = jobs[i];
-    const stage = reviewOn ? "분석·검토 중" : "분석 중";
     loadingTextEl.textContent =
       total > 1
-        ? `${job.name} ${stage}… (${i + 1}/${total})`
-        : `AI가 지문을 ${stage}입니다… ${reviewOn ? "(꼼꼼 검토: 두 번 분석해 더 걸립니다)" : "(지문 길이에 따라 20~60초)"}`;
+        ? `${job.name} 분석 중… (${i + 1}/${total})`
+        : `AI가 지문을 분석 중입니다… (지문 길이에 따라 20~60초)`;
 
     if (job.text.length < 20) {
       htmlParts.push(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
@@ -2588,7 +2576,6 @@ async function analyze() {
         {
           passage: job.text,
           targetGrammar: grammarEl.value,
-          review: reviewOn,
         },
         "분석에 실패했습니다."
       );
@@ -2832,14 +2819,13 @@ TAB_SAVE.analyze = {
   saveBtn,
   getPayload: () => ({
     passages: passageMgr.getJobs(),
-    settings: { targetGrammar: grammarEl.value, review: !!(reviewChk && reviewChk.checked) },
+    settings: { targetGrammar: grammarEl.value },
     entries: collectAnalysisEdits(),
     pageBreaks: collectPageBreaks(),
   }),
   applyPayload: (payload) => {
     passageMgr.setJobs(payload.passages || []);
     grammarEl.value = (payload.settings && payload.settings.targetGrammar) || "";
-    if (reviewChk) reviewChk.checked = !!(payload.settings && payload.settings.review);
     renderAnalyzeEntries(payload.entries || []);
     applyPageBreaks(payload.pageBreaks); // 손봐 둔 쪽 구성까지 그대로 되살린다
     resetUndo(); // 불러온 그 상태가 출발점 (되돌리기로 저장본 이전으로 가지 않게)

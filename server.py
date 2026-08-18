@@ -4978,7 +4978,7 @@ def _analysis_regressed(retry, current, passage):
     )
 
 
-def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=None,
+def build_user_prompt(passage, target_grammar, mode, complete_hint=None,
                       english_fix=False, conj_hint=None, num_hint=None,
                       ruby_hint=None, conflict_hint=None, note_hint=None):
     lines = []
@@ -5065,25 +5065,6 @@ def build_user_prompt(passage, target_grammar, mode, prior=None, complete_hint=N
     lines.append("")
     lines.append("[지문]")
     lines.append(passage.strip())
-    if prior is not None:
-        # 2차 검토 패스: 1차 결과를 주고 빠진 어법·어휘·등위접속사를 보강시킨다.
-        lines.append("")
-        lines.append("[1차 분석 결과 — 아래를 검토·보강하라]")
-        # 서버 내부용 키(_로 시작)는 빼고 보낸다 — 모델이 스키마에 없는 필드를
-        # 따라 만들거나 혼란스러워하지 않도록.
-        lines.append(json.dumps(
-            {k: v for k, v in prior.items() if not str(k).startswith("_")},
-            ensure_ascii=False,
-        ))
-        lines.append("")
-        lines.append(
-            "위 1차 결과를 지문과 대조하여, 빠지거나 틀린 표시를 모두 보강·수정하라. "
-            "특히 ① 등위·상관접속사(and/or/but/nor/yet, both…and 등)와 병렬구조, "
-            "② 준동사(to부정사·동명사·분사·분사구문), ③ 관계사, ④ 시제·상·태(수동/완료/진행), "
-            "⑤ 특수구문(가정법·도치·강조·가주어진주어 등), ⑥ 핵심 어휘를 한 문장씩 다시 훑어 "
-            "누락이 없는지 확인하라. 이미 올바른 부분은 그대로 두고, 누락은 추가, 오류는 수정하여 "
-            "동일한 스키마의 '완전한' JSON으로 다시 출력하라. 문장 수·순서·번호는 1차와 동일해야 한다."
-        )
     return "\n".join(lines)
 
 
@@ -5401,7 +5382,7 @@ def splice_sentences(result, fixed, targets):
     return out
 
 
-def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, complete_hint=None,
+def call_gemini(passage, target_grammar, mode, api_key, model, complete_hint=None,
                 english_fix=False, conj_hint=None, num_hint=None,
                 ruby_hint=None, conflict_hint=None, note_hint=None):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -5412,22 +5393,12 @@ def call_gemini(passage, target_grammar, mode, api_key, model, prior=None, compl
         )
     model = model if (model and _MODEL_RE.match(model)) else MODEL
 
-    sys_text = SYSTEM_PROMPT
-    if prior is not None:
-        sys_text += (
-            "\n\n## REVIEW MODE (검토·보강 패스)\n"
-            "You are now REVISING an existing analysis for completeness. Keep every correct "
-            "mark, ADD every missed grammar/vocab/coordinating-conjunction mark, and FIX any "
-            "wrong ones. Do not change sentence count, order, or numbering. Return the full "
-            "corrected JSON in the same schema."
-        )
-
     payload = {
-        "systemInstruction": {"parts": [{"text": sys_text}]},
+        "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": build_user_prompt(passage, target_grammar, mode, prior,
+                "parts": [{"text": build_user_prompt(passage, target_grammar, mode,
                                                      complete_hint, english_fix, conj_hint,
                                                      num_hint, ruby_hint, conflict_hint,
                                                      note_hint)}],
@@ -6207,6 +6178,18 @@ CHANGELOG = [
             "'↩ 되돌리기' 버튼이 생겼습니다.",
             "문제 제작 — 영어 정의를 보고 낱말을 맞히는 '영영풀이' 유형이 "
             "객관식·주관식에 추가됐습니다.",
+        ],
+    },
+    {
+        "version": 2,
+        "date": "2026-08-19",
+        "items": [
+            "문제 제작 — 밑줄 친 우리말을 <보기> 낱말·<조건>에 맞게 직접 쓰는 "
+            "'조건 영작', 문장을 수동태·분사구문 등으로 바꿔 쓰는 '문장 전환' "
+            "유형이 주관식에 추가됐습니다.",
+            "지문 분석 — '요약 이미지' 만들기가 기본으로 켜집니다(전과 달리 "
+            "지문당 요금이 자동으로 더 붙으니, 필요 없으면 체크를 해제하세요).",
+            "지문 분석 — 두 번 분석해 보강하던 '꼼꼼 검토'를 뺐습니다.",
         ],
     },
 ]
@@ -7816,7 +7799,6 @@ class Handler(BaseHTTPRequestHandler):
         mode = req.get("mode") or "teacher"
         api_key = req.get("apiKey") or ""
         model = MODEL  # 지문 분석은 항상 Flash — 사용자가 모델을 고르지 않는다
-        review = bool(req.get("review"))
 
         t0 = time.monotonic()
         trace = RefineTrace(t0)
@@ -7845,12 +7827,6 @@ class Handler(BaseHTTPRequestHandler):
                 trace.retry("영어")
                 result = call_gemini(
                     passage, target_grammar, mode, api_key, model, english_fix=True
-                )
-            if review:
-                # 2차 검토 패스 — 1차 결과를 다시 보내 빠진 어법·어휘를 보강
-                trace.retry("검토")
-                result = call_gemini(
-                    passage, target_grammar, mode, api_key, model, prior=result
                 )
             # 등위접속사 누락 방어 — 모델이 가장 자주 빠뜨리는 항목이라, 서버가 직접
             # 세어 빠진 자리를 짚어 준 뒤 다시 요청한다. 더 많이 표시해 온 결과만 채택해
