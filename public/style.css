@@ -743,7 +743,19 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
   /* 정답 모음은 별지 — 새 쪽에서 시작하고 2단으로 촘촘하게 */
   .wb-answerbook{break-before:page; page-break-before:always; margin-top:0;}
   .wb-answerbook-head{break-after:avoid; page-break-after:avoid;}
-  .wb-ab-passage{column-count:2; column-gap:8mm; column-rule:1px solid var(--line-soft);}
+  /* 지문마다 정답을 새 쪽에서 시작해 그 쪽을 늘 다 채운다.
+     원래는 여러 지문 정답을 한 흐름으로 이어 붙여 종이를 아꼈는데, 그러면 정답이
+     짧은 지문 뒤에서 내용이 일찍 끝나 버려 매 쪽 바닥에 반복되는 학원 로고(.print-foot,
+     table-footer-group)가 쪽 중간에 붙는 문제가 있었다 — tfoot은 '그 쪽 내용이 끝난
+     자리'에 그려지지, 쪽 바닥에 고정되지 않는다. 종이를 조금 더 쓰더라도 로고 위치를
+     보장하는 쪽을 택해, 지문마다 쪽을 떼고 최소 높이를 한 쪽 분량(PAGE_H_MM, app.js와
+     같은 값)만큼 채운다. 정답이 그보다 긴 지문은(드묾) 여러 쪽으로 넘어가고 그 지문의
+     마지막 쪽에서는 이 문제가 다시 나타날 수 있다. */
+  .wb-ab-passage{
+    column-count:2; column-gap:8mm; column-rule:1px solid var(--line-soft);
+    break-before:page; page-break-before:always; min-height:261mm;
+  }
+  .wb-answerbook > .wb-ab-passage:first-of-type{break-before:auto; page-break-before:auto;}
   #workbookDoc.answers-only .wb-answerbook{break-before:auto; page-break-before:auto;}
 }
 
