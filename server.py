@@ -246,6 +246,7 @@ MCQ_ONLY_TYPES = {
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
     "함축의미", "무관한 문장", "요약문", "영영풀이",
     "목적", "심경", "지칭 추론",
+    "어법 분석", "옳은 문장 찾기", "영영풀이 오류 찾기",
 }
 
 
@@ -874,6 +875,7 @@ QUIZ_TYPE_LABELS = [
     "동사형 쓰기", "빈칸 쓰기", "표현 찾아 쓰기", "영영풀이 쓰기",
     "무관한 문장 쓰기", "요약문 완성", "조건 영작", "문장 전환", "질문에 답하기",
     "목적", "심경", "지칭 추론",
+    "어법 분석", "옳은 문장 찾기", "영영풀이 오류 찾기",
 ]
 
 # 지문을 '가공 없이 통째로' 보여 주는 유형 — 빈칸·밑줄·블록 분할이 전혀 없다.
@@ -959,6 +961,15 @@ QUIZ_TYPE_MAX = {
     # 지문에 서로 다른 대상을 가리키는 지칭어 집합이 여러 벌 나오기 어렵다 —
     # 어법과 같은 이유(문법 포인트 수)로, 대명사가 헷갈릴 만한 자리 수가 한계다.
     "지칭 추론": 2,
+    # 어법보다 한 자리 낮춘다 — 한 자리에 '참인 주장 하나 + 거짓인 주장 넷'을 모두
+    # 자연스럽게 지어내야 해서, 단순히 오류 하나만 심는 어법보다 손이 더 간다.
+    "어법 분석": 3,
+    # 문항 하나에 문장 5개 중 넷에 문법 오류를 심고 하나는 원문 그대로 옳아야 한다.
+    # 어법(단어 하나에 오류 하나)보다 한 문항이 요구하는 오류 수가 많아 어법 분석과
+    # 같은 상한을 준다.
+    "옳은 문장 찾기": 3,
+    # 영영풀이와 같은 이유(뜻이 뚜렷한 내용어 수)로 넉넉히 잡는다.
+    "영영풀이 오류 찾기": 5,
 }
 # 한 번의 /api/quiz 호출에 넣을 수 있는 총 문항 수 상한.
 # 화면은 문항 수로 끊어 보내므로(app.js의 QUIZ_QUESTIONS_PER_CALL=6, 한 유형이 그보다
@@ -1138,6 +1149,35 @@ the passage in full.
     찾아라.
   choices = ["①","②","③","④","⑤"] in that literal order; answer = 다른 대상을
   가리키는 것의 위치.
+- "어법 분석" — instruction "다음 글의 밑줄 친 부분에 대한 설명으로 가장 적절한 것은?".
+  Same underline/circled-number passageHtml as 어법 (5 spans, ①~⑤) — 문법 포인트든
+  어휘(문맥상 뜻)든 섞어도 된다. 여기까지는 어법과 같지만, **choices의 구조가
+  다르다**: 어법·어휘는 "어느 것이 틀렸나"를 묻지만, 이 유형은 **각 choice가 그
+  번호의 밑줄에 대한 하나의 문법적·의미적 주장**이다 — choice N은 반드시 밑줄 N에
+  대해 말해야 한다(1번 choice가 3번 밑줄을 설명하는 식으로 뒤섞지 마라). 예:
+    ① ①that은 which로 바꿔 쓸 수 있다.
+    ② ②that은 the illusion을 설명하는 목적격 관계대명사이다.
+    ③ ③no less than은 문맥상 '기껏해야'를 의미한다.
+    ④ ④to recognise는 어법상 recognising으로 바꿔 쓸 수 없다.
+    ⑤ ⑤presenting은 어법상 presented로 고쳐야 한다.
+  정확히 하나의 주장만 참이고, 나머지 넷은 각각 그 밑줄에 대해 **틀린** 주장이어야
+  한다(형태를 잘못 짚거나, 뜻을 잘못 짚거나, 안 바뀌는 걸 바뀐다고 하거나).
+  ⚠️ 참인 주장 하나를 뺀 나머지 넷의 밑줄 자체는 실제로 어법상·의미상 **문제가
+  없어야** 한다 — 그 넷에 대한 주장만 틀렸을 뿐, 밑줄 자체가 틀리면 학생이 왜
+  그 choice가 틀렸다고 판단해야 하는지 근거가 사라진다.
+  choices = 5 Korean/English-mixed statements as above; answer = the TRUE one's position.
+- "옳은 문장 찾기" — instruction "다음 글에서 어법상 옳은 문장은?". 어법의 극성을
+  뒤집은 유형이다 — 어법은 5개 중 **하나만 틀린 것**을 찾지만, 이건 5개 중
+  **하나만 맞는 것**을 찾는다. 표시 단위도 낱말이 아니라 **문장**이다.
+  · 지문에서 문장 5개를 골라(연속이 아니어도 된다) 각각을 <u>…</u>로 통째로 감싸고
+    앞에 circled number를 붙인다(①<u>Sentence one.</u> … ⑤<u>Sentence five.</u>).
+  · 그중 정확히 하나는 지문 원문 그대로 — 어법상 완전히 옳다. 나머지 넷에는 네가
+    직접 문법 오류를 하나씩 심는다(수일치·시제·태·준동사·관계사·병렬 등, 어법
+    유형과 같은 원리로 고른다).
+  · 오류를 심은 네 문장도 억지스럽지 않게 자연스러운 문장처럼 읽혀야 한다 — 대놓고
+    틀린 문장은 학생이 지문을 안 읽어도 걸러낼 수 있어 시험이 안 된다.
+  choices = ["①","②","③","④","⑤"] in that literal order; answer = 원문 그대로 둔
+  문장(어법상 옳은 것)의 위치.
 - "순서" — instruction "주어진 글 다음에 이어질 글의 순서로 가장 적절한 것은?".
   passageHtml = the passage's first 1–2 sentences (the given opening) then <br><br>, then the
   REST of the passage split into exactly 3 blocks labeled <b>(A)</b>, <b>(B)</b>, <b>(C)</b>
@@ -1214,6 +1254,21 @@ the passage in full.
   similar part of speech and difficulty that the definition does NOT fit. answer = the defined
   word's position. Never choose 5 near-synonyms — a careful reader must be able to rule out
   4 of them by matching the definition, not by vocabulary trivia alone.
+- "영영풀이 오류 찾기" — instruction "다음 글의 밑줄 친 부분의 영영풀이로 적절하지 않은
+  것은?". 영영풀이와 재료(단어+영어 정의)는 같지만, 한 단어에 정의 하나씩이 아니라
+  **다섯 쌍**을 한꺼번에 보여주고 그중 잘못 짝지어진 것을 고르게 한다.
+  · `passageHtml` = 지문 전문에서 내용어 5개를 골라 각각 circled number를 붙여
+    <u>…</u>로 감싸고, 그 낱말 바로 뒤에 괄호로 영영풀이를 단다 — 예:
+    "the animal remained largely <u>①unnoticed</u>(without attracting attention) by
+    predators". 정의는 <u> 밖에 평문으로 쓴다(정의 자체에는 밑줄 치지 마라).
+  · 다섯 중 넷은 그 낱말이 **이 지문에서 실제로 쓰인 뜻**과 맞는 정의를 쓴다.
+    나머지 하나는 그럴듯하지만 **틀린** 정의를 쓴다 — 가장 확실한 방법은 방향이
+    반대인 정의를 쓰는 것이다(예: melt를 "to cause a solid to become liquid"가
+    아니라 "to cause a liquid to become solid"라고 뒤집기), 또는 그 낱말의 다른
+    뜻(문맥에 안 맞는 의미)을 정의로 준다.
+  · 정의에는 그 낱말 자체나 같은 어근을 쓰지 마라(영영풀이 유형과 같은 규칙).
+  choices = ["①","②","③","④","⑤"] in that literal order; answer = 정의가 틀린
+  것의 위치.
 - "내용일치(영)" — instruction "다음 글의 내용과 일치하는 것은?". passageHtml = 지문 전문.
   choices = 5 ENGLISH statements about the passage; EXACTLY ONE is true to the
   passage, the other 4 must CONTRADICT it (not merely be unmentioned). answer = the true one.
@@ -6295,6 +6350,15 @@ CHANGELOG = [
         "date": "2026-08-19",
         "items": [
             "문제 제작 — 객관식에 '목적', '심경', '지칭 추론' 유형이 추가됐습니다.",
+        ],
+    },
+    {
+        "version": 5,
+        "date": "2026-08-19",
+        "items": [
+            "문제 제작 — 객관식에 '어법 분석'(밑줄 각각에 대한 설명 중 옳은 것 고르기), "
+            "'옳은 문장 찾기'(다섯 문장 중 어법상 옳은 것 고르기), "
+            "'영영풀이 오류 찾기' 유형이 추가됐습니다.",
         ],
     },
 ]
