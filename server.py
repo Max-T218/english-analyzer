@@ -247,6 +247,7 @@ MCQ_ONLY_TYPES = {
     "함축의미", "무관한 문장", "요약문", "영영풀이",
     "목적", "심경", "지칭 추론",
     "어법 분석", "옳은 문장 찾기", "영영풀이 오류 찾기",
+    "연결어 2빈칸 추론",
 }
 
 
@@ -876,6 +877,7 @@ QUIZ_TYPE_LABELS = [
     "무관한 문장 쓰기", "요약문 완성", "조건 영작", "문장 전환", "질문에 답하기",
     "목적", "심경", "지칭 추론",
     "어법 분석", "옳은 문장 찾기", "영영풀이 오류 찾기",
+    "요약문 완전구성형", "연결어 2빈칸 추론", "다의어 문맥의미 매칭형",
 ]
 
 # 지문을 '가공 없이 통째로' 보여 주는 유형 — 빈칸·밑줄·블록 분할이 전혀 없다.
@@ -890,6 +892,9 @@ QUIZ_PLAIN_PASSAGE_TYPES = {
     "주제", "제목", "요지", "영영풀이", "목적", "심경",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
     "OX진위(영)", "OX진위(한)", "질문에 답하기",
+    # 요약 문장을 통째로 새로 짓는 유형이라 지문 자체는 건드리지 않는다
+    # ("요약문 완성"은 요약 문장 안에 빈칸을 뚫으므로 여기 없다).
+    "요약문 완전구성형",
 }
 
 # '목표 어법'(화면의 targetGrammar)이 걸리는 유형.
@@ -970,6 +975,15 @@ QUIZ_TYPE_MAX = {
     "옳은 문장 찾기": 3,
     # 영영풀이와 같은 이유(뜻이 뚜렷한 내용어 수)로 넉넉히 잡는다.
     "영영풀이 오류 찾기": 5,
+    # 무관한 문장·요약문과 같은 이유 — 지문 하나를 요약한 문장은 하나뿐이라 여러 문항을
+    # 내면 같은 요약을 다른 낱말로 되풀이하게 된다.
+    "요약문 완전구성형": 1,
+    # 연결어 두 자리가 자연스레 성립하는 담화 전환점(그러나·따라서 등)이 지문 하나에
+    # 여럿 있기는 어렵다. 순서·문장삽입과 같은 상한을 준다.
+    "연결어 2빈칸 추론": 2,
+    # 같은 낱말이 서로 다른 뜻으로 3번 이상 쓰인 경우 자체가 드물다 — 지문 하나에
+    # 그런 낱말이 두 개 있기는 더 어렵다.
+    "다의어 문맥의미 매칭형": 1,
 }
 # 한 번의 /api/quiz 호출에 넣을 수 있는 총 문항 수 상한.
 # 화면은 문항 수로 끊어 보내므로(app.js의 QUIZ_QUESTIONS_PER_CALL=6, 한 유형이 그보다
@@ -1079,7 +1093,8 @@ in every other question.
   For "mc" and "tf", set to "".
 - `tfItems`: for "tf", EXACTLY 5 items {text, isTrue}. For every other format, set to [].
 - `fixes`: for "fix", one {wrong, right} per planted error. For every other format, set to [].
-- `findItems`: for "find" (표현 찾아 쓰기), 3~4 items {ko, en}. For every other format, set to [].
+- `findItems`: for format "find" — 3~4 items {ko, en} for "표현 찾아 쓰기", or 3~5 items
+  (one per underlined occurrence) for "다의어 문맥의미 매칭형". For every other format, set to [].
 - `glossItems`: for "gloss" (영영풀이 쓰기), 2~4 items {def, en}. For every other format, set to [].
 - `conditions`: for "compose", "convert", and "answer", the Korean <조건> lines (see those
   types below). For every other format, set to [].
@@ -1238,6 +1253,30 @@ the passage in full.
   actually contradicts, not a word that is merely odd. Do not use nonsense fillers.
   ⚠️ Do NOT put the correct pair first. Order the five pairs so the answer falls at ②, ③, ④,
   or ⑤ — a correct choice sitting at ① is a giveaway.
+- "연결어 2빈칸 추론" (format "mc") — instruction
+  "다음 글의 빈칸 (A), (B)에 들어갈 말로 가장 적절한 것은?"
+  수능에 흔한 담화표지(연결어) 두 자리 추론 유형이다. "빈칸"과 다른 점은 한 자리가
+  아니라 **두 자리**이고, 채울 것이 명사·구가 아니라 **문장과 문장을 잇는 담화표지**
+  (however, therefore, in addition, for example, in contrast, as a result, similarly …)
+  라는 것이다.
+  `passageHtml` = the passage verbatim, with exactly TWO sentence-initial connectives
+  replaced by "(A)_______" and "(B)_______" — pick two spots where the passage's own
+  logic genuinely turns (역접·인과·예시·첨가 등), not two random sentence starts.
+  ⚠️ The two blanks must sit at two DIFFERENT kinds of transition (e.g. one 역접 + one
+  인과) — if both blanks want the same relationship, the item has only one real decision
+  disguised as two.
+  choices = 5 strings, each ONE pair written exactly as "wordA … wordB" (three-dot
+  ellipsis, spaces around it) — same convention as "요약문". answer = the correct pair.
+  ⚠️ DISTRACTOR GRID — same requirement as "요약문": if all five (A) words differ AND all
+  five (B) words differ, a student who nails only (A) has already found the answer. Reuse
+  words on ONE side (2-3 distinct words spread across the five pairs) and keep the OTHER
+  side fully distinct (5 different words), e.g.:
+      ① However … Therefore   ② In addition … For example   ③ However … For example
+      ④ In contrast … As a result   ⑤ However … As a result
+  ⚠️ Every wrong connective must be wrong for a reason grounded in the passage's actual
+  logic at that spot (a real 역접 spot where the distractor claims 인과, etc.) — never a
+  connective that would also read acceptably there.
+  ⚠️ Do NOT put the correct pair first — order so the answer falls at ②, ③, ④, or ⑤.
 - "영영풀이" (format "mc") — instruction "다음 영영풀이가 설명하는 낱말로 가장 적절한 것은?"
   followed on its own line by the definition, embedded the same way "문장삽입" embeds its
   given sentence:
@@ -1393,6 +1432,27 @@ the passage in full.
   ⚠️ 한 지문에서 여러 문항을 낼 때는 **질문마다 지문의 다른 대목을 짚어라** — 같은 문장을
   근거로 삼는 질문을 두 개 내면 사실상 같은 문제의 반복이다.
   · choices = [], answer = 0, tfItems = [], fixes = [], findItems = [], glossItems = [].
+- "요약문 완전구성형" (format "compose") — passageHtml = 지문 전문(OMIT when 지문 재사용 is
+  on — QUIZ_PLAIN_PASSAGE_TYPES와 같다. "요약문 완성"과 달리 이 유형은 지문을 전혀
+  손대지 않는다). `instruction` = "다음 글의 내용을 한 문장으로 요약하고자 한다. <보기>의
+  낱말을 모두 사용하여 요약문을 완성하시오."
+  이 유형은 "요약문 완성"(빈칸 두 곳만 채움)과 다르다 — 학생이 요약 문장 **전체를
+  새로 짓는다**. "조건 영작"과 재료(wordBank·conditions)는 닮았지만 대상이 다르다 —
+  조건 영작은 '지문 속에 이미 있는 문장'을 우리말 보고 재현하는 것이고, 이 유형은
+  '지문에 없는, 요약이라는 새 문장'을 짓는 것이다. 그래서 밑줄 친 우리말 문장도,
+  숨겨야 할 원문 영어도 없다 — passageHtml은 그냥 지문 전문이다.
+  · `answerText` = 모범 요약 문장 하나(영어). 지문 전체(도입부만이 아니라)를 압축해야
+    하고, 문법적으로 완전한 한 문장이어야 한다.
+  · `wordBank` = 4~7개. `answerText`의 내용어(동사·명사·형용사·부사)를 **사전형**으로
+    적는다(조건 영작과 같은 규칙 — 굴절형 금지). `answerText`에 실제로 쓰인 낱말만
+    넣는다.
+  · `conditions` = 2개, 이 순서로:
+      ① "<보기>의 낱말을 모두 사용하되, 필요하면 형태를 바꿀 것"
+      ② "한 문장으로 쓸 것"
+    낱말 수 조건은 적지 마라 — 앱이 answerText를 세어 붙인다.
+  ⚠️ 요약문은 지문의 **결론이나 전체 요지**를 담아야 한다 — 도입부 사실 하나만 옮기면
+  요약이 아니라 발췌다.
+  · choices = [], answer = 0, tfItems = [], fixes = [], findItems = [], glossItems = [].
 - "어휘 선택형" (format "pick") — instruction
   "다음 각 네모 안에서 문맥상 알맞은 낱말을 골라 쓰시오."
   `passageHtml` = 3~6 sentences taken from the passage, PLAIN TEXT ONLY (no HTML tags at all),
@@ -1458,6 +1518,34 @@ the passage in full.
   word or overlap. Pick words whose meaning is actually worth testing (관용표현·핵심 어휘) —
   never an article, pronoun, or other function word.
   choices = [], answer = 0, answerText = "", tfItems = [], fixes = [], findItems = [].
+- "다의어 문맥의미 매칭형" (format "find") — instruction
+  "다음 글에서 밑줄 친 낱말 ①~은 아래 <보기> 중 어느 뜻으로 쓰였는지 기호를 쓰시오."
+  ⚠️ 이 유형은 지문에 **같은 철자의 한 단어가 서로 다른 뜻으로 3번 이상** 쓰일 때만
+  성립한다(예: as가 '~함에 따라'와 '~로서'로 각각 쓰이는 경우). 그런 낱말이 지문에
+  실제로 없으면 이 유형을 만들지 마라 — 억지로 만들면 답이 하나로 안 정해진다.
+  흔한 후보: as, that, since, while, for, like, once, so, well, still, before, right,
+  even, just(문맥에 따라 전치사·접속사·부사·형용사로 뜻이 갈리는 기능어들).
+  · `passageHtml` = the passage verbatim, with EVERY occurrence of the target word (3~5
+    of them) wrapped as a circled-numbered underline in reading order — ①<u>as</u>,
+    ②<u>as</u>, ③<u>as</u> … (같은 규칙: circled number는 <u> 바로 앞, 밖에 둔다).
+    그 뒤에 <br><br>로 이어, 이 단어가 지문에서 실제로 갖는 **서로 다른 뜻**을 우리말
+    보기로 나열한다(2~4개 — 뜻의 가짓수이지 낱말 등장 횟수가 아니다. 등장은 5번이어도
+    뜻은 2~3가지로 겹칠 수 있다):
+      &lt;보기&gt;<br>
+      ㄱ. ~함에 따라(비례)<br>
+      ㄴ. ~로서(자격)<br>
+      ㄷ. ~ 때(시간)
+    보기 순서는 지문 등장 순서와 무관하게 둬도 된다(사전식이든 임의든) — 어차피 답을
+    번호마다 기호로 적으므로 순서 자체는 단서가 아니다.
+  · `findItems` = 등장한 낱말 개수만큼(3~5개), 지문에 나온 순서대로 {ko, en}:
+      ko = 그 번호 라벨 그대로, 예: "①"
+      en = 그 자리에 맞는 보기 기호, 예: "ㄴ"
+    ⚠️ 최소 두 개의 서로 다른 기호가 실제로 쓰여야 한다 — 답이 전부 같은 기호면
+    '문맥마다 다른 뜻'을 확인하는 문제가 아니라 반복 확인 문제가 된다.
+  · <보기>의 각 뜻은 실제로 하나 이상의 밑줄과 짝지어져야 한다 — 어느 밑줄과도 맞지
+    않는 보기 항목을 넣지 마라(선택형과 달리 오답 매력을 위한 미끼 항목을 두는 유형이
+    아니다).
+  choices = [], answer = 0, answerText = "", tfItems = [], fixes = [], glossItems = [].
 - "빈칸 쓰기" (format "fill") — instruction
   "다음 글의 빈칸에 들어갈 알맞은 낱말을 윗글에서 찾아 쓰시오."
   `passageHtml` = the passage (or 4~8 consecutive sentences of it), PLAIN TEXT ONLY
