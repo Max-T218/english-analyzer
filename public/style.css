@@ -1233,6 +1233,37 @@ table.vocab td.pos{color:var(--ink-soft); font-style:italic; white-space:nowrap;
 footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-soft);}
 #result:empty{display:none;}
 
+/* ── 사이트 바닥글 (사업자 정보 · 약관 링크) ──
+   결과물 안에 쓰는 맨 footer 태그(위 규칙)와 겹치지 않게 클래스로 다시 잡는다.
+   print-frame 표 밖에 있어 인쇄에는 원래 안 나오지만, 혹시 몰라 한 번 더 막아 둔다. */
+.site-footer{
+  max-width:900px; margin:40px auto 0; padding:20px 22px 28px;
+  border-top:1px solid var(--line); text-align:center;
+  font-size:12px; line-height:1.8; color:var(--ink-soft);
+}
+.site-footer-links{margin:0 0 8px; font-weight:700;}
+.site-footer-links a{color:var(--accent); text-decoration:none;}
+.site-footer-links a:hover{text-decoration:underline;}
+.site-footer-biz{margin:0;}
+.site-footer-biz a{color:inherit; text-decoration:none;}
+.site-footer-biz a:hover{text-decoration:underline;}
+.site-footer-copy{margin:6px 0 0; opacity:.75;}
+@media print{ .site-footer{display:none !important;} }
+
+/* ── 이용약관 · 개인정보처리방침 ── */
+.legal-doc{font-size:14px; line-height:1.75; color:var(--ink);}
+.legal-doc h2{font-size:16px; margin:26px 0 8px; color:var(--accent);}
+.legal-doc h2:first-child{margin-top:0;}
+.legal-doc p{margin:0 0 10px;}
+.legal-doc ul, .legal-doc ol{margin:0 0 10px; padding-left:22px;}
+.legal-doc li{margin:0 0 4px;}
+.legal-doc li ul{margin-top:4px;}
+.legal-note{margin-top:24px; padding-top:14px; border-top:1px dashed var(--line);
+  font-size:12.5px; color:var(--ink-soft);}
+.legal-back{margin:18px 2px 0; font-size:13px;}
+.legal-back a{color:var(--accent); text-decoration:none;}
+.legal-back a:hover{text-decoration:underline;}
+
 @media (max-width:620px){
   .sent{grid-template-columns:1fr; grid-template-areas:"head" "body" "note";}
   .note{border-left:none; border-top:1px dashed var(--line);}
