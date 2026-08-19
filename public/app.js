@@ -3009,8 +3009,9 @@ const MCQ_TYPES = [
 // 주관식(서술형·단답형) 유형
 const SAQ_TYPES = [
   { id: "서술형배열", def: true },
-  // 서술형배열 바로 옆에 둔다 — 셋 다 '문장을 직접 쓰는' 유형이라 여기서 함께 찾는다.
+  // 서술형배열 바로 옆에 둔다 — 넷 다 '문장을 직접 쓰는' 유형이라 여기서 함께 찾는다.
   { id: "조건 영작", def: false }, { id: "문장 전환", def: false },
+  { id: "질문에 답하기", def: false },
   { id: "OX진위(영)", def: true }, { id: "OX진위(한)", def: false },
   { id: "어휘 선택형", def: true }, { id: "어법 선택형", def: true },
   { id: "틀린 어휘 찾기", def: false }, { id: "틀린 어법 찾기", def: false },
@@ -3112,7 +3113,7 @@ const TYPE_MAX = {
   "틀린 어휘 찾기": 5, "어법 선택형": 5, "틀린 어법 찾기": 3,
   "동사형 쓰기": 2, "빈칸 쓰기": 3, "표현 찾아 쓰기": 2, "영영풀이 쓰기": 2,
   "무관한 문장 쓰기": 1, "요약문 완성": 1,
-  "조건 영작": 3, "문장 전환": 3,
+  "조건 영작": 3, "문장 전환": 3, "질문에 답하기": 5,
 };
 // +버튼이 막혔을 때 왜 막혔는지 알려 준다 — 유형마다 상한이 다른 이유가 다르다.
 const TYPE_MAX_REASON = {
@@ -3135,6 +3136,7 @@ const TYPE_MAX_REASON = {
   "요약문 완성": "글 하나를 요약한 문장이 하나뿐이라",
   "조건 영작": "조건을 걸 만한 문법이 든 문장 수 때문에",
   "문장 전환": "바꿔 쓸 수 있는 구조가 든 문장 수 때문에",
+  "질문에 답하기": "질문마다 답의 근거가 겹치지 않아야 해서",
 };
 function typeMaxNote(id) {
   const max = TYPE_MAX[id] || 1;
@@ -3749,8 +3751,12 @@ const QUIZ_TABS = {
 // (객관식=①, 서술형=문장, OX=O/X 나열, 선택형=고른 낱말, 오류찾기=틀린말→바른말)
 function quizAnswerLabel(q) {
   const fmt = q.format || "mc";
-  // 조건 영작·문장 전환도 정답이 문장 하나다(전환은 '바꿔 쓴' 문장이 정답이다)
-  if (fmt === "write" || fmt === "short" || fmt === "compose" || fmt === "convert") {
+  // 조건 영작·문장 전환·질문에 답하기도 정답이 문장 하나다
+  // (전환은 '바꿔 쓴' 문장, 질문에 답하기는 모범답안 문장이 정답이다)
+  if (
+    fmt === "write" || fmt === "short" ||
+    fmt === "compose" || fmt === "convert" || fmt === "answer"
+  ) {
     return esc(q.answerText || "");
   }
   if (fmt === "tf") {
@@ -3854,6 +3860,25 @@ function quizBodyHtml(q) {
   if (fmt === "convert") {
     return `
       <div class="qz-passage">${safeHTML(q.passageHtml)}</div>
+      ${quizConditionsHtml(q)}
+      <div class="qz-writeline"></div>
+      <div class="qz-writeline"></div>`;
+  }
+
+  /* 질문에 답하기 — 지문은 그대로(가공 없음), 질문은 이미 위쪽 qz-instruction에
+     붙어 있다(build 쪽에서 "...쓰시오.<br><br><b>Q:</b> ..."로 실어 보낸다).
+     <보기>가 있을 때만 보여준다 — 이 유형은 조건 영작과 달리 단어은행 없이 자유롭게
+     쓰는 문항이 더 많아서(서버 프롬프트 참고), wordBank가 빈 배열이면 아예 뺀다. */
+  if (fmt === "answer") {
+    const bank = (q.wordBank || []).filter((w) => String(w || "").trim());
+    const bankHtml = bank.length
+      ? `<div class="qz-scramble"><span class="qz-scramble-tag">&lt;보기&gt;</span>${esc(
+          seededShuffle(bank, q.no || 1).join(" / ")
+        )}</div>`
+      : "";
+    return `
+      <div class="qz-passage">${safeHTML(q.passageHtml)}</div>
+      ${bankHtml}
       ${quizConditionsHtml(q)}
       <div class="qz-writeline"></div>
       <div class="qz-writeline"></div>`;

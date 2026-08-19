@@ -187,6 +187,7 @@ QUIZ_KIND_HINTS = {
     "요약문 완성": "글을 한 문장으로 요약한 문장의 빈칸 두 곳을 <보기>의 낱말로 채운다",
     "조건 영작": "밑줄 친 우리말을 <보기>의 낱말(원형)과 <조건>에 맞게 직접 영작한다",
     "문장 전환": "밑줄 친 문장을 수동태·분사구문 등 <조건>이 지정한 구조로 바꿔 쓴다",
+    "질문에 답하기": "지문에 대한 영어 질문을 읽고 완전한 영어 문장으로 답을 직접 쓴다",
 }
 
 
@@ -833,13 +834,14 @@ QUIZ_SCHEMA = {
                             "propertyOrdering": ["def", "en"],
                         },
                     },
-                    # 조건 영작·문장 전환 — 학생에게 거는 <조건> 줄들(우리말).
+                    # 조건 영작·문장 전환·질문에 답하기 — 학생에게 거는 <조건> 줄들(우리말).
                     # 조건 영작의 '총 N단어로 쓸 것'은 여기 넣지 않는다. 모델이 낱말을
                     # 세다 틀리면 모범답안이 제 조건을 어기게 되므로, 서버가 answerText를
-                    # 직접 세어 뒤에 붙인다(_append_word_count_condition).
+                    # 직접 세어 뒤에 붙인다(_append_word_count_condition). 질문에 답하기의
+                    # 분량 제한은 답이 정해진 하나로 떨어지지 않아 서버가 대신 세지 않는다.
                     "conditions": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    # 조건 영작 — 학생에게 주는 <보기> 낱말. 반드시 사전형(원형)이라
-                    # 형태 결정은 학생 몫으로 남는다. 굴절형을 주면 배열 문제가 된다.
+                    # 조건 영작(항상), 질문에 답하기(<보기>를 줄 때만) — 학생에게 주는 낱말.
+                    # 조건 영작은 반드시 사전형(원형)이라 형태 결정이 학생 몫으로 남는다.
                     "wordBank": {"type": "ARRAY", "items": {"type": "STRING"}},
                     "explanation": {"type": "STRING"},
                 },
@@ -869,7 +871,7 @@ QUIZ_TYPE_LABELS = [
     "서술형배열", "OX진위(영)", "OX진위(한)",
     "어휘 선택형", "어법 선택형", "틀린 어휘 찾기", "틀린 어법 찾기",
     "동사형 쓰기", "빈칸 쓰기", "표현 찾아 쓰기", "영영풀이 쓰기",
-    "무관한 문장 쓰기", "요약문 완성", "조건 영작", "문장 전환",
+    "무관한 문장 쓰기", "요약문 완성", "조건 영작", "문장 전환", "질문에 답하기",
 ]
 
 # 지문을 '가공 없이 통째로' 보여 주는 유형 — 빈칸·밑줄·블록 분할이 전혀 없다.
@@ -877,10 +879,11 @@ QUIZ_TYPE_LABELS = [
 # 출력에 중복돼 실린다(12유형이면 지문 12벌). 모델에게는 비워서 보내게 하고
 # 서버가 지문으로 채워, 출력 토큰과 생성 시간을 함께 줄인다.
 # "영영풀이"도 여기 든다 — 영영풀이는 지문 옆에 정의를 얹을 뿐 지문 자체는 그대로다.
+# "질문에 답하기"도 마찬가지다 — 질문은 instruction에 실리고 지문 자체는 손대지 않는다.
 QUIZ_PLAIN_PASSAGE_TYPES = {
     "주제", "제목", "요지", "영영풀이",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
-    "OX진위(영)", "OX진위(한)",
+    "OX진위(영)", "OX진위(한)", "질문에 답하기",
 }
 
 # '목표 어법'(화면의 targetGrammar)이 걸리는 유형.
@@ -940,6 +943,10 @@ QUIZ_TYPE_MAX = {
     # 전환은 원문이 그 구조를 이미 갖고 있을 때만 성립한다(수동태로 바꾸려면 타동사와
     # 목적어가, 분사구문으로 바꾸려면 부사절이 있어야 한다). 조건 영작보다 더 좁다.
     "문장 전환": 3,
+    # 지문 재사용 유형이라 출력은 크지 않지만, 질문마다 답의 근거가 되는 대목이
+    # 겹치지 않아야 한다. 지문 하나에서 서로 다른 대목을 짚어 물을 수 있는 질문이
+    # 그리 많지 않아 OX진위(8)보다는 보수적으로 잡는다.
+    "질문에 답하기": 5,
 }
 # 한 번의 /api/quiz 호출에 넣을 수 있는 총 문항 수 상한.
 # 화면은 문항 수로 끊어 보내므로(app.js의 QUIZ_QUESTIONS_PER_CALL=6, 한 유형이 그보다
@@ -1023,7 +1030,7 @@ in every other question.
 - `format`: "mc" for 5-choice questions, "write" for 서술형배열, "tf" for OX진위(영)/OX진위(한),
   "pick" for 어휘/어법 선택형, "fix" for 틀린 어휘/어법 찾기, "verb" for 동사형 쓰기,
   "fill" for 빈칸 쓰기, "find" for 표현 찾아 쓰기, "gloss" for 영영풀이 쓰기,
-  "compose" for 조건 영작, "convert" for 문장 전환.
+  "compose" for 조건 영작, "convert" for 문장 전환, "answer" for 질문에 답하기.
   Every other type (including "영영풀이") is "mc".
 - `instruction`: the exact Korean question line the student reads (수능 어투 그대로), e.g.
   "다음 글의 주제로 가장 적절한 것은?". For "문장삽입" also embed the sentence to insert,
@@ -1044,15 +1051,17 @@ in every other question.
 - `answerText`: for "write", the correct English sentence (verbatim from the passage).
   For "compose", the same — the passage's own sentence, verbatim (that is the 모범답안).
   For "convert", the TRANSFORMED sentence you wrote (NOT the passage's original).
+  For "answer", the model answer to the question — a NEW sentence you compose from
+  understanding the passage (not copied verbatim), obeying `conditions`.
   For "mc" and "tf", set to "".
 - `tfItems`: for "tf", EXACTLY 5 items {text, isTrue}. For every other format, set to [].
 - `fixes`: for "fix", one {wrong, right} per planted error. For every other format, set to [].
 - `findItems`: for "find" (표현 찾아 쓰기), 3~4 items {ko, en}. For every other format, set to [].
 - `glossItems`: for "gloss" (영영풀이 쓰기), 2~4 items {def, en}. For every other format, set to [].
-- `conditions`: for "compose" and "convert", the Korean <조건> lines (see those types below).
-  For every other format, set to [].
-- `wordBank`: for "compose" only, the <보기> words in DICTIONARY form. For every other
-  format, set to [].
+- `conditions`: for "compose", "convert", and "answer", the Korean <조건> lines (see those
+  types below). For every other format, set to [].
+- `wordBank`: for "compose" always, and for "answer" only when that item gives a word bank
+  (see below) — the <보기> words in DICTIONARY form. For every other format, set to [].
 - `explanation`: 2–4 Korean sentences (문어체) explaining why the answer is correct and why
   the others are wrong — specific, referencing the passage content.
 
@@ -1251,6 +1260,36 @@ the passage in full.
   ⚠️ 한 지문에서 여러 문항을 낼 때는 **문장도 전환 종류도 서로 겹치지 않게** 하라.
   · choices = [], answer = 0, tfItems = [], fixes = [], findItems = [], glossItems = [],
     wordBank = [].
+- "질문에 답하기" (format "answer") — passageHtml = 지문 전문(OMIT when 지문 재사용 is on,
+  same as the other QUIZ_PLAIN_PASSAGE_TYPES). 지문은 전혀 손대지 않는다 — 표시도 변형도 없다.
+  `instruction` = "다음 글을 읽고, 질문에 대한 답을 완전한 영어 문장으로 쓰시오." 다음 줄에
+  질문을 영어로 붙인다:
+    다음 글을 읽고, 질문에 대한 답을 완전한 영어 문장으로 쓰시오.<br><br>
+    <b>Q:</b> How does the painting differ from typical art of that time?
+  이 유형은 지문 속 문장을 그대로 찾거나 옮기는 게 아니다 — **질문을 이해하고, 지문 내용을
+  근거로 학생이 직접 새 문장을 짓게** 하는 것이 핵심이다. 서술형배열·조건 영작과 헷갈리지
+  마라 — 그 둘은 지문에 '이미 있는' 문장을 재료로 쓰지만, 이 유형의 질문은 지문 어디에도
+  그 형태로 적혀 있지 않은 새로운 문장을 요구한다.
+  · 질문 만들기: 지문의 핵심 정보 하나(원인·비교·정의·이유·과정 등)를 짚어 영어 의문문으로
+    쓴다. 답이 지문 한 군데에 명확히 있어야 한다 — 추론에 추론을 거듭해야 답이 나오는
+    질문, 또는 답이 여러 갈래로 갈리는 질문은 쓰지 마라.
+  · `answerText` = 그 질문에 대한 모범답안. 지문 내용을 바탕으로 학생이 실제로 쓸 법한,
+    문법적으로 완전한 영어 문장 하나. 지문 문장을 토씨 하나 안 틀리고 베낀 것이면 안 된다
+    — 질문에 맞게 재구성하거나 표현을 바꿔야 한다(다만 지문에 없는 사실을 지어내지는 마라).
+  · `conditions` = 1~3줄, 다음 중 실제로 거는 것만 우리말로 적는다(전부 걸 필요는 없다):
+      "답변으로 주어진 단어 'It'으로 시작할 것" 처럼 답의 시작을 지정 —
+        지정했으면 answerText도 반드시 그 단어로 시작해야 한다.
+      "주어와 동사를 갖춘, 문법적으로 완성된 문장으로 답을 작성할 것"
+      "10단어 이내로 완성할 것" 처럼 분량 제한 — 지정했으면 answerText가 그 안에 들어야 한다.
+    낱말 수를 세는 건 네 몫이다(서버가 다시 세지 않는다) — 조건에 적은 숫자와 answerText가
+    어긋나지 않게 스스로 확인하라.
+  · `wordBank` = 선택. 답에 반드시 들어가야 하는 표현을 줄 때만 채운다(3~6개). 채웠으면
+    conditions에 "<보기>의 표현을 모두 사용할 것"과, 형태를 바꿔도 되는지("필요하면 형태를
+    바꿀 것" 또는 "형태 변형 없이 사용할 것")를 반드시 함께 적어라. 안 줄 때는 빈 배열로
+    두고, 학생이 자유롭게 단어를 골라 쓰게 한다.
+  ⚠️ 한 지문에서 여러 문항을 낼 때는 **질문마다 지문의 다른 대목을 짚어라** — 같은 문장을
+  근거로 삼는 질문을 두 개 내면 사실상 같은 문제의 반복이다.
+  · choices = [], answer = 0, tfItems = [], fixes = [], findItems = [], glossItems = [].
 - "어휘 선택형" (format "pick") — instruction
   "다음 각 네모 안에서 문맥상 알맞은 낱말을 골라 쓰시오."
   `passageHtml` = 3~6 sentences taken from the passage, PLAIN TEXT ONLY (no HTML tags at all),
@@ -6193,6 +6232,14 @@ CHANGELOG = [
             "그림이 필요하시면 인쇄 창에서 PDF로 먼저 저장해 두세요. "
             "인쇄·저장을 누를 때 이 경고를 함께 보여 드립니다.",
             "지문 분석 — 두 번 분석해 보강하던 '꼼꼼 검토'를 뺐습니다.",
+        ],
+    },
+    {
+        "version": 3,
+        "date": "2026-08-19",
+        "items": [
+            "문제 제작 — 지문에 대한 영어 질문을 읽고 완전한 영어 문장으로 답을 직접 쓰는 "
+            "'질문에 답하기' 유형이 주관식에 추가됐습니다.",
         ],
     },
 ]
