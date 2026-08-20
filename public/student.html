@@ -39,15 +39,19 @@
     <div id="testList"></div>
   </section>
 
-  <!-- ══════════ 응시 화면 ══════════ -->
+  <!-- ══════════ 응시 화면 ══════════
+       한 문항씩만 보여주고 이전 문항으로 돌아갈 수 없다 — 여러 문항을 한 화면에
+       띄워두면 위로 스크롤해서 이미 나온 보기들을 서로 대조해 정답을 유추할 수
+       있어서(단어 수가 적을수록 특히), 그걸 막기 위한 구조다. -->
   <section class="panel" id="takeWorkspace" hidden>
     <button type="button" class="btn ghost small" id="backToListBtn">← 목록으로</button>
     <h3 id="takeTitle" style="margin:12px 0 4px;"></h3>
     <p class="hint" id="takeHint"></p>
+    <p class="hint" id="takeProgress" style="font-weight:700;"></p>
     <div class="error" id="takeError"></div>
-    <form id="takeForm"></form>
+    <div id="takeForm"></div>
     <div class="actions" style="margin-top:16px;">
-      <button type="submit" form="takeForm" class="btn" id="submitBtn">제출하기</button>
+      <button type="button" class="btn" id="nextBtn">다음</button>
       <span class="gate-status" id="submitStatus"></span>
     </div>
   </section>

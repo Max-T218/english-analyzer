@@ -143,6 +143,10 @@ $("testList").addEventListener("click", (e) => {
 });
 
 let currentAssignmentId = null;
+let currentFormat = "saq";
+let currentQuestions = [];
+let currentAnswers = [];
+let currentIndex = 0;
 
 async function openTest(assignmentId) {
   const errEl = $("takeError");
@@ -150,54 +154,71 @@ async function openTest(assignmentId) {
   currentAssignmentId = assignmentId;
   showOnly(takeWorkspaceEl);
   $("takeTitle").textContent = "불러오는 중…";
+  $("takeProgress").textContent = "";
   $("takeForm").innerHTML = "";
   try {
     const data = await getJson(`/api/student/tests/detail?assignmentId=${encodeURIComponent(assignmentId)}`);
     $("takeTitle").textContent = data.round > 1 ? `${data.title} (${data.round}회차)` : data.title;
     $("takeHint").textContent =
       data.format === "mcq" ? "보기 중 하나를 고르세요." : "직접 입력하세요.";
-    $("takeForm").innerHTML = data.questions.map((q, i) => `
-      <div class="field" style="margin-bottom:14px;">
-        <label>${i + 1}. ${esc(q.prompt)}
-          <span class="hint">(${esc(DIRECTION_LABEL[q.direction] || q.direction)}${data.format === "saq" ? (q.direction === "en2ko" ? " · 뜻 쓰기" : " · 영어 쓰기") : ""})</span>
-        </label>
-        ${data.format === "mcq"
-          ? (q.options || []).map((opt, oi) => `
-              <label class="chk" style="display:flex; margin:4px 0;">
-                <input type="radio" name="q${i}" value="${esc(opt)}">
-                <span style="margin-left:6px;">${esc(opt)}</span>
-              </label>`).join("")
-          : `<input type="text" name="q${i}" autocomplete="off">`}
-      </div>
-    `).join("");
+    currentFormat = data.format;
+    currentQuestions = data.questions;
+    currentAnswers = currentQuestions.map(() => "");
+    currentIndex = 0;
+    renderQuestion();
   } catch (err) {
     $("takeTitle").textContent = "";
     errEl.textContent = err.message || "시험을 불러오지 못했습니다.";
   }
 }
 
+// 한 문항만 그려서 앞 문항으로 돌아가 대조하지 못하게 한다 — 다음으로 넘어가면
+// 그 문항의 HTML은 완전히 사라진다(뒤로가기 버튼 자체가 없음).
+function renderQuestion() {
+  const q = currentQuestions[currentIndex];
+  const total = currentQuestions.length;
+  $("takeProgress").textContent = `문항 ${currentIndex + 1} / ${total}`;
+  $("takeForm").innerHTML = `
+    <div class="field" style="margin-bottom:14px;">
+      <label>${currentIndex + 1}. ${esc(q.prompt)}
+        <span class="hint">(${esc(DIRECTION_LABEL[q.direction] || q.direction)}${currentFormat === "saq" ? (q.direction === "en2ko" ? " · 뜻 쓰기" : " · 영어 쓰기") : ""})</span>
+      </label>
+      ${currentFormat === "mcq"
+        ? (q.options || []).map((opt) => `
+            <label class="chk" style="display:flex; margin:4px 0;">
+              <input type="radio" name="qCurrent" value="${esc(opt)}">
+              <span style="margin-left:6px;">${esc(opt)}</span>
+            </label>`).join("")
+        : `<input type="text" id="qCurrentInput" autocomplete="off">`}
+    </div>
+  `;
+  nextBtn.textContent = currentIndex === total - 1 ? "제출하기" : "다음";
+}
+
+function readCurrentAnswer() {
+  if (currentFormat === "mcq") {
+    const checked = $("takeForm").querySelector('input[name="qCurrent"]:checked');
+    return checked ? checked.value : "";
+  }
+  const input = $("qCurrentInput");
+  return input ? input.value.trim() : "";
+}
+
 $("backToListBtn").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
 $("backToListBtn2").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
 $("retryBtn").addEventListener("click", () => openTest(currentAssignmentId));
 
-const submitBtn = $("submitBtn");
+const nextBtn = $("nextBtn");
 const submitStatus = $("submitStatus");
-$("takeForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
+
+async function submitTest() {
   const errEl = $("takeError");
   errEl.textContent = "";
-  const formData = new FormData($("takeForm"));
-  const answers = [];
-  let i = 0;
-  while (formData.has(`q${i}`) || $("takeForm").querySelector(`[name="q${i}"]`)) {
-    answers.push((formData.get(`q${i}`) || "").toString());
-    i++;
-  }
-  submitBtn.disabled = true;
+  nextBtn.disabled = true;
   submitStatus.textContent = "채점 중…";
   try {
     const result = await postJson("/api/student/tests/submit", {
-      assignmentId: currentAssignmentId, answers,
+      assignmentId: currentAssignmentId, answers: currentAnswers,
     });
     $("resultScore").textContent = `${result.score} / ${result.total}점`;
     $("resultLead").textContent = result.passed
@@ -208,7 +229,17 @@ $("takeForm").addEventListener("submit", async (e) => {
   } catch (err) {
     errEl.textContent = err.message || "제출에 실패했습니다.";
   } finally {
-    submitBtn.disabled = false;
+    nextBtn.disabled = false;
     submitStatus.textContent = "";
   }
+}
+
+nextBtn.addEventListener("click", () => {
+  currentAnswers[currentIndex] = readCurrentAnswer();
+  if (currentIndex === currentQuestions.length - 1) {
+    submitTest();
+    return;
+  }
+  currentIndex++;
+  renderQuestion();
 });
