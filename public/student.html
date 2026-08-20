@@ -13,30 +13,23 @@
 
   <header class="app-head">
     <h1 class="eyebrow">English Lab · 학생</h1>
-    <p>선생님이 알려준 반 코드를 넣고, 목록에서 내 이름을 골라 로그인합니다.</p>
+    <p>내 이름과 선생님이 알려준 반 코드를 넣고 로그인합니다.</p>
   </header>
 
-  <!-- ══════════ 1단계: 반 코드 ══════════ -->
+  <!-- ══════════ 로그인: 이름 + 반 코드 ══════════ -->
   <section class="panel" id="codeGate">
     <form class="auth-panel" id="codeForm" style="max-width:320px;">
+      <label for="nameInput">내 이름</label>
+      <input type="text" id="nameInput" placeholder="예: 홍길동" autocomplete="off">
       <label for="codeInput">선생님이 준 반 코드</label>
       <input type="text" id="codeInput" placeholder="예: AB3D9WXK" autocomplete="off"
              autocapitalize="characters" maxlength="8">
       <div class="gate-actions">
-        <button type="submit" class="btn" id="codeNextBtn">다음</button>
+        <button type="submit" class="btn" id="codeNextBtn">로그인</button>
         <span class="gate-status" id="codeStatus"></span>
       </div>
       <div class="error" id="codeError"></div>
     </form>
-  </section>
-
-  <!-- ══════════ 2단계: 이름 고르기 ══════════ -->
-  <section class="panel" id="nameGate" hidden>
-    <h3 id="nameGateClassName" style="margin-top:0;"></h3>
-    <p class="hint">목록에서 내 이름을 찾아 누르세요.</p>
-    <div id="nameList" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
-    <div class="error" id="nameError" style="margin-top:10px;"></div>
-    <button type="button" class="btn ghost small" id="backToCodeBtn" style="margin-top:14px;">← 다른 반 코드로</button>
   </section>
 
   <!-- ══════════ 시험 목록 ══════════ -->

@@ -6473,11 +6473,13 @@ CHANGELOG = [
         "date": "2026-08-20",
         "items": [
             "반/학생 관리 — 반을 만들어 학생을 등록하면 반마다 로그인 코드가 하나씩 "
-            "발급됩니다. 학생은 별도 화면(/student.html)에서 그 코드를 넣고 목록에서 자기 "
-            "이름을 골라 로그인해, 선생님이 낸 단어시험을 온라인으로 풀 수 있습니다. "
+            "발급됩니다. 학생은 별도 화면(/student.html)에서 그 코드와 자기 이름을 넣어 "
+            "바로 로그인해, 선생님이 낸 단어시험을 온라인으로 풀 수 있습니다. "
             "결과는 이 화면의 '학생 관리' 탭에서 바로 확인됩니다.",
             "단어시험은 지금 만든 단어장으로 즉시 낼 수 있고(객관식·주관식 선택 가능), "
-            "인공지능을 부르지 않아 채점까지 무료입니다.",
+            "인공지능을 부르지 않아 채점까지 무료입니다. 반 전체에 낼 수도, 학생 한 명을 "
+            "골라 그 학생에게만 낼 수도 있습니다. 이미 낸 시험은 삭제할 수 있고, "
+            "'시험 내기' 창에서 저장해 둔 다른 단어장을 바로 골라 낼 수도 있습니다.",
             "미성년자 정보를 다루는 기능이라 관리자 승인을 받은 선생님만 쓸 수 있습니다 — "
             "필요하시면 문의해 주세요.",
         ],
@@ -7234,57 +7236,43 @@ def _student_login_clear(ip):
     _student_login_fails.pop(ip, None)
 
 
-def get_class_roster(code, ip):
-    """반 코드로 그 반 학생 이름 목록을 돌려준다 — 로그인 1단계(아직 세션은 안 만든다).
-    코드를 맞혀 보는 무차별 대입 시도가 여기서 일어나므로 실패 횟수 제한도 여기서 건다."""
+def login_student(code, name, ip):
+    """학생 로그인 — 반 코드와 자기 이름을 함께 넣으면 한 번에 로그인된다.
+
+    예전에는 코드만 넣으면 그 반 학생 전체 이름이 목록으로 뜨고 그중 하나를 눌러
+    로그인했다. 그러면 코드를 아는 사람 누구나 같은 반 급우들의 이름을 전부 볼 수
+    있었다(개인정보 노출) — 이제는 자기 이름을 직접 입력해야 하므로 목록 자체가
+    사라진다. 반 코드가 곧 비밀값이라는 점은 그대로다(class_codes 참고) — 이름은
+    인증 수단이 아니라 그 반 안에서 '누구인지' 가리키는 값일 뿐이므로, 코드를
+    모르면 이름을 알아도 로그인할 수 없다.
+    """
     if _student_login_blocked(ip):
         raise ValueError("시도가 너무 많습니다. 5분 뒤 다시 시도하세요.")
     code = (code or "").strip().upper()
-    if not code:
-        raise ValueError("코드를 입력하세요.")
+    name = _norm_text(name)
+    if not code or not name:
+        raise ValueError("반 코드와 이름을 모두 입력하세요.")
     _require_db()
     c_snap = DB.collection("class_codes").document(code).get()
     if not c_snap.exists:
         _student_login_record_fail(ip)
         raise ValueError("코드가 올바르지 않습니다.")
     class_id = c_snap.to_dict().get("class_id")
-    cls_snap = DB.collection("classes").document(class_id).get()
-    if not cls_snap.exists:
-        _student_login_record_fail(ip)
-        raise ValueError("코드가 올바르지 않습니다.")
-    _student_login_clear(ip)
-    students = [
-        {"id": doc.id, "name": (doc.to_dict() or {}).get("name", "")}
-        for doc in DB.collection("students").where("class_id", "==", class_id).stream()
+    matches = [
+        doc for doc in DB.collection("students").where("class_id", "==", class_id).stream()
+        if _norm_text((doc.to_dict() or {}).get("name")) == name
     ]
-    students.sort(key=lambda s: s["name"])
-    return {
-        "classId": class_id,
-        "className": cls_snap.to_dict().get("name", ""),
-        "students": students,
-    }
-
-
-def login_student(code, student_id, ip):
-    """로그인 2단계 — 1단계에서 받은 목록 중 자기 이름(student_id)을 골랐을 때 부른다.
-    반 코드가 여전히 유효하고, 그 학생이 정말 이 반 소속인지 다시 확인한다."""
-    if _student_login_blocked(ip):
-        raise ValueError("시도가 너무 많습니다. 5분 뒤 다시 시도하세요.")
-    code = (code or "").strip().upper()
-    if not code or not student_id:
-        raise ValueError("반 코드와 이름을 다시 선택하세요.")
-    _require_db()
-    c_snap = DB.collection("class_codes").document(code).get()
-    if not c_snap.exists:
+    if not matches:
         _student_login_record_fail(ip)
-        raise ValueError("코드가 올바르지 않습니다.")
-    class_id = c_snap.to_dict().get("class_id")
-    s_snap = DB.collection("students").document(student_id).get()
-    if not s_snap.exists or s_snap.to_dict().get("class_id") != class_id:
+        raise ValueError("이 반에서 그 이름을 찾을 수 없습니다. 선생님께 확인해 주세요.")
+    if len(matches) > 1:
+        # 같은 반에 동명이인이 있으면 누구로 로그인할지 이름만으로는 가릴 수 없다 —
+        # 아무나 골라 로그인시키면 서로 다른 사람의 시험 결과가 뒤섞인다.
         _student_login_record_fail(ip)
-        raise ValueError("학생 정보를 찾을 수 없습니다. 목록을 다시 불러와 보세요.")
+        raise ValueError("같은 이름의 학생이 이 반에 여러 명입니다. 선생님께 문의해 주세요.")
     _student_login_clear(ip)
-    return student_id, s_snap.to_dict().get("name", "")
+    student_id = matches[0].id
+    return student_id, (matches[0].to_dict() or {}).get("name", "")
 
 
 # --- 단어시험 (AI 없음) ------------------------------------------------------
@@ -7303,17 +7291,28 @@ def _meaning_variants(text):
     return [p for p in parts if p]
 
 
-def create_test_assignment(teacher_id, class_id, title, vocab, fmt):
+def create_test_assignment(teacher_id, class_id, title, vocab, fmt, student_id=None):
     """출제 방향(영어→뜻 / 뜻→영어)은 더 이상 선생님이 고르지 않는다 — 문제마다
     _build_student_questions가 무작위로 섞어 낸다. 그래서 여기서는 객관식일 때
     두 방향 다 오답을 만들 수 있는지(서로 다른 뜻 2개 이상 '그리고' 서로 다른
-    단어 2개 이상) 미리 확인해 둔다 — 어느 방향이 나올지 미리 알 수 없어서다."""
+    단어 2개 이상) 미리 확인해 둔다 — 어느 방향이 나올지 미리 알 수 없어서다.
+
+    student_id가 없으면(기본) 반 전체에 낸다. 있으면 그 학생 한 명에게만 낸다 —
+    student_name을 함께 스냅샷으로 저장해 두는 이유는 목록을 보여줄 때마다
+    students 컬렉션을 또 읽지 않기 위해서다(학생이 나중에 이름을 바꾸거나
+    삭제돼도 이 시험의 '누구에게 냈는지' 표시는 그대로 남는다)."""
     _require_db()
     c_snap = DB.collection("classes").document(class_id).get()
     if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
         raise ValueError("반을 찾을 수 없습니다.")
     if fmt not in ("mcq", "saq"):
         raise ValueError("잘못된 시험 형식입니다.")
+    student_name = None
+    if student_id:
+        s_snap = DB.collection("students").document(student_id).get()
+        if not s_snap.exists or s_snap.to_dict().get("class_id") != class_id:
+            raise ValueError("학생을 찾을 수 없습니다.")
+        student_name = s_snap.to_dict().get("name", "")
     clean_vocab = []
     for item in (vocab or []):
         word = _norm_text(item.get("word"))
@@ -7339,6 +7338,7 @@ def create_test_assignment(teacher_id, class_id, title, vocab, fmt):
     ref = DB.collection("test_assignments").document()
     ref.set({
         "teacher_id": teacher_id, "class_id": class_id,
+        "student_id": student_id, "student_name": student_name,
         "title": (title or "").strip() or "단어시험",
         "vocab": clean_vocab, "format": fmt,
         "created_at": _now_iso(),
@@ -7357,6 +7357,8 @@ def list_assignments_for_class(teacher_id, class_id):
         rows.append({
             "id": doc.id, "title": d.get("title", ""), "format": d.get("format"),
             "wordCount": len(d.get("vocab") or []), "createdAt": d.get("created_at", ""),
+            # None이면 반 전체, 있으면 그 학생 한 명에게만 낸 시험
+            "studentId": d.get("student_id"), "studentName": d.get("student_name"),
         })
     rows.sort(key=lambda r: r["createdAt"], reverse=True)
     return rows
@@ -7407,6 +7409,16 @@ def _build_student_questions(assignment_id, assignment, student_id):
     return questions
 
 
+def _assignment_targets_student(assignment, student_id, student):
+    """이 시험이 이 학생에게 배정된 것인지 — 반이 같아야 하고, 개별로 낸 시험
+    (student_id가 있는 경우)이면 그 학생 본인이어야 한다. 반 전체로 낸 시험은
+    student_id가 없어(None) 반만 같으면 누구에게나 열려 있다."""
+    if student.get("class_id") != assignment.get("class_id"):
+        return False
+    target = assignment.get("student_id")
+    return target is None or target == student_id
+
+
 def get_test_detail_for_student(student_id, assignment_id):
     _require_db()
     s_snap = DB.collection("students").document(student_id).get()
@@ -7416,8 +7428,8 @@ def get_test_detail_for_student(student_id, assignment_id):
     if not a_snap.exists:
         raise ValueError("시험을 찾을 수 없습니다.")
     assignment = a_snap.to_dict()
-    if s_snap.to_dict().get("class_id") != assignment.get("class_id"):
-        raise ValueError("이 시험은 이 학생의 반에 배정되지 않았습니다.")
+    if not _assignment_targets_student(assignment, student_id, s_snap.to_dict()):
+        raise ValueError("이 시험은 이 학생에게 배정되지 않았습니다.")
     questions = _build_student_questions(assignment_id, assignment, student_id)
     return {
         "title": assignment.get("title", ""),
@@ -7440,6 +7452,11 @@ def list_tests_for_student(student_id):
     rows = []
     for doc in DB.collection("test_assignments").where("class_id", "==", class_id).stream():
         d = doc.to_dict() or {}
+        # 반 전체로 낸 시험(student_id 없음)과 이 학생 개인에게 낸 시험만 보여준다 —
+        # 같은 반의 다른 학생 한 명에게만 낸 시험은 여기서 걸러진다.
+        target = d.get("student_id")
+        if target is not None and target != student_id:
+            continue
         attempt_snap = DB.collection("test_attempts").document(f"{doc.id}_{student_id}").get()
         a = attempt_snap.to_dict() if attempt_snap.exists else None
         rows.append({
@@ -7472,8 +7489,8 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
     if not s_snap.exists:
         raise ValueError("학생 정보를 찾을 수 없습니다.")
     student = s_snap.to_dict()
-    if student.get("class_id") != assignment.get("class_id"):
-        raise ValueError("이 시험은 이 학생의 반에 배정되지 않았습니다.")
+    if not _assignment_targets_student(assignment, student_id, student):
+        raise ValueError("이 시험은 이 학생에게 배정되지 않았습니다.")
 
     vocab = assignment.get("vocab") or []
     fmt = assignment.get("format", "saq")
@@ -7811,17 +7828,6 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         # --- 반 · 학생 · 단어시험 (학생 쪽 GET) ---
-        # 로그인 1단계 — 반 코드로 그 반 학생 이름 목록을 받는다(아직 로그인 전이라
-        # 세션 확인 없이, 대신 IP별 시도 횟수 제한이 걸린다 — get_class_roster 참고).
-        if path == "/api/student/roster":
-            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-            code = (query.get("code") or [""])[0]
-            try:
-                self._send_json(get_class_roster(code, _client_ip(self)))
-            except ValueError as e:
-                self._send_json({"error": str(e)}, 401)
-            return
-
         if path == "/api/student/me":
             student_id = _student_session_user(self)
             if not student_id:
@@ -8420,6 +8426,7 @@ class Handler(BaseHTTPRequestHandler):
                 assignment_id = create_test_assignment(
                     user_id, req.get("classId"), req.get("title"),
                     req.get("vocab"), req.get("format"),
+                    student_id=(req.get("studentId") or None),
                 )
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
@@ -8452,7 +8459,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 student_id, name = login_student(
-                    req.get("code"), req.get("studentId"), _client_ip(self),
+                    req.get("code"), req.get("name"), _client_ip(self),
                 )
             except ValueError as e:
                 self._send_json({"error": str(e)}, 401)

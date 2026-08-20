@@ -7280,7 +7280,8 @@ function renderAssignedTests(tests) {
       <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
         <div>
           <b>${esc(t.title)}</b>
-          <span class="hint">· ${esc(FORMAT_LABEL_KO[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개</span>
+          <span class="hint">· ${esc(FORMAT_LABEL_KO[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개
+            · ${t.studentId ? `👤 ${esc(t.studentName || "학생 1명")}` : "반 전체"}</span>
         </div>
         <span style="display:inline-flex; gap:6px;">
           <button type="button" class="btn ghost small view-results-btn">결과 보기</button>
@@ -7353,6 +7354,7 @@ studentsTabBtn.addEventListener("click", () => refreshClassSelect(true));
    지금 화면에 그려진 단어장(lastVocabRows, buildVocab이 채워 둠)을 그대로 문제로 낸다. */
 const assignModalEl = $("assignModalOverlay");
 const assignClassSelectEl = $("assignClassSelect");
+const assignTargetSelectEl = $("assignTargetSelect");
 const assignFormEl = $("assignForm");
 const assignErrorEl = $("assignError");
 const assignStatusEl = $("assignStatus");
@@ -7369,7 +7371,30 @@ async function refreshClassSelectForModal() {
   assignClassSelectEl.innerHTML = classesCache.length
     ? classesCache.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")
     : `<option value="">먼저 '학생 관리' 탭에서 반을 만들어 주세요</option>`;
+  await refreshAssignTargetSelect();
 }
+
+// 낼 대상 — "반 전체" 또는 이 반의 학생 한 명. 반을 바꾸면(assignClassSelectEl의
+// change) 그 반 학생 목록으로 다시 채운다.
+async function refreshAssignTargetSelect() {
+  const classId = assignClassSelectEl.value;
+  if (!classId) {
+    assignTargetSelectEl.innerHTML = `<option value="class">반 전체</option>`;
+    return;
+  }
+  let students = [];
+  try {
+    const data = await getJson(`/api/students?classId=${encodeURIComponent(classId)}`, "");
+    students = data.students || [];
+  } catch (_) {
+    students = [];
+  }
+  const perStudent = students
+    .map((s) => `<option value="${esc(s.id)}">👤 ${esc(s.name)}</option>`)
+    .join("");
+  assignTargetSelectEl.innerHTML = `<option value="class">반 전체</option>` + perStudent;
+}
+assignClassSelectEl.addEventListener("change", refreshAssignTargetSelect);
 
 /* 반에 낼 단어장 — 기본은 "지금 화면에 있는 단어장"(lastVocabRows)이고, 저장함에
    담아 둔 다른 단어장으로 바꿔 낼 수도 있다. assignVocabRows가 null이면 "지금 화면"을
@@ -7452,6 +7477,7 @@ assignFormEl.addEventListener("submit", async (e) => {
     assignErrorEl.textContent = "먼저 단어장을 만들거나, 저장된 단어장을 골라 주세요.";
     return;
   }
+  const target = assignTargetSelectEl.value; // "class" 또는 학생 id
   assignStatusEl.textContent = "내는 중…";
   $("assignSubmitBtn").disabled = true;
   try {
@@ -7459,6 +7485,7 @@ assignFormEl.addEventListener("submit", async (e) => {
       "/api/vocab-tests",
       {
         classId,
+        studentId: target === "class" ? null : target,
         title: $("assignTitle").value,
         format: $("assignFormat").value,
         vocab: rows.map((r) => ({

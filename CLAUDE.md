@@ -82,14 +82,25 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 개인정보일 수 있어, 로컬에서 이 기능을 테스트할 때도 실제 이름을 넣지 말고
 "테스트"처럼 알아볼 수 없는 값을 쓰세요.
 
-로그인 코드는 **학생 개별이 아니라 반 하나에 하나**입니다(`class_codes` 컬렉션) —
-학생이 코드를 낱개로 받으면 잊어버리기 쉬워, 반 코드로 목록을 받은 뒤 자기 이름을
-골라 로그인하는 방식으로 바꿨습니다. 비밀번호처럼 해시하지 않고 코드를 그대로
-저장합니다 — 짧은 코드를 값으로 직접 조회해야 하기 때문이며, 대신 무차별 대입은
-IP별 실패 횟수 제한(`_student_login_blocked`)으로 막습니다. **주의**: 반 코드만
-알면 그 반 학생 이름 목록이 보이고, 이름을 고르는 것만으로 그 학생으로 로그인됩니다
-— 이름 자체는 인증 수단이 아닙니다. 급우끼리 코드를 공유하면 서로 이름 행세를 할
-수 있다는 뜻이라, 부정행위 방지는 여기서 기술이 아니라 교실 안 관리에 맡깁니다.
+로그인 코드는 **학생 개별이 아니라 반 하나에 하나**입니다(`class_codes` 컬렉션).
+학생은 **반 코드와 자기 이름을 함께 입력**해 한 번에 로그인합니다(`login_student`) —
+예전에는 코드만 넣으면 그 반 학생 전체 이름이 목록으로 뜨고 그중 하나를 눌러
+로그인했는데, 그러면 코드를 아는 사람 누구나 같은 반 급우들의 이름을 전부 볼 수
+있었다(개인정보 노출). 지금은 목록 자체가 없다 — 자기 이름을 직접 입력해야 한다.
+비밀번호처럼 해시하지 않고 코드를 그대로 저장합니다 — 짧은 코드를 값으로 직접
+조회해야 하기 때문이며, 대신 무차별 대입은 IP별 실패 횟수 제한
+(`_student_login_blocked`)으로 막습니다. **주의**: 이름은 여전히 인증 수단이
+아닙니다 — 코드를 아는 사람이 급우의 이름까지 알면(또는 맞히면) 그 급우로 로그인할
+수 있습니다. 다만 예전처럼 반 전체 이름을 화면에서 보여주지는 않으므로, 로그인
+시도만으로 급우 이름을 알아낼 수는 없습니다. 같은 반에 동명이인이 있으면 로그인이
+거부됩니다(누구인지 가릴 수 없어서) — 부정행위 방지는 여기서도 기술이 아니라
+교실 안 관리에 맡깁니다.
+
+단어시험은 **반 전체**에 낼 수도, **학생 한 명**에게만 낼 수도 있습니다
+(`create_test_assignment`의 `student_id` — 없으면 반 전체, 있으면 그 학생만).
+`list_tests_for_student`·`get_test_detail_for_student`·`grade_and_submit_attempt`는
+전부 `_assignment_targets_student`로 이 배정 대상을 확인합니다 — 반이 같아도
+다른 학생 한 명에게만 낸 시험은 안 보입니다.
 
 ## 코드 지도
 
@@ -103,7 +114,7 @@ IP별 실패 횟수 제한(`_student_login_blocked`)으로 막습니다. **주�
 | 가격 계산 | `_quiz_type_base_price`, `_quiz_action_cost`, `_workbook_cost`(단계 수 × 단가, 상한 있음) |
 | 포인트 원장(이용 내역)·유상무상 구분 | `POINT_LEDGER`, `_split_balance`, `charge_krw`, `add_krw`, `list_usage`, `_fold_old_ledger` |
 | 결제(포트원) — 결제창 열기 전 요청 생성 → 결제 후 서버가 직접 확인하고서만 충전 | `PORTONE_STORE_ID`/`PORTONE_CHANNEL_KEY_CARD`/`PORTONE_API_SECRET`, `create_payment_intent`, `confirm_payment_intent`(`payment_intents` 컬렉션, 브라우저가 보고하는 성공 여부를 그대로 믿지 않는다) |
-| 반 · 학생 · 단어시험(AI 안 씀) | `_classroom_approved`/`set_classroom_approved`(관리자 승인 게이트), `create_class`/`regenerate_class_code`(반 하나당 코드 하나, `classes`/`class_codes` 컬렉션)/`create_student`/`delete_student`(`students` 컬렉션, 개별 코드 없음), `get_class_roster`(로그인 1단계 — 반 코드로 학생 이름 목록)/`login_student`(2단계 — 이름 선택)/`create_student_session`/`_student_session_user`(학생 세션, `admin_sessions`와 같은 모양), `create_test_assignment`/`_build_student_questions`(객관식 오답을 같은 단어장의 다른 뜻/단어에서 결정적으로 뽑음)/`grade_and_submit_attempt`(`test_assignments`/`test_attempts` 컬렉션, 문서 ID를 `{assignment_id}_{student_id}`로 고정해 중복 제출을 막음) |
+| 반 · 학생 · 단어시험(AI 안 씀) | `_classroom_approved`/`set_classroom_approved`(관리자 승인 게이트), `create_class`/`regenerate_class_code`(반 하나당 코드 하나, `classes`/`class_codes` 컬렉션)/`create_student`/`delete_student`(`students` 컬렉션, 개별 코드 없음), `login_student`(반 코드+이름을 함께 받아 한 번에 로그인 — 목록 없음)/`create_student_session`/`_student_session_user`(학생 세션, `admin_sessions`와 같은 모양), `create_test_assignment`(`student_id`를 주면 그 학생 한 명에게만, 안 주면 반 전체에)/`_assignment_targets_student`(반 전체/개별 배정 판정, 조회·응시·제출 세 곳이 공유)/`_build_student_questions`(객관식 오답을 같은 단어장의 다른 뜻/단어에서 결정적으로 뽑음)/`grade_and_submit_attempt`(`test_assignments`/`test_attempts` 컬렉션, 문서 ID를 `{assignment_id}_{student_id}`로 고정해 중복 제출을 막음)/`delete_assignment`(시험과 딸린 답안까지 삭제) |
 | Firestore 연결 | `_load_firestore` |
 | 회원가입·인증코드·비밀번호 | `start_signup`, `complete_signup`, `login_with_password`, `_hash_password` |
 | Gemini 호출 공통(재시도·시간 예산) | `RETRY_MIN_WAIT`, `MAX_RETRY_TOTAL`, `_over_budget`, `RefineTrace`, `_parse_retry_delay` |
@@ -170,7 +181,6 @@ IP별 실패 횟수 제한(`_student_login_blocked`)으로 막습니다. **주�
 `/api/admin/users` `/api/admin/usage` `/api/_probe`(임시, 아래 참고)
 `/api/classes` `/api/students` `/api/vocab-tests` `/api/vocab-tests/results`(선생님 쪽,
 반/학생/시험 — `classId`/`assignmentId`를 쿼리 문자열로 받습니다)
-`/api/student/roster`(로그인 1단계, `code` 쿼리 문자열 — 아직 로그인 전이라 세션 없이 조회)
 `/api/student/me` `/api/student/tests` `/api/student/tests/detail`(학생 쪽,
 `student_session` 쿠키로 인증)
 
@@ -181,8 +191,10 @@ IP별 실패 횟수 제한(`_student_login_blocked`)으로 막습니다. **주�
 `/api/saved` `/api/saved/delete`
 `/api/admin/login` `/api/admin/logout` `/api/admin/recharge` `/api/admin/approve-classroom`
 `/api/classes` `/api/classes/regenerate-code` `/api/students` `/api/students/delete`
-`/api/vocab-tests`(선생님 쪽 — 위 GET들과 경로가 같은 것도 있음, GET=조회/POST=생성)
-`/api/student/login`(2단계 — `code`+`studentId`) `/api/student/logout` `/api/student/tests/submit`
+`/api/vocab-tests` `/api/vocab-tests/delete`(선생님 쪽 — 위 GET들과 경로가 같은 것도 있음,
+GET=조회/POST=생성. `/api/vocab-tests`에 `studentId`를 실으면 그 학생 한 명에게만 낸다)
+`/api/student/login`(`code`+`name` — 목록 없이 한 번에 로그인) `/api/student/logout`
+`/api/student/tests/submit`
 
 ## 업데이트 소식(로그인 시 플로팅 창)
 

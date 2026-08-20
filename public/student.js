@@ -27,13 +27,12 @@ const esc = (s) => String(s == null ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 const codeGateEl = $("codeGate");
-const nameGateEl = $("nameGate");
 const listWorkspaceEl = $("listWorkspace");
 const takeWorkspaceEl = $("takeWorkspace");
 const resultWorkspaceEl = $("resultWorkspace");
 
 function showOnly(el) {
-  [codeGateEl, nameGateEl, listWorkspaceEl, takeWorkspaceEl, resultWorkspaceEl].forEach((s) => {
+  [codeGateEl, listWorkspaceEl, takeWorkspaceEl, resultWorkspaceEl].forEach((s) => {
     s.hidden = s !== el;
   });
 }
@@ -54,68 +53,37 @@ function showOnly(el) {
   }
 })();
 
-/* ── 1단계: 반 코드 → 학생 이름 목록 ── */
-let currentClassCode = "";
-
+/* ── 로그인: 이름 + 반 코드를 함께 넣어 한 번에 로그인 ──
+   예전에는 코드만 넣으면 그 반 학생 전체 이름이 목록으로 떠서, 코드를 아는
+   사람이면 누구나 같은 반 급우들의 이름을 볼 수 있었다. 이제 목록 없이
+   자기 이름을 직접 입력한다(login_student, server.py 참고). */
 const codeNextBtn = $("codeNextBtn");
 const codeError = $("codeError");
 const codeStatus = $("codeStatus");
 $("codeForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const name = $("nameInput").value.trim();
   const code = $("codeInput").value.trim();
   codeError.textContent = "";
-  if (!code) {
-    codeError.textContent = "코드를 입력하세요.";
+  if (!name || !code) {
+    codeError.textContent = "이름과 반 코드를 모두 입력하세요.";
     return;
   }
   codeNextBtn.disabled = true;
   codeStatus.textContent = "확인 중…";
   try {
-    const data = await getJson(`/api/student/roster?code=${encodeURIComponent(code)}`);
-    currentClassCode = code;
-    $("nameGateClassName").textContent = data.className;
-    renderNameList(data.students || []);
-    showOnly(nameGateEl);
-  } catch (err) {
-    codeError.textContent = err.message || "코드를 확인하지 못했습니다.";
-  } finally {
-    codeNextBtn.disabled = false;
-    codeStatus.textContent = "";
-  }
-});
-
-function renderNameList(students) {
-  const nameError = $("nameError");
-  nameError.textContent = "";
-  $("nameList").innerHTML = students.length
-    ? students
-        .map((s) => `<button type="button" class="btn ghost name-btn" data-id="${esc(s.id)}">${esc(s.name)}</button>`)
-        .join("")
-    : "";
-  if (!students.length) nameError.textContent = "이 반에 등록된 학생이 없습니다. 선생님께 문의하세요.";
-}
-
-$("nameList").addEventListener("click", async (e) => {
-  const btn = e.target.closest(".name-btn");
-  if (!btn) return;
-  const nameError = $("nameError");
-  nameError.textContent = "";
-  btn.disabled = true;
-  try {
-    const info = await postJson("/api/student/login", { code: currentClassCode, studentId: btn.dataset.id });
+    const info = await postJson("/api/student/login", { code, name });
     $("studentGreeting").textContent = `${info.name}님, 안녕하세요`;
+    $("nameInput").value = "";
     $("codeInput").value = "";
     showOnly(listWorkspaceEl);
     loadTests();
   } catch (err) {
-    nameError.textContent = err.message || "로그인에 실패했습니다.";
-    btn.disabled = false;
+    codeError.textContent = err.message || "로그인에 실패했습니다.";
+  } finally {
+    codeNextBtn.disabled = false;
+    codeStatus.textContent = "";
   }
-});
-
-$("backToCodeBtn").addEventListener("click", () => {
-  currentClassCode = "";
-  showOnly(codeGateEl);
 });
 
 $("logoutBtn").addEventListener("click", async () => {
