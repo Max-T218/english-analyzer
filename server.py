@@ -7742,6 +7742,12 @@ class Handler(BaseHTTPRequestHandler):
             if not user_id:
                 self._send_json({"error": "로그인이 필요합니다."}, 401)
                 return
+            # 소유권 검사(list_students 내부)만으로는 부족하다 — 승인이 취소된 뒤에도
+            # 자기 반이면 그대로 통과한다. 신규 등록을 막는 세 곳(POST classes·
+            # students·vocab-tests)과 같은 기준으로, 조회도 승인이 살아 있어야 한다.
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
             query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
             class_id = (query.get("classId") or [""])[0]
             if not class_id:
@@ -7758,6 +7764,9 @@ class Handler(BaseHTTPRequestHandler):
             if not user_id:
                 self._send_json({"error": "로그인이 필요합니다."}, 401)
                 return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
             query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
             class_id = (query.get("classId") or [""])[0]
             if not class_id:
@@ -7773,6 +7782,9 @@ class Handler(BaseHTTPRequestHandler):
             user_id = _session_user(self)
             if not user_id:
                 self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
                 return
             query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
             assignment_id = (query.get("assignmentId") or [""])[0]
@@ -8336,6 +8348,9 @@ class Handler(BaseHTTPRequestHandler):
             if not user_id:
                 self._send_json({"error": "로그인이 필요합니다."}, 401)
                 return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
             try:
                 code = regenerate_class_code(user_id, req.get("classId"))
             except ValueError as e:
@@ -8364,6 +8379,13 @@ class Handler(BaseHTTPRequestHandler):
             user_id = _session_user(self)
             if not user_id:
                 self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            # 삭제는 데이터를 줄이는 방향이라 막지 않는 쪽도 생각해 봤지만, 승인이
+            # 취소된 계정이 학생 기록을 손댈 수 있는 길을 하나라도 열어 두면 그 자체가
+            # 위험이다(예: 문제가 있어 승인을 취소했는데 그 계정이 증거가 될 기록을
+            # 지울 수 있다). 나머지 넷과 같은 기준으로 막는다.
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
                 return
             try:
                 delete_student(user_id, req.get("studentId"))
