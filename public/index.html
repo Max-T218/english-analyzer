@@ -439,6 +439,13 @@
           <option value="saq">주관식(직접 입력)</option>
         </select>
         <p class="hint">문제마다 "영어 보고 뜻 맞히기"·"뜻 보고 영어 쓰기"가 무작위로 섞여 나갑니다.</p>
+        <label class="chk" style="margin:4px 0 8px;">
+          <input type="checkbox" id="assignRetestChk"> 합격 기준을 두고, 기준 미달이면 통과할 때까지 재시험
+        </label>
+        <div id="assignRetestField" hidden>
+          <label for="assignMaxWrong">허용 오답 수 (이 개수 이하로 틀리면 합격)</label>
+          <input type="number" id="assignMaxWrong" min="0" step="1" placeholder="예: 5">
+        </div>
         <div class="gate-actions">
           <button type="submit" class="btn" id="assignSubmitBtn">시험 내기</button>
           <span class="gate-status" id="assignStatus"></span>

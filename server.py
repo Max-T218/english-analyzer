@@ -7288,7 +7288,7 @@ def _meaning_variants(text):
     return [p for p in parts if p]
 
 
-def create_test_assignment(teacher_id, class_id, title, vocab, fmt, student_id=None):
+def create_test_assignment(teacher_id, class_id, title, vocab, fmt, student_id=None, max_wrong=None):
     """출제 방향(영어→뜻 / 뜻→영어)은 더 이상 선생님이 고르지 않는다 — 문제마다
     _build_student_questions가 무작위로 섞어 낸다. 그래서 여기서는 객관식일 때
     두 방향 다 오답을 만들 수 있는지(서로 다른 뜻 2개 이상 '그리고' 서로 다른
@@ -7297,7 +7297,13 @@ def create_test_assignment(teacher_id, class_id, title, vocab, fmt, student_id=N
     student_id가 없으면(기본) 반 전체에 낸다. 있으면 그 학생 한 명에게만 낸다 —
     student_name을 함께 스냅샷으로 저장해 두는 이유는 목록을 보여줄 때마다
     students 컬렉션을 또 읽지 않기 위해서다(학생이 나중에 이름을 바꾸거나
-    삭제돼도 이 시험의 '누구에게 냈는지' 표시는 그대로 남는다)."""
+    삭제돼도 이 시험의 '누구에게 냈는지' 표시는 그대로 남는다).
+
+    max_wrong=None이면(기본) 재시험 없이 1회로 끝난다(예전과 같은 동작 — 옛 시험도
+    이 필드가 없어 그대로 호환된다). 정수면 '이 개수 이하로 틀려야 합격'이고,
+    불합격이면 학생이 몇 번이고 다시 볼 수 있다(_get_student_attempts/
+    _attempt_progress 참고) — 회차마다 문제를 다시 섞어 답 위치만 외워 통과하는
+    것을 막는다(_build_student_questions의 round 인자)."""
     _require_db()
     c_snap = DB.collection("classes").document(class_id).get()
     if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
@@ -7332,15 +7338,44 @@ def create_test_assignment(teacher_id, class_id, title, vocab, fmt, student_id=N
                 "객관식으로 내려면 서로 다른 뜻과 서로 다른 단어가 각각 2개 이상 필요합니다 "
                 "(영어→뜻·뜻→영어를 섞어 내다 보니 둘 다 필요합니다). 주관식으로 내보세요."
             )
+    if max_wrong is not None:
+        try:
+            max_wrong = int(max_wrong)
+        except (TypeError, ValueError):
+            raise ValueError("허용 오답 수는 숫자여야 합니다.")
+        if not (0 <= max_wrong <= len(clean_vocab)):
+            raise ValueError(f"허용 오답 수는 0~{len(clean_vocab)} 사이여야 합니다.")
     ref = DB.collection("test_assignments").document()
     ref.set({
         "teacher_id": teacher_id, "class_id": class_id,
         "student_id": student_id, "student_name": student_name,
         "title": (title or "").strip() or "단어시험",
-        "vocab": clean_vocab, "format": fmt,
+        "vocab": clean_vocab, "format": fmt, "max_wrong": max_wrong,
         "created_at": _now_iso(),
     })
     return ref.id
+
+
+def update_assignment_retest(teacher_id, assignment_id, max_wrong):
+    """이미 낸 시험의 재시험 기준(max_wrong)만 나중에 넣거나 바꾼다. 이미 제출된
+    시도의 합격 여부는 그대로 둔다 — 그 시도를 볼 당시의 기준으로 이미 확정된
+    결과라, 기준을 바꿨다고 지난 결과까지 소급해서 다시 매기지 않는다. 바뀐
+    기준은 이 시점 이후 새로 제출하는 시도부터 적용된다."""
+    _require_db()
+    ref = DB.collection("test_assignments").document(assignment_id)
+    snap = ref.get()
+    if not snap.exists or snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    word_count = len(snap.to_dict().get("vocab") or [])
+    if max_wrong is not None:
+        try:
+            max_wrong = int(max_wrong)
+        except (TypeError, ValueError):
+            raise ValueError("허용 오답 수는 숫자여야 합니다.")
+        if not (0 <= max_wrong <= word_count):
+            raise ValueError(f"허용 오답 수는 0~{word_count} 사이여야 합니다.")
+    ref.update({"max_wrong": max_wrong})
+    return max_wrong
 
 
 def list_assignments_for_class(teacher_id, class_id):
@@ -7354,6 +7389,7 @@ def list_assignments_for_class(teacher_id, class_id):
         rows.append({
             "id": doc.id, "title": d.get("title", ""), "format": d.get("format"),
             "wordCount": len(d.get("vocab") or []), "createdAt": d.get("created_at", ""),
+            "maxWrong": d.get("max_wrong"),
             # None이면 반 전체, 있으면 그 학생 한 명에게만 낸 시험
             "studentId": d.get("student_id"), "studentName": d.get("student_name"),
         })
@@ -7361,14 +7397,15 @@ def list_assignments_for_class(teacher_id, class_id):
     return rows
 
 
-def _build_student_questions(assignment_id, assignment, student_id):
+def _build_student_questions(assignment_id, assignment, student_id, round):
     """학생에게 보여줄 문제(순서·방향·객관식 보기)를 결정적으로 만든다 — 저장 없이도
-    같은 (시험,학생) 조합이면 새로고침해도 항상 같은 문제가 나오고, 채점할 때도
+    같은 (시험,학생,회차) 조합이면 새로고침해도 항상 같은 문제가 나오고, 채점할 때도
     이 함수를 다시 불러 같은 정답과 대조한다.
 
-    문제마다 방향(영어→뜻 / 뜻→영어)을 무작위로 섞는다 — 이제 시험 하나가 두 방향을
-    같이 낸다. 그래서 오답 후보 풀도 두 가지(뜻 풀·단어 풀)를 미리 만들어 두고,
-    그 문제의 방향에 맞는 풀에서만 뽑는다."""
+    round를 시드에 넣는 이유 — 재시험(회차)마다 순서·방향·객관식 보기를 다시 섞어서,
+    떨어진 회차의 '몇 번째 보기가 정답이었는지'를 외워 다음 회차를 통과하는 것을
+    막는다. 문제마다 방향(영어→뜻 / 뜻→영어)을 무작위로 섞는다 — 오답 후보 풀도
+    두 가지(뜻 풀·단어 풀)를 미리 만들어 두고, 그 문제의 방향에 맞는 풀에서만 뽑는다."""
     vocab = assignment.get("vocab") or []
     fmt = assignment.get("format", "saq")
 
@@ -7382,14 +7419,14 @@ def _build_student_questions(assignment_id, assignment, student_id):
             seen_w.add(item["word"])
             word_pool.append(item["word"])
 
-    order_rng = random.Random(f"{assignment_id}:{student_id}:order")
+    order_rng = random.Random(f"{assignment_id}:{student_id}:{round}:order")
     order = list(range(len(vocab)))
     order_rng.shuffle(order)
 
     questions = []
     for idx in order:
         item = vocab[idx]
-        q_rng = random.Random(f"{assignment_id}:{student_id}:{idx}")
+        q_rng = random.Random(f"{assignment_id}:{student_id}:{round}:{idx}")
         direction = "en2ko" if q_rng.random() < 0.5 else "ko2en"
         if direction == "en2ko":
             prompt, correct, pool = item["word"], item["meaning"], meaning_pool
@@ -7416,6 +7453,38 @@ def _assignment_targets_student(assignment, student_id, student):
     return target is None or target == student_id
 
 
+def _get_student_attempts(assignment_id, student_id):
+    """이 시험에서 이 학생이 지금까지 본 회차들을 회차 순서대로 돌려준다."""
+    _require_db()
+    rows = [
+        (doc.to_dict() or {})
+        for doc in DB.collection("test_attempts")
+        .where("assignment_id", "==", assignment_id)
+        .where("student_id", "==", student_id)
+        .stream()
+    ]
+    rows.sort(key=lambda d: d.get("round", 1))
+    return rows
+
+
+def _attempt_progress(assignment, attempts):
+    """max_wrong 기준으로 지금까지의 시도를 훑어 (합격 여부, 합격한 회차, 다음에 볼
+    회차)를 계산한다. max_wrong이 없으면(재시험 없는 시험) 1회 제출로 항상 '합격'
+    취급 — 예전(회차 개념 없던 시절) 동작과 같다."""
+    max_wrong = assignment.get("max_wrong")
+    passed_round = None
+    for a in attempts:
+        if a.get("passed") or (max_wrong is None and a.get("round", 1) == 1):
+            passed_round = a.get("round", 1)
+            break
+    next_round = (attempts[-1].get("round", 1) + 1) if attempts else 1
+    return {
+        "passed": passed_round is not None,
+        "passedRound": passed_round,
+        "nextRound": next_round,
+    }
+
+
 def get_test_detail_for_student(student_id, assignment_id):
     _require_db()
     s_snap = DB.collection("students").document(student_id).get()
@@ -7427,9 +7496,15 @@ def get_test_detail_for_student(student_id, assignment_id):
     assignment = a_snap.to_dict()
     if not _assignment_targets_student(assignment, student_id, s_snap.to_dict()):
         raise ValueError("이 시험은 이 학생에게 배정되지 않았습니다.")
-    questions = _build_student_questions(assignment_id, assignment, student_id)
+    attempts = _get_student_attempts(assignment_id, student_id)
+    progress = _attempt_progress(assignment, attempts)
+    if progress["passed"]:
+        raise ValueError("이미 합격한 시험입니다.")
+    round = progress["nextRound"]
+    questions = _build_student_questions(assignment_id, assignment, student_id, round)
     return {
         "title": assignment.get("title", ""),
+        "round": round,
         "format": assignment.get("format"),
         # idx·정답 값은 빼고 화면에 보여줄 것만 내보낸다(방향은 어느 언어로 답할지
         # 알아야 하니 내보낸다)
@@ -7454,30 +7529,29 @@ def list_tests_for_student(student_id):
         target = d.get("student_id")
         if target is not None and target != student_id:
             continue
-        attempt_snap = DB.collection("test_attempts").document(f"{doc.id}_{student_id}").get()
-        a = attempt_snap.to_dict() if attempt_snap.exists else None
+        attempts = _get_student_attempts(doc.id, student_id)
+        progress = _attempt_progress(d, attempts)
+        last = attempts[-1] if attempts else None
         rows.append({
             "id": doc.id, "title": d.get("title", ""), "format": d.get("format"),
             "wordCount": len(d.get("vocab") or []), "createdAt": d.get("created_at", ""),
-            "submitted": attempt_snap.exists,
-            "score": a.get("score") if a else None,
-            "total": a.get("total") if a else None,
+            "maxWrong": d.get("max_wrong"),
+            "submitted": bool(attempts),
+            "passed": progress["passed"], "passedRound": progress["passedRound"],
+            "attemptCount": len(attempts),
+            "score": last.get("score") if last else None,
+            "total": last.get("total") if last else None,
         })
     rows.sort(key=lambda r: r["createdAt"], reverse=True)
     return rows
 
 
 def grade_and_submit_attempt(assignment_id, student_id, answers):
-    """이미 제출한 시험이면 다시 채점하지 않고 저장된 결과를 그대로 돌려준다 —
-    문서 ID를 f"{assignment_id}_{student_id}"로 고정하고 create()의 존재 확인을
-    그대로 '학생당 시험당 1회 제출' 잠금으로 쓴다(경쟁 상태 걱정이 없다)."""
+    """이미 합격한 시험이면 다시 채점하지 않고 그 결과를 그대로 돌려준다. 아직이면
+    다음 회차로 채점해 새 시도 기록을 남긴다 — 문서 ID를
+    f"{assignment_id}_{student_id}_{round}"로 고정하고 create()의 존재 확인을
+    '그 회차는 1회만 제출'하는 잠금으로 쓴다(경쟁 상태 걱정이 없다)."""
     _require_db()
-    attempt_ref = DB.collection("test_attempts").document(f"{assignment_id}_{student_id}")
-    existing = attempt_ref.get()
-    if existing.exists:
-        d = existing.to_dict()
-        return {"score": d.get("score", 0), "total": d.get("total", 0)}
-
     a_snap = DB.collection("test_assignments").document(assignment_id).get()
     if not a_snap.exists:
         raise ValueError("시험을 찾을 수 없습니다.")
@@ -7489,9 +7563,20 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
     if not _assignment_targets_student(assignment, student_id, student):
         raise ValueError("이 시험은 이 학생에게 배정되지 않았습니다.")
 
+    attempts = _get_student_attempts(assignment_id, student_id)
+    progress = _attempt_progress(assignment, attempts)
+    if progress["passed"]:
+        last = attempts[-1]
+        return {
+            "score": last.get("score", 0), "total": last.get("total", 0),
+            "wrong": last.get("wrong", 0), "passed": True, "round": last.get("round", 1),
+        }
+    round = progress["nextRound"]
+
     vocab = assignment.get("vocab") or []
     fmt = assignment.get("format", "saq")
-    questions = _build_student_questions(assignment_id, assignment, student_id)
+    max_wrong = assignment.get("max_wrong")
+    questions = _build_student_questions(assignment_id, assignment, student_id, round)
 
     score = 0
     for i, q in enumerate(questions):
@@ -7511,34 +7596,54 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
         if ok:
             score += 1
 
+    total = len(questions)
+    wrong = total - score
+    passed = (max_wrong is None) or (wrong <= max_wrong)
     row = {
-        "assignment_id": assignment_id, "student_id": student_id,
+        "assignment_id": assignment_id, "student_id": student_id, "round": round,
         "teacher_id": assignment.get("teacher_id"), "student_name": student.get("name", ""),
-        "answers": list(answers or []), "score": score, "total": len(questions),
-        "submitted_at": _now_iso(),
+        "answers": list(answers or []), "score": score, "total": total,
+        "wrong": wrong, "passed": passed, "submitted_at": _now_iso(),
     }
+    attempt_ref = DB.collection("test_attempts").document(f"{assignment_id}_{student_id}_{round}")
     try:
         attempt_ref.create(row)
     except Exception:
         d = attempt_ref.get().to_dict() or {}
-        return {"score": d.get("score", 0), "total": d.get("total", 0)}
-    return {"score": score, "total": len(questions)}
+        return {
+            "score": d.get("score", 0), "total": d.get("total", 0),
+            "wrong": d.get("wrong", 0), "passed": d.get("passed", True),
+            "round": d.get("round", round),
+        }
+    return {"score": score, "total": total, "wrong": wrong, "passed": passed, "round": round}
 
 
 def list_attempts_for_assignment(teacher_id, assignment_id):
+    """반 전체(또는 개별) 시험의 학생별 회차 기록 — 회차별 점수를 다 보여주고,
+    몇 회차에 합격했는지도 함께 계산한다."""
     _require_db()
     a_snap = DB.collection("test_assignments").document(assignment_id).get()
     if not a_snap.exists or a_snap.to_dict().get("teacher_id") != teacher_id:
         raise ValueError("시험을 찾을 수 없습니다.")
-    rows = []
+    assignment = a_snap.to_dict()
+    by_student = {}
     for doc in DB.collection("test_attempts").where("assignment_id", "==", assignment_id).stream():
         d = doc.to_dict() or {}
-        rows.append({
-            "studentId": d.get("student_id"), "studentName": d.get("student_name", ""),
-            "score": d.get("score", 0), "total": d.get("total", 0),
+        sid = d.get("student_id")
+        by_student.setdefault(sid, {"studentId": sid, "studentName": d.get("student_name", ""), "rounds": []})
+        by_student[sid]["rounds"].append({
+            "round": d.get("round", 1), "score": d.get("score", 0), "total": d.get("total", 0),
+            "wrong": d.get("wrong", 0), "passed": d.get("passed", True),
             "submittedAt": d.get("submitted_at", ""),
         })
-    rows.sort(key=lambda r: r["submittedAt"])
+    rows = []
+    for entry in by_student.values():
+        entry["rounds"].sort(key=lambda r: r["round"])
+        progress = _attempt_progress(assignment, entry["rounds"])
+        entry["passed"] = progress["passed"]
+        entry["passedRound"] = progress["passedRound"]
+        rows.append(entry)
+    rows.sort(key=lambda r: (r["rounds"][0]["submittedAt"] if r["rounds"] else ""))
     return rows
 
 
@@ -7942,6 +8047,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
                         "/api/classes", "/api/classes/regenerate-code", "/api/students",
                         "/api/students/delete", "/api/vocab-tests", "/api/vocab-tests/delete",
+                        "/api/vocab-tests/update",
                         "/api/student/login", "/api/student/logout", "/api/student/tests/submit"):
             self.send_error(404, "Not found")
             return
@@ -8424,6 +8530,7 @@ class Handler(BaseHTTPRequestHandler):
                     user_id, req.get("classId"), req.get("title"),
                     req.get("vocab"), req.get("format"),
                     student_id=(req.get("studentId") or None),
+                    max_wrong=req.get("maxWrong"),
                 )
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
@@ -8447,6 +8554,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 404)
                 return
             self._send_json({"deleted": True})
+            return
+
+        if path == "/api/vocab-tests/update":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                max_wrong = update_assignment_retest(
+                    user_id, req.get("assignmentId"), req.get("maxWrong"),
+                )
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json({"maxWrong": max_wrong})
             return
 
         # --- 반 · 학생 · 단어시험 (학생 쪽 POST) ---

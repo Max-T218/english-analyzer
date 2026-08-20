@@ -105,6 +105,15 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 전부 `_assignment_targets_student`로 이 배정 대상을 확인합니다 — 반이 같아도
 다른 학생 한 명에게만 낸 시험은 안 보입니다.
 
+**재시험**: `create_test_assignment`의 `max_wrong`(없으면 1회로 끝, 있으면 "이
+개수 이하로 틀려야 합격")을 기준으로 `_attempt_progress`가 합격 여부·합격 회차·
+다음에 볼 회차를 계산합니다. `test_attempts` 문서 ID는 `{assignment_id}_{student_id}_{round}`로
+회차마다 따로 쌓이고(옛 시험은 회차 개념이 없던 시절 문서라 `round` 필드가 없는데,
+`_get_student_attempts`가 조회할 때 `round=1`로 취급해 예전 데이터도 그대로
+호환됩니다), `_build_student_questions`도 시드에 `round`를 넣어 재시험마다 순서·
+방향·객관식 보기를 다시 섞습니다 — 떨어진 회차의 보기 위치를 외워 통과하는 것을
+막기 위해서입니다.
+
 ## 코드 지도
 
 줄 번호는 수정할 때마다 밀리니 **심볼 이름으로 찾으세요.**
@@ -117,7 +126,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | 가격 계산 | `_quiz_type_base_price`, `_quiz_action_cost`, `_workbook_cost`(단계 수 × 단가, 상한 있음) |
 | 포인트 원장(이용 내역)·유상무상 구분 | `POINT_LEDGER`, `_split_balance`, `charge_krw`, `add_krw`, `list_usage`, `_fold_old_ledger` |
 | 결제(포트원) — 결제창 열기 전 요청 생성 → 결제 후 서버가 직접 확인하고서만 충전 | `PORTONE_STORE_ID`/`PORTONE_CHANNEL_KEY_CARD`/`PORTONE_API_SECRET`, `create_payment_intent`, `confirm_payment_intent`(`payment_intents` 컬렉션, 브라우저가 보고하는 성공 여부를 그대로 믿지 않는다) |
-| 반 · 학생 · 단어시험(AI 안 씀) | `_classroom_approved`/`set_classroom_approved`(관리자 승인 게이트), `create_class`/`regenerate_class_code`(반 하나당 코드 하나, `classes`/`class_codes` 컬렉션)/`create_student`/`delete_student`(`students` 컬렉션, 개별 코드 없음. `create_student`가 이름을 앱 전체에서 유일하도록 등록 시점에 동명이인을 거부한다), `login_student`(이름만 받아 로그인 — 반 코드 없음, `students` 전체를 이름으로 검색)/`create_student_session`/`_student_session_user`(학생 세션, `admin_sessions`와 같은 모양), `create_test_assignment`(`student_id`를 주면 그 학생 한 명에게만, 안 주면 반 전체에)/`_assignment_targets_student`(반 전체/개별 배정 판정, 조회·응시·제출 세 곳이 공유)/`_build_student_questions`(객관식 오답을 같은 단어장의 다른 뜻/단어에서 결정적으로 뽑음)/`grade_and_submit_attempt`(`test_assignments`/`test_attempts` 컬렉션, 문서 ID를 `{assignment_id}_{student_id}`로 고정해 중복 제출을 막음)/`delete_assignment`(시험과 딸린 답안까지 삭제) |
+| 반 · 학생 · 단어시험(AI 안 씀) | `_classroom_approved`/`set_classroom_approved`(관리자 승인 게이트), `create_class`/`regenerate_class_code`(반 하나당 코드 하나, `classes`/`class_codes` 컬렉션)/`create_student`/`delete_student`(`students` 컬렉션, 개별 코드 없음. `create_student`가 이름을 앱 전체에서 유일하도록 등록 시점에 동명이인을 거부한다), `login_student`(이름만 받아 로그인 — 반 코드 없음, `students` 전체를 이름으로 검색)/`create_student_session`/`_student_session_user`(학생 세션, `admin_sessions`와 같은 모양), `create_test_assignment`(`student_id`를 주면 그 학생 한 명에게만, 안 주면 반 전체에)/`_assignment_targets_student`(반 전체/개별 배정 판정, 조회·응시·제출 세 곳이 공유)/`_build_student_questions`(객관식 오답을 같은 단어장의 다른 뜻/단어에서 결정적으로 뽑음)/`grade_and_submit_attempt`(`test_assignments`/`test_attempts` 컬렉션, 문서 ID를 `{assignment_id}_{student_id}_{round}`로 고정해 그 회차의 중복 제출을 막음 — 재시험 기준은 아래 참고)/`_get_student_attempts`/`_attempt_progress`(합격 여부·합격 회차·다음 회차 계산)/`delete_assignment`(시험과 딸린 답안까지 삭제) |
 | Firestore 연결 | `_load_firestore` |
 | 회원가입·인증코드·비밀번호 | `start_signup`, `complete_signup`, `login_with_password`, `_hash_password` |
 | Gemini 호출 공통(재시도·시간 예산) | `RETRY_MIN_WAIT`, `MAX_RETRY_TOTAL`, `_over_budget`, `RefineTrace`, `_parse_retry_delay` |

@@ -112,17 +112,29 @@ function renderTests(tests) {
     $("testList").innerHTML = `<p class="hint">아직 배정된 시험이 없습니다.</p>`;
     return;
   }
-  $("testList").innerHTML = tests.map((t) => `
+  $("testList").innerHTML = tests.map((t) => {
+    let rightSide;
+    if (!t.submitted) {
+      rightSide = `<button type="button" class="btn small take-btn" data-id="${esc(t.id)}">응시하기</button>`;
+    } else if (t.passed) {
+      rightSide = `<div style="font-weight:800; color:var(--accent);">✅ 합격 (${t.passedRound}회차 · ${t.score}/${t.total})</div>`;
+    } else {
+      rightSide = `
+        <div style="text-align:right;">
+          <div style="font-weight:700; color:var(--g);">미통과 (${t.attemptCount}회 시도 · 최근 ${t.score}/${t.total})</div>
+          <button type="button" class="btn small take-btn" data-id="${esc(t.id)}" style="margin-top:4px;">재시험 보기</button>
+        </div>`;
+    }
+    return `
     <div class="panel" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
       <div>
         <div style="font-weight:700;">${esc(t.title)}</div>
-        <div class="hint">${esc(FORMAT_LABEL[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개</div>
+        <div class="hint">${esc(FORMAT_LABEL[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개
+          ${t.maxWrong != null ? `· 합격 기준 ${t.wordCount - t.maxWrong}/${t.wordCount}` : ""}</div>
       </div>
-      ${t.submitted
-        ? `<div style="font-weight:800; color:var(--accent);">${t.score} / ${t.total}점</div>`
-        : `<button type="button" class="btn small take-btn" data-id="${esc(t.id)}">응시하기</button>`}
-    </div>
-  `).join("");
+      ${rightSide}
+    </div>`;
+  }).join("");
 }
 
 $("testList").addEventListener("click", (e) => {
@@ -141,7 +153,7 @@ async function openTest(assignmentId) {
   $("takeForm").innerHTML = "";
   try {
     const data = await getJson(`/api/student/tests/detail?assignmentId=${encodeURIComponent(assignmentId)}`);
-    $("takeTitle").textContent = data.title;
+    $("takeTitle").textContent = data.round > 1 ? `${data.title} (${data.round}회차)` : data.title;
     $("takeHint").textContent =
       data.format === "mcq" ? "보기 중 하나를 고르세요." : "직접 입력하세요.";
     $("takeForm").innerHTML = data.questions.map((q, i) => `
@@ -166,6 +178,7 @@ async function openTest(assignmentId) {
 
 $("backToListBtn").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
 $("backToListBtn2").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
+$("retryBtn").addEventListener("click", () => openTest(currentAssignmentId));
 
 const submitBtn = $("submitBtn");
 const submitStatus = $("submitStatus");
@@ -187,6 +200,10 @@ $("takeForm").addEventListener("submit", async (e) => {
       assignmentId: currentAssignmentId, answers,
     });
     $("resultScore").textContent = `${result.score} / ${result.total}점`;
+    $("resultLead").textContent = result.passed
+      ? (result.round > 1 ? `🎉 ${result.round}회차 만에 합격했습니다!` : "🎉 합격했습니다!")
+      : `아직 기준에 못 미쳤습니다 (틀린 개수 ${result.wrong}개). 다시 도전해 보세요.`;
+    $("retryBtn").hidden = result.passed;
     showOnly(resultWorkspaceEl);
   } catch (err) {
     errEl.textContent = err.message || "제출에 실패했습니다.";

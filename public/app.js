@@ -7281,14 +7281,19 @@ function renderAssignedTests(tests) {
         <div>
           <b>${esc(t.title)}</b>
           <span class="hint">· ${esc(FORMAT_LABEL_KO[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개
-            · ${t.studentId ? `👤 ${esc(t.studentName || "학생 1명")}` : "반 전체"}</span>
+            · ${t.studentId ? `👤 ${esc(t.studentName || "학생 1명")}` : "반 전체"}
+            ${t.maxWrong != null ? `· 합격 기준 ${t.wordCount - t.maxWrong}/${t.wordCount}(오답 ${t.maxWrong}개까지)` : ""}</span>
         </div>
         <span style="display:inline-flex; gap:6px;">
           <button type="button" class="btn ghost small view-results-btn">결과 보기</button>
+          <button type="button" class="btn ghost small edit-retest-btn"
+                  data-max-wrong="${t.maxWrong == null ? "" : t.maxWrong}"
+                  data-word-count="${t.wordCount}">재시험 기준 수정</button>
           <button type="button" class="btn ghost small danger del-test-btn">삭제</button>
         </span>
       </div>
       <div class="results-body" hidden></div>
+      <div class="edit-body" hidden></div>
     </div>`
     )
     .join("");
@@ -7316,6 +7321,69 @@ assignedTestListEl.addEventListener("click", async (e) => {
     return;
   }
 
+  const editBtn = e.target.closest(".edit-retest-btn");
+  if (editBtn) {
+    const card = editBtn.closest("[data-aid]");
+    const body = card.querySelector(".edit-body");
+    if (!body.hidden) {
+      body.hidden = true;
+      return;
+    }
+    card.querySelector(".results-body").hidden = true; // 결과 보기가 열려 있으면 접는다
+    body.hidden = false;
+    const hasRetest = editBtn.dataset.maxWrong !== "";
+    const wordCount = editBtn.dataset.wordCount;
+    body.innerHTML = `
+      <div class="field" style="max-width:360px;">
+        <label class="chk">
+          <input type="checkbox" class="edit-retest-chk" ${hasRetest ? "checked" : ""}>
+          합격 기준을 두고, 기준 미달이면 통과할 때까지 재시험
+        </label>
+        <div class="edit-retest-inner" ${hasRetest ? "" : "hidden"}>
+          <label>허용 오답 수 (0~${esc(wordCount)}, 이 개수 이하로 틀리면 합격)</label>
+          <input type="number" class="edit-max-wrong" min="0" max="${esc(wordCount)}" step="1"
+                 value="${esc(editBtn.dataset.maxWrong)}">
+        </div>
+        <div class="actions" style="margin-top:8px;">
+          <button type="button" class="btn small edit-retest-save-btn">저장</button>
+          <span class="error edit-retest-error"></span>
+        </div>
+        <p class="hint">이미 제출한 학생들의 지난 결과는 안 바뀌고, 이제부터 새로 보는
+          시도에만 새 기준이 적용됩니다.</p>
+      </div>`;
+    return;
+  }
+
+  const saveBtn = e.target.closest(".edit-retest-save-btn");
+  if (saveBtn) {
+    const card = saveBtn.closest("[data-aid]");
+    const body = saveBtn.closest(".edit-body");
+    const errEl = body.querySelector(".edit-retest-error");
+    errEl.textContent = "";
+    const checked = body.querySelector(".edit-retest-chk").checked;
+    let maxWrong = null;
+    if (checked) {
+      maxWrong = parseInt(body.querySelector(".edit-max-wrong").value, 10);
+      if (!Number.isFinite(maxWrong) || maxWrong < 0) {
+        errEl.textContent = "허용 오답 수를 0 이상의 숫자로 입력하세요.";
+        return;
+      }
+    }
+    saveBtn.disabled = true;
+    try {
+      await postJson(
+        "/api/vocab-tests/update",
+        { assignmentId: card.dataset.aid, maxWrong },
+        "수정에 실패했습니다."
+      );
+      loadAssignedTests();
+    } catch (err) {
+      errEl.textContent = err.message || "수정에 실패했습니다.";
+      saveBtn.disabled = false;
+    }
+    return;
+  }
+
   const btn = e.target.closest(".view-results-btn");
   if (!btn) return;
   const card = btn.closest("[data-aid]");
@@ -7331,20 +7399,32 @@ assignedTestListEl.addEventListener("click", async (e) => {
       `/api/vocab-tests/results?assignmentId=${encodeURIComponent(card.dataset.aid)}`,
       "결과를 불러오지 못했습니다."
     );
-    const attempts = data.attempts || [];
-    body.innerHTML = attempts.length
-      ? `<table><thead><tr><th>학생</th><th>점수</th><th>제출 시각</th></tr></thead><tbody>` +
-        attempts
-          .map(
-            (a) =>
-              `<tr><td>${esc(a.studentName)}</td><td>${a.score} / ${a.total}</td><td>${esc(fmtClassroomDate(a.submittedAt))}</td></tr>`
-          )
+    const students = data.attempts || [];
+    body.innerHTML = students.length
+      ? `<table><thead><tr><th>학생</th><th>회차별 점수</th><th>결과</th></tr></thead><tbody>` +
+        students
+          .map((s) => {
+            const roundsText = (s.rounds || [])
+              .map((r) => `${r.round}회 ${r.score}/${r.total}${r.passed ? " ✅" : ""}`)
+              .join(" · ");
+            const resultText = s.passed
+              ? `합격(${s.passedRound}회차)`
+              : `미통과(${(s.rounds || []).length}회 시도)`;
+            return `<tr><td>${esc(s.studentName)}</td><td>${esc(roundsText)}</td><td>${esc(resultText)}</td></tr>`;
+          })
           .join("") +
         `</tbody></table>`
       : `<p class="hint">아직 제출한 학생이 없습니다.</p>`;
   } catch (err) {
     body.innerHTML = `<p class="error">${esc(err.message || "결과를 불러오지 못했습니다.")}</p>`;
   }
+});
+
+assignedTestListEl.addEventListener("change", (e) => {
+  const chk = e.target.closest(".edit-retest-chk");
+  if (!chk) return;
+  const inner = chk.closest(".edit-body").querySelector(".edit-retest-inner");
+  inner.hidden = !chk.checked;
 });
 
 // 탭을 열 때마다 최신으로 — 다른 탭에서 작업하다 돌아왔을 때 낡은 목록을 보지 않게
@@ -7360,6 +7440,13 @@ const assignErrorEl = $("assignError");
 const assignStatusEl = $("assignStatus");
 const assignVocabSourceSelectEl = $("assignVocabSourceSelect");
 const assignVocabSourceHintEl = $("assignVocabSourceHint");
+const assignRetestChkEl = $("assignRetestChk");
+const assignRetestFieldEl = $("assignRetestField");
+const assignMaxWrongEl = $("assignMaxWrong");
+
+assignRetestChkEl.addEventListener("change", () => {
+  assignRetestFieldEl.hidden = !assignRetestChkEl.checked;
+});
 
 async function refreshClassSelectForModal() {
   try {
@@ -7459,6 +7546,9 @@ assignVocabSourceSelectEl.addEventListener("change", async () => {
 
 vocabAssignBtn.addEventListener("click", async () => {
   assignErrorEl.textContent = "";
+  assignRetestChkEl.checked = false;
+  assignRetestFieldEl.hidden = true;
+  assignMaxWrongEl.value = "";
   await Promise.all([refreshClassSelectForModal(), refreshAssignVocabSourceSelect()]);
   openModal(assignModalEl);
 });
@@ -7478,6 +7568,14 @@ assignFormEl.addEventListener("submit", async (e) => {
     return;
   }
   const target = assignTargetSelectEl.value; // "class" 또는 학생 id
+  let maxWrong = null;
+  if (assignRetestChkEl.checked) {
+    maxWrong = parseInt(assignMaxWrongEl.value, 10);
+    if (!Number.isFinite(maxWrong) || maxWrong < 0) {
+      assignErrorEl.textContent = "허용 오답 수를 0 이상의 숫자로 입력하세요.";
+      return;
+    }
+  }
   assignStatusEl.textContent = "내는 중…";
   $("assignSubmitBtn").disabled = true;
   try {
@@ -7488,6 +7586,7 @@ assignFormEl.addEventListener("submit", async (e) => {
         studentId: target === "class" ? null : target,
         title: $("assignTitle").value,
         format: $("assignFormat").value,
+        maxWrong,
         vocab: rows.map((r) => ({
           word: r.word, meaning: r.meaning, pos: r.pos, synonym: r.synonym, antonym: r.antonym,
         })),
