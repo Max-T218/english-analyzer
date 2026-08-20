@@ -27,6 +27,7 @@
 <meta name="twitter:card" content="summary">
 <link rel="stylesheet" href="/style.css?v=%%ASSET_V%%">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdn.portone.io/v2/browser-sdk.js" async defer></script>
 </head>
 <body>
 <!-- 인쇄 틀: <tfoot>은 매 페이지 하단에 '자리를 차지하며' 반복되므로
@@ -386,7 +387,12 @@
     <div class="modal-box">
       <button type="button" class="modal-close" id="rechargeModalClose" aria-label="닫기">&times;</button>
       <h3 class="modal-title">충전</h3>
-      <p class="hint">현재는 비공개 테스트 기간이라 결제 없이 원하는 만큼 바로 충전됩니다.</p>
+      <p class="hint">신용카드로 결제하면 결제한 금액만큼 즉시 충전됩니다.</p>
+
+      <div class="field">
+        <label for="rechargePhone">연락처(휴대폰 번호)</label>
+        <input type="tel" id="rechargePhone" placeholder="010-1234-5678" autocomplete="tel">
+      </div>
 
       <div class="recharge-presets" id="rechargePresets">
         <button type="button" class="btn ghost small recharge-preset-btn" data-amount="10000">10,000원</button>
@@ -408,6 +414,31 @@
     </div>
   </div>
 
+  <!-- ══════════ 반에 시험 내기 창(플로팅) ══════════ -->
+  <div class="modal-overlay" id="assignModalOverlay" hidden>
+    <div class="modal-box">
+      <button type="button" class="modal-close" id="assignModalClose" aria-label="닫기">&times;</button>
+      <h3 class="modal-title">반에 단어시험 내기</h3>
+      <form class="auth-panel" id="assignForm">
+        <label for="assignClassSelect">낼 반</label>
+        <select id="assignClassSelect"></select>
+        <label for="assignTitle">시험 제목</label>
+        <input type="text" id="assignTitle" placeholder="예: 3과 단어시험">
+        <label for="assignFormat">형식</label>
+        <select id="assignFormat">
+          <option value="mcq">객관식(4지선다)</option>
+          <option value="saq">주관식(직접 입력)</option>
+        </select>
+        <p class="hint">문제마다 "영어 보고 뜻 맞히기"·"뜻 보고 영어 쓰기"가 무작위로 섞여 나갑니다.</p>
+        <div class="gate-actions">
+          <button type="submit" class="btn" id="assignSubmitBtn">시험 내기</button>
+          <span class="gate-status" id="assignStatus"></span>
+        </div>
+      </form>
+      <div class="error" id="assignError"></div>
+    </div>
+  </div>
+
   <!-- ══════════ 작업 화면 ══════════ -->
   <div id="workspace" hidden>
 
@@ -418,12 +449,7 @@
         <button type="button" class="btn ghost small" id="passageLibraryBtn">📄 지문 저장함</button>
         <button type="button" class="btn ghost small" id="materialLibraryBtn">📦 제작 자료 저장함</button>
         <button type="button" class="btn ghost small" id="usageHistoryBtn">🧾 이용 내역</button>
-        <!-- 사용자가 스스로 충전하는 버튼은 지금 내려 두었다. 결제사 연동 전이라
-             누르면 그냥 잔액이 늘어나는 상태였다. 잔액이 모자란 사용자는 화면 안내대로
-             관리자에게 문의하고, 충전은 /admin.html에서 해 준다.
-             되살리려면 아래 한 줄의 주석을 풀면 된다 — 모달·API·app.js 배선은 그대로 있다.
         <button type="button" class="btn small" id="openRechargeBtn">💳 충전</button>
-        -->
         <button type="button" class="btn ghost small" id="logoutBtn">로그아웃</button>
         <button type="button" class="btn ghost small danger" id="deleteAccountBtn">회원 탈퇴</button>
         <span class="hint">공용 컴퓨터라면 사용 후 반드시 로그아웃하세요.</span>
@@ -470,6 +496,8 @@
     <button type="button" class="tab-btn" data-tab="workbook">📚 워크북 제작</button>
     <button type="button" class="tab-btn" data-tab="vocab">📒 단어장</button>
     <button type="button" class="tab-btn" data-tab="exam">🧾 동형 모의고사 제작</button>
+    <!-- 관리자가 허가한 선생님에게만 보인다 — renderAccount가 hidden을 켜고 끈다 -->
+    <button type="button" class="tab-btn" data-tab="students" id="studentsTabBtn" hidden>🏫 학생 관리</button>
   </nav>
 
   <section class="panel passage-panel">
@@ -773,6 +801,8 @@
                 title="로그인한 계정에 이 단어장을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
         <button class="btn ghost" id="vocabDocxBtn" style="display:none"
                 title="워드에서 직접 고칠 수 있는 .docx 파일로 내려받습니다. 지금 화면에 보이는 그대로 담기므로, 정답을 넣을지는 아래 '정답 표시'로 정하세요.">📝 워드 다운로드</button>
+        <button class="btn ghost" id="vocabAssignBtn" style="display:none"
+                title="지금 만든 단어장으로 반 학생들에게 온라인 단어시험을 냅니다(AI를 부르지 않아 요금이 없습니다).">🏫 반에 시험 내기</button>
         <label class="chk" title="여러 지문에 같은 단어가 나오면 하나로 합칩니다.">
           <input type="checkbox" id="vocabDedup" checked> 중복 단어 합치기
         </label>
@@ -969,6 +999,64 @@
     </div>
 
     <div id="examPaperResult"></div>
+  </section>
+
+  <!-- ══════════ 탭 7: 학생 관리 (관리자가 허가한 선생님만) ══════════ -->
+  <section class="tab-page" id="tab-students">
+    <section class="panel">
+      <div class="field-head">
+        <label for="classSelect">반</label>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:1 1 220px;">
+          <select id="classSelect"><option value="">반을 먼저 만들어 주세요</option></select>
+        </div>
+        <div class="field" style="flex:0 0 auto; align-self:flex-end;">
+          <button type="button" class="btn ghost small" id="newClassBtn">+ 새 반 만들기</button>
+        </div>
+      </div>
+      <div class="error" id="classError"></div>
+    </section>
+
+    <section class="panel" id="studentsPanel" hidden>
+      <div class="brand-panel" style="margin-bottom:12px;">
+        <div class="brand-title">🔑 이 반의 로그인 코드
+          <span class="sub">(학생은 <code>/student.html</code>에서 이 코드를 넣고, 목록에서 자기 이름을 골라 로그인합니다 — 이름은 몰라도 코드만 알면 됩니다)</span>
+        </div>
+        <div class="brand-body" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <code id="classCodeDisplay" style="font-size:20px; font-weight:800; letter-spacing:.06em;"></code>
+          <button type="button" class="btn ghost small" id="copyClassCodeBtn">복사</button>
+          <button type="button" class="btn ghost small" id="regenClassCodeBtn">코드 재발급</button>
+        </div>
+      </div>
+
+      <div class="field-head">
+        <label>학생 목록</label>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:1 1 160px;">
+          <input type="text" id="newStudentName" placeholder="학생 이름">
+        </div>
+        <div class="field" style="flex:0 0 auto; align-self:flex-end;">
+          <button type="button" class="btn small" id="addStudentBtn">＋ 학생 등록</button>
+        </div>
+      </div>
+      <div class="error" id="studentError"></div>
+      <div class="table-wrap" style="margin-top:10px;">
+        <table>
+          <thead><tr><th>이름</th><th>등록일</th><th></th></tr></thead>
+          <tbody id="studentTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="assignedTestsPanel" hidden>
+      <div class="field-head">
+        <label>이 반에 낸 단어시험</label>
+      </div>
+      <p class="hint">단어장 탭에서 단어장을 만든 뒤 "🏫 반에 시험 내기"를 누르면 여기에 나타납니다.</p>
+      <div id="assignedTestList"></div>
+    </section>
   </section>
 
   </div><!-- /#workspace -->

@@ -401,6 +401,7 @@ function closeAllModals() {
   closeModal(loginModalEl);
   closeModal(signupModalEl);
   closeModal(rechargeModalEl);
+  closeModal(assignModalEl);
 }
 function showSignupStep(step) {
   signupPanelEl.hidden = step !== "form";
@@ -535,12 +536,17 @@ let isLoggedIn = false; // 저장/불러오기 버튼들이 이 값으로 로그
 let lastAccountLabel = ""; // 이름/이메일 표시용 — 충전 후 잔액만 다시 그릴 때 재사용
 let currentKrwFree = null; // 무상 포인트 — 이용 내역 안내 문구에 쓴다
 let currentKrwPaid = null; // 유상 포인트(환불 대상)
+let currentAccountEmail = ""; // 결제창(포트원)이 구매자 이메일·이름을 요구해서 따로 들고 있는다
+let currentAccountName = "";
+let isClassroomApproved = false; // 관리자가 반/학생 등록 기능을 켜 준 선생님인지
 
 function renderAccount(info) {
   isLoggedIn = !!(info && info.loggedIn);
   if (!isLoggedIn) {
     currentKrw = null;
     currentKrwFree = currentKrwPaid = null;
+    isClassroomApproved = false;
+    studentsTabBtn.hidden = true;
     return;
   }
   const krw = Number(info.krwRemaining);
@@ -550,6 +556,11 @@ function renderAccount(info) {
   currentKrwFree = Number.isFinite(free) ? free : null;
   currentKrwPaid = Number.isFinite(paid) ? paid : null;
   if (info.name || info.email) lastAccountLabel = info.name || info.email;
+  if (info.email) currentAccountEmail = info.email;
+  if (info.name) currentAccountName = info.name;
+  isClassroomApproved = !!info.classroomApproved;
+  studentsTabBtn.hidden = !isClassroomApproved;
+  updateVocabAssignBtnVisibility();
   const krwText = currentKrw !== null ? ` · 잔액 ${currentKrw.toLocaleString()}원` : "";
   accountNameEl.textContent = `${lastAccountLabel || "로그인됨"}님${krwText}`;
   // 서버가 이 계정이 아직 못 본 업데이트를 함께 내려준다(/api/me·로그인 응답 공통).
@@ -659,12 +670,16 @@ deleteAccountBtn.addEventListener("click", async () => {
   showGate();
 });
 
-/* ── 충전(결제사 연동 전, 비공개 테스트 기간 임시 무료 충전) ── */
+/* ── 충전(포트원 결제창) ──
+   1) 서버에 결제 요청을 만든다(아직 포인트 안 줌) → 2) 포트원 결제창을 띄운다 →
+   3) 결제창이 끝나면 서버에 확인시킨다 — 서버가 포트원에 직접 물어봐서 실제로
+   결제된 게 맞을 때만 충전한다(브라우저가 '성공했다'는 말만 믿지 않는다). */
 const rechargeCustomForm = $("rechargeCustomForm");
 const rechargeCustomAmountEl = $("rechargeCustomAmount");
 const rechargeCustomBtn = $("rechargeCustomBtn");
 const rechargeStatusEl = $("rechargeStatus");
 const rechargeErrorEl = $("rechargeError");
+const rechargePhoneEl = $("rechargePhone");
 
 async function submitRecharge(amount) {
   rechargeErrorEl.textContent = "";
@@ -672,9 +687,45 @@ async function submitRecharge(amount) {
     rechargeErrorEl.textContent = "충전할 금액을 올바르게 입력하세요.";
     return;
   }
-  rechargeStatusEl.textContent = "충전 중…";
+  // 이니시스 V2 일반결제는 구매자 이메일·휴대폰 번호가 없으면 결제창 자체를 못 띄운다
+  const phoneDigits = (rechargePhoneEl.value || "").replace(/\D/g, "");
+  if (phoneDigits.length < 9) {
+    rechargeErrorEl.textContent = "결제 확인 문자를 받을 휴대폰 번호를 입력하세요.";
+    return;
+  }
+  if (!window.PortOne) {
+    rechargeErrorEl.textContent = "결제 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.";
+    return;
+  }
+  rechargeStatusEl.textContent = "결제창을 여는 중…";
   try {
-    const data = await postJson("/api/account/recharge", { amount }, "충전에 실패했습니다.");
+    const intent = await postJson("/api/account/recharge", { amount }, "결제 요청에 실패했습니다.");
+    rechargeStatusEl.textContent = "결제 진행 중…";
+    const result = await window.PortOne.requestPayment({
+      storeId: intent.storeId,
+      channelKey: intent.channelKey,
+      paymentId: intent.paymentId,
+      orderName: intent.orderName,
+      totalAmount: intent.amount,
+      currency: "CURRENCY_KRW",
+      payMethod: "CARD",
+      customer: {
+        email: currentAccountEmail || undefined,
+        phoneNumber: phoneDigits,
+        fullName: currentAccountName || currentAccountEmail || undefined,
+      },
+    });
+    if (result && result.code) {
+      // 결제창을 닫았거나 카드사가 거절한 경우 — message가 사유를 담고 있다
+      rechargeErrorEl.textContent = result.message || "결제가 취소되었습니다.";
+      return;
+    }
+    rechargeStatusEl.textContent = "결제 확인 중…";
+    const data = await postJson(
+      "/api/account/recharge/confirm",
+      { paymentId: intent.paymentId },
+      "결제 확인에 실패했습니다."
+    );
     renderAccount({ loggedIn: true, krwRemaining: data.krwRemaining });
     closeModal(rechargeModalEl);
   } catch (err) {
@@ -684,10 +735,6 @@ async function submitRecharge(amount) {
   }
 }
 
-/* 충전 버튼은 지금 index.html에서 주석으로 내려 두었다(결제사 연동 전이라 누르면 그냥
-   잔액이 늘어나는 상태였다). 여기서 없는 요소에 addEventListener를 걸면 그 자리에서
-   app.js가 통째로 죽으므로 — 버튼 하나 때문에 화면 전체가 멎는다 — 있을 때만 건다.
-   버튼을 되살리면 이 배선도 그대로 다시 동작한다. */
 const openRechargeBtn = $("openRechargeBtn");
 if (openRechargeBtn) {
   openRechargeBtn.addEventListener("click", () => {
@@ -2034,6 +2081,7 @@ const passagePanelEl = document.querySelector(".passage-panel");
 wirePassageDrop(passagePanelEl, passageMgr, ocrStatus, { ocr: true });
 
 // ── 탭 전환 ──
+const studentsTabBtn = $("studentsTabBtn");
 const tabBtns = [...document.querySelectorAll(".tab-btn")];
 const tabPages = [...document.querySelectorAll(".tab-page")];
 function syncFloatPrint() {
@@ -2131,7 +2179,7 @@ function moveBrandPanel(intoExam) {
 
 function syncTabChrome(tab) {
   const onExam = tab === "exam";
-  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || tab === "vocab";
+  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || tab === "vocab" || tab === "students";
   // 기출 탭에서는 분석이 끝나 시험지 칸이 열렸을 때만 마크 칸을 보여 준다
   moveBrandPanel(onExam && !examPaperPanelEl.hidden);
   if (brandPanelEl) brandPanelEl.hidden = onExam && examPaperPanelEl.hidden;
@@ -4988,8 +5036,12 @@ const vocabBtn = $("vocabBtn");
 const vocabPrintBtn = $("vocabPrintBtn");
 const vocabSaveBtn = $("vocabSaveBtn");
 const vocabDocxBtn = $("vocabDocxBtn");
+const vocabAssignBtn = $("vocabAssignBtn");
 const vocabErrorEl = $("vocabError");
 const vocabDocEl = $("vocabDoc");
+// "반에 시험 내기"가 지금 화면에 그려진 것과 똑같은 목록(중복 합치기·정렬 반영)을
+// 그대로 시험 문제로 쓰게, buildVocab이 마지막으로 계산한 줄을 들고 있는다.
+let lastVocabRows = [];
 
 function getVocabSets() {
   try {
@@ -5143,6 +5195,8 @@ function buildVocab() {
   vocabPrintBtn.style.display = "inline-flex";
   vocabSaveBtn.style.display = "inline-flex";
   vocabDocxBtn.style.display = "inline-flex";
+  lastVocabRows = rows;
+  updateVocabAssignBtnVisibility();
   syncFloatPrint();
   vocabDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -5552,6 +5606,8 @@ TAB_SAVE.vocab = {
     vocabPrintBtn.style.display = "none";
     vocabSaveBtn.style.display = "none";
     vocabDocxBtn.style.display = "none";
+    lastVocabRows = [];
+    updateVocabAssignBtnVisibility();
     syncFloatPrint();
   },
 };
@@ -7023,3 +7079,310 @@ $("examPaperSaveBtn").addEventListener("click", () => openSaveDialog("exam"));
 // 분석만 끝난 상태에서 누르는 저장 — 같은 저장 창을 쓴다. 무엇이 담기는지는
 // saveLead가, 목록에서 어떻게 보일지는 SAVE_TITLE_SUGGEST가 경우에 맞춰 바꾼다.
 $("examSpecSaveBtn").addEventListener("click", () => openSaveDialog("exam"));
+
+/* ══════ 반 · 학생 · 단어시험 배정 (관리자가 허가한 선생님에게만 탭이 보인다) ══════
+   AI를 부르지 않는다 — 서버가 같은 단어장 안의 다른 뜻/단어로 오답을 만들고,
+   채점도 문자열 비교로 한다(server.py의 create_test_assignment/grade_and_submit_attempt). */
+
+function updateVocabAssignBtnVisibility() {
+  if (!vocabAssignBtn) return;
+  vocabAssignBtn.style.display = isClassroomApproved && lastVocabRows.length ? "inline-flex" : "none";
+}
+
+function fmtClassroomDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getFullYear() % 100)}.${p(d.getMonth() + 1)}.${p(d.getDate())}`;
+}
+
+const classSelectEl = $("classSelect");
+const newClassBtn = $("newClassBtn");
+const classErrorEl = $("classError");
+const studentsPanelEl = $("studentsPanel");
+const classCodeDisplayEl = $("classCodeDisplay");
+const copyClassCodeBtn = $("copyClassCodeBtn");
+const regenClassCodeBtn = $("regenClassCodeBtn");
+const newStudentNameEl = $("newStudentName");
+const addStudentBtn = $("addStudentBtn");
+const studentErrorEl = $("studentError");
+const studentTableBodyEl = $("studentTableBody");
+const assignedTestsPanelEl = $("assignedTestsPanel");
+const assignedTestListEl = $("assignedTestList");
+
+let classesCache = [];
+let selectedClassId = "";
+
+async function refreshClassSelect(preserveSelection) {
+  classErrorEl.textContent = "";
+  try {
+    const data = await getJson("/api/classes", "반 목록을 불러오지 못했습니다.");
+    classesCache = data.classes || [];
+  } catch (err) {
+    classErrorEl.textContent = err.message || "반 목록을 불러오지 못했습니다.";
+    classesCache = [];
+  }
+  const prev = preserveSelection ? classSelectEl.value : "";
+  classSelectEl.innerHTML = classesCache.length
+    ? classesCache.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")
+    : `<option value="">반을 먼저 만들어 주세요</option>`;
+  if (prev && classesCache.some((c) => c.id === prev)) classSelectEl.value = prev;
+  onClassSelectChange();
+}
+
+function onClassSelectChange() {
+  selectedClassId = classSelectEl.value;
+  const has = !!selectedClassId;
+  studentsPanelEl.hidden = !has;
+  assignedTestsPanelEl.hidden = !has;
+  if (has) {
+    const cls = classesCache.find((c) => c.id === selectedClassId);
+    classCodeDisplayEl.textContent = cls ? cls.code : "";
+    loadStudents();
+    loadAssignedTests();
+  }
+}
+classSelectEl.addEventListener("change", onClassSelectChange);
+
+newClassBtn.addEventListener("click", async () => {
+  const name = prompt("새 반 이름을 입력하세요.");
+  if (name === null || !name.trim()) return;
+  classErrorEl.textContent = "";
+  try {
+    const data = await postJson("/api/classes", { name }, "반 만들기에 실패했습니다.");
+    await refreshClassSelect(false);
+    classSelectEl.value = data.classId;
+    onClassSelectChange();
+  } catch (err) {
+    classErrorEl.textContent = err.message || "반 만들기에 실패했습니다.";
+  }
+});
+
+copyClassCodeBtn.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(classCodeDisplayEl.textContent);
+  } catch (_) {}
+});
+
+regenClassCodeBtn.addEventListener("click", async () => {
+  if (!selectedClassId) return;
+  if (!confirm("코드를 다시 만들까요? 기존 코드로는 더 이상 학생이 로그인할 수 없습니다.")) return;
+  try {
+    const data = await postJson(
+      "/api/classes/regenerate-code",
+      { classId: selectedClassId },
+      "재발급에 실패했습니다."
+    );
+    classCodeDisplayEl.textContent = data.code;
+    const cls = classesCache.find((c) => c.id === selectedClassId);
+    if (cls) cls.code = data.code;
+  } catch (err) {
+    alert(err.message || "재발급에 실패했습니다.");
+  }
+});
+
+async function loadStudents() {
+  studentErrorEl.textContent = "";
+  studentTableBodyEl.innerHTML = `<tr><td colspan="3">불러오는 중…</td></tr>`;
+  try {
+    const data = await getJson(
+      `/api/students?classId=${encodeURIComponent(selectedClassId)}`,
+      "학생 목록을 불러오지 못했습니다."
+    );
+    renderStudents(data.students || []);
+  } catch (err) {
+    studentErrorEl.textContent = err.message || "학생 목록을 불러오지 못했습니다.";
+    studentTableBodyEl.innerHTML = "";
+  }
+}
+
+function renderStudents(students) {
+  studentTableBodyEl.innerHTML = students.length
+    ? students
+        .map(
+          (s) => `
+      <tr data-sid="${esc(s.id)}">
+        <td>${esc(s.name)}</td>
+        <td>${esc(fmtClassroomDate(s.createdAt))}</td>
+        <td><button type="button" class="btn ghost small danger del-student-btn">삭제</button></td>
+      </tr>`
+        )
+        .join("")
+    : `<tr><td colspan="3" class="hint">등록된 학생이 없습니다.</td></tr>`;
+}
+
+addStudentBtn.addEventListener("click", async () => {
+  const name = newStudentNameEl.value.trim();
+  studentErrorEl.textContent = "";
+  if (!selectedClassId) return;
+  if (!name) {
+    studentErrorEl.textContent = "학생 이름을 입력하세요.";
+    return;
+  }
+  addStudentBtn.disabled = true;
+  try {
+    await postJson("/api/students", { classId: selectedClassId, name }, "학생 등록에 실패했습니다.");
+    newStudentNameEl.value = "";
+    await loadStudents();
+  } catch (err) {
+    studentErrorEl.textContent = err.message || "학생 등록에 실패했습니다.";
+  } finally {
+    addStudentBtn.disabled = false;
+  }
+});
+
+studentTableBodyEl.addEventListener("click", async (e) => {
+  const row = e.target.closest("tr[data-sid]");
+  if (!row) return;
+  const studentId = row.dataset.sid;
+
+  if (e.target.closest(".del-student-btn")) {
+    if (!confirm("이 학생을 삭제할까요? 그동안의 시험 결과는 남지만, 다음부터 목록에 안 뜹니다.")) {
+      return;
+    }
+    try {
+      await postJson("/api/students/delete", { studentId }, "삭제에 실패했습니다.");
+      loadStudents();
+    } catch (err) {
+      alert(err.message || "삭제에 실패했습니다.");
+    }
+    return;
+  }
+});
+
+const FORMAT_LABEL_KO = { mcq: "객관식", saq: "주관식" };
+
+async function loadAssignedTests() {
+  assignedTestListEl.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  try {
+    const data = await getJson(
+      `/api/vocab-tests?classId=${encodeURIComponent(selectedClassId)}`,
+      "시험 목록을 불러오지 못했습니다."
+    );
+    renderAssignedTests(data.tests || []);
+  } catch (err) {
+    assignedTestListEl.innerHTML = `<p class="error">${esc(err.message || "시험 목록을 불러오지 못했습니다.")}</p>`;
+  }
+}
+
+function renderAssignedTests(tests) {
+  if (!tests.length) {
+    assignedTestListEl.innerHTML = `<p class="hint">아직 낸 시험이 없습니다.</p>`;
+    return;
+  }
+  assignedTestListEl.innerHTML = tests
+    .map(
+      (t) => `
+    <div class="panel" data-aid="${esc(t.id)}" style="margin-bottom:10px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+        <div>
+          <b>${esc(t.title)}</b>
+          <span class="hint">· ${esc(FORMAT_LABEL_KO[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개</span>
+        </div>
+        <button type="button" class="btn ghost small view-results-btn">결과 보기</button>
+      </div>
+      <div class="results-body" hidden></div>
+    </div>`
+    )
+    .join("");
+}
+
+assignedTestListEl.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".view-results-btn");
+  if (!btn) return;
+  const card = btn.closest("[data-aid]");
+  const body = card.querySelector(".results-body");
+  if (!body.hidden) {
+    body.hidden = true;
+    return;
+  }
+  body.hidden = false;
+  body.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  try {
+    const data = await getJson(
+      `/api/vocab-tests/results?assignmentId=${encodeURIComponent(card.dataset.aid)}`,
+      "결과를 불러오지 못했습니다."
+    );
+    const attempts = data.attempts || [];
+    body.innerHTML = attempts.length
+      ? `<table><thead><tr><th>학생</th><th>점수</th><th>제출 시각</th></tr></thead><tbody>` +
+        attempts
+          .map(
+            (a) =>
+              `<tr><td>${esc(a.studentName)}</td><td>${a.score} / ${a.total}</td><td>${esc(fmtClassroomDate(a.submittedAt))}</td></tr>`
+          )
+          .join("") +
+        `</tbody></table>`
+      : `<p class="hint">아직 제출한 학생이 없습니다.</p>`;
+  } catch (err) {
+    body.innerHTML = `<p class="error">${esc(err.message || "결과를 불러오지 못했습니다.")}</p>`;
+  }
+});
+
+// 탭을 열 때마다 최신으로 — 다른 탭에서 작업하다 돌아왔을 때 낡은 목록을 보지 않게
+studentsTabBtn.addEventListener("click", () => refreshClassSelect(true));
+
+/* ── 반에 시험 내기 (단어장 탭 → 모달) ──
+   지금 화면에 그려진 단어장(lastVocabRows, buildVocab이 채워 둠)을 그대로 문제로 낸다. */
+const assignModalEl = $("assignModalOverlay");
+const assignClassSelectEl = $("assignClassSelect");
+const assignFormEl = $("assignForm");
+const assignErrorEl = $("assignError");
+const assignStatusEl = $("assignStatus");
+
+async function refreshClassSelectForModal() {
+  try {
+    const data = await getJson("/api/classes", "");
+    classesCache = data.classes || [];
+  } catch (_) {
+    classesCache = [];
+  }
+  assignClassSelectEl.innerHTML = classesCache.length
+    ? classesCache.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")
+    : `<option value="">먼저 '학생 관리' 탭에서 반을 만들어 주세요</option>`;
+}
+
+vocabAssignBtn.addEventListener("click", async () => {
+  assignErrorEl.textContent = "";
+  await refreshClassSelectForModal();
+  openModal(assignModalEl);
+});
+$("assignModalClose").addEventListener("click", () => closeModal(assignModalEl));
+
+assignFormEl.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  assignErrorEl.textContent = "";
+  const classId = assignClassSelectEl.value;
+  if (!classId) {
+    assignErrorEl.textContent = "반을 먼저 만들어 주세요.";
+    return;
+  }
+  if (!lastVocabRows.length) {
+    assignErrorEl.textContent = "먼저 단어장을 만들어 주세요.";
+    return;
+  }
+  assignStatusEl.textContent = "내는 중…";
+  $("assignSubmitBtn").disabled = true;
+  try {
+    await postJson(
+      "/api/vocab-tests",
+      {
+        classId,
+        title: $("assignTitle").value,
+        format: $("assignFormat").value,
+        vocab: lastVocabRows.map((r) => ({
+          word: r.word, meaning: r.meaning, pos: r.pos, synonym: r.synonym, antonym: r.antonym,
+        })),
+      },
+      "시험 내기에 실패했습니다."
+    );
+    closeModal(assignModalEl);
+    alert("시험을 냈습니다. '학생 관리' 탭에서 결과를 확인할 수 있습니다.");
+  } catch (err) {
+    assignErrorEl.textContent = err.message || "시험 내기에 실패했습니다.";
+  } finally {
+    assignStatusEl.textContent = "";
+    $("assignSubmitBtn").disabled = false;
+  }
+});

@@ -44,7 +44,7 @@ Get-NetTCPConnection -LocalPort 8000 -State Listen | ForEach-Object { Stop-Proce
 `.env` 파일을 만들지 마세요.** 지금 무엇이 채워져 있는지는 값을 찍지 말고 이걸로 확인하세요.
 
 ```powershell
-foreach ($n in 'GEMINI_API_KEY','GOOGLE_APPLICATION_CREDENTIALS_JSON','GOOGLE_CLIENT_ID','SMTP_USER','SMTP_PASSWORD','ADMIN_USERNAME','ADMIN_PASSWORD') {
+foreach ($n in 'GEMINI_API_KEY','GOOGLE_APPLICATION_CREDENTIALS_JSON','GOOGLE_CLIENT_ID','SMTP_USER','SMTP_PASSWORD','ADMIN_USERNAME','ADMIN_PASSWORD','PORTONE_STORE_ID','PORTONE_CHANNEL_KEY_CARD','PORTONE_API_SECRET') {
   $v = [Environment]::GetEnvironmentVariable($n, 'User')
   "{0,-38} {1}" -f $n, $(if ($v) { "설정됨" } else { "없음" })
 }
@@ -61,16 +61,35 @@ foreach ($n in 'GEMINI_API_KEY','GOOGLE_APPLICATION_CREDENTIALS_JSON','GOOGLE_CL
 
 dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를 로컬 서버와 배포 서버가
 똑같이 바라봅니다 — 컬렉션은 `users`, `sessions`, `saved_items`, `pending_signups`,
-`deleted_accounts`, `admin_sessions`.
+`deleted_accounts`, `admin_sessions`, `payment_intents`.
 
 따라서 로컬 테스트가 곧 실데이터 조작입니다.
 
 - 회원가입 테스트 → 실서비스 회원 목록에 계정이 쌓입니다
 - 분석·문제 생성 테스트 → **실제 잔액이 깎입니다**
 - `/api/auth/delete`, `/api/admin/recharge` → **진짜 계정을 지우고 진짜 잔액을 바꿉니다**
+- **`PORTONE_*` 환경변수가 실연동(live) 채널 값이면, 충전 테스트가 진짜 카드로 진짜 결제됩니다.**
+  로컬에서 충전 버튼을 눌러 볼 때는 반드시 포트원 콘솔의 **테스트 채널** 값으로 띄운
+  서버인지 먼저 확인하세요 — `create_payment_intent`/`confirm_payment_intent` 참고.
 
 로그인이 필요한 기능을 확인할 때는 테스트용 계정을 쓰고, 삭제·충전 계열 API는 사용자가
 명시적으로 요청하지 않는 한 로컬에서 호출하지 마세요.
+
+### ⚠️ 반/학생 기능은 관리자 승인이 필요하고, 미성년자 데이터를 다룹니다
+
+`users` 문서의 `classroom_approved`가 켜진 선생님만 반을 만들고 학생을 등록할 수
+있습니다(`admin.html`에서 관리자가 켭니다 — 기본은 꺼짐). 학생 이름은 미성년자
+개인정보일 수 있어, 로컬에서 이 기능을 테스트할 때도 실제 이름을 넣지 말고
+"테스트"처럼 알아볼 수 없는 값을 쓰세요.
+
+로그인 코드는 **학생 개별이 아니라 반 하나에 하나**입니다(`class_codes` 컬렉션) —
+학생이 코드를 낱개로 받으면 잊어버리기 쉬워, 반 코드로 목록을 받은 뒤 자기 이름을
+골라 로그인하는 방식으로 바꿨습니다. 비밀번호처럼 해시하지 않고 코드를 그대로
+저장합니다 — 짧은 코드를 값으로 직접 조회해야 하기 때문이며, 대신 무차별 대입은
+IP별 실패 횟수 제한(`_student_login_blocked`)으로 막습니다. **주의**: 반 코드만
+알면 그 반 학생 이름 목록이 보이고, 이름을 고르는 것만으로 그 학생으로 로그인됩니다
+— 이름 자체는 인증 수단이 아닙니다. 급우끼리 코드를 공유하면 서로 이름 행세를 할
+수 있다는 뜻이라, 부정행위 방지는 여기서 기술이 아니라 교실 안 관리에 맡깁니다.
 
 ## 코드 지도
 
@@ -83,6 +102,8 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | 환경변수·기본값 | 파일 상단 `HOST` ~ `PRICE_OCR_KRW` |
 | 가격 계산 | `_quiz_type_base_price`, `_quiz_action_cost`, `_workbook_cost`(단계 수 × 단가, 상한 있음) |
 | 포인트 원장(이용 내역)·유상무상 구분 | `POINT_LEDGER`, `_split_balance`, `charge_krw`, `add_krw`, `list_usage`, `_fold_old_ledger` |
+| 결제(포트원) — 결제창 열기 전 요청 생성 → 결제 후 서버가 직접 확인하고서만 충전 | `PORTONE_STORE_ID`/`PORTONE_CHANNEL_KEY_CARD`/`PORTONE_API_SECRET`, `create_payment_intent`, `confirm_payment_intent`(`payment_intents` 컬렉션, 브라우저가 보고하는 성공 여부를 그대로 믿지 않는다) |
+| 반 · 학생 · 단어시험(AI 안 씀) | `_classroom_approved`/`set_classroom_approved`(관리자 승인 게이트), `create_class`/`regenerate_class_code`(반 하나당 코드 하나, `classes`/`class_codes` 컬렉션)/`create_student`/`delete_student`(`students` 컬렉션, 개별 코드 없음), `get_class_roster`(로그인 1단계 — 반 코드로 학생 이름 목록)/`login_student`(2단계 — 이름 선택)/`create_student_session`/`_student_session_user`(학생 세션, `admin_sessions`와 같은 모양), `create_test_assignment`/`_build_student_questions`(객관식 오답을 같은 단어장의 다른 뜻/단어에서 결정적으로 뽑음)/`grade_and_submit_attempt`(`test_assignments`/`test_attempts` 컬렉션, 문서 ID를 `{assignment_id}_{student_id}`로 고정해 중복 제출을 막음) |
 | Firestore 연결 | `_load_firestore` |
 | 회원가입·인증코드·비밀번호 | `start_signup`, `complete_signup`, `login_with_password`, `_hash_password` |
 | Gemini 호출 공통(재시도·시간 예산) | `RETRY_MIN_WAIT`, `MAX_RETRY_TOTAL`, `_over_budget`, `RefineTrace`, `_parse_retry_delay` |
@@ -116,8 +137,17 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 
 ### `public/index.html`
 
-탭 5개 — `analyze`, `mcq`, `saq`, `workbook`, `vocab`.
+탭 6개 — `analyze`, `mcq`, `saq`, `workbook`, `vocab`, `exam`. 그 뒤에 관리자가 승인한
+선생님에게만 보이는 `students`(반/학생 관리) 탭이 하나 더 있습니다(`studentsTabBtn`,
+`renderAccount`가 `classroomApproved` 값으로 `hidden`을 켜고 끕니다).
 각각 `#tab-<id>` 섹션과 `#analyzeBtn` / `#mcqBtn` / `#saqBtn` / `#wbBtn` 실행 버튼을 가집니다.
+
+### `public/student.html` + `public/student.js`
+
+학생용 화면. `index.html`/`app.js`와 완전히 분리된 로그인(코드 입력, `student_session`
+쿠키)·탭 전환 없는 단일 페이지입니다. `admin.html`처럼 정적 파일이라 서버에 경로
+등록이 필요 없습니다. 지금은 같은 Render 서비스 안에서 경로만 나뉘어 있고, 나중에
+필요하면 별도 배포로 떼어낼 수 있게 설계했습니다.
 
 ## 반드시 함께 고쳐야 하는 쌍
 
@@ -138,12 +168,21 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 
 **GET** — `/api/pricing` `/api/me` `/api/saved` `/api/saved/<id>` `/api/usage` `/api/admin/me`
 `/api/admin/users` `/api/admin/usage` `/api/_probe`(임시, 아래 참고)
+`/api/classes` `/api/students` `/api/vocab-tests` `/api/vocab-tests/results`(선생님 쪽,
+반/학생/시험 — `classId`/`assignmentId`를 쿼리 문자열로 받습니다)
+`/api/student/roster`(로그인 1단계, `code` 쿼리 문자열 — 아직 로그인 전이라 세션 없이 조회)
+`/api/student/me` `/api/student/tests` `/api/student/tests/detail`(학생 쪽,
+`student_session` 쿠키로 인증)
 
 **POST** — `/api/analyze` `/api/quiz` `/api/workbook` `/api/reword` `/api/ocr` `/api/pdfsplit`
 `/api/vocabocr` `/api/vocabpdf` `/api/models`
 `/api/auth/google` `/api/auth/signup` `/api/auth/verify` `/api/auth/login` `/api/auth/delete`
-`/api/logout` `/api/account/recharge` `/api/account/ack-update` `/api/saved` `/api/saved/delete`
-`/api/admin/login` `/api/admin/logout` `/api/admin/recharge`
+`/api/logout` `/api/account/recharge` `/api/account/recharge/confirm` `/api/account/ack-update`
+`/api/saved` `/api/saved/delete`
+`/api/admin/login` `/api/admin/logout` `/api/admin/recharge` `/api/admin/approve-classroom`
+`/api/classes` `/api/classes/regenerate-code` `/api/students` `/api/students/delete`
+`/api/vocab-tests`(선생님 쪽 — 위 GET들과 경로가 같은 것도 있음, GET=조회/POST=생성)
+`/api/student/login`(2단계 — `code`+`studentId`) `/api/student/logout` `/api/student/tests/submit`
 
 ## 업데이트 소식(로그인 시 플로팅 창)
 
@@ -174,6 +213,12 @@ localStorage를 통째로 비우기 때문입니다).
   막아두었지만, 코드 안에 박아 넣는 건 막지 못합니다. `origin`은 공개 저장소입니다.
 - **`git push`는 곧 배포입니다.** Render가 `origin/main`의 push를 받아 자동 재배포합니다.
   사용자가 명시적으로 요청하지 않으면 push하지 마세요.
+- **🚨 결제(포트원) 코드는 지금 GitHub에 올리면 안 됩니다.** `PORTONE_STORE_ID` /
+  `PORTONE_CHANNEL_KEY_CARD` 등에 지금 등록되어 있는 값은 KG이니시스 **테스트 채널**
+  값입니다. 이 상태로 배포하면 실제 서비스에서 결제가 안 되거나 이상 동작합니다.
+  KG이니시스 실연동(live) 심사가 통과해서 실제 채널 키로 환경변수를 바꾸고, 실결제로
+  한 번 더 확인을 마친 뒤에만 push하세요. 사용자가 "이제 됐다"고 명시적으로 말하기
+  전에는 결제 관련 커밋을 만들지도, 올리지도 마세요.
 - 이 폴더는 **Google Drive 동기화 경로**(`G:\...`)입니다. 파일 감시가 늦을 수 있으니,
   외부에서 바뀐 파일은 캐시를 믿지 말고 다시 읽으세요.
 

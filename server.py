@@ -19,6 +19,7 @@ import hashlib
 import io
 import json
 import os
+import random
 import re
 import secrets
 import smtplib
@@ -108,6 +109,14 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30일
 # 사용자에게 더 주고 싶으면 관리자 페이지(/admin.html)에서 충전하거나 Firestore
 # 콘솔에서 users/<id> 문서의 krw_remaining 값을 직접 고치면 된다.
 DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "10000"))
+
+# --- 결제(포트원) -----------------------------------------------------------
+# 셋 다 비어 있으면 "충전하기"가 결제창을 못 띄운다(503) — 결제사가 아직
+# 안 붙었다는 뜻이므로 무상으로 채워 주던 옛 동작으로 조용히 되돌아가지 않는다.
+PORTONE_STORE_ID = os.environ.get("PORTONE_STORE_ID", "")
+PORTONE_CHANNEL_KEY_CARD = os.environ.get("PORTONE_CHANNEL_KEY_CARD", "")
+PORTONE_API_SECRET = os.environ.get("PORTONE_API_SECRET", "")
+PORTONE_API_BASE = "https://api.portone.io"
 
 # --- 포인트 원장(이용 내역) ------------------------------------------------
 # 잔액은 숫자 하나로만 남아 있어서 "언제 무엇에 얼마를 썼는지"를 아무도 알 수 없었다.
@@ -275,6 +284,16 @@ def _quiz_action_cost(items):
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 ADMIN_SESSION_MAX_AGE = 60 * 60 * 12  # 관리자 세션은 짧게 — 12시간
+
+# --- 학생 로그인(반/단어시험) ------------------------------------------------
+# 학생 세션도 관리자처럼 짧게 둔다 — 학교 공용 컴퓨터를 여러 학생이 번갈아 쓰는
+# 자리라, 앞 학생 세션이 오래 남아 있으면 뒷 학생이 그 계정으로 시험을 보게 된다.
+STUDENT_SESSION_MAX_AGE = 60 * 60 * 12
+# 반 코드에 쓰는 문자셋 — 헷갈리는 글자(0/O, 1/I/L)를 빼서 칠판에 적어도 옮겨 적기
+# 쉽게 한다. 8자리라 무작위 대입도 현실적으로 어렵다. 학생 개별 코드가 아니라
+# 반 하나에 코드 하나 — 학생은 이 코드로 반을 찾은 뒤 목록에서 자기 이름을 고른다.
+CLASS_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+CLASS_CODE_LEN = 8
 
 
 def _load_firestore():
@@ -6449,6 +6468,20 @@ CHANGELOG = [
             "'영영풀이 오류 찾기' 유형이 추가됐습니다.",
         ],
     },
+    {
+        "version": 6,
+        "date": "2026-08-20",
+        "items": [
+            "반/학생 관리 — 반을 만들어 학생을 등록하면 반마다 로그인 코드가 하나씩 "
+            "발급됩니다. 학생은 별도 화면(/student.html)에서 그 코드를 넣고 목록에서 자기 "
+            "이름을 골라 로그인해, 선생님이 낸 단어시험을 온라인으로 풀 수 있습니다. "
+            "결과는 이 화면의 '학생 관리' 탭에서 바로 확인됩니다.",
+            "단어시험은 지금 만든 단어장으로 즉시 낼 수 있고(객관식·주관식 선택 가능), "
+            "인공지능을 부르지 않아 채점까지 무료입니다.",
+            "미성년자 정보를 다루는 기능이라 관리자 승인을 받은 선생님만 쓸 수 있습니다 — "
+            "필요하시면 문의해 주세요.",
+        ],
+    },
 ]
 
 
@@ -6476,6 +6509,8 @@ def _account_payload(user_id):
         # 유상/무상 구분 — 환불 대상은 유상분뿐이라 화면에서도 나눠 보여 준다
         "krwFree": free,
         "krwPaid": paid,
+        # 반/학생 관리 탭을 보여줄지 — 관리자가 켜 준 선생님만 True
+        "classroomApproved": bool(info.get("classroom_approved")),
         # 로그인마다 함께 내려준다 — 비어 있으면 화면이 아무것도 띄우지 않는다
         "updates": _unseen_updates(info.get("last_seen_changelog")),
     }
@@ -6605,6 +6640,92 @@ def add_krw(user_id, amount, kind, label):
         return new_free + new_paid
 
     return _apply(DB.transaction())
+
+
+def create_payment_intent(user_id, amount):
+    """결제창을 열기 '전에' 부른다. 아직 포인트를 주지 않는다 — 결제가 실제로
+    끝난 뒤 confirm_payment_intent가 포트원 서버에 직접 물어보고 나서야 지급한다.
+    브라우저가 보고하는 성공 여부는 위조될 수 있으므로 그 자체를 근거로 쓰지 않는다."""
+    _require_db()
+    payment_id = f"pay-{secrets.token_hex(16)}"
+    DB.collection("payment_intents").document(payment_id).set({
+        "user_id": user_id,
+        "amount": int(amount),
+        "status": "pending",
+        "created_at": _now_iso(),
+    })
+    return payment_id
+
+
+def _fetch_portone_payment(payment_id):
+    """포트원 서버에 결제 단건 조회. 실패하면 예외를 그대로 올린다 — 호출부가
+    '확인 안 됨'과 '확인하다 실패함'을 구분해서 처리한다(전자만 결제 실패로 못 박는다)."""
+    url = f"{PORTONE_API_BASE}/payments/{urllib.parse.quote(payment_id, safe='')}"
+    req = urllib.request.Request(url, headers={"Authorization": f"PortOne {PORTONE_API_SECRET}"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def confirm_payment_intent(user_id, payment_id):
+    """결제창이 끝난 뒤 부른다. 포트원이 답한 결제 정보가 이 사용자·이 금액·이
+    상점/채널과 정확히 맞을 때만 충전한다. 이미 처리된 결제(중복 호출·새로고침
+    재시도)면 다시 주지 않고 지금 잔액만 돌려준다 — '결제 완료 표시'와 '충전'을
+    같은 트랜잭션 안에서 함께 바꾸므로 이중 지급이 될 수 없다."""
+    _require_db()
+    intent_ref = DB.collection("payment_intents").document(payment_id)
+    snap = intent_ref.get()
+    if not snap.exists:
+        raise ValueError("결제 요청을 찾을 수 없습니다.")
+    intent = snap.to_dict() or {}
+    if intent.get("user_id") != user_id:
+        raise ValueError("본인의 결제가 아닙니다.")
+    if intent.get("status") != "pending":
+        return get_user_krw(user_id)  # 이미 처리됨 — 조용히 현재 잔액만 돌려준다
+
+    amount = int(intent.get("amount", 0))
+    try:
+        payment = _fetch_portone_payment(payment_id)
+    except Exception as e:
+        raise ValueError(f"결제 확인에 실패했습니다: {e}")
+
+    paid_amount = payment.get("amount") or {}
+    ok = (
+        payment.get("status") == "PAID"
+        and int(paid_amount.get("total", -1)) == amount
+        and paid_amount.get("currency") == "KRW"
+        and payment.get("storeId") == PORTONE_STORE_ID
+        and (payment.get("selectedChannel") or {}).get("key") == PORTONE_CHANNEL_KEY_CARD
+    )
+    if not ok:
+        intent_ref.update({"status": "failed", "checked_at": _now_iso()})
+        raise ValueError("결제가 확인되지 않았습니다.")
+
+    user_ref = DB.collection("users").document(user_id)
+    row_ref = DB.collection(POINT_LEDGER).document()
+
+    @firestore.transactional
+    def _apply(tx):
+        i_snap = intent_ref.get(transaction=tx)
+        u_snap = user_ref.get(transaction=tx)
+        if (i_snap.to_dict() or {}).get("status") != "pending":
+            return None  # 그 사이 다른 요청이 먼저 처리함 — 중복 지급 방지
+        if not u_snap.exists:
+            raise ValueError("해당 회원을 찾을 수 없습니다.")
+        _total, free, paid = _split_balance(u_snap.to_dict() or {})
+        new_free, new_paid = free, paid + amount
+        tx.update(user_ref, {
+            "krw_remaining": new_free + new_paid,
+            "krw_free": new_free,
+            "krw_paid": new_paid,
+        })
+        tx.set(row_ref, _ledger_row(
+            user_id, "charge", "카드 결제 충전", amount, amount, 0, new_free + new_paid,
+        ))
+        tx.update(intent_ref, {"status": "completed", "confirmed_at": _now_iso()})
+        return new_free + new_paid
+
+    result = _apply(DB.transaction())
+    return result if result is not None else get_user_krw(user_id)
 
 
 def create_session(sub):
@@ -6752,6 +6873,7 @@ def list_all_users():
             "provider": "password" if d.get("password_hash") else "google",
             "krwRemaining": krw,
             "createdAt": d.get("created_at", ""),
+            "classroomApproved": bool(d.get("classroom_approved")),
         })
     rows.sort(key=lambda r: r["createdAt"], reverse=True)
     return rows
@@ -6928,6 +7050,484 @@ def delete_saved_item(item_id, user_id):
     return True
 
 
+# =============================================================================
+# 반 · 학생 · 단어시험 (선생님이 반을 만들고 학생을 등록 → 학생은 코드로 로그인해
+# 단어시험을 봄 → 결과가 선생님 화면에 모임). AI를 부르지 않는다 — 객관식 오답은
+# 같은 단어장의 다른 뜻/단어에서 뽑고, 채점은 문자열 비교로 한다.
+# =============================================================================
+
+def _classroom_approved(user_id):
+    """관리자가 이 선생님에게 학생 등록 기능을 켜 줬는지. 미성년자 데이터가 걸린
+    기능이라 가입만으로는 못 쓰게 막아 둔다 — admin.html에서 관리자가 켠다."""
+    _require_db()
+    snap = DB.collection("users").document(user_id).get()
+    return bool((snap.to_dict() or {}).get("classroom_approved")) if snap.exists else False
+
+
+def set_classroom_approved(user_id, approved):
+    _require_db()
+    ref = DB.collection("users").document(user_id)
+    if not ref.get().exists:
+        raise ValueError("회원을 찾을 수 없습니다.")
+    ref.update({"classroom_approved": bool(approved)})
+
+
+# --- 반 · 학생 ---------------------------------------------------------------
+
+def _gen_class_code():
+    return "".join(secrets.choice(CLASS_CODE_ALPHABET) for _ in range(CLASS_CODE_LEN))
+
+
+def _new_unique_class_code():
+    """짧은 코드라 세션 토큰과 달리 겹칠 가능성을 실제로 확인해야 한다 — 있으면 다시 뽑는다."""
+    for _ in range(5):
+        code = _gen_class_code()
+        if not DB.collection("class_codes").document(code).get().exists:
+            return code
+    raise RuntimeError("코드 생성에 반복 실패했습니다. 다시 시도해 주세요.")
+
+
+def create_class(teacher_id, name):
+    """반 하나에 코드 하나 — 학생별 코드 대신 반 전체가 코드 하나를 공유한다.
+    학생은 이 코드로 반을 찾은 뒤, 목록에서 자기 이름을 골라 로그인한다(비밀번호
+    구실을 하는 건 반 코드뿐이다 — 이름은 그냥 '나'를 고르는 용도지 인증 수단이
+    아니다. 급우끼리 서로 코드를 알면 이름만으로 남 행세를 할 수 있다는 뜻이라,
+    부정행위 방지는 여기서는 기술이 아니라 교실 안 관리에 맡긴다)."""
+    _require_db()
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("반 이름을 입력하세요.")
+    code = _new_unique_class_code()
+    ref = DB.collection("classes").document()
+    ref.set({"teacher_id": teacher_id, "name": name, "code": code, "created_at": _now_iso()})
+    DB.collection("class_codes").document(code).set({"class_id": ref.id})
+    return {"classId": ref.id, "code": code}
+
+
+def list_classes(teacher_id):
+    _require_db()
+    rows = []
+    for doc in DB.collection("classes").where("teacher_id", "==", teacher_id).stream():
+        d = doc.to_dict() or {}
+        rows.append({
+            "id": doc.id, "name": d.get("name", ""), "code": d.get("code", ""),
+            "createdAt": d.get("created_at", ""),
+        })
+    rows.sort(key=lambda r: r["createdAt"])
+    return rows
+
+
+def regenerate_class_code(teacher_id, class_id):
+    _require_db()
+    ref = DB.collection("classes").document(class_id)
+    snap = ref.get()
+    if not snap.exists or snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("반을 찾을 수 없습니다.")
+    old_code = snap.to_dict().get("code")
+    new_code = _new_unique_class_code()
+    ref.update({"code": new_code})
+    DB.collection("class_codes").document(new_code).set({"class_id": class_id})
+    if old_code:
+        DB.collection("class_codes").document(old_code).delete()
+    return new_code
+
+
+def create_student(teacher_id, class_id, name):
+    _require_db()
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("학생 이름을 입력하세요.")
+    c_snap = DB.collection("classes").document(class_id).get()
+    if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("반을 찾을 수 없습니다.")
+    ref = DB.collection("students").document()
+    ref.set({"teacher_id": teacher_id, "class_id": class_id, "name": name, "created_at": _now_iso()})
+    return {"studentId": ref.id}
+
+
+def list_students(teacher_id, class_id):
+    _require_db()
+    c_snap = DB.collection("classes").document(class_id).get()
+    if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("반을 찾을 수 없습니다.")
+    rows = []
+    for doc in DB.collection("students").where("class_id", "==", class_id).stream():
+        d = doc.to_dict() or {}
+        rows.append({"id": doc.id, "name": d.get("name", ""), "createdAt": d.get("created_at", "")})
+    rows.sort(key=lambda r: r["createdAt"])
+    return rows
+
+
+def _delete_student_sessions(student_id):
+    for doc in DB.collection("student_sessions").where("student_id", "==", student_id).stream():
+        doc.reference.delete()
+
+
+def delete_student(teacher_id, student_id):
+    _require_db()
+    ref = DB.collection("students").document(student_id)
+    snap = ref.get()
+    if not snap.exists or snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("학생을 찾을 수 없습니다.")
+    _delete_student_sessions(student_id)
+    ref.delete()
+
+
+# --- 학생 로그인 세션 (admin_sessions와 같은 모양, 다만 student_id를 함께 담는다) ---
+
+def create_student_session(student_id):
+    _require_db()
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(seconds=STUDENT_SESSION_MAX_AGE)
+    DB.collection("student_sessions").document(token).set({
+        "student_id": student_id, "created_at": _now_iso(), "expires_at": expires.isoformat(),
+    })
+    return token
+
+
+def delete_student_session(token):
+    if DB is None or not token:
+        return
+    DB.collection("student_sessions").document(token).delete()
+
+
+def _student_session_user(handler):
+    """세션 쿠키로 로그인한 학생의 student_id. 없거나 만료됐으면 None."""
+    if DB is None:
+        return None
+    token = _parse_cookies(handler.headers.get("Cookie", "")).get("student_session")
+    if not token:
+        return None
+    ref = DB.collection("student_sessions").document(token)
+    snap = ref.get()
+    if not snap.exists:
+        return None
+    sess = snap.to_dict()
+    try:
+        expires = datetime.fromisoformat(sess["expires_at"])
+    except Exception:
+        return None
+    if datetime.now(timezone.utc) >= expires:
+        ref.delete()
+        return None
+    return sess.get("student_id")
+
+
+# 무차별 대입 방지 — 관리자 로그인과 같은 방식(IP별 실패 횟수 제한)
+_student_login_fails = {}
+STUDENT_LOGIN_MAX_ATTEMPTS = 5
+STUDENT_LOGIN_WINDOW = 300  # 5분
+
+
+def _student_login_blocked(ip):
+    now = time.monotonic()
+    fails = [t for t in _student_login_fails.get(ip, []) if now - t < STUDENT_LOGIN_WINDOW]
+    _student_login_fails[ip] = fails
+    return len(fails) >= STUDENT_LOGIN_MAX_ATTEMPTS
+
+
+def _student_login_record_fail(ip):
+    _student_login_fails.setdefault(ip, []).append(time.monotonic())
+
+
+def _student_login_clear(ip):
+    _student_login_fails.pop(ip, None)
+
+
+def get_class_roster(code, ip):
+    """반 코드로 그 반 학생 이름 목록을 돌려준다 — 로그인 1단계(아직 세션은 안 만든다).
+    코드를 맞혀 보는 무차별 대입 시도가 여기서 일어나므로 실패 횟수 제한도 여기서 건다."""
+    if _student_login_blocked(ip):
+        raise ValueError("시도가 너무 많습니다. 5분 뒤 다시 시도하세요.")
+    code = (code or "").strip().upper()
+    if not code:
+        raise ValueError("코드를 입력하세요.")
+    _require_db()
+    c_snap = DB.collection("class_codes").document(code).get()
+    if not c_snap.exists:
+        _student_login_record_fail(ip)
+        raise ValueError("코드가 올바르지 않습니다.")
+    class_id = c_snap.to_dict().get("class_id")
+    cls_snap = DB.collection("classes").document(class_id).get()
+    if not cls_snap.exists:
+        _student_login_record_fail(ip)
+        raise ValueError("코드가 올바르지 않습니다.")
+    _student_login_clear(ip)
+    students = [
+        {"id": doc.id, "name": (doc.to_dict() or {}).get("name", "")}
+        for doc in DB.collection("students").where("class_id", "==", class_id).stream()
+    ]
+    students.sort(key=lambda s: s["name"])
+    return {
+        "classId": class_id,
+        "className": cls_snap.to_dict().get("name", ""),
+        "students": students,
+    }
+
+
+def login_student(code, student_id, ip):
+    """로그인 2단계 — 1단계에서 받은 목록 중 자기 이름(student_id)을 골랐을 때 부른다.
+    반 코드가 여전히 유효하고, 그 학생이 정말 이 반 소속인지 다시 확인한다."""
+    if _student_login_blocked(ip):
+        raise ValueError("시도가 너무 많습니다. 5분 뒤 다시 시도하세요.")
+    code = (code or "").strip().upper()
+    if not code or not student_id:
+        raise ValueError("반 코드와 이름을 다시 선택하세요.")
+    _require_db()
+    c_snap = DB.collection("class_codes").document(code).get()
+    if not c_snap.exists:
+        _student_login_record_fail(ip)
+        raise ValueError("코드가 올바르지 않습니다.")
+    class_id = c_snap.to_dict().get("class_id")
+    s_snap = DB.collection("students").document(student_id).get()
+    if not s_snap.exists or s_snap.to_dict().get("class_id") != class_id:
+        _student_login_record_fail(ip)
+        raise ValueError("학생 정보를 찾을 수 없습니다. 목록을 다시 불러와 보세요.")
+    _student_login_clear(ip)
+    return student_id, s_snap.to_dict().get("name", "")
+
+
+# --- 단어시험 (AI 없음) ------------------------------------------------------
+
+_MEANING_SPLIT_RE = re.compile(r"[,;·、/]+")
+
+
+def _norm_text(s):
+    return re.sub(r"\s+", " ", (s or "").strip())
+
+
+def _meaning_variants(text):
+    """'빠른, 신속한'처럼 여러 뜻이 이어진 경우 각각을 정답 후보로 쪼갠다 —
+    주관식 채점에서 그중 하나만 맞아도 정답 처리하기 위해서다."""
+    parts = [p.strip() for p in _MEANING_SPLIT_RE.split(_norm_text(text))]
+    return [p for p in parts if p]
+
+
+def create_test_assignment(teacher_id, class_id, title, vocab, fmt):
+    """출제 방향(영어→뜻 / 뜻→영어)은 더 이상 선생님이 고르지 않는다 — 문제마다
+    _build_student_questions가 무작위로 섞어 낸다. 그래서 여기서는 객관식일 때
+    두 방향 다 오답을 만들 수 있는지(서로 다른 뜻 2개 이상 '그리고' 서로 다른
+    단어 2개 이상) 미리 확인해 둔다 — 어느 방향이 나올지 미리 알 수 없어서다."""
+    _require_db()
+    c_snap = DB.collection("classes").document(class_id).get()
+    if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("반을 찾을 수 없습니다.")
+    if fmt not in ("mcq", "saq"):
+        raise ValueError("잘못된 시험 형식입니다.")
+    clean_vocab = []
+    for item in (vocab or []):
+        word = _norm_text(item.get("word"))
+        meaning = _norm_text(item.get("meaning"))
+        if not word or not meaning:
+            continue
+        clean_vocab.append({
+            "word": word, "meaning": meaning,
+            "pos": _norm_text(item.get("pos")),
+            "synonym": _norm_text(item.get("synonym")),
+            "antonym": _norm_text(item.get("antonym")),
+        })
+    if len(clean_vocab) < 2:
+        raise ValueError("단어가 최소 2개는 있어야 시험을 만들 수 있습니다.")
+    if fmt == "mcq":
+        distinct_meanings = {w["meaning"] for w in clean_vocab}
+        distinct_words = {w["word"] for w in clean_vocab}
+        if len(distinct_meanings) < 2 or len(distinct_words) < 2:
+            raise ValueError(
+                "객관식으로 내려면 서로 다른 뜻과 서로 다른 단어가 각각 2개 이상 필요합니다 "
+                "(영어→뜻·뜻→영어를 섞어 내다 보니 둘 다 필요합니다). 주관식으로 내보세요."
+            )
+    ref = DB.collection("test_assignments").document()
+    ref.set({
+        "teacher_id": teacher_id, "class_id": class_id,
+        "title": (title or "").strip() or "단어시험",
+        "vocab": clean_vocab, "format": fmt,
+        "created_at": _now_iso(),
+    })
+    return ref.id
+
+
+def list_assignments_for_class(teacher_id, class_id):
+    _require_db()
+    c_snap = DB.collection("classes").document(class_id).get()
+    if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("반을 찾을 수 없습니다.")
+    rows = []
+    for doc in DB.collection("test_assignments").where("class_id", "==", class_id).stream():
+        d = doc.to_dict() or {}
+        rows.append({
+            "id": doc.id, "title": d.get("title", ""), "format": d.get("format"),
+            "wordCount": len(d.get("vocab") or []), "createdAt": d.get("created_at", ""),
+        })
+    rows.sort(key=lambda r: r["createdAt"], reverse=True)
+    return rows
+
+
+def _build_student_questions(assignment_id, assignment, student_id):
+    """학생에게 보여줄 문제(순서·방향·객관식 보기)를 결정적으로 만든다 — 저장 없이도
+    같은 (시험,학생) 조합이면 새로고침해도 항상 같은 문제가 나오고, 채점할 때도
+    이 함수를 다시 불러 같은 정답과 대조한다.
+
+    문제마다 방향(영어→뜻 / 뜻→영어)을 무작위로 섞는다 — 이제 시험 하나가 두 방향을
+    같이 낸다. 그래서 오답 후보 풀도 두 가지(뜻 풀·단어 풀)를 미리 만들어 두고,
+    그 문제의 방향에 맞는 풀에서만 뽑는다."""
+    vocab = assignment.get("vocab") or []
+    fmt = assignment.get("format", "saq")
+
+    meaning_pool, seen_m = [], set()
+    word_pool, seen_w = [], set()
+    for item in vocab:
+        if item["meaning"] not in seen_m:
+            seen_m.add(item["meaning"])
+            meaning_pool.append(item["meaning"])
+        if item["word"] not in seen_w:
+            seen_w.add(item["word"])
+            word_pool.append(item["word"])
+
+    order_rng = random.Random(f"{assignment_id}:{student_id}:order")
+    order = list(range(len(vocab)))
+    order_rng.shuffle(order)
+
+    questions = []
+    for idx in order:
+        item = vocab[idx]
+        q_rng = random.Random(f"{assignment_id}:{student_id}:{idx}")
+        direction = "en2ko" if q_rng.random() < 0.5 else "ko2en"
+        if direction == "en2ko":
+            prompt, correct, pool = item["word"], item["meaning"], meaning_pool
+        else:
+            prompt, correct, pool = item["meaning"], item["word"], word_pool
+        q = {"idx": idx, "direction": direction, "prompt": prompt}
+        if fmt == "mcq":
+            candidates = [v for v in pool if v != correct]
+            q_rng.shuffle(candidates)
+            options = candidates[:3] + [correct]
+            q_rng.shuffle(options)
+            q["options"] = options
+        questions.append(q)
+    return questions
+
+
+def get_test_detail_for_student(student_id, assignment_id):
+    _require_db()
+    s_snap = DB.collection("students").document(student_id).get()
+    if not s_snap.exists:
+        raise ValueError("학생 정보를 찾을 수 없습니다.")
+    a_snap = DB.collection("test_assignments").document(assignment_id).get()
+    if not a_snap.exists:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    assignment = a_snap.to_dict()
+    if s_snap.to_dict().get("class_id") != assignment.get("class_id"):
+        raise ValueError("이 시험은 이 학생의 반에 배정되지 않았습니다.")
+    questions = _build_student_questions(assignment_id, assignment, student_id)
+    return {
+        "title": assignment.get("title", ""),
+        "format": assignment.get("format"),
+        # idx·정답 값은 빼고 화면에 보여줄 것만 내보낸다(방향은 어느 언어로 답할지
+        # 알아야 하니 내보낸다)
+        "questions": [
+            {"prompt": q["prompt"], "direction": q["direction"], "options": q.get("options")}
+            for q in questions
+        ],
+    }
+
+
+def list_tests_for_student(student_id):
+    _require_db()
+    s_snap = DB.collection("students").document(student_id).get()
+    if not s_snap.exists:
+        raise ValueError("학생 정보를 찾을 수 없습니다.")
+    class_id = s_snap.to_dict().get("class_id")
+    rows = []
+    for doc in DB.collection("test_assignments").where("class_id", "==", class_id).stream():
+        d = doc.to_dict() or {}
+        attempt_snap = DB.collection("test_attempts").document(f"{doc.id}_{student_id}").get()
+        a = attempt_snap.to_dict() if attempt_snap.exists else None
+        rows.append({
+            "id": doc.id, "title": d.get("title", ""), "format": d.get("format"),
+            "wordCount": len(d.get("vocab") or []), "createdAt": d.get("created_at", ""),
+            "submitted": attempt_snap.exists,
+            "score": a.get("score") if a else None,
+            "total": a.get("total") if a else None,
+        })
+    rows.sort(key=lambda r: r["createdAt"], reverse=True)
+    return rows
+
+
+def grade_and_submit_attempt(assignment_id, student_id, answers):
+    """이미 제출한 시험이면 다시 채점하지 않고 저장된 결과를 그대로 돌려준다 —
+    문서 ID를 f"{assignment_id}_{student_id}"로 고정하고 create()의 존재 확인을
+    그대로 '학생당 시험당 1회 제출' 잠금으로 쓴다(경쟁 상태 걱정이 없다)."""
+    _require_db()
+    attempt_ref = DB.collection("test_attempts").document(f"{assignment_id}_{student_id}")
+    existing = attempt_ref.get()
+    if existing.exists:
+        d = existing.to_dict()
+        return {"score": d.get("score", 0), "total": d.get("total", 0)}
+
+    a_snap = DB.collection("test_assignments").document(assignment_id).get()
+    if not a_snap.exists:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    assignment = a_snap.to_dict()
+    s_snap = DB.collection("students").document(student_id).get()
+    if not s_snap.exists:
+        raise ValueError("학생 정보를 찾을 수 없습니다.")
+    student = s_snap.to_dict()
+    if student.get("class_id") != assignment.get("class_id"):
+        raise ValueError("이 시험은 이 학생의 반에 배정되지 않았습니다.")
+
+    vocab = assignment.get("vocab") or []
+    fmt = assignment.get("format", "saq")
+    questions = _build_student_questions(assignment_id, assignment, student_id)
+
+    score = 0
+    for i, q in enumerate(questions):
+        item = vocab[q["idx"]]
+        direction = q["direction"]
+        given = _norm_text(answers[i] if i < len(answers or []) else "")
+        if fmt == "mcq":
+            correct = item["meaning"] if direction == "en2ko" else item["word"]
+            ok = given == correct
+        elif direction == "en2ko":
+            ok = given.lower() in [v.lower() for v in _meaning_variants(item["meaning"])]
+        else:
+            accepted = {item["word"].lower()}
+            if item.get("synonym"):
+                accepted.add(item["synonym"].lower())
+            ok = given.lower() in accepted
+        if ok:
+            score += 1
+
+    row = {
+        "assignment_id": assignment_id, "student_id": student_id,
+        "teacher_id": assignment.get("teacher_id"), "student_name": student.get("name", ""),
+        "answers": list(answers or []), "score": score, "total": len(questions),
+        "submitted_at": _now_iso(),
+    }
+    try:
+        attempt_ref.create(row)
+    except Exception:
+        d = attempt_ref.get().to_dict() or {}
+        return {"score": d.get("score", 0), "total": d.get("total", 0)}
+    return {"score": score, "total": len(questions)}
+
+
+def list_attempts_for_assignment(teacher_id, assignment_id):
+    _require_db()
+    a_snap = DB.collection("test_assignments").document(assignment_id).get()
+    if not a_snap.exists or a_snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    rows = []
+    for doc in DB.collection("test_attempts").where("assignment_id", "==", assignment_id).stream():
+        d = doc.to_dict() or {}
+        rows.append({
+            "studentId": d.get("student_id"), "studentName": d.get("student_name", ""),
+            "score": d.get("score", 0), "total": d.get("total", 0),
+            "submittedAt": d.get("submitted_at", ""),
+        })
+    rows.sort(key=lambda r: r["submittedAt"])
+    return rows
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "PassageAnalyzer/1.0"
 
@@ -6978,6 +7578,14 @@ class Handler(BaseHTTPRequestHandler):
     def _cleared_admin_session_cookie(self):
         secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
         return f"admin_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"
+
+    def _student_session_cookie(self, token):
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return f"student_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={STUDENT_SESSION_MAX_AGE}{secure}"
+
+    def _cleared_student_session_cookie(self):
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return f"student_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"
 
     def do_GET(self):
         """/api/*는 Firestore를 호출하므로, do_POST처럼 예상 못 한 예외에도
@@ -7114,6 +7722,120 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        # --- 반 · 학생 · 단어시험 (선생님 쪽 GET) ---
+        if path == "/api/classes":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                self._send_json({"classes": list_classes(user_id)})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+            return
+
+        if path == "/api/students":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            class_id = (query.get("classId") or [""])[0]
+            if not class_id:
+                self._send_json({"error": "반을 지정하세요."}, 400)
+                return
+            try:
+                self._send_json({"students": list_students(user_id, class_id)})
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+            return
+
+        if path == "/api/vocab-tests":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            class_id = (query.get("classId") or [""])[0]
+            if not class_id:
+                self._send_json({"error": "반을 지정하세요."}, 400)
+                return
+            try:
+                self._send_json({"tests": list_assignments_for_class(user_id, class_id)})
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+            return
+
+        if path == "/api/vocab-tests/results":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            assignment_id = (query.get("assignmentId") or [""])[0]
+            if not assignment_id:
+                self._send_json({"error": "시험을 지정하세요."}, 400)
+                return
+            try:
+                self._send_json({"attempts": list_attempts_for_assignment(user_id, assignment_id)})
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+            return
+
+        # --- 반 · 학생 · 단어시험 (학생 쪽 GET) ---
+        # 로그인 1단계 — 반 코드로 그 반 학생 이름 목록을 받는다(아직 로그인 전이라
+        # 세션 확인 없이, 대신 IP별 시도 횟수 제한이 걸린다 — get_class_roster 참고).
+        if path == "/api/student/roster":
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            code = (query.get("code") or [""])[0]
+            try:
+                self._send_json(get_class_roster(code, _client_ip(self)))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 401)
+            return
+
+        if path == "/api/student/me":
+            student_id = _student_session_user(self)
+            if not student_id:
+                self._send_json({"loggedIn": False})
+                return
+            snap = DB.collection("students").document(student_id).get() if DB else None
+            if not snap or not snap.exists:
+                self._send_json({"loggedIn": False})
+                return
+            self._send_json({"loggedIn": True, "name": snap.to_dict().get("name", "")})
+            return
+
+        if path == "/api/student/tests":
+            student_id = _student_session_user(self)
+            if not student_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                self._send_json({"tests": list_tests_for_student(student_id)})
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+            return
+
+        if path == "/api/student/tests/detail":
+            student_id = _student_session_user(self)
+            if not student_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            assignment_id = (query.get("assignmentId") or [""])[0]
+            if not assignment_id:
+                self._send_json({"error": "시험을 지정하세요."}, 400)
+                return
+            try:
+                self._send_json(get_test_detail_for_student(student_id, assignment_id))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+            return
+
         if path == "/":
             path = "/index.html"
         target = (PUBLIC_DIR / path.lstrip("/")).resolve()
@@ -7185,10 +7907,14 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
-                        "/api/account/recharge", "/api/account/ack-update",
+                        "/api/account/recharge", "/api/account/recharge/confirm",
+                        "/api/account/ack-update",
                         "/api/saved", "/api/saved/delete",
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
-                        "/api/admin/delete-user"):
+                        "/api/admin/delete-user", "/api/admin/approve-classroom",
+                        "/api/classes", "/api/classes/regenerate-code", "/api/students",
+                        "/api/students/delete", "/api/vocab-tests",
+                        "/api/student/login", "/api/student/logout", "/api/student/tests/submit"):
             self.send_error(404, "Not found")
             return
         try:
@@ -7399,9 +8125,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/account/recharge":
-            # 결제사가 아직 연결되지 않은 비공개 테스트 단계 전용 — 로그인만 하면
-            # 원하는 만큼 스스로 충전할 수 있다. 결제사 연동 후에는 반드시 이 경로를
-            # 실제 결제 확인 로직으로 바꾸거나 없애야 한다.
+            # 결제창을 열기 위한 '결제 요청 생성'. 여기서는 포인트를 주지 않는다 —
+            # 결제창이 끝난 뒤 /api/account/recharge/confirm이 포트원 서버에 직접
+            # 확인하고 나서야 지급한다(confirm_payment_intent 참고).
             if DB is None:
                 self._send_json({"error": "로그인 기능이 아직 설정되지 않았습니다."}, 503)
                 return
@@ -7417,12 +8143,37 @@ class Handler(BaseHTTPRequestHandler):
             if amount <= 0 or amount > 10_000_000:
                 self._send_json({"error": "충전 금액이 올바르지 않습니다."}, 400)
                 return
-            # 결제가 실제로 일어나지 않았으므로 무상(grant)으로 남긴다 — 여기서 유상으로
-            # 잡으면 돈을 받은 적 없는 금액이 환불 대상 채무가 되어 버린다.
+            if not (PORTONE_STORE_ID and PORTONE_CHANNEL_KEY_CARD and PORTONE_API_SECRET):
+                self._send_json({"error": "결제 기능이 아직 설정되지 않았습니다."}, 503)
+                return
+            payment_id = create_payment_intent(user_id, amount)
+            self._send_json({
+                "paymentId": payment_id,
+                "storeId": PORTONE_STORE_ID,
+                "channelKey": PORTONE_CHANNEL_KEY_CARD,
+                "amount": amount,
+                "orderName": f"English Lab 포인트 충전 {amount:,}원",
+            })
+            return
+
+        if path == "/api/account/recharge/confirm":
+            # 결제창이 끝난 뒤 부른다 — 실제 지급은 여기, confirm_payment_intent 안에서
+            # 포트원 서버에 직접 확인한 뒤에만 이뤄진다.
+            if DB is None:
+                self._send_json({"error": "로그인 기능이 아직 설정되지 않았습니다."}, 503)
+                return
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요한 서비스입니다."}, 401)
+                return
+            payment_id = (req.get("paymentId") or "").strip()
+            if not payment_id:
+                self._send_json({"error": "결제 정보가 올바르지 않습니다."}, 400)
+                return
             try:
-                new_krw = recharge_user_krw(user_id, amount, "grant", "테스트 충전")
+                new_krw = confirm_payment_intent(user_id, payment_id)
             except ValueError as e:
-                self._send_json({"error": str(e)}, 404)
+                self._send_json({"error": str(e)}, 400)
                 return
             self._send_json({"krwRemaining": new_krw})
             return
@@ -7545,6 +8296,138 @@ class Handler(BaseHTTPRequestHandler):
                 return
             print(f"[관리자] 회원 강제 탈퇴: {actual}", flush=True)
             self._send_json({"deleted": True, "email": actual})
+            return
+
+        if path == "/api/admin/approve-classroom":
+            if not _admin_session_valid(self):
+                self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
+                return
+            user_id = (req.get("userId") or "").strip()
+            if not user_id:
+                self._send_json({"error": "회원을 지정하세요."}, 400)
+                return
+            try:
+                set_classroom_approved(user_id, bool(req.get("approved")))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+                return
+            self._send_json({"ok": True})
+            return
+
+        # --- 반 · 학생 · 단어시험 (선생님 쪽 POST) ---
+        if path == "/api/classes":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                result = create_class(user_id, req.get("name"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json(result)
+            return
+
+        if path == "/api/classes/regenerate-code":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                code = regenerate_class_code(user_id, req.get("classId"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+                return
+            self._send_json({"code": code})
+            return
+
+        if path == "/api/students":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                result = create_student(user_id, req.get("classId"), req.get("name"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json(result)
+            return
+
+        if path == "/api/students/delete":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                delete_student(user_id, req.get("studentId"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+                return
+            self._send_json({"deleted": True})
+            return
+
+        if path == "/api/vocab-tests":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                assignment_id = create_test_assignment(
+                    user_id, req.get("classId"), req.get("title"),
+                    req.get("vocab"), req.get("format"),
+                )
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json({"assignmentId": assignment_id})
+            return
+
+        # --- 반 · 학생 · 단어시험 (학생 쪽 POST) ---
+        if path == "/api/student/login":
+            if DB is None:
+                self._send_json({"error": "로그인 기능이 아직 설정되지 않았습니다."}, 503)
+                return
+            try:
+                student_id, name = login_student(
+                    req.get("code"), req.get("studentId"), _client_ip(self),
+                )
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 401)
+                return
+            token = create_student_session(student_id)
+            self._send_json({"loggedIn": True, "name": name},
+                             cookies=[self._student_session_cookie(token)])
+            return
+
+        if path == "/api/student/logout":
+            token = _parse_cookies(self.headers.get("Cookie", "")).get("student_session")
+            delete_student_session(token)
+            self._send_json({"loggedIn": False}, cookies=[self._cleared_student_session_cookie()])
+            return
+
+        if path == "/api/student/tests/submit":
+            student_id = _student_session_user(self)
+            if not student_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                result = grade_and_submit_attempt(
+                    req.get("assignmentId"), student_id, req.get("answers") or [],
+                )
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json(result)
             return
 
         if path == "/api/saved":
