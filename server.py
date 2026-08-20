@@ -6472,10 +6472,11 @@ CHANGELOG = [
         "version": 6,
         "date": "2026-08-20",
         "items": [
-            "반/학생 관리 — 반을 만들어 학생을 등록하면 반마다 로그인 코드가 하나씩 "
-            "발급됩니다. 학생은 별도 화면(/student.html)에서 그 코드와 자기 이름을 넣어 "
-            "바로 로그인해, 선생님이 낸 단어시험을 온라인으로 풀 수 있습니다. "
-            "결과는 이 화면의 '학생 관리' 탭에서 바로 확인됩니다.",
+            "반/학생 관리 — 반을 만들어 학생을 등록하세요. 학생은 별도 화면"
+            "(/student.html)에서 자기 이름만 입력해 바로 로그인해, 선생님이 낸 "
+            "단어시험을 온라인으로 풀 수 있습니다. 결과는 이 화면의 '학생 관리' 탭에서 "
+            "바로 확인됩니다. (학생 로그인이 이름만으로 이뤄지므로, 등록 시 이름이 "
+            "다른 학생과 겹치면 등록이 거부됩니다.)",
             "단어시험은 지금 만든 단어장으로 즉시 낼 수 있고(객관식·주관식 선택 가능), "
             "인공지능을 부르지 않아 채점까지 무료입니다. 반 전체에 낼 수도, 학생 한 명을 "
             "골라 그 학생에게만 낼 수도 있습니다. 이미 낸 시험은 삭제할 수 있고, "
@@ -7135,13 +7136,19 @@ def regenerate_class_code(teacher_id, class_id):
 
 
 def create_student(teacher_id, class_id, name):
+    """학생 등록. 이름은 반을 가리지 않고 앱 전체에서 유일해야 한다 — 로그인
+    (login_student)이 이제 반 코드 없이 이름만으로 students 전체를 검색하기
+    때문에, 등록 시점에 동명이인을 막아 두지 않으면 나중에 둘 다 로그인이
+    거부되는 사고가 난다."""
     _require_db()
-    name = (name or "").strip()
+    name = _norm_text(name)
     if not name:
         raise ValueError("학생 이름을 입력하세요.")
     c_snap = DB.collection("classes").document(class_id).get()
     if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
         raise ValueError("반을 찾을 수 없습니다.")
+    if list(DB.collection("students").where("name", "==", name).limit(1).stream()):
+        raise ValueError("같은 이름의 학생이 이미 등록되어 있습니다. 학생 로그인이 이름만으로 이뤄지므로 이름이 겹치면 등록할 수 없습니다.")
     ref = DB.collection("students").document()
     ref.set({"teacher_id": teacher_id, "class_id": class_id, "name": name, "created_at": _now_iso()})
     return {"studentId": ref.id}
@@ -7236,40 +7243,30 @@ def _student_login_clear(ip):
     _student_login_fails.pop(ip, None)
 
 
-def login_student(code, name, ip):
-    """학생 로그인 — 반 코드와 자기 이름을 함께 넣으면 한 번에 로그인된다.
+def login_student(name, ip):
+    """학생 로그인 — 이름만 입력하면 로그인된다. 반 코드는 더 이상 묻지 않는다
+    (학생 등록이 이미 반 하나에 속해 있으니 반 코드는 로그인에서 군더더기라는
+    판단 — 다만 그만큼 로그인의 유일한 방어선이던 비밀값이 사라졌다는 뜻이기도
+    하다. 이름을 아는 사람이면 누구나 그 학생으로 로그인할 수 있다).
 
-    예전에는 코드만 넣으면 그 반 학생 전체 이름이 목록으로 뜨고 그중 하나를 눌러
-    로그인했다. 그러면 코드를 아는 사람 누구나 같은 반 급우들의 이름을 전부 볼 수
-    있었다(개인정보 노출) — 이제는 자기 이름을 직접 입력해야 하므로 목록 자체가
-    사라진다. 반 코드가 곧 비밀값이라는 점은 그대로다(class_codes 참고) — 이름은
-    인증 수단이 아니라 그 반 안에서 '누구인지' 가리키는 값일 뿐이므로, 코드를
-    모르면 이름을 알아도 로그인할 수 없다.
-    """
+    students 컬렉션 전체에서(반·선생님을 가리지 않고) 이름으로 찾는다 — 반을
+    구분할 입력값이 없으므로 검색 범위를 반 하나로 좁힐 수가 없다. 그래서 다른
+    선생님 반의 학생과 이름이 같아도 걸린다: 동명이인이면 누구로 로그인할지
+    가릴 수 없으므로 거부한다(아무나 골라 로그인시키면 서로 다른 사람의 시험
+    결과가 뒤섞인다). 흔한 이름일수록 이 충돌이 잦아질 수 있다."""
     if _student_login_blocked(ip):
         raise ValueError("시도가 너무 많습니다. 5분 뒤 다시 시도하세요.")
-    code = (code or "").strip().upper()
     name = _norm_text(name)
-    if not code or not name:
-        raise ValueError("반 코드와 이름을 모두 입력하세요.")
+    if not name:
+        raise ValueError("이름을 입력하세요.")
     _require_db()
-    c_snap = DB.collection("class_codes").document(code).get()
-    if not c_snap.exists:
-        _student_login_record_fail(ip)
-        raise ValueError("코드가 올바르지 않습니다.")
-    class_id = c_snap.to_dict().get("class_id")
-    matches = [
-        doc for doc in DB.collection("students").where("class_id", "==", class_id).stream()
-        if _norm_text((doc.to_dict() or {}).get("name")) == name
-    ]
+    matches = list(DB.collection("students").where("name", "==", name).stream())
     if not matches:
         _student_login_record_fail(ip)
-        raise ValueError("이 반에서 그 이름을 찾을 수 없습니다. 선생님께 확인해 주세요.")
+        raise ValueError("그 이름을 찾을 수 없습니다. 선생님께 확인해 주세요.")
     if len(matches) > 1:
-        # 같은 반에 동명이인이 있으면 누구로 로그인할지 이름만으로는 가릴 수 없다 —
-        # 아무나 골라 로그인시키면 서로 다른 사람의 시험 결과가 뒤섞인다.
         _student_login_record_fail(ip)
-        raise ValueError("같은 이름의 학생이 이 반에 여러 명입니다. 선생님께 문의해 주세요.")
+        raise ValueError("같은 이름의 학생이 여러 명입니다. 선생님께 문의해 주세요.")
     _student_login_clear(ip)
     student_id = matches[0].id
     return student_id, (matches[0].to_dict() or {}).get("name", "")
@@ -8459,7 +8456,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 student_id, name = login_student(
-                    req.get("code"), req.get("name"), _client_ip(self),
+                    req.get("name"), _client_ip(self),
                 )
             except ValueError as e:
                 self._send_json({"error": str(e)}, 401)

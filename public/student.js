@@ -53,29 +53,26 @@ function showOnly(el) {
   }
 })();
 
-/* ── 로그인: 이름 + 반 코드를 함께 넣어 한 번에 로그인 ──
-   예전에는 코드만 넣으면 그 반 학생 전체 이름이 목록으로 떠서, 코드를 아는
-   사람이면 누구나 같은 반 급우들의 이름을 볼 수 있었다. 이제 목록 없이
-   자기 이름을 직접 입력한다(login_student, server.py 참고). */
+/* ── 로그인: 이름만 입력 ──
+   반 코드는 더 이상 묻지 않는다. 학생 등록이 이름을 앱 전체에서 유일하게
+   강제하므로(create_student, server.py 참고) 이름 하나로 로그인이 결정된다. */
 const codeNextBtn = $("codeNextBtn");
 const codeError = $("codeError");
 const codeStatus = $("codeStatus");
 $("codeForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = $("nameInput").value.trim();
-  const code = $("codeInput").value.trim();
   codeError.textContent = "";
-  if (!name || !code) {
-    codeError.textContent = "이름과 반 코드를 모두 입력하세요.";
+  if (!name) {
+    codeError.textContent = "이름을 입력하세요.";
     return;
   }
   codeNextBtn.disabled = true;
   codeStatus.textContent = "확인 중…";
   try {
-    const info = await postJson("/api/student/login", { code, name });
+    const info = await postJson("/api/student/login", { name });
     $("studentGreeting").textContent = `${info.name}님, 안녕하세요`;
     $("nameInput").value = "";
-    $("codeInput").value = "";
     showOnly(listWorkspaceEl);
     loadTests();
   } catch (err) {
