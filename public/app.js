@@ -2194,6 +2194,11 @@ tabBtns.forEach((btn) => {
   });
 });
 
+// 학생 관리 탭 → 단어장 탭으로 바로 이동해 시험 낼 단어장을 만들게 한다
+$("goVocabTabBtn").addEventListener("click", () => {
+  document.querySelector('.tab-btn[data-tab="vocab"]').click();
+});
+
 /* ── 분석본 직접 수정 ──
    결과는 이미 화면에 HTML로 그려져 있으므로, 그 영역을 편집 가능 상태로 바꾸기만 하면
    해석·해설·어휘표를 그 자리에서 고칠 수 있다. 되돌리기(Ctrl+Z)는 브라우저가 처리하고,

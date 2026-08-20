@@ -7513,6 +7513,27 @@ def get_test_detail_for_student(student_id, assignment_id):
     }
 
 
+def get_test_vocab_for_student(student_id, assignment_id):
+    """학생이 시험 보기 전(또는 합격한 뒤에도) 원본 단어 목록을 그대로 보고 외울 수
+    있게 돌려준다. 문제(get_test_detail_for_student)와 달리 오답 선택지·순서 섞기가
+    필요 없는 학습용이라, 이미 합격한 시험도 계속 열람할 수 있게 막지 않는다."""
+    _require_db()
+    s_snap = DB.collection("students").document(student_id).get()
+    if not s_snap.exists:
+        raise ValueError("학생 정보를 찾을 수 없습니다.")
+    a_snap = DB.collection("test_assignments").document(assignment_id).get()
+    if not a_snap.exists:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    assignment = a_snap.to_dict()
+    if not _assignment_targets_student(assignment, student_id, s_snap.to_dict()):
+        raise ValueError("이 시험은 이 학생에게 배정되지 않았습니다.")
+    vocab = assignment.get("vocab") or []
+    return {
+        "title": assignment.get("title", ""),
+        "vocab": [{"word": v.get("word", ""), "meaning": v.get("meaning", "")} for v in vocab],
+    }
+
+
 def list_tests_for_student(student_id):
     _require_db()
     s_snap = DB.collection("students").document(student_id).get()
@@ -7963,6 +7984,22 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 self._send_json(get_test_detail_for_student(student_id, assignment_id))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+            return
+
+        if path == "/api/student/tests/vocab":
+            student_id = _student_session_user(self)
+            if not student_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            assignment_id = (query.get("assignmentId") or [""])[0]
+            if not assignment_id:
+                self._send_json({"error": "시험을 지정하세요."}, 400)
+                return
+            try:
+                self._send_json(get_test_vocab_for_student(student_id, assignment_id))
             except ValueError as e:
                 self._send_json({"error": str(e)}, 404)
             return

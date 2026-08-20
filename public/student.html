@@ -39,6 +39,25 @@
     <div id="testList"></div>
   </section>
 
+  <!-- ══════════ 단어 학습 화면 ══════════ -->
+  <section class="panel" id="studyWorkspace" hidden>
+    <button type="button" class="btn ghost small" id="backToListBtn3">← 목록으로</button>
+    <h3 id="studyTitle" style="margin:12px 0 4px;"></h3>
+    <label class="chk" style="margin:6px 0 10px; display:inline-flex; align-items:center; gap:6px;">
+      <input type="checkbox" id="studyHideMeaning"> 뜻 가리고 외우기 (눌러서 확인)
+    </label>
+    <div class="error" id="studyError"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>단어</th><th>뜻</th></tr></thead>
+        <tbody id="studyTableBody"></tbody>
+      </table>
+    </div>
+    <div class="actions" style="margin-top:16px;">
+      <button type="button" class="btn" id="studyTakeBtn">이 시험 보기</button>
+    </div>
+  </section>
+
   <!-- ══════════ 응시 화면 ══════════
        한 문항씩만 보여주고 이전 문항으로 돌아갈 수 없다 — 여러 문항을 한 화면에
        띄워두면 위로 스크롤해서 이미 나온 보기들을 서로 대조해 정답을 유추할 수

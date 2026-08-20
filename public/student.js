@@ -28,11 +28,12 @@ const esc = (s) => String(s == null ? "" : s)
 
 const codeGateEl = $("codeGate");
 const listWorkspaceEl = $("listWorkspace");
+const studyWorkspaceEl = $("studyWorkspace");
 const takeWorkspaceEl = $("takeWorkspace");
 const resultWorkspaceEl = $("resultWorkspace");
 
 function showOnly(el) {
-  [codeGateEl, listWorkspaceEl, takeWorkspaceEl, resultWorkspaceEl].forEach((s) => {
+  [codeGateEl, listWorkspaceEl, studyWorkspaceEl, takeWorkspaceEl, resultWorkspaceEl].forEach((s) => {
     s.hidden = s !== el;
   });
 }
@@ -131,6 +132,7 @@ function renderTests(tests) {
         <div style="font-weight:700;">${esc(t.title)}</div>
         <div class="hint">${esc(FORMAT_LABEL[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개
           ${t.maxWrong != null ? `· 합격 기준 ${t.wordCount - t.maxWrong}/${t.wordCount}` : ""}</div>
+        <button type="button" class="btn ghost small study-btn" data-id="${esc(t.id)}" style="margin-top:6px;">📖 단어 학습</button>
       </div>
       ${rightSide}
     </div>`;
@@ -138,9 +140,57 @@ function renderTests(tests) {
 }
 
 $("testList").addEventListener("click", (e) => {
-  const btn = e.target.closest(".take-btn");
-  if (btn) openTest(btn.dataset.id);
+  const takeBtn = e.target.closest(".take-btn");
+  if (takeBtn) { openTest(takeBtn.dataset.id); return; }
+  const studyBtn = e.target.closest(".study-btn");
+  if (studyBtn) { openStudy(studyBtn.dataset.id); return; }
 });
+
+let currentStudyAssignmentId = null;
+let currentStudyVocab = [];
+
+async function openStudy(assignmentId) {
+  const errEl = $("studyError");
+  errEl.textContent = "";
+  currentStudyAssignmentId = assignmentId;
+  showOnly(studyWorkspaceEl);
+  $("studyTitle").textContent = "불러오는 중…";
+  $("studyTableBody").innerHTML = "";
+  $("studyHideMeaning").checked = false;
+  try {
+    const data = await getJson(`/api/student/tests/vocab?assignmentId=${encodeURIComponent(assignmentId)}`);
+    $("studyTitle").textContent = data.title;
+    currentStudyVocab = data.vocab || [];
+    renderStudyTable();
+  } catch (err) {
+    $("studyTitle").textContent = "";
+    errEl.textContent = err.message || "단어 목록을 불러오지 못했습니다.";
+  }
+}
+
+// 뜻 가리기가 켜지면 눌러야 그 줄만 보이게 한다 — 카드 뒤집기 방식의 암기 확인용
+function renderStudyTable() {
+  const hide = $("studyHideMeaning").checked;
+  $("studyTableBody").innerHTML = currentStudyVocab.map((v, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${esc(v.word)}</td>
+      <td class="study-meaning" data-meaning="${esc(v.meaning)}" data-revealed="${hide ? "0" : "1"}"
+          style="cursor:${hide ? "pointer" : "default"};">${hide ? "눌러서 보기" : esc(v.meaning)}</td>
+    </tr>
+  `).join("");
+}
+
+$("studyHideMeaning").addEventListener("change", renderStudyTable);
+$("studyTableBody").addEventListener("click", (e) => {
+  const td = e.target.closest(".study-meaning");
+  if (!td || td.dataset.revealed === "1") return;
+  td.dataset.revealed = "1";
+  td.style.cursor = "default";
+  td.textContent = td.dataset.meaning;
+});
+$("studyTakeBtn").addEventListener("click", () => openTest(currentStudyAssignmentId));
+$("backToListBtn3").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
 
 let currentAssignmentId = null;
 let currentFormat = "saq";
