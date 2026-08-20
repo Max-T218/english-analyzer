@@ -7528,6 +7528,19 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
     return rows
 
 
+def delete_assignment(teacher_id, assignment_id):
+    """시험(및 학생들이 이미 낸 답안)을 통째로 지운다. delete_student와 같은 모양 —
+    소유권을 확인하고, 딸린 문서(test_attempts)부터 지운 뒤 본체를 지운다."""
+    _require_db()
+    ref = DB.collection("test_assignments").document(assignment_id)
+    snap = ref.get()
+    if not snap.exists or snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    for doc in DB.collection("test_attempts").where("assignment_id", "==", assignment_id).stream():
+        doc.reference.delete()
+    ref.delete()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "PassageAnalyzer/1.0"
 
@@ -7925,7 +7938,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
                         "/api/classes", "/api/classes/regenerate-code", "/api/students",
-                        "/api/students/delete", "/api/vocab-tests",
+                        "/api/students/delete", "/api/vocab-tests", "/api/vocab-tests/delete",
                         "/api/student/login", "/api/student/logout", "/api/student/tests/submit"):
             self.send_error(404, "Not found")
             return
@@ -8412,6 +8425,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 400)
                 return
             self._send_json({"assignmentId": assignment_id})
+            return
+
+        if path == "/api/vocab-tests/delete":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            # 학생 삭제와 같은 이유로 승인 여부를 다시 확인한다 — 이미 낸 시험과
+            # 학생들이 제출한 답안까지 함께 지우는 동작이라 소유권만으로는 부족하다.
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                delete_assignment(user_id, req.get("assignmentId"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+                return
+            self._send_json({"deleted": True})
             return
 
         # --- 반 · 학생 · 단어시험 (학생 쪽 POST) ---

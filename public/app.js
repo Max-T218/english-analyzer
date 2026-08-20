@@ -7084,9 +7084,11 @@ $("examSpecSaveBtn").addEventListener("click", () => openSaveDialog("exam"));
    AI를 부르지 않는다 — 서버가 같은 단어장 안의 다른 뜻/단어로 오답을 만들고,
    채점도 문자열 비교로 한다(server.py의 create_test_assignment/grade_and_submit_attempt). */
 
+// lastVocabRows(지금 화면)가 비어 있어도 보인다 — 모달 안에서 저장된 단어장을
+// 골라 낼 수도 있으니, 승인된 선생님이면 항상 열어 둔다.
 function updateVocabAssignBtnVisibility() {
   if (!vocabAssignBtn) return;
-  vocabAssignBtn.style.display = isClassroomApproved && lastVocabRows.length ? "inline-flex" : "none";
+  vocabAssignBtn.style.display = isClassroomApproved ? "inline-flex" : "none";
 }
 
 function fmtClassroomDate(iso) {
@@ -7280,7 +7282,10 @@ function renderAssignedTests(tests) {
           <b>${esc(t.title)}</b>
           <span class="hint">· ${esc(FORMAT_LABEL_KO[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개</span>
         </div>
-        <button type="button" class="btn ghost small view-results-btn">결과 보기</button>
+        <span style="display:inline-flex; gap:6px;">
+          <button type="button" class="btn ghost small view-results-btn">결과 보기</button>
+          <button type="button" class="btn ghost small danger del-test-btn">삭제</button>
+        </span>
       </div>
       <div class="results-body" hidden></div>
     </div>`
@@ -7289,6 +7294,27 @@ function renderAssignedTests(tests) {
 }
 
 assignedTestListEl.addEventListener("click", async (e) => {
+  const delBtn = e.target.closest(".del-test-btn");
+  if (delBtn) {
+    const card = delBtn.closest("[data-aid]");
+    if (!confirm("이 시험을 삭제할까요? 학생들이 이미 낸 답안·점수도 함께 지워지며 되돌릴 수 없습니다.")) {
+      return;
+    }
+    delBtn.disabled = true;
+    try {
+      await postJson(
+        "/api/vocab-tests/delete",
+        { assignmentId: card.dataset.aid },
+        "삭제에 실패했습니다."
+      );
+      loadAssignedTests();
+    } catch (err) {
+      alert(err.message || "삭제에 실패했습니다.");
+      delBtn.disabled = false;
+    }
+    return;
+  }
+
   const btn = e.target.closest(".view-results-btn");
   if (!btn) return;
   const card = btn.closest("[data-aid]");
@@ -7330,6 +7356,8 @@ const assignClassSelectEl = $("assignClassSelect");
 const assignFormEl = $("assignForm");
 const assignErrorEl = $("assignError");
 const assignStatusEl = $("assignStatus");
+const assignVocabSourceSelectEl = $("assignVocabSourceSelect");
+const assignVocabSourceHintEl = $("assignVocabSourceHint");
 
 async function refreshClassSelectForModal() {
   try {
@@ -7343,9 +7371,70 @@ async function refreshClassSelectForModal() {
     : `<option value="">먼저 '학생 관리' 탭에서 반을 만들어 주세요</option>`;
 }
 
+/* 반에 낼 단어장 — 기본은 "지금 화면에 있는 단어장"(lastVocabRows)이고, 저장함에
+   담아 둔 다른 단어장으로 바꿔 낼 수도 있다. assignVocabRows가 null이면 "지금 화면"을
+   쓰는 뜻이고, 배열이면 그걸로 덮어쓴다 — lastVocabRows를 직접 건드리지 않아
+   단어장 탭 화면은 그대로 둔 채 시험만 다른 단어장으로 낼 수 있다. */
+let assignVocabRows = null;
+let assignSavedVocabCache = [];
+
+// 저장해 둔 단어장 payload(vocabSets)를 buildVocab과 같은 규칙으로 한 줄씩 펼친다.
+function flattenVocabSets(sets) {
+  const rows = [];
+  (sets || []).forEach((s) => {
+    (s.vocab || []).forEach((v) => {
+      if (v && v.word) rows.push({ ...v, from: s.name });
+    });
+  });
+  return rows;
+}
+
+function updateAssignVocabHint() {
+  const rows = assignVocabRows || lastVocabRows;
+  assignVocabSourceHintEl.textContent = rows.length
+    ? `${rows.length}개 단어로 시험을 냅니다.`
+    : "단어장이 비어 있습니다 — 다른 단어장을 골라 주세요.";
+}
+
+async function refreshAssignVocabSourceSelect() {
+  assignVocabRows = null;
+  let items = [];
+  try {
+    const data = await getJson("/api/saved", "");
+    items = (data.items || []).filter((it) => it.tab === "vocab");
+  } catch (_) {
+    items = [];
+  }
+  assignSavedVocabCache = items;
+  const saved = items
+    .map((it) => `<option value="${esc(it.id)}">💾 ${esc(it.title || "제목 없음")}</option>`)
+    .join("");
+  assignVocabSourceSelectEl.innerHTML =
+    `<option value="current">지금 화면에 있는 단어장</option>` + saved;
+  updateAssignVocabHint();
+}
+
+assignVocabSourceSelectEl.addEventListener("change", async () => {
+  const val = assignVocabSourceSelectEl.value;
+  if (val === "current") {
+    assignVocabRows = null;
+    updateAssignVocabHint();
+    return;
+  }
+  assignVocabSourceHintEl.textContent = "불러오는 중…";
+  try {
+    const item = await getJson(`/api/saved/${encodeURIComponent(val)}`, "불러오기에 실패했습니다.");
+    assignVocabRows = flattenVocabSets((item.payload && item.payload.vocabSets) || []);
+  } catch (err) {
+    assignVocabRows = [];
+    assignErrorEl.textContent = err.message || "단어장을 불러오지 못했습니다.";
+  }
+  updateAssignVocabHint();
+});
+
 vocabAssignBtn.addEventListener("click", async () => {
   assignErrorEl.textContent = "";
-  await refreshClassSelectForModal();
+  await Promise.all([refreshClassSelectForModal(), refreshAssignVocabSourceSelect()]);
   openModal(assignModalEl);
 });
 $("assignModalClose").addEventListener("click", () => closeModal(assignModalEl));
@@ -7358,8 +7447,9 @@ assignFormEl.addEventListener("submit", async (e) => {
     assignErrorEl.textContent = "반을 먼저 만들어 주세요.";
     return;
   }
-  if (!lastVocabRows.length) {
-    assignErrorEl.textContent = "먼저 단어장을 만들어 주세요.";
+  const rows = assignVocabRows || lastVocabRows;
+  if (!rows.length) {
+    assignErrorEl.textContent = "먼저 단어장을 만들거나, 저장된 단어장을 골라 주세요.";
     return;
   }
   assignStatusEl.textContent = "내는 중…";
@@ -7371,7 +7461,7 @@ assignFormEl.addEventListener("submit", async (e) => {
         classId,
         title: $("assignTitle").value,
         format: $("assignFormat").value,
-        vocab: lastVocabRows.map((r) => ({
+        vocab: rows.map((r) => ({
           word: r.word, meaning: r.meaning, pos: r.pos, synonym: r.synonym, antonym: r.antonym,
         })),
       },
