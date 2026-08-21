@@ -603,6 +603,11 @@ v{
     padding:9px 11px; margin:0 0 7px;
     break-inside:avoid; page-break-inside:avoid;
   }
+  /* OX진위처럼 지문 전체 + 진술 여러 개가 든 긴 문항 — 좁은 단 폭 그대로 '안 끊기게'
+     강제하면 크로미움이 쪽 계산을 못 맞춰 그 뒤로 빈 쪽을 여러 장 만들어낼 수 있다
+     (실사례로 확인). 단을 걸쳐 전체 폭을 쓰게 하면 일반 전체 폭 인쇄와 같아져
+     이 문제를 피한다. */
+  .qz-card-wide{column-span:all;}
   /* 2단 폭에 맞춰 조판을 촘촘하게 */
   .qz-head{gap:6px; margin-bottom:6px;}
   .qz-no{min-width:20px; height:20px; font-size:12px;}

@@ -4181,8 +4181,13 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead) {
   // 번호는 AI가 준 q.no 대신 '실제 출제(출력) 순서'로 다시 매긴다.
   // 문항이 유형별로 묶여 나오므로, 지면에 찍히는 순서와 번호가 어긋나지 않게 한다.
   (d.questions || []).forEach((q, i) => {
+    // OX진위는 문항 하나에 진술 5개+지문 전체가 통째로 들어가 2단 폭엔 너무 길다 —
+    // 좁은 단 안에서 '안 끊기게' 강제하다 인쇄(PDF 변환)가 그 문항 뒤로 빈 쪽을 여러 장
+    // 만들어내는 걸 봐서(YBM 1단원 사례), 이 유형만 단을 걸치게(column-span) 해서
+    // 좁은 단 안에 억지로 욱여넣지 않게 한다.
+    const wide = q.format === "tf" ? " qz-card-wide" : "";
     parts.push(`
-      <div class="qz-card">
+      <div class="qz-card${wide}">
         <div class="qz-head"><span class="qz-no">${i + 1}</span><span class="qz-type">${esc(q.type)}</span></div>
         <div class="qz-instruction">${safeHTML(q.instruction)}</div>
         ${markVariations(quizBodyHtml(q), d.variations)}
