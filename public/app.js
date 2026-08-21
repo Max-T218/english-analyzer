@@ -3607,6 +3607,7 @@ function setupQuizTab({ prefix, types, footer }) {
     let stopped = false;
     let stopErr = null;
     const entries = []; // 저장 기능이 쓸 {job, label, set, total} — 성공한 세트만
+    const answerParts = []; // 지문마다 흩어지지 않게 모아뒀다 문서 맨 뒤에 한 번에 붙인다
 
     for (let i = 0; i < total && !stopped; i++) {
       const job = jobs[i];
@@ -3691,7 +3692,9 @@ function setupQuizTab({ prefix, types, footer }) {
           if (isRandom()) {
             set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
           }
-          append(buildQuizHtml(set, job, total, prefix, label));
+          const built = buildQuizHtml(set, job, total, prefix, label);
+          append(built.html);
+          answerParts.push(built.answerHtml);
           entries.push({ job, label, set, total });
           okCount++;
           showFooter();
@@ -3706,7 +3709,17 @@ function setupQuizTab({ prefix, types, footer }) {
       }
     }
 
-    if (okCount) showFooter();
+    if (okCount) {
+      const body = answerParts.filter((p) => p && p.trim()).join("");
+      if (body) {
+        append(`
+          <section class="qz-answerbook">
+            <h2 class="qz-answerbook-head">정답 및 해설</h2>
+            ${body}
+          </section>`);
+      }
+      showFooter();
+    }
     lastEntries = entries; // 저장 버튼이 이 값을 그대로 payload로 보낸다
     syncFloatPrint();
     loadingEl.classList.remove("on");
@@ -3727,10 +3740,21 @@ function setupQuizTab({ prefix, types, footer }) {
   // 저장해 둔 원본 set(질문·변형 정보)을 그때와 같은 buildQuizHtml로 재사용한다.
   function renderQuizEntries(entries) {
     resultEl.innerHTML = "";
+    const answerParts = [];
     entries.forEach(({ job, label, set, total }) => {
-      resultEl.insertAdjacentHTML("beforeend", buildQuizHtml(set, job, total, prefix, label));
+      const built = buildQuizHtml(set, job, total, prefix, label);
+      resultEl.insertAdjacentHTML("beforeend", built.html);
+      answerParts.push(built.answerHtml);
     });
     if (entries.length) {
+      const body = answerParts.filter((p) => p && p.trim()).join("");
+      if (body) {
+        resultEl.insertAdjacentHTML("beforeend", `
+          <section class="qz-answerbook">
+            <h2 class="qz-answerbook-head">정답 및 해설</h2>
+            ${body}
+          </section>`);
+      }
       resultEl.insertAdjacentHTML("beforeend", `<footer class="qz-footer">${esc(footer)} · 자동 생성</footer>`);
     }
     printBtn.style.display = entries.length ? "inline-flex" : "none";
@@ -4147,7 +4171,8 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead) {
   const parts = [];
   parts.push(`<section class="passage-block qz-block">`);
   if (sheetHead) parts.push(sheetHead);
-  parts.push(passageBanner(job, total, label));
+  const banner = passageBanner(job, total, label);
+  parts.push(banner);
 
   // 문항 카드는 별도 래퍼에 담는다 — 인쇄할 때 이 래퍼에만 2단 조판을 적용하고
   // '정답 및 해설' 표는 단 나눔 없이 전체 폭을 쓰게 하기 위해서다.
@@ -4170,8 +4195,13 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead) {
   });
 
   parts.push(`</div>`); // .qz-cards
+  parts.push(`</section>`);
 
-  // 정답 및 해설 — 화면 토글과 별개로 인쇄물에는 항상 별도 페이지로 포함
+  // 정답 및 해설(+지문 변형 내역)은 여기서 지면에 바로 넣지 않는다 — 지문이 여럿이면
+  // 호출한 쪽이 이 값들을 모아서 문서 맨 뒤에 한 번에 붙인다(지문마다 답지가 중간에
+  // 끼어 인쇄가 끊기던 문제를 없애기 위함). 화면 토글(.qz-reveal-btn)과는 별개로
+  // 인쇄에는 이 답지만 실린다.
+  let answerHtml = "";
   if (d.questions && d.questions.length) {
     // 해설이 하나도 없으면 '해설' 열 자체를 만들지 않는다 — 머리글만 있고 내용은
     // 텅 빈 열이 지면을 먹고, 지문마다 표 모양이 달라 보이는 것을 막는다.
@@ -4194,36 +4224,36 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead) {
       </tr>`
       )
       .join("");
-    parts.push(`
-      <h3 class="section page-break"><span class="num">📌</span> ${anyExp ? "정답 및 해설" : "정답"}</h3>
-      <div class="table-wrap"><table class="answerkey">
-        <thead><tr><th>번호</th><th>유형</th><th>정답</th>${expHead}</tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>
-    `);
-  }
 
-  // 지문 변형 내역 — 어떤 낱말을 무엇으로 바꿨는지. 문제지의 형광 표시는 인쇄되지
-  // 않지만 이 표는 인쇄된다. 선생님이 답지를 들고 확인하는 자료이기 때문이다.
-  const varied = (d.variations || []).filter((v) => v && v.from && v.to);
-  if (varied.length) {
-    const rows = varied
-      .map(
-        (v, i) => `
-      <tr><td>${i + 1}</td><td>${esc(v.from)}</td><td>${esc(v.to)}</td></tr>`
-      )
-      .join("");
-    parts.push(`
+    // 지문 변형 내역 — 어떤 낱말을 무엇으로 바꿨는지. 문제지의 형광 표시는 인쇄되지
+    // 않지만 이 표는 인쇄된다. 선생님이 답지를 들고 확인하는 자료이기 때문이다.
+    const varied = (d.variations || []).filter((v) => v && v.from && v.to);
+    const variedHtml = varied.length
+      ? `
       <h3 class="section"><span class="num">✏️</span> 지문 변형 내역 <span class="qz-varied-count">${varied.length}곳</span></h3>
       <div class="table-wrap"><table class="answerkey variedkey">
         <thead><tr><th>번호</th><th>원문</th><th>변형</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>
-    `);
+        <tbody>${varied
+          .map((v, i) => `<tr><td>${i + 1}</td><td>${esc(v.from)}</td><td>${esc(v.to)}</td></tr>`)
+          .join("")}</tbody>
+      </table></div>`
+      : "";
+
+    // 지문이 여럿일 때만 어느 지문의 답인지 이름표를 단다(하나뿐이면 군더더기).
+    const abLabel = banner ? `<div class="qz-ab-label">${esc(job.name)}${label ? ` <span class="passage-banner-tag">${esc(label)}</span>` : ""}</div>` : "";
+    answerHtml = `
+      <div class="qz-ab-passage">
+        ${abLabel}
+        <h3 class="section"><span class="num">📌</span> ${anyExp ? "정답 및 해설" : "정답"}</h3>
+        <div class="table-wrap"><table class="answerkey">
+          <thead><tr><th>번호</th><th>유형</th><th>정답</th>${expHead}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+        ${variedHtml}
+      </div>`;
   }
 
-  parts.push(`</section>`);
-  return parts.join("");
+  return { html: parts.join(""), answerHtml };
 }
 
 // 정답/해설 토글 — 문제 탭·워크북 탭 어디에 렌더되든 동작하도록 document에 위임
@@ -6919,9 +6949,11 @@ function renderExamPaperSets() {
         ? `<p class="hint warn">${set.failed.length}문항은 만들지 못해 빠졌습니다 — ` +
           esc(set.failed.map((f) => `${f.type}`).join(", ")) + `</p>`
         : "";
+      const built = buildQuizHtml({ questions: set.questions, variations: [] }, head, 1, "mcq", "", sheetHead);
       return (
         fails +
-        buildQuizHtml({ questions: set.questions, variations: [] }, head, 1, "mcq", "", sheetHead) +
+        built.html +
+        built.answerHtml +
         examPlanTableHtml(set.plan, jobs, `출제 지문${set.label ? " — " + set.label : ""}`)
       );
     })

@@ -556,6 +556,24 @@ table.variedkey td:nth-child(2){white-space:nowrap; color:var(--ink-soft); font-
   margin-left:6px; vertical-align:middle;
 }
 
+/* ── 뒤쪽 '정답 및 해설' 모음 ── 지문이 여럿이면 지문마다 답지가 끼어 인쇄가
+   끊기지 않도록, 모든 지문의 답지를 문서 맨 뒤에 한 번에 모아 붙인다
+   (워크북 탭의 .wb-answerbook과 같은 방식). */
+.qz-answerbook{margin-top:30px;}
+.qz-answerbook-head{
+  font-family:var(--font); font-size:20px; margin:0 0 14px; padding-bottom:8px;
+  color:var(--accent); border-bottom:2px solid var(--accent);
+}
+.qz-ab-label{
+  font-weight:800; font-size:13px; color:var(--accent);
+  margin:14px 0 8px; break-after:avoid; page-break-after:avoid;
+}
+.qz-ab-passage{margin-bottom:20px; break-inside:avoid; page-break-inside:avoid;}
+@media print{
+  .qz-answerbook{break-before:page; page-break-before:always; margin-top:0;}
+  .qz-answerbook-head{break-after:avoid; page-break-after:avoid;}
+}
+
 /* ── 지문 변형 표시 ──
    변형 모드로 만든 지문에서 실제로 바뀐 낱말. 화면에서는 형광펜으로 어디를
    손댔는지 바로 보이고, 마우스를 올리면 원문 낱말이 뜬다. 인쇄할 때는 아래
