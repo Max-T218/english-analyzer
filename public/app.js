@@ -4181,13 +4181,16 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead) {
   // 번호는 AI가 준 q.no 대신 '실제 출제(출력) 순서'로 다시 매긴다.
   // 문항이 유형별로 묶여 나오므로, 지면에 찍히는 순서와 번호가 어긋나지 않게 한다.
   (d.questions || []).forEach((q, i) => {
-    // OX진위는 문항 하나에 진술 5개+지문 전체가 통째로 들어가 2단 폭엔 너무 길다 —
-    // 좁은 단 안에서 '안 끊기게' 강제하다 인쇄(PDF 변환)가 그 문항 뒤로 빈 쪽을 여러 장
-    // 만들어내는 걸 봐서(YBM 1단원 사례), 이 유형만 단을 걸치게(column-span) 해서
-    // 좁은 단 안에 억지로 욱여넣지 않게 한다.
-    const wide = q.format === "tf" ? " qz-card-wide" : "";
+    // OX진위는 문항 하나에 진술 5개+지문 전체가 통째로 들어가 2단 폭엔 유난히 길다.
+    // '이 카드는 절대 안 끊기게'를 강제하면, 카드가 한 단 높이보다 커질 때 인쇄(PDF
+    // 변환)가 쪽 계산을 못 맞춰 그 뒤로 빈 쪽을 여러 장 만들어내는 걸 실사례로
+    // 확인했다(YBM 1단원). 그렇다고 이 유형만 1단으로 빼면 같은 지문 안에서 문항 폭이
+    // 들쭉날쭉해 보인다는 피드백을 받아, 2단은 그대로 두고 '안 끊기게' 규칙만 이
+    // 유형에서 풀어준다 — 카드가 안 맞으면 그냥 단/쪽 경계에서 자연스럽게 이어서
+    // 넘어가게 한다(다른 유형은 지금처럼 카드 중간이 안 잘린다).
+    const breakable = q.format === "tf" ? " qz-card-breakable" : "";
     parts.push(`
-      <div class="qz-card${wide}">
+      <div class="qz-card${breakable}">
         <div class="qz-head"><span class="qz-no">${i + 1}</span><span class="qz-type">${esc(q.type)}</span></div>
         <div class="qz-instruction">${safeHTML(q.instruction)}</div>
         ${markVariations(quizBodyHtml(q), d.variations)}
