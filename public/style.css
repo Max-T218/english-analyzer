@@ -676,6 +676,15 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 .wb-heading{font-weight:700; color:var(--ink); font-size:14px; margin:6px 0 8px;}
 .wb-ko{font-size:13.5px; color:var(--ink-soft); line-height:1.7; margin-bottom:6px; word-break:keep-all;}
 .wb-en{font-size:15px; line-height:2.1; color:var(--ink);}
+/* 좌지문 우해석 — 7:3 좌우 배치. 문장이 길어 한쪽만 줄바꿈되면 나머지 흰 공간이
+   위쪽으로 붙어 보이므로 align-items:flex-start로 둘 다 윗줄을 맞춘다. */
+.wb-lr{display:flex; gap:18px; align-items:flex-start;}
+.wb-lr-en{flex:7 1 0; font-size:15px; line-height:1.85; color:var(--ink);}
+.wb-lr-ko{
+  flex:3 1 0; font-size:13px; line-height:1.75; color:var(--ink-soft); word-break:keep-all;
+  border-left:1px solid var(--line); padding-left:12px;
+}
+@media (max-width:560px){ .wb-lr{flex-direction:column; gap:4px;} .wb-lr-ko{border-left:none; padding-left:0;} }
 /* 영작 — 밑줄이 촘촘히 늘어서므로 줄 간격을 더 준다 */
 .wb-en.wb-write{line-height:2.5;}
 .wb-para{font-size:14.5px; line-height:2.1; color:var(--ink); margin-bottom:12px;}

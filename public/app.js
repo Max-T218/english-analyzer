@@ -4241,6 +4241,7 @@ document.addEventListener("click", (e) => {
 // 지원 단계 — 참고 자료(10단계 WORKBOOK)의 번호·명칭·지시문을 그대로 쓰되,
 // 1(지문 연습하기)·2(빈칸 완성하기·우리말)는 제외한 3~10단계만 만든다.
 const WB_STAGES = [
+  { id: 1,  name: "좌지문 우해석",         guide: "지문 원문(왼쪽)과 우리말 해석(오른쪽)을 나란히 놓고 읽어 보세요.", def: true },
   { id: 3,  name: "빈칸 완성하기(영문)",   guide: "우리말 해석을 읽고 영문의 빈칸을 완성해 보세요.", def: true },
   { id: 4,  name: "해석 연습하기",         guide: "문장 전체의 자연스러운 해석을 써 보세요.", def: true },
   { id: 5,  name: "동사형 연습하기",       guide: "괄호 안에 주어진 단어를 알맞게 고쳐 쓰세요.", def: true },
@@ -4829,7 +4830,14 @@ function renderStageSentence(stageId, s) {
   let body = "";
   let answer = "";
 
-  if (stageId === 3) {
+  if (stageId === 1) {
+    // 좌지문 우해석 — 채점할 게 없는 읽기 자료라 정답(answer)은 두지 않는다
+    body = `
+      <div class="wb-lr">
+        <div class="wb-lr-en">${esc(s.en)}</div>
+        <div class="wb-lr-ko">${esc(s.ko || "")}</div>
+      </div>`;
+  } else if (stageId === 3) {
     // 빈칸 완성하기(영문) — 해석을 보고 영문의 빈칸 채우기
     const { html, answers } = renderBraceBlanks(s.enBlank || "");
     if (!answers.length) return null;

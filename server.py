@@ -161,12 +161,15 @@ PRICE_SAQ_KRW = int(os.environ.get("PRICE_SAQ_KRW", "250"))
 # 스키마·프롬프트를 잘라야 한다(그때 비로소 적게 고르면 실제로 싸진다).
 PRICE_WORKBOOK_STAGE_KRW = int(os.environ.get("PRICE_WORKBOOK_STAGE_KRW", "100"))  # 단계 1개당
 PRICE_WORKBOOK_MAX_KRW = int(os.environ.get("PRICE_WORKBOOK_MAX_KRW", "700"))      # 지문 1개당 상한
-WORKBOOK_STAGE_IDS = (3, 4, 5, 6, 7, 8, 9, 10)  # public/app.js의 WB_STAGES와 같은 목록
+WORKBOOK_STAGE_IDS = (1, 3, 4, 5, 6, 7, 8, 9, 10)  # public/app.js의 WB_STAGES와 같은 목록
 
 # 단계 이름과 '학생이 실제로 하는 일'. public/app.js WB_STAGES의 name·guide와 같은 값을
 # 유지해야 한다 — 기출 유형 분석이 시험지 문항을 이 이름에 갖다 붙이고, 화면은 그 이름으로
 # 워크북 탭의 체크박스를 찾아 켠다. 이름이 어긋나면 채우기가 조용히 아무것도 안 한다.
 WORKBOOK_STAGE_LABELS = {
+    # 유일하게 '푸는' 게 아니라 '읽는' 단계다 — sentences[].en/ko는 어차피 모든 요청에서
+    # 항상 만들어지므로(스키마가 required로 강제) 새 AI 호출 없이 공짜로 만들 수 있다.
+    1:  ("좌지문 우해석", "지문 원문과 우리말 해석을 나란히 놓고 읽는다"),
     3:  ("빈칸 완성하기(영문)", "우리말 해석을 보고 영문 문장의 빈칸을 채워 쓴다"),
     4:  ("해석 연습하기",       "영어 문장을 우리말로 해석해 쓴다"),
     5:  ("동사형 연습하기",     "괄호 안에 기본형으로 주어진 동사를 알맞은 형태로 고쳐 쓴다"),
@@ -3731,10 +3734,12 @@ You will receive ONE English passage. Split it into sentences and, for EACH sent
 the raw materials the stages need. The app assembles the printable pages from your data,
 so the MARKUP FORMAT below must be followed to the letter.
 
-(The reference workbook has 10 stages; stages 1~2 are not produced here, so the numbering
-below starts at 3 — it is the reference material's numbering, not a gap.)
+(The reference workbook has 10 stages; stage 2 is not produced here, so there is a gap in
+the numbering below — it is the reference material's numbering, not a mistake. Stage 1 needs
+no extra data beyond sentences[].en/ko below, which every request already produces.)
 
 The stages the app builds from your data:
+  1 좌지문 우해석         지문 원문·해석을 나란히 놓고 읽기 ← en, ko (no new field)
   3 빈칸 완성하기(영문)   해석 보고 영문 빈칸 채우기   ← enBlank
   4 해석 연습하기        영문 보고 해석 쓰기         ← en (정답 ko)
   5 동사형 연습하기      괄호 안 동사 고쳐 쓰기      ← verbForm
@@ -6481,6 +6486,15 @@ CHANGELOG = [
             "인공지능을 부르지 않아 채점까지 무료입니다. 반 전체에 낼 수도, 학생 한 명을 "
             "골라 그 학생에게만 낼 수도 있습니다. 이미 낸 시험은 삭제할 수 있고, "
             "'시험 내기' 창에서 저장해 둔 다른 단어장을 바로 골라 낼 수도 있습니다.",
+        ],
+    },
+    {
+        "version": 7,
+        "date": "2026-08-21",
+        "items": [
+            "워크북 제작 — 맨 앞 단계로 '좌지문 우해석'이 추가됐습니다. 지문 원문(왼쪽)과 "
+            "우리말 해석(오른쪽)을 나란히 놓고 읽는 단계로, 다른 단계들처럼 필요 없으면 "
+            "체크를 해제할 수 있습니다.",
         ],
     },
 ]
