@@ -457,8 +457,23 @@
     </div>
   </div>
 
-  <!-- ══════════ 작업 화면 ══════════ -->
+  <!-- ══════════ 작업 화면 ══════════
+       탭 메뉴를 왼쪽 세로 사이드바로 둔다 — 위쪽 가로줄이면 작업 중 탭을 오가려고
+       스크롤을 맨 위까지 되돌려야 해서 불편하다는 피드백을 반영했다. -->
   <div id="workspace" hidden>
+
+  <nav class="tabs" id="tabNav">
+    <button type="button" class="tab-btn active" data-tab="analyze">📖 지문 분석</button>
+    <button type="button" class="tab-btn" data-tab="mcq">📝 문제 제작 (객관식)</button>
+    <button type="button" class="tab-btn" data-tab="saq">✍️ 문제 제작 (주관식)</button>
+    <button type="button" class="tab-btn" data-tab="workbook">📚 워크북 제작</button>
+    <button type="button" class="tab-btn" data-tab="vocab">📒 단어장</button>
+    <button type="button" class="tab-btn" data-tab="exam">🧾 동형 모의고사 제작</button>
+    <!-- 관리자가 허가한 선생님에게만 보인다 — renderAccount가 hidden을 켜고 끈다 -->
+    <button type="button" class="tab-btn" data-tab="students" id="studentsTabBtn" hidden>🏫 학생 관리</button>
+  </nav>
+
+  <div class="main-content">
 
   <section class="panel">
     <div class="account-bar" id="accountBar">
@@ -504,20 +519,8 @@
 
   </section>
 
-  <!-- 무엇을 만들지 먼저 고르고 나서 지문을 넣게, 탭 메뉴를 지문칸보다 위에 둔다.
-       탭은 눌러도 이 지문칸을 다시 그리지 않는다 — 값은 그대로고 아래로 보이는
+  <!-- 탭은 눌러도 이 지문칸을 다시 그리지 않는다 — 값은 그대로고 아래로 보이는
        위치만 바뀐다(공용 지문칸이라 탭마다 있는 게 아니라 하나뿐이다). -->
-  <nav class="tabs" id="tabNav">
-    <button type="button" class="tab-btn active" data-tab="analyze">📖 지문 분석</button>
-    <button type="button" class="tab-btn" data-tab="mcq">📝 문제 제작 (객관식)</button>
-    <button type="button" class="tab-btn" data-tab="saq">✍️ 문제 제작 (주관식)</button>
-    <button type="button" class="tab-btn" data-tab="workbook">📚 워크북 제작</button>
-    <button type="button" class="tab-btn" data-tab="vocab">📒 단어장</button>
-    <button type="button" class="tab-btn" data-tab="exam">🧾 동형 모의고사 제작</button>
-    <!-- 관리자가 허가한 선생님에게만 보인다 — renderAccount가 hidden을 켜고 끈다 -->
-    <button type="button" class="tab-btn" data-tab="students" id="studentsTabBtn" hidden>🏫 학생 관리</button>
-  </nav>
-
   <section class="panel passage-panel">
     <div class="field-head">
       <label>영어 지문 <span id="passageCount"></span></label>
@@ -1077,6 +1080,8 @@
       <div id="assignedTestList"></div>
     </section>
   </section>
+
+  </div><!-- /.main-content -->
 
   </div><!-- /#workspace -->
 
