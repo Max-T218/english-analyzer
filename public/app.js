@@ -3377,8 +3377,13 @@ function setupQuizTab({ prefix, types, footer }) {
     syncTypeChips();
   });
 
-  // 출제 순서 — "type"(유형 순서대로) / "random"(무작위로 섞기)
-  const isRandom = () => orderEl.value === "random";
+  /* 출제 순서 세 가지
+       type    — 유형 칸에 놓인 순서 그대로
+       passage — 지문 안에서만 유형을 섞는다(지문 묶음은 유지)
+       all     — 지문 경계를 넘어 전체 문항을 섞어 한 벌로 만든다 */
+  const ORDER_MODES = ["type", "passage", "all"];
+  const shuffleInPassage = () => orderEl.value === "passage";
+  const shuffleAll = () => orderEl.value === "all";
 
   // 칩의 선택 표시와 스테퍼 상태를 지금 값에 맞춘다.
   // 출제 순서는 화면에 나열된 순서(DOM 순서) 그대로이고 서버에도 그 순서로 보내지만,
@@ -3442,13 +3447,20 @@ function setupQuizTab({ prefix, types, footer }) {
   }
 
   function updateOrderHint() {
-    orderHintEl.innerHTML = isRandom()
-      ? "유형은 물론 <b>지문 구분 없이</b> 문항이 모두 섞여 출제됩니다(같은 지문 문항이 몰려 나오지 않아, 지문을 외워서 푸는 것을 막습니다). " +
-        "번호는 섞인 순서대로 1번부터 매겨지고, <b>모든 지문이 끝난 뒤 한 번에</b> 화면에 나타납니다."
-      : "위 <b>유형 칸에 놓인 순서대로</b> 출제됩니다. 문제지도 이 순서대로 만들어집니다.";
+    orderHintEl.innerHTML =
+      shuffleAll()
+        ? "지문 구분 없이 <b>모든 문항이 뒤섞여</b> 한 벌로 나갑니다. 같은 지문 문항이 몰려 나오지 않아 " +
+          "지문을 외워서 푸는 것을 막습니다. 번호는 섞인 순서대로 1번부터 이어지고, " +
+          "<b>모든 지문이 끝난 뒤 한 번에</b> 화면에 나타납니다."
+        : shuffleInPassage()
+        ? "<b>지문 묶음은 그대로 두고</b>, 그 안에서 유형 순서만 섞습니다. 지문마다 1번부터 번호가 다시 매겨집니다."
+        : "위 <b>유형 칸에 놓인 순서대로</b> 출제됩니다. 문제지도 이 순서대로 만들어집니다.";
   }
 
-  orderEl.value = localStorage.getItem(ORDER_STORE) === "random" ? "random" : "type";
+  // 이 창에서 고른 값을 탭을 오갈 때만 기억한다 — 창을 새로 열면 파일 맨 위의
+  // localStorage.clear()로 함께 지워져 늘 '유형 순서대로'부터 시작한다.
+  const savedOrder = localStorage.getItem(ORDER_STORE);
+  orderEl.value = ORDER_MODES.includes(savedOrder) ? savedOrder : "type";
   orderEl.addEventListener("change", () => {
     localStorage.setItem(ORDER_STORE, orderEl.value);
     syncTypeChips();
@@ -3689,11 +3701,9 @@ function setupQuizTab({ prefix, types, footer }) {
 
         // 일부 청크가 실패해도 성공한 문항은 살려 낸다 (그만큼 토큰을 이미 썼다)
         if (questions.length) {
-          if (isRandom()) {
-            /* 무작위 모드 — 지문 경계를 넘어 전부 섞는다.
-               한 지문의 문항이 연달아 나오면 지문을 한 번 읽고 나머지는 기억으로
-               풀 수 있어 문제가 쉬워진다. 그래서 여기서는 그리지 않고 모아 두었다가
-               모든 지문이 끝난 뒤 한 번에 섞어 그린다.
+          if (shuffleAll()) {
+            /* 전체 문항 섞기 — 지문 경계를 넘어 섞으려면 모든 지문이 끝나야 하므로
+               여기서는 그리지 않고 모아 두었다가 아래에서 한 번에 섞어 그린다.
                변형 세트(label)끼리는 섞지 않는다 — 같은 지문의 원문판·변형판이
                한 시험지에 뒤섞이면 거의 같은 지문을 두 번 풀게 되고, 애초에 변형을
                여러 개 고르는 건 A형/B형처럼 여러 벌을 뽑으려는 것이기 때문이다.
@@ -3705,7 +3715,12 @@ function setupQuizTab({ prefix, types, footer }) {
             bucket.variations.push(...varied);
             randomBuckets.set(label, bucket);
           } else {
+            // 지문 내 유형 섞기 — 지문 묶음은 그대로 두고 그 안에서만 순서를 섞는다.
+            // 문제지 번호와 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매긴다.
             const set = { questions, variations: varied };
+            if (shuffleInPassage()) {
+              set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
+            }
             const built = buildQuizHtml(set, job, total, prefix, label);
             append(built.html);
             answerParts.push(built.answerHtml);
