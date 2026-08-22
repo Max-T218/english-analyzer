@@ -3294,6 +3294,8 @@ function setupQuizTab({ prefix, types, footer }) {
   const printBtn = $(prefix + "PrintBtn");
   const saveBtn = $(prefix + "SaveBtn");
   const docxBtn = $(prefix + "DocxBtn");
+  const shufflePassageBtn = $(prefix + "ShufflePassageBtn");
+  const shuffleAllBtn = $(prefix + "ShuffleAllBtn");
   let lastEntries = []; // 저장/불러오기용 — {job, label, set, total}
   const docName = prefix === "mcq" ? "객관식문제" : "주관식문제";
   const errorEl = $(prefix + "Error");
@@ -3592,6 +3594,8 @@ function setupQuizTab({ prefix, types, footer }) {
     printBtn.style.display = "none";
     saveBtn.style.display = "none";
     docxBtn.style.display = "none";
+    lastEntries = [];
+    syncShuffleBtns();
     syncFloatPrint();
 
     // 완성될 때마다 화면에 붙인다. 도중에 멈추거나 창을 닫아도 그때까지 만든
@@ -3701,15 +3705,24 @@ function setupQuizTab({ prefix, types, footer }) {
 
         // 일부 청크가 실패해도 성공한 문항은 살려 낸다 (그만큼 토큰을 이미 썼다)
         if (questions.length) {
+          /* 문항마다 '어느 지문·어느 변형 세트에서 나왔는지'와 그 지문의 변형 낱말을
+             붙여 둔다. 만든 뒤에 순서를 다시 섞을 때(지문별 ↔ 전부) 이 표식으로
+             원래 묶음을 되살린다 — 표식이 없으면 한 번 합친 것을 지문별로 되돌릴 수
+             없다. 변형 낱말을 문항에 두는 이유는 지문마다 바뀐 낱말이 달라, 세트로
+             합쳐 두면 다른 지문의 낱말까지 잘못 칠해지기 때문이다. */
+          questions.forEach((q) => {
+            q.__passage = job.name;
+            q.__passageIdx = i;
+            q.__label = label;
+            q.__labelIdx = v;
+            q.__variations = varied;
+          });
           if (shuffleAll()) {
             /* 전체 문항 섞기 — 지문 경계를 넘어 섞으려면 모든 지문이 끝나야 하므로
                여기서는 그리지 않고 모아 두었다가 아래에서 한 번에 섞어 그린다.
                변형 세트(label)끼리는 섞지 않는다 — 같은 지문의 원문판·변형판이
                한 시험지에 뒤섞이면 거의 같은 지문을 두 번 풀게 되고, 애초에 변형을
-               여러 개 고르는 건 A형/B형처럼 여러 벌을 뽑으려는 것이기 때문이다.
-               변형 표시(형광)는 지문마다 바뀐 낱말이 다르므로 문항에 붙여 둔다 —
-               세트로 합쳐 두면 다른 지문의 낱말까지 잘못 칠해질 수 있다. */
-            questions.forEach((q) => { q.__variations = varied; });
+               여러 개 고르는 건 A형/B형처럼 여러 벌을 뽑으려는 것이기 때문이다. */
             const bucket = randomBuckets.get(label) || { questions: [], variations: [] };
             bucket.questions.push(...questions);
             bucket.variations.push(...varied);
@@ -3768,6 +3781,7 @@ function setupQuizTab({ prefix, types, footer }) {
       showFooter();
     }
     lastEntries = entries; // 저장 버튼이 이 값을 그대로 payload로 보낸다
+    syncShuffleBtns();
     syncFloatPrint();
     loadingEl.classList.remove("on");
     btn.disabled = false;
@@ -3785,6 +3799,91 @@ function setupQuizTab({ prefix, types, footer }) {
 
   // "내 저장함"에서 불러온 문제 세트를 다시 그린다 — API를 다시 부르지 않고
   // 저장해 둔 원본 set(질문·변형 정보)을 그때와 같은 buildQuizHtml로 재사용한다.
+  /* ── 만들어 둔 문제의 순서만 다시 섞기 ──
+     AI를 다시 부르지 않는다 — 이미 받아 둔 문항을 재배열해 다시 그릴 뿐이라
+     요금이 들지 않는다. 같은 문제로 A형·B형 시험지를 뽑는 데 쓴다.
+
+     문항에 붙여 둔 표식(__passage/__label)으로 원래 묶음을 되살리므로, 전부
+     섞었다가 다시 지문별로 되돌리는 것도 된다. 그 표식이 없던 시절에 저장해 둔
+     자료는 담겨 있던 묶음 정보로 대신 채운다(그 경우 이미 합쳐져 저장된 자료는
+     지문별로 되돌릴 수 없어 '지문별 섞기'도 전부 섞기처럼 동작한다). */
+  function flattenEntries() {
+    const out = [];
+    (lastEntries || []).forEach((e, ei) => {
+      const set = e.set || {};
+      (set.questions || []).forEach((q) => {
+        out.push({
+          q,
+          label: q.__label != null ? q.__label : e.label || "",
+          passage: q.__passage != null ? q.__passage : (e.job && e.job.name) || "",
+          // 묶음을 원래 순서대로 되돌리기 위한 자리 번호. 표식이 없던 시절 자료는
+          // 담겨 있던 순서(ei)를 대신 쓴다.
+          passageIdx: q.__passageIdx != null ? q.__passageIdx : ei,
+          labelIdx: q.__labelIdx != null ? q.__labelIdx : 0,
+          variations: q.__variations || set.variations || [],
+        });
+      });
+    });
+    return out;
+  }
+
+  function reshuffle(byPassage) {
+    const flat = flattenEntries();
+    if (!flat.length) return;
+    // 변형 세트는 언제나 갈라 둔다(원문판·변형판이 한 벌에 섞이면 안 된다).
+    // 지문별 섞기는 거기서 지문으로 한 번 더 나눈다.
+    const groups = new Map();
+    flat.forEach((it) => {
+      const key = byPassage ? `${it.label} ${it.passage}` : it.label;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          label: it.label, passage: it.passage, rank: Infinity,
+          questions: [], seen: new Set(), variations: [],
+        });
+      }
+      const g = groups.get(key);
+      // 묶음은 원래 자리(지문 순서·변형 세트 순서)를 지킨다 — 섞이는 것은 문항 순서다.
+      // 이름표가 '지문 2, 지문 1, 지문 3'처럼 뒤죽박죽 보이지 않게 하기 위함이다.
+      g.rank = Math.min(g.rank, it.labelIdx * 10000 + (byPassage ? it.passageIdx : 0));
+      g.questions.push(it.q);
+      // 변형 내역표에 같은 낱말이 지문 수만큼 반복되지 않게 걸러 담는다
+      it.variations.forEach((v) => {
+        if (!v || !v.from || !v.to) return;
+        const k = `${v.from} ${v.to}`;
+        if (g.seen.has(k)) return;
+        g.seen.add(k);
+        g.variations.push(v);
+      });
+    });
+    const entries = [];
+    const ordered = [...groups.values()].sort((a, b) => a.rank - b.rank);
+    ordered.forEach((g) => {
+      const set = {
+        questions: seededShuffle(g.questions, Math.floor(Math.random() * 1e9)),
+        variations: g.variations,
+      };
+      // 이름표는 묶음이 둘 이상일 때만 붙는다(passageBanner가 total로 판단한다)
+      const name = byPassage ? g.passage : g.label;
+      entries.push({ job: { name: name || "", named: false }, label: "", set, total: groups.size });
+    });
+    renderQuizEntries(entries);
+  }
+
+  /* 섞기 버튼은 결과가 있을 때만 보인다. '지문별 섞기'는 지문이 둘 이상일 때만
+     의미가 있으므로(하나뿐이면 '전부 섞기'와 같은 일을 한다) 그때만 내놓는다. */
+  function syncShuffleBtns() {
+    const has = (lastEntries || []).length > 0;
+    const passages = new Set(flattenEntries().map((it) => `${it.label} ${it.passage}`));
+    if (shuffleAllBtn) shuffleAllBtn.style.display = has ? "inline-flex" : "none";
+    if (shufflePassageBtn) {
+      shufflePassageBtn.style.display = has && passages.size > 1 ? "inline-flex" : "none";
+    }
+    syncFloatPrint();
+  }
+
+  if (shufflePassageBtn) shufflePassageBtn.addEventListener("click", () => reshuffle(true));
+  if (shuffleAllBtn) shuffleAllBtn.addEventListener("click", () => reshuffle(false));
+
   function renderQuizEntries(entries) {
     resultEl.innerHTML = "";
     const answerParts = [];
@@ -3808,6 +3907,7 @@ function setupQuizTab({ prefix, types, footer }) {
     saveBtn.style.display = entries.length ? "inline-flex" : "none";
     docxBtn.style.display = entries.length ? "inline-flex" : "none";
     lastEntries = entries;
+    syncShuffleBtns();
     syncFloatPrint();
     // 비우는 호출일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
     if (entries.length) resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
