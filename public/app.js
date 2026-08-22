@@ -3443,7 +3443,8 @@ function setupQuizTab({ prefix, types, footer }) {
 
   function updateOrderHint() {
     orderHintEl.innerHTML = isRandom()
-      ? "유형과 상관없이 문항이 <b>무작위로 섞여</b> 출제됩니다. 문제지 번호는 섞인 순서대로 1번부터 매겨집니다."
+      ? "유형은 물론 <b>지문 구분 없이</b> 문항이 모두 섞여 출제됩니다(같은 지문 문항이 몰려 나오지 않아, 지문을 외워서 푸는 것을 막습니다). " +
+        "번호는 섞인 순서대로 1번부터 매겨지고, <b>모든 지문이 끝난 뒤 한 번에</b> 화면에 나타납니다."
       : "위 <b>유형 칸에 놓인 순서대로</b> 출제됩니다. 문제지도 이 순서대로 만들어집니다.";
   }
 
@@ -3608,6 +3609,8 @@ function setupQuizTab({ prefix, types, footer }) {
     let stopErr = null;
     const entries = []; // 저장 기능이 쓸 {job, label, set, total} — 성공한 세트만
     const answerParts = []; // 지문마다 흩어지지 않게 모아뒀다 문서 맨 뒤에 한 번에 붙인다
+    // 무작위 모드에서 지문을 넘어 전부 섞기 위한 모음 — 변형 세트(label)별로 담는다
+    const randomBuckets = new Map();
 
     for (let i = 0; i < total && !stopped; i++) {
       const job = jobs[i];
@@ -3686,18 +3689,30 @@ function setupQuizTab({ prefix, types, footer }) {
 
         // 일부 청크가 실패해도 성공한 문항은 살려 낸다 (그만큼 토큰을 이미 썼다)
         if (questions.length) {
-          // 무작위 모드 — 받아온 문항을 섞는다. 세트마다 다시 섞이고, 문제지 번호와
-          // 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매기므로 어긋나지 않는다.
-          const set = { questions, variations: varied };
           if (isRandom()) {
-            set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
+            /* 무작위 모드 — 지문 경계를 넘어 전부 섞는다.
+               한 지문의 문항이 연달아 나오면 지문을 한 번 읽고 나머지는 기억으로
+               풀 수 있어 문제가 쉬워진다. 그래서 여기서는 그리지 않고 모아 두었다가
+               모든 지문이 끝난 뒤 한 번에 섞어 그린다.
+               변형 세트(label)끼리는 섞지 않는다 — 같은 지문의 원문판·변형판이
+               한 시험지에 뒤섞이면 거의 같은 지문을 두 번 풀게 되고, 애초에 변형을
+               여러 개 고르는 건 A형/B형처럼 여러 벌을 뽑으려는 것이기 때문이다.
+               변형 표시(형광)는 지문마다 바뀐 낱말이 다르므로 문항에 붙여 둔다 —
+               세트로 합쳐 두면 다른 지문의 낱말까지 잘못 칠해질 수 있다. */
+            questions.forEach((q) => { q.__variations = varied; });
+            const bucket = randomBuckets.get(label) || { questions: [], variations: [] };
+            bucket.questions.push(...questions);
+            bucket.variations.push(...varied);
+            randomBuckets.set(label, bucket);
+          } else {
+            const set = { questions, variations: varied };
+            const built = buildQuizHtml(set, job, total, prefix, label);
+            append(built.html);
+            answerParts.push(built.answerHtml);
+            entries.push({ job, label, set, total });
+            showFooter();
           }
-          const built = buildQuizHtml(set, job, total, prefix, label);
-          append(built.html);
-          answerParts.push(built.answerHtml);
-          entries.push({ job, label, set, total });
           okCount++;
-          showFooter();
         }
         failed.forEach((f) => {
           append(buildErrorHtml(job, total, `${groupLabel(f.group)} — ${f.msg}`, label, prefix));
@@ -3708,6 +3723,23 @@ function setupQuizTab({ prefix, types, footer }) {
         }
       }
     }
+
+    /* 무작위 모드 — 모아 둔 문항을 지문 구분 없이 섞어 한 벌로 그린다.
+       중간에 멈췄어도(잔액 소진 등) 그때까지 모인 것은 여기서 그려 살려 낸다.
+       이름표는 지문 이름이 아니라 변형 세트 이름이 된다(세트가 하나뿐이면 없음).
+       저장도 이 합쳐진 한 벌로 남긴다 — 그래야 나중에 불러왔을 때 인쇄했던 것과
+       같은 순서가 나온다(예전에 지문별로 저장해 둔 자료는 그대로 열린다). */
+    randomBuckets.forEach((bucket, label) => {
+      const set = {
+        questions: seededShuffle(bucket.questions, Math.floor(Math.random() * 1e9)),
+        variations: bucket.variations,
+      };
+      const job = { name: label || "", named: !!label };
+      const built = buildQuizHtml(set, job, 1, prefix, "");
+      append(built.html);
+      answerParts.push(built.answerHtml);
+      entries.push({ job, label: "", set, total: 1 });
+    });
 
     if (okCount) {
       const body = answerParts.filter((p) => p && p.trim()).join("");
@@ -4185,7 +4217,7 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead) {
       <div class="qz-card">
         <div class="qz-head"><span class="qz-no">${i + 1}</span><span class="qz-type">${esc(q.type)}</span></div>
         <div class="qz-instruction">${safeHTML(q.instruction)}</div>
-        ${markVariations(quizBodyHtml(q), d.variations)}
+        ${markVariations(quizBodyHtml(q), q.__variations || d.variations)}
         <button type="button" class="qz-reveal-btn">정답·해설 보기</button>
         <div class="qz-answer-box">
           <b>정답 ${quizAnswerLabel(q)}</b><br>${safeHTML(q.explanation)}
