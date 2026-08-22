@@ -594,7 +594,13 @@ v{
      지면 소모를 줄인다. 단 나눔은 문항 카드에만 적용하고, '정답 및 해설' 표는
      .qz-cards 바깥이라 전체 폭을 그대로 쓴다. */
   .qz-cards{
-    column-count:2; column-gap:7mm; column-fill:auto;
+    column-count:2; column-gap:7mm;
+    /* column-fill은 balance라야 한다. auto로 두면 문항 카드가 한 단 높이보다 클 때
+       크로미움이 쪽 계산을 못 맞춰, 마지막 문항 뒤로 아무것도 없는 빈 쪽을 여러 장
+       만들어낸다(OX진위처럼 지문+진술 5개가 든 긴 카드에서 실측 — 지문 7개 × 10문항이
+       41쪽 중 12쪽이 빈 쪽이었다. balance로 바꾸니 빈 쪽 0, 전체 29쪽).
+       가득 찬 쪽의 모양새는 두 값이 같고, 마지막 쪽에서 두 단 높이가 맞춰질 뿐이다. */
+    column-fill:balance;
     /* 두 단 사이 세로 구분선 — 시험지 느낌 */
     column-rule:1px solid var(--line-soft);
   }
@@ -603,11 +609,6 @@ v{
     padding:9px 11px; margin:0 0 7px;
     break-inside:avoid; page-break-inside:avoid;
   }
-  /* OX진위처럼 지문 전체 + 진술 여러 개가 든 긴 문항 — 좁은 단 폭에서 '안 끊기게'
-     강제하면 크로미움이 쪽 계산을 못 맞춰 그 뒤로 빈 쪽을 여러 장 만들어낼 수 있다
-     (실사례로 확인). 2단 배치는 그대로 두고, 이 유형만 안 끊기게 규칙을 풀어
-     카드가 안 맞으면 단/쪽 경계에서 자연스럽게 이어지게 한다. */
-  .qz-card-breakable{break-inside:auto; page-break-inside:auto;}
   /* 2단 폭에 맞춰 조판을 촘촘하게 */
   .qz-head{gap:6px; margin-bottom:6px;}
   .qz-no{min-width:20px; height:20px; font-size:12px;}
