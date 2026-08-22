@@ -3812,15 +3812,22 @@ function setupQuizTab({ prefix, types, footer }) {
     (lastEntries || []).forEach((e, ei) => {
       const set = e.set || {};
       (set.questions || []).forEach((q) => {
+        /* 표식이 없던 시절에 저장한 자료는 담겨 있던 묶음 정보로 채우고, 그 값을
+           문항에 새겨 둔다. 새겨 두지 않으면 한 번 '전부 섞기'로 합치는 순간 지문
+           정보가 사라져 다시는 지문별로 되돌릴 수 없다(실제로 그 증상을 확인했다). */
+        if (q.__label == null) q.__label = e.label || "";
+        if (q.__passage == null) q.__passage = (e.job && e.job.name) || "";
+        // 묶음을 원래 순서대로 되돌리기 위한 자리 번호
+        if (q.__passageIdx == null) q.__passageIdx = ei;
+        if (q.__labelIdx == null) q.__labelIdx = 0;
+        if (q.__variations == null) q.__variations = set.variations || [];
         out.push({
           q,
-          label: q.__label != null ? q.__label : e.label || "",
-          passage: q.__passage != null ? q.__passage : (e.job && e.job.name) || "",
-          // 묶음을 원래 순서대로 되돌리기 위한 자리 번호. 표식이 없던 시절 자료는
-          // 담겨 있던 순서(ei)를 대신 쓴다.
-          passageIdx: q.__passageIdx != null ? q.__passageIdx : ei,
-          labelIdx: q.__labelIdx != null ? q.__labelIdx : 0,
-          variations: q.__variations || set.variations || [],
+          label: q.__label,
+          passage: q.__passage,
+          passageIdx: q.__passageIdx,
+          labelIdx: q.__labelIdx,
+          variations: q.__variations,
         });
       });
     });
