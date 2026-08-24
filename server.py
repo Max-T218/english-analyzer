@@ -6497,6 +6497,20 @@ CHANGELOG = [
             "체크를 해제할 수 있습니다.",
         ],
     },
+    {
+        "version": 8,
+        "date": "2026-08-22",
+        "items": [
+            "문제 제작 — 만들어 둔 문제의 순서만 다시 섞는 '🔀 문제 섞기' 버튼이 생겼습니다. "
+            "인공지능을 다시 부르지 않아 요금이 들지 않으니, 같은 문제로 A형·B형 시험지를 "
+            "한 번 값에 뽑을 수 있습니다. 저장함에서 불러온 자료에도 그대로 쓸 수 있습니다.",
+            "문제 제작 — 출제 순서를 '유형 순서대로 / 지문 내 유형 섞기 / 전체 문항 섞기' "
+            "셋 중에 고를 수 있습니다. '전체 문항 섞기'는 지문 구분 없이 모든 문항을 뒤섞어, "
+            "같은 지문 문항이 몰려 나와 지문을 외워서 푸는 것을 막습니다.",
+            "학생 단어시험 — 객관식 보기가 4개에서 5개로 늘었습니다. 찍어서 맞힐 확률이 "
+            "줄어듭니다(단어장에 든 단어가 적으면 보기도 그만큼 줄어듭니다).",
+        ],
+    },
 ]
 
 
@@ -7446,9 +7460,11 @@ def _build_student_questions(assignment_id, assignment, student_id, round):
             prompt, correct, pool = item["meaning"], item["word"], word_pool
         q = {"idx": idx, "direction": direction, "prompt": prompt}
         if fmt == "mcq":
+            # 오답 4개 + 정답 1개 = 5지선다. 찍어서 맞힐 확률을 25%에서 20%로 낮춘다.
+            # 단어장이 작아 후보가 모자라면 있는 만큼만 쓴다(보기가 3~4개로 줄 뿐 깨지지 않는다).
             candidates = [v for v in pool if v != correct]
             q_rng.shuffle(candidates)
-            options = candidates[:3] + [correct]
+            options = candidates[:4] + [correct]
             q_rng.shuffle(options)
             q["options"] = options
         questions.append(q)
