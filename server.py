@@ -7301,17 +7301,70 @@ def login_student(name, ip):
 # --- 단어시험 (AI 없음) ------------------------------------------------------
 
 _MEANING_SPLIT_RE = re.compile(r"[,;·、/]+")
+_BRACKET_RE = re.compile(r"\[([^\]]*)\]")          # 수선[수리]하다 — 앞말 대신 쓸 수 있는 말
+_PAREN_RE = re.compile(r"[(（][^)）]*[)）]")         # (건강 등을) 회복 — 부연 설명
+# '~을 돌보다'의 '~'은 목적어 자리표시다. 기호만 지우면 '을 돌보다'가 남아 학생이
+# 쓸 리 없는 형태가 되므로, 뒤에 붙은 조사까지 함께 지워 '돌보다'가 되게 한다.
+_PLACEHOLDER_RE = re.compile(r"[~∼…]+\s*(?:에게서|에게|에서|으로|와|과|을|를|이|가|에|로|의)?")
 
 
 def _norm_text(s):
     return re.sub(r"\s+", " ", (s or "").strip())
 
 
+def _expand_brackets(text):
+    """'수선[수리]하다' → ['수선하다', '수리하다'].
+    사전에서 대괄호는 '앞말 대신 이 말을 써도 된다'는 표기다. 그대로 두면 학생이
+    대괄호까지 타이핑해야 정답이 되어 사실상 맞힐 수 없다."""
+    m = _BRACKET_RE.search(text)
+    if not m:
+        return [text]
+    head, alt, tail = text[: m.start()], m.group(1).strip(), text[m.end() :]
+    out = []
+    for t in _expand_brackets(tail):   # 대괄호가 여러 개여도 모두 펼친다
+        out.append(head + t)
+        if alt:
+            out.append(alt + t)
+    return out
+
+
 def _meaning_variants(text):
     """'빠른, 신속한'처럼 여러 뜻이 이어진 경우 각각을 정답 후보로 쪼갠다 —
-    주관식 채점에서 그중 하나만 맞아도 정답 처리하기 위해서다."""
-    parts = [p.strip() for p in _MEANING_SPLIT_RE.split(_norm_text(text))]
-    return [p for p in parts if p]
+    주관식 채점에서 그중 하나만 맞아도 정답 처리하기 위해서다.
+    대괄호는 위처럼 펼치고, 괄호 안 부연 설명('(건강 등을) 회복')은 떼어 낸 형태도
+    함께 인정한다. '~'·'…' 같은 자리표시 기호도 지운다.
+
+    '하다'를 자동으로 붙이거나 떼지는 않는다 — 선생님이 '수선하다'라고만 적었으면
+    '수선'은 오답이어야 한다(명사·동사를 구분해 가르치는 경우가 있다). 둘 다
+    인정받고 싶으면 단어장에 둘 다 적으면 된다."""
+    out, seen = [], set()
+
+    def add(v):
+        v = _norm_text(v)
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+
+    # 쪼갠 조각마다 받아 주되, 뜻을 전부 이어 쓴 답('custom, routine')도 인정한다 —
+    # 다 아는 학생이 다 적었는데 틀리는 일이 없게 한다.
+    whole = _norm_text(text)
+    for part in [whole] + _MEANING_SPLIT_RE.split(whole):
+        if not part.strip():
+            continue
+        # 단어장에 적힌 그대로 옮겨 쓴 답도 정답으로 받아 둔다(대괄호·기호 포함)
+        for cand in [part] + _expand_brackets(part):
+            no_paren = _PAREN_RE.sub(" ", cand)
+            add(cand)
+            add(no_paren)
+            add(_PLACEHOLDER_RE.sub(" ", cand))
+            add(_PLACEHOLDER_RE.sub(" ", no_paren))
+    return out
+
+
+def _answer_key(s):
+    """채점용 비교 키 — 띄어쓰기를 무시하고 대소문자를 맞춘다.
+    '회복 하다'와 '회복하다'를 다르게 채점할 이유가 없다."""
+    return re.sub(r"\s+", "", (s or "")).lower()
 
 
 def create_test_assignment(teacher_id, class_id, title, vocab, fmt, student_id=None, max_wrong=None):
@@ -7636,12 +7689,14 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
             correct = item["meaning"] if direction == "en2ko" else item["word"]
             ok = given == correct
         elif direction == "en2ko":
-            ok = given.lower() in [v.lower() for v in _meaning_variants(item["meaning"])]
+            accepted = {_answer_key(v) for v in _meaning_variants(item["meaning"])}
+            ok = _answer_key(given) in accepted
         else:
-            accepted = {item["word"].lower()}
+            # 유의어도 'custom, routine'처럼 여러 개가 한 칸에 적히므로 같이 쪼갠다
+            accepted = {_answer_key(v) for v in _meaning_variants(item["word"])}
             if item.get("synonym"):
-                accepted.add(item["synonym"].lower())
-            ok = given.lower() in accepted
+                accepted |= {_answer_key(v) for v in _meaning_variants(item["synonym"])}
+            ok = _answer_key(given) in accepted
         if ok:
             score += 1
 
