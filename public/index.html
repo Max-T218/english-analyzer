@@ -1203,6 +1203,28 @@
   </div>
 </div>
 
+<!-- 문항이 아주 많을 때 뜨는 창 — 예전에는 200문항을 넘기면 그냥 거부했다.
+     그러면 유형까지 다 골라 둔 선생님이 지문을 줄여 처음부터 다시 설정해야 했다.
+     막연한 경고 대신 구체적인 숫자(문항·호출·요금)를 보여 주고 중간 선택지를 준다.
+     버튼이 셋이라 브라우저 기본 confirm()으로는 만들 수 없다 (app.js의 askBigRun). -->
+<div class="print-guide" id="bigRunDialog" hidden>
+  <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="bigRunTitle">
+    <h3 id="bigRunTitle">문항이 많습니다</h3>
+    <p class="print-guide-lead" id="bigRunLead"></p>
+    <ul class="print-guide-steps" id="bigRunFacts"></ul>
+    <p class="print-guide-note" id="bigRunNote">
+      만드는 도중에 멈춰도 <b>그때까지 만든 문항은 화면에 남고</b>, 실패한 몫에는
+      <b>요금이 나가지 않습니다.</b> 다만 <b>브라우저를 닫으면 중단됩니다</b> —
+      끝날 때까지 이 탭을 열어 두세요.
+    </p>
+    <div class="print-guide-actions">
+      <button type="button" class="btn ghost" id="bigRunCancel">취소</button>
+      <button type="button" class="btn ghost" id="bigRunWhole">그대로 진행</button>
+      <button type="button" class="btn" id="bigRunSplit">나눠서 진행</button>
+    </div>
+  </div>
+</div>
+
 <!-- 저장 전 제목 입력 -->
 <div class="print-guide" id="saveDialog" hidden>
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="saveDialogTitle">

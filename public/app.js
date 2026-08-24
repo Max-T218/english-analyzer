@@ -3232,6 +3232,97 @@ const QUIZ_QUESTIONS_PER_CALL = 6;
 // 지문 수는 이 탭 밖에서 바뀌므로 만들기를 누르는 시점에만 확인한다.
 const QUIZ_MAX_QUESTIONS_PER_RUN = 200;
 
+/* ── 호출에 실제로 걸린 시간 ──
+   '문항이 많습니다' 창에서 예상 시간을 보여 주는 데 쓴다. 근거 없는 숫자를 보여 주면
+   안 되므로 상수로 못박지 않고, 이 브라우저에서 방금 돌려 본 호출의 평균을 쓴다.
+   아직 한 번도 안 돌렸으면 시간 줄을 아예 빼고 호출 횟수만 보여 준다.
+   지문 변형(/api/reword)과 문제 생성(/api/quiz)은 걸리는 시간이 달라 따로 잰다. */
+const CALL_SECS = { quiz: null, reword: null };
+function noteCallSecs(kind, secs) {
+  if (!Number.isFinite(secs) || secs <= 0) return;
+  const prev = CALL_SECS[kind];
+  // 최근 것에 무게를 두는 평균 — 첫 값은 그대로, 그다음부터는 3:1로 섞는다
+  CALL_SECS[kind] = prev == null ? secs : prev * 0.75 + secs * 0.25;
+}
+function humanDuration(secs) {
+  if (secs < 90) return `${Math.round(secs / 10) * 10 || 10}초`;
+  const m = Math.round(secs / 60);
+  if (m < 60) return `${m}분`;
+  return `${Math.floor(m / 60)}시간 ${m % 60}분`;
+}
+
+/* ── 200문항을 넘겼을 때 뜨는 창 ──
+   예전에는 그냥 거부했다. 그러면 지문·유형·문항 수를 다 골라 둔 뒤에 "줄이세요"만
+   듣고 처음부터 다시 설정해야 했다. 대신 구체적인 숫자를 보여 주고 셋 중에 고르게
+   한다 — 나눠서 / 그대로 / 취소. 브라우저 기본 confirm()은 버튼이 둘뿐이라 이 창을
+   따로 만들었다(#bigRunDialog). 답이 정해질 때까지 기다려야 하므로 Promise로 돌려준다.
+   "오류가 날 수 있습니다" 같은 막연한 경고는 넣지 않는다 — 실제 위험은 오류가 아니라
+   '오래 걸림'이다. 문항 6개마다 따로 부르고, 일부가 실패해도 성공한 것은 남으며,
+   실패한 몫은 요금이 나가지 않는다(server.py의 /api/quiz는 다 만든 뒤에야 charge_krw). */
+const bigRunEl = $("bigRunDialog");
+let bigRunAnswer = null; // 창이 떠 있는 동안의 resolve 함수
+function closeBigRun(answer) {
+  if (!bigRunAnswer) return;
+  const done = bigRunAnswer;
+  bigRunAnswer = null;
+  bigRunEl.hidden = true;
+  done(answer || null);
+}
+$("bigRunSplit").addEventListener("click", () => closeBigRun("split"));
+$("bigRunWhole").addEventListener("click", () => closeBigRun("whole"));
+$("bigRunCancel").addEventListener("click", () => closeBigRun(null));
+bigRunEl.addEventListener("click", (e) => {
+  if (e.target === bigRunEl) closeBigRun(null);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !bigRunEl.hidden) closeBigRun(null);
+});
+
+// info = {questions, quizCalls, rewordCalls, perBatch, batches, krw}
+// 돌려주는 값: "split" | "whole" | null(취소)
+function askBigRun(info) {
+  $("bigRunTitle").textContent = `${info.questions.toLocaleString()}문항을 만듭니다`;
+  $("bigRunLead").textContent =
+    `한 번에 ${QUIZ_MAX_QUESTIONS_PER_RUN}문항까지가 기준입니다. ` +
+    `지문 ${info.perBatch}개씩 ${info.batches}번에 나눠 돌리거나, 그대로 한 번에 갈 수 있습니다.`;
+  const calls = info.quizCalls + info.rewordCalls;
+  const facts = [
+    `<b>AI 호출 ${calls.toLocaleString()}회</b> — 문항 ${QUIZ_QUESTIONS_PER_CALL}개마다 따로 부릅니다` +
+      (info.rewordCalls ? ` (지문 변형 ${info.rewordCalls.toLocaleString()}회 포함)` : ""),
+  ];
+  // 잰 적이 있는 호출만으로 시간을 계산한다 — 하나라도 기준이 없으면 시간 줄을 뺀다
+  const haveQuiz = CALL_SECS.quiz != null;
+  const haveReword = !info.rewordCalls || CALL_SECS.reword != null;
+  if (haveQuiz && haveReword) {
+    const secs = info.quizCalls * CALL_SECS.quiz + info.rewordCalls * (CALL_SECS.reword || 0);
+    facts.push(
+      `<b>예상 시간 약 ${humanDuration(secs)}</b> — 이 브라우저에서 방금 잰 ` +
+        `호출 한 번 ${Math.round(CALL_SECS.quiz)}초 기준`
+    );
+  } else {
+    facts.push(
+      `<b>예상 시간은 아직 알 수 없습니다</b> — 이 창을 연 뒤 아직 만들어 본 적이 없어 ` +
+        `기준으로 삼을 실측 시간이 없습니다. 한 번 만들어 보면 다음부터 여기에 표시됩니다`
+    );
+  }
+  if (Number.isFinite(info.krw) && info.krw > 0) {
+    facts.push(
+      `<b>예상 요금 약 ${info.krw.toLocaleString()}원</b>` +
+        (Number.isFinite(currentKrw)
+          ? ` — 지금 잔액 ${currentKrw.toLocaleString()}원 → 진행 후 약 ${(currentKrw - info.krw).toLocaleString()}원`
+          : "") +
+        ` (나눠서 진행해도 총액은 같습니다)`
+    );
+  }
+  $("bigRunFacts").innerHTML = facts.map((f) => `<li>${f}</li>`).join("");
+  $("bigRunSplit").textContent = `지문 ${info.perBatch}개씩 나눠서 진행`;
+  bigRunEl.hidden = false;
+  $("bigRunSplit").focus();
+  return new Promise((resolve) => {
+    bigRunAnswer = resolve;
+  });
+}
+
 /* 객관식 '지문변형형' — 정찰 가격이 다른 유형들(server.py의 _quiz_type_base_price).
    서버는 이 무리를 계산으로 정한다: MCQ_ONLY_TYPES 중 QUIZ_PLAIN_PASSAGE_TYPES에 없는 것.
    여기는 그 답을 손으로 옮겨 적은 것이라 **두 집합의 차집합과 정확히 같아야 한다**
@@ -3562,26 +3653,40 @@ function setupQuizTab({ prefix, types, footer }) {
     }
     // 지문 수까지 곱한 실제 총량을 여기서 확인한다 — 지문은 이 탭 밖에서 바뀌므로
     // 유형 칸의 실시간 요약만으로는 잡히지 않는다.
-    const runQuestions = billableJobCount() * perSetQuestions * vars.length;
+    const billable = billableJobCount();
+    const perJobQuestions = perSetQuestions * vars.length; // 지문 1개가 만들어 내는 문항 수
+    const runQuestions = billable * perJobQuestions;
+    // 유형마다 단가가 갈리고 추가 문항은 따로 매겨진다(costPerSet). 지문변형 세트를
+    // 여러 개 고르면 세트 수만큼 문제 생성이 통째로 반복된다.
+    const rewordSets = vars.filter((v) => v !== "verbatim").length;
+    const cost = PRICING
+      ? billable * (vars.length * costPerSet(picked) + rewordSets * PRICING.reword)
+      : 0;
+    // 한 묶음에 담을 지문 수. 0이면 나누지 않고 지금까지대로 한 번에 간다.
+    let batchSize = 0;
     if (runQuestions > QUIZ_MAX_QUESTIONS_PER_RUN) {
-      errorEl.textContent =
-        `한 번에 ${QUIZ_MAX_QUESTIONS_PER_RUN}문항까지만 만들 수 있습니다 ` +
-        `(지금 지문 ${billableJobCount()}개 × ${perSetQuestions}문항` +
-        (vars.length > 1 ? ` × 변형 ${vars.length}세트` : "") +
-        ` = ${runQuestions}문항). 지문·유형·문항 수 중 하나를 줄여 주세요.`;
-      return;
-    }
-    if (PRICING) {
-      // 유형마다 단가가 갈리고 추가 문항은 따로 매겨진다(costPerSet). 지문변형 세트를
-      // 여러 개 고르면 세트 수만큼 문제 생성이 통째로 반복된다.
-      const rewordSets = vars.filter((v) => v !== "verbatim").length;
-      const cost =
-        billableJobCount() * (vars.length * costPerSet(picked) + rewordSets * PRICING.reword);
+      /* 예전에는 여기서 그냥 거부했다("줄여 주세요"). 지문도 유형도 다 골라 둔 뒤라
+         되돌리기 아까운 자리여서, 지금은 숫자를 보여 주고 어떻게 갈지 고르게 한다.
+         나눠도 총액은 같다 — 달라지는 건 묶음마다 200문항 기준을 지킨다는 점과,
+         어디까지 왔는지 진행 문구에 보인다는 점이다. */
+      const perBatch = Math.max(1, Math.floor(QUIZ_MAX_QUESTIONS_PER_RUN / perJobQuestions));
+      const choice = await askBigRun({
+        questions: runQuestions,
+        quizCalls: billable * vars.length * chunkTypes(picked).length,
+        rewordCalls: billable * rewordSets,
+        perBatch,
+        batches: Math.ceil(billable / perBatch),
+        krw: cost,
+      });
+      if (!choice) return;
+      if (choice === "split") batchSize = perBatch;
+      // 이 창이 요금·잔액까지 이미 보여 줬으므로 costConfirmed는 다시 묻지 않는다
+    } else if (PRICING) {
       const label =
         `${docName}를 만듭니다.\n` +
-        `지문 ${billableJobCount()}개 × ${perSetQuestions}문항` +
+        `지문 ${billable}개 × ${perSetQuestions}문항` +
         (vars.length > 1 ? ` × 변형 ${vars.length}세트` : "") +
-        ` = 총 ${billableJobCount() * perSetQuestions * vars.length}문항`;
+        ` = 총 ${runQuestions}문항`;
       if (!costConfirmed(cost, label, jobs.length)) return;
     }
 
@@ -3627,123 +3732,154 @@ function setupQuizTab({ prefix, types, footer }) {
     // 무작위 모드에서 지문을 넘어 전부 섞기 위한 모음 — 변형 세트(label)별로 담는다
     const randomBuckets = new Map();
 
-    for (let i = 0; i < total && !stopped; i++) {
-      const job = jobs[i];
-
-      if (job.text.length < 20) {
-        append(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력).", "", prefix));
-        continue;
+    /* 묶음으로 나눠 돌리기 — 나누지 않기로 했으면 전체가 한 묶음이다.
+       한 묶음의 문항 수가 QUIZ_MAX_QUESTIONS_PER_RUN 이하가 되도록 지문을 자른다.
+       묶음마다 다시 묻지는 않는다(지문이 100개면 다섯 번을 물어야 해서 오히려 성가시다) —
+       처음에 한 번만 묻고, 대신 진행 문구에 "2/5 묶음"처럼 어디까지 왔는지 보여 준다. */
+    const batches = [];
+    if (batchSize > 0) {
+      let cur = [];
+      let n = 0;
+      for (const job of jobs) {
+        if (n >= batchSize) {
+          batches.push(cur);
+          cur = [];
+          n = 0;
+        }
+        cur.push(job);
+        if (job.text.length >= 20) n++; // 짧아서 건너뛸 지문은 묶음 크기에 세지 않는다
       }
+      if (cur.length) batches.push(cur);
+    } else {
+      batches.push(jobs);
+    }
 
-      for (let v = 0; v < vars.length && !stopped; v++) {
-        const variation = vars[v];
-        const label = vars.length > 1 ? VARIATION_LABELS[variation] : "";
-        const who = total > 1 || job.named ? job.name : "지문";
-        const tag = label ? `${who} · ${label}` : who;
+    for (let b = 0; b < batches.length && !stopped; b++) {
+      const batch = batches[b];
+      const batchTag = batches.length > 1 ? `${b + 1}/${batches.length} 묶음 · ` : "";
+      for (let i = 0; i < batch.length && !stopped; i++) {
+        const job = batch[i];
 
-        // ① 변형본 확정 — 유형을 나눠 여러 번 호출해도 모든 문항이 같은 지문을 쓰도록
-        //    문제를 만들기 전에 지문을 한 번만 다시 쓴다.
-        let source = job.text;
-        let varied = [];
-        if (variation !== "verbatim") {
-          loadingTextEl.textContent = `${tag} 지문 변형본 만드는 중…`;
-          try {
-            const r = await postJson(
-              "/api/reword",
-              { passage: job.text, variation },
-              "지문 변형에 실패했습니다."
-            );
-            source = (r.passage || "").trim() || job.text;
-            varied = Array.isArray(r.variations) ? r.variations : [];
-          } catch (err) {
-            append(buildErrorHtml(job, total, err.message || String(err), label, prefix));
-            if (isQuotaError(err)) {
-              stopped = true;
-              stopErr = err;
-              const left = steps - step;
-              if (left > 0) append(quotaStopHtml(left, err, "작업"));
-            }
-            step += chunks.length;
-            continue;
-          }
+        if (job.text.length < 20) {
+          append(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력).", "", prefix));
+          continue;
         }
 
-        // ② 문제 생성 — 확정된 지문을 '원문 그대로'로 넘긴다. 변형은 ①에서 이미 끝났다.
-        const questions = [];
-        const failed = [];
-        for (const group of chunks) {
-          step++;
-          loadingTextEl.textContent =
-            steps > 1
-              ? `${tag} 문제 만드는 중… (${step}/${steps}) — ${groupLabel(group)}`
-              : "AI가 문제를 만들고 있습니다…";
-          try {
-            const data = await postJson(
-              "/api/quiz",
-              {
-                passage: source,
-                types: group,   // [{id, count}] — 유형별 문항 수가 그대로 실린다
-                variation: "verbatim",
-                // 어법 계열 유형이 섞여 있을 때만 서버가 쓴다. 비어 있으면 지금까지대로
-                // AI가 지문에 맞춰 알아서 문법 포인트를 고른다.
-                targetGrammar: grammarEl.value,
-              },
-              "문제 생성에 실패했습니다."
-            );
-            if (Array.isArray(data.questions)) questions.push(...data.questions);
-          } catch (err) {
-            failed.push({ group, msg: err.message || String(err) });
-            // 한도 소진·Pro 불가는 기다려도 안 풀린다 — 남은 작업을 시도하지 않는다
-            if (isQuotaError(err)) {
-              stopped = true;
-              stopErr = err;
-              break;
+        for (let v = 0; v < vars.length && !stopped; v++) {
+          const variation = vars[v];
+          const label = vars.length > 1 ? VARIATION_LABELS[variation] : "";
+          const who = total > 1 || job.named ? job.name : "지문";
+          const tag = batchTag + (label ? `${who} · ${label}` : who);
+
+          // ① 변형본 확정 — 유형을 나눠 여러 번 호출해도 모든 문항이 같은 지문을 쓰도록
+          //    문제를 만들기 전에 지문을 한 번만 다시 쓴다.
+          let source = job.text;
+          let varied = [];
+          if (variation !== "verbatim") {
+            loadingTextEl.textContent = `${tag} 지문 변형본 만드는 중…`;
+            const rwStart = Date.now();
+            try {
+              const r = await postJson(
+                "/api/reword",
+                { passage: job.text, variation },
+                "지문 변형에 실패했습니다."
+              );
+              // 다음에 '문항이 많습니다' 창이 뜰 때 예상 시간의 근거가 된다
+              noteCallSecs("reword", (Date.now() - rwStart) / 1000);
+              source = (r.passage || "").trim() || job.text;
+              varied = Array.isArray(r.variations) ? r.variations : [];
+            } catch (err) {
+              append(buildErrorHtml(job, total, err.message || String(err), label, prefix));
+              if (isQuotaError(err)) {
+                stopped = true;
+                stopErr = err;
+                const left = steps - step;
+                if (left > 0) append(quotaStopHtml(left, err, "작업"));
+              }
+              step += chunks.length;
+              continue;
             }
           }
-        }
 
-        // 일부 청크가 실패해도 성공한 문항은 살려 낸다 (그만큼 토큰을 이미 썼다)
-        if (questions.length) {
-          /* 문항마다 '어느 변형 세트에서 나왔는지'와 그 지문의 변형 낱말을 붙여 둔다.
-             나중에 '문제 섞기'로 다시 섞을 때 세트를 갈라 두는 데 쓴다. 변형 낱말을
-             문항에 두는 이유는 지문마다 바뀐 낱말이 달라, 세트로 합쳐 두면 다른
-             지문의 낱말까지 잘못 칠해지기 때문이다. */
-          questions.forEach((q) => {
-            q.__label = label;
-            q.__labelIdx = v;
-            q.__variations = varied;
+          // ② 문제 생성 — 확정된 지문을 '원문 그대로'로 넘긴다. 변형은 ①에서 이미 끝났다.
+          const questions = [];
+          const failed = [];
+          for (const group of chunks) {
+            step++;
+            loadingTextEl.textContent =
+              steps > 1
+                ? `${tag} 문제 만드는 중… (${step}/${steps}) — ${groupLabel(group)}`
+                : "AI가 문제를 만들고 있습니다…";
+            const qzStart = Date.now();
+            try {
+              const data = await postJson(
+                "/api/quiz",
+                {
+                  passage: source,
+                  types: group,   // [{id, count}] — 유형별 문항 수가 그대로 실린다
+                  variation: "verbatim",
+                  // 어법 계열 유형이 섞여 있을 때만 서버가 쓴다. 비어 있으면 지금까지대로
+                  // AI가 지문에 맞춰 알아서 문법 포인트를 고른다.
+                  targetGrammar: grammarEl.value,
+                },
+                "문제 생성에 실패했습니다."
+              );
+              noteCallSecs("quiz", (Date.now() - qzStart) / 1000);
+              if (Array.isArray(data.questions)) questions.push(...data.questions);
+            } catch (err) {
+              failed.push({ group, msg: err.message || String(err) });
+              // 한도 소진·Pro 불가는 기다려도 안 풀린다 — 남은 작업을 시도하지 않는다
+              if (isQuotaError(err)) {
+                stopped = true;
+                stopErr = err;
+                break;
+              }
+            }
+          }
+
+          // 일부 청크가 실패해도 성공한 문항은 살려 낸다 (그만큼 토큰을 이미 썼다)
+          if (questions.length) {
+            /* 문항마다 '어느 변형 세트에서 나왔는지'와 그 지문의 변형 낱말을 붙여 둔다.
+               나중에 '문제 섞기'로 다시 섞을 때 세트를 갈라 두는 데 쓴다. 변형 낱말을
+               문항에 두는 이유는 지문마다 바뀐 낱말이 달라, 세트로 합쳐 두면 다른
+               지문의 낱말까지 잘못 칠해지기 때문이다. */
+            questions.forEach((q) => {
+              q.__label = label;
+              q.__labelIdx = v;
+              q.__variations = varied;
+            });
+            if (shuffleAll()) {
+              /* 전체 문항 섞기 — 지문 경계를 넘어 섞으려면 모든 지문이 끝나야 하므로
+                 여기서는 그리지 않고 모아 두었다가 아래에서 한 번에 섞어 그린다.
+                 변형 세트(label)끼리는 섞지 않는다 — 같은 지문의 원문판·변형판이
+                 한 시험지에 뒤섞이면 거의 같은 지문을 두 번 풀게 되고, 애초에 변형을
+                 여러 개 고르는 건 A형/B형처럼 여러 벌을 뽑으려는 것이기 때문이다. */
+              const bucket = randomBuckets.get(label) || { questions: [], variations: [] };
+              bucket.questions.push(...questions);
+              bucket.variations.push(...varied);
+              randomBuckets.set(label, bucket);
+            } else {
+              // 지문 내 유형 섞기 — 지문 묶음은 그대로 두고 그 안에서만 순서를 섞는다.
+              // 문제지 번호와 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매긴다.
+              const set = { questions, variations: varied };
+              if (shuffleInPassage()) {
+                set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
+              }
+              const built = buildQuizHtml(set, job, total, prefix, label);
+              append(built.html);
+              answerParts.push(built.answerHtml);
+              entries.push({ job, label, set, total });
+              showFooter();
+            }
+            okCount++;
+          }
+          failed.forEach((f) => {
+            append(buildErrorHtml(job, total, `${groupLabel(f.group)} — ${f.msg}`, label, prefix));
           });
-          if (shuffleAll()) {
-            /* 전체 문항 섞기 — 지문 경계를 넘어 섞으려면 모든 지문이 끝나야 하므로
-               여기서는 그리지 않고 모아 두었다가 아래에서 한 번에 섞어 그린다.
-               변형 세트(label)끼리는 섞지 않는다 — 같은 지문의 원문판·변형판이
-               한 시험지에 뒤섞이면 거의 같은 지문을 두 번 풀게 되고, 애초에 변형을
-               여러 개 고르는 건 A형/B형처럼 여러 벌을 뽑으려는 것이기 때문이다. */
-            const bucket = randomBuckets.get(label) || { questions: [], variations: [] };
-            bucket.questions.push(...questions);
-            bucket.variations.push(...varied);
-            randomBuckets.set(label, bucket);
-          } else {
-            // 지문 내 유형 섞기 — 지문 묶음은 그대로 두고 그 안에서만 순서를 섞는다.
-            // 문제지 번호와 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매긴다.
-            const set = { questions, variations: varied };
-            if (shuffleInPassage()) {
-              set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
-            }
-            const built = buildQuizHtml(set, job, total, prefix, label);
-            append(built.html);
-            answerParts.push(built.answerHtml);
-            entries.push({ job, label, set, total });
-            showFooter();
+          if (stopped && stopErr) {
+            const left = steps - step;
+            if (left > 0) append(quotaStopHtml(left, stopErr, "작업"));
           }
-          okCount++;
-        }
-        failed.forEach((f) => {
-          append(buildErrorHtml(job, total, `${groupLabel(f.group)} — ${f.msg}`, label, prefix));
-        });
-        if (stopped && stopErr) {
-          const left = steps - step;
-          if (left > 0) append(quotaStopHtml(left, stopErr, "작업"));
         }
       }
     }
