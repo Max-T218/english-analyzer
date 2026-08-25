@@ -3818,6 +3818,10 @@ community.":
 - `writeMask`: copy `en` and wrap in {{ }} every span the student must write. Leave OUTSIDE the
   braces only the scaffolding that should stay printed: 짧은 기능어(in, of, and, where, that,
   it's), 고유명사, 인사말·맺음말. Aim to blank 60~80% of the words.
+  ⚠️ EVERY word you list in `writeKeys` MUST end up INSIDE {{ }} — including its inflected form
+  (key "plant" → "Plants" must be inside the braces; key "seed" → "of seeds" leaves "of" outside
+  but "seeds" inside). A keyword that is already printed on the page is not a hint, it is the
+  answer, and the question stops working. Check every keyword against the mask before you answer.
   Each word inside {{ }} becomes ONE underline on the page, so wrap real word spans.
   Everything outside {{ }} must be identical to `en`.
   Example: "People {{have been dumping their waste}} in areas of {{our neighborhood}} where

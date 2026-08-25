@@ -5001,8 +5001,56 @@ function renderChunkOrder(chunks, en, seed) {
 }
 
 // 워크북10 — {{쓸 부분}}의 단어 수만큼 밑줄을 깔아 준다 (참고 자료와 같은 모양)
-function renderWriteMask(mask, en) {
-  const src = String(mask || "").indexOf("{{") >= 0 ? mask : `{{${en || ""}}}`;
+/* <보기>로 준 낱말이 문장에 그대로 찍혀 있으면 그것도 빈칸으로 돌린다.
+   학생이 써야 할 낱말을 미리 보여 주면 문제가 성립하지 않는다 — 실제로 'plant'를
+   <보기>로 주고 문장에는 'Plants'를 찍어 낸 시험지가 나갔다. 서버 프롬프트에도
+   '보기 낱말은 반드시 빈칸이어야 한다'고 못박아 두었지만 모델이 가끔 어기므로,
+   그리는 자리에서 한 번 더 바로잡는다(이미 저장해 둔 워크북도 함께 고쳐진다).
+   낱말 세 글자 미만은 건드리지 않는다 — of·in 같은 기능어까지 지우면 뼈대가 무너진다. */
+function maskWriteKeys(mask, keys) {
+  const list = (keys || []).map((k) => String(k || "").trim()).filter((k) => k.length >= 3);
+  if (!list.length || String(mask).indexOf("{{") < 0) return mask;
+  const rxEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // 'the recipe'처럼 여러 낱말이면 사이 공백을 느슨하게 보고, 굴절형(plant→Plants)도 잡는다
+  const pats = list.map(
+    (k) =>
+      new RegExp(`\\b${k.split(/\s+/).map(rxEsc).join("\\s+")}(?:s|es|ed|d|ing|ies)?\\b`, "gi")
+  );
+  // 이미 {{ }} 안인 곳은 건드리지 않는다
+  return String(mask)
+    .split(/(\{\{[^{}]*\}\})/)
+    .map((seg) => {
+      if (seg.startsWith("{{")) return seg;
+      const spans = [];
+      pats.forEach((p) => {
+        p.lastIndex = 0;
+        let m;
+        while ((m = p.exec(seg))) {
+          if (m[0]) spans.push([m.index, m.index + m[0].length]);
+          if (p.lastIndex === m.index) p.lastIndex++;   // 빈 매치 무한루프 방지
+        }
+      });
+      if (!spans.length) return seg;
+      spans.sort((a, b) => a[0] - b[0]);
+      const merged = [];
+      spans.forEach(([s, e]) => {
+        const last = merged[merged.length - 1];
+        if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+        else merged.push([s, e]);
+      });
+      let out = "", cur = 0;
+      merged.forEach(([s, e]) => {
+        out += seg.slice(cur, s) + "{{" + seg.slice(s, e) + "}}";
+        cur = e;
+      });
+      return out + seg.slice(cur);
+    })
+    .join("");
+}
+
+function renderWriteMask(mask, en, keys) {
+  const raw = String(mask || "").indexOf("{{") >= 0 ? String(mask) : `{{${en || ""}}}`;
+  const src = maskWriteKeys(raw, keys);
   let any = false;
   const html = esc(src).replace(/\{\{([^{}]*)\}\}/g, (_, a) => {
     const words = a.trim().split(/\s+/).filter(Boolean);
@@ -5165,7 +5213,7 @@ function renderStageSentence(stageId, s) {
   } else if (stageId === 10) {
     // 영작 연습하기 — 키워드 + 단어 수만큼의 밑줄
     const keys = (s.writeKeys || []).filter(Boolean);
-    const masked = renderWriteMask(s.writeMask, s.en);
+    const masked = renderWriteMask(s.writeMask, s.en, keys);
     if (!masked) return null;
     body = `
       <div class="wb-ko">${esc(s.ko || "")}</div>
