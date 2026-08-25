@@ -1397,6 +1397,10 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
        되풀이하다 앞쪽에 표가 없는 쪽을 만들어 낸다(실사용 85단어에서 1·2쪽이 통째로
        낭비됐다). 쪼개도 된다고 알려 주면 표가 쪽 경계에서 자연스럽게 이어진다. */
     break-inside:auto; page-break-inside:auto;}
+  /* 감싼 상자의 테두리는 지운다. 두면 그 상자가 단 높이만큼 늘어나, 마지막 줄 아래의
+     빈 공간까지 테두리로 둘러 '내용 없는 빈 행'처럼 보인다(실제 인쇄물에서 확인).
+     줄 구분선은 표의 각 칸이 이미 갖고 있어 테두리를 지워도 모양이 그대로다. */
+  .vocab-2col{border:0; border-radius:0;}
   /* 단 폭이 절반이라 답란 최소폭(150px)을 그대로 두면 단어 칸이 밀려 찌그러진다 */
   .vocab-2col table.vocab-test td.v-blank{min-width:64px;}
   .vocab-2col table.vocab td.v-no{width:24px;}
