@@ -556,6 +556,14 @@ table.variedkey td:nth-child(2){white-space:nowrap; color:var(--ink-soft); font-
   margin-left:6px; vertical-align:middle;
 }
 
+/* 시험지명 — 문제 제작 탭에서 인쇄창·저장창에 적어 넣은 이름. 지면 맨 위에 한 줄로
+   놓아, 여러 벌을 뽑았을 때 어느 시험지인지 바로 보이게 한다. */
+.qz-sheet-title{
+  font-family:var(--font); font-size:19px; font-weight:800; color:var(--accent);
+  padding-bottom:8px; margin-bottom:16px; border-bottom:2px solid var(--accent);
+  break-after:avoid; page-break-after:avoid;
+}
+
 /* ── 뒤쪽 '정답 및 해설' 모음 ── 지문이 여럿이면 지문마다 답지가 끼어 인쇄가
    끊기지 않도록, 모든 지문의 답지를 문서 맨 뒤에 한 번에 모아 붙인다
    (워크북 탭의 .wb-answerbook과 같은 방식). */

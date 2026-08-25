@@ -82,23 +82,36 @@ function closePrintGuide() {
 function docHasInfographic() {
   return !!document.querySelector("#result [data-infographic]");
 }
-function showPrintGuide(run) {
+/* titleOpt를 주면 시험지명 입력칸이 함께 뜬다 — {get, set}.
+   이 칸이 있을 때는 '다시 보지 않기'를 켜 두었어도 창을 건너뛰지 않는다.
+   여러 벌을 뽑을 때 이름으로 구분하려는 것이 목적이라, 물어보지 않으면 기능이 없는
+   것과 같기 때문이다. */
+let printGuideTitleOpt = null;
+function showPrintGuide(run, titleOpt) {
   const warn = docHasInfographic();
   const warnEl = $("printGuideWarn");
   if (warnEl) warnEl.hidden = !warn;
+  printGuideTitleOpt = titleOpt || null;
+  const field = $("printGuideTitleField");
+  const nameEl = $("printGuideName");
+  if (field) field.hidden = !titleOpt;
+  if (titleOpt && nameEl) nameEl.value = titleOpt.get() || "";
   // 경고가 있을 때는 '다시 보지 않기'를 켜 둔 사람에게도 반드시 보여 준다 —
   // 놓치면 되돌릴 수 없는(요금이 다시 나가는) 손해라서 건너뛰게 두면 안 된다.
-  if (!warn && localStorage.getItem(PRINT_GUIDE_SKIP) === "1") {
+  if (!warn && !titleOpt && localStorage.getItem(PRINT_GUIDE_SKIP) === "1") {
     run();
     return;
   }
   printGuideRun = run;
   printGuideEl.hidden = false;
-  $("printGuideGo").focus();
+  if (titleOpt && nameEl) nameEl.focus();
+  else $("printGuideGo").focus();
 }
 $("printGuideCancel").addEventListener("click", closePrintGuide);
 $("printGuideGo").addEventListener("click", () => {
   const run = printGuideRun;
+  // 인쇄를 걸기 전에 이름을 먼저 반영해야 그 이름이 찍힌 채로 인쇄된다
+  if (printGuideTitleOpt) printGuideTitleOpt.set(($("printGuideName").value || "").trim());
   if (printGuideSkipEl.checked) localStorage.setItem(PRINT_GUIDE_SKIP, "1");
   closePrintGuide();
   if (run) run();
@@ -139,7 +152,10 @@ function runPrint(nameFn, before, after) {
 
 // 인쇄/PDF저장 버튼의 공통 동작 — 안내 후 인쇄 대화상자를 연다.
 function printDoc(nameFn, opts) {
-  showPrintGuide(() => runPrint(nameFn, opts && opts.before, opts && opts.after));
+  showPrintGuide(
+    () => runPrint(nameFn, opts && opts.before, opts && opts.after),
+    opts && opts.title
+  );
 }
 
 /* ── 워드(.docx)로 내려받기 ──
@@ -3377,6 +3393,10 @@ function chunkTypes(items, size = QUIZ_QUESTIONS_PER_CALL) {
   return out;
 }
 
+/* 문제 제작 탭이 자기 '시험지명' 손잡이를 걸어 두는 곳 — {get, set}.
+   저장창이 탭 안쪽 변수를 직접 볼 수 없어서 이 레지스트리를 거친다(TAB_SAVE와 같은 방식). */
+const QUIZ_SHEET_TITLE = {};
+
 // 문제 제작 탭 하나를 구성한다 (객관식·주관식이 같은 로직을 공유)
 function setupQuizTab({ prefix, types, footer }) {
   const gridEl = $(prefix + "TypeGrid");
@@ -3387,6 +3407,11 @@ function setupQuizTab({ prefix, types, footer }) {
   const docxBtn = $(prefix + "DocxBtn");
   const shuffleBtn = $(prefix + "ShuffleBtn");
   let lastEntries = []; // 저장/불러오기용 — {job, label, set, total}
+  /* 시험지명 — 인쇄창·저장창에서 적어 넣는다. 시험지 맨 위와 답지 제목에 함께 찍히고
+     PDF 파일 이름도 이것으로 만들어져, 같은 지문으로 여러 벌을 뽑았을 때 구분된다.
+     화면에 입력칸을 따로 두지 않는 이유 — 만들 때는 필요 없고 '뽑을 때' 필요한
+     정보라, 뽑는 자리에서 묻는 편이 잊지 않는다. */
+  let sheetTitle = "";
   const docName = prefix === "mcq" ? "객관식문제" : "주관식문제";
   const errorEl = $(prefix + "Error");
   const loadingEl = $(prefix + "Loading");
@@ -4010,6 +4035,7 @@ function setupQuizTab({ prefix, types, footer }) {
     saveBtn.style.display = entries.length ? "inline-flex" : "none";
     docxBtn.style.display = entries.length ? "inline-flex" : "none";
     lastEntries = entries;
+    applySheetTitle();   // 새로 그렸으니 시험지명을 다시 얹는다
     syncShuffleBtns();
     syncFloatPrint();
     // 비우는 호출일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
@@ -4066,7 +4092,36 @@ function setupQuizTab({ prefix, types, footer }) {
   };
 
   btn.addEventListener("click", generate);
-  printBtn.addEventListener("click", () => printDoc(() => passageBasedName(docName)));
+  /* 시험지명을 지면에 반영한다. 만든 뒤(인쇄 직전)에 적어도 되도록 DOM을 직접 고친다 —
+     이름이 정해질 때마다 문항을 다시 그리면 '전체 문항 섞기'가 다시 섞여 버린다. */
+  function applySheetTitle() {
+    let head = resultEl.querySelector(".qz-sheet-title");
+    if (sheetTitle) {
+      if (!head) {
+        head = document.createElement("div");
+        head.className = "qz-sheet-title";
+        resultEl.prepend(head);
+      }
+      head.textContent = sheetTitle;
+    } else if (head) {
+      head.remove();
+    }
+    // 답지에도 같은 이름을 얹어, 시험지와 답지가 흩어져도 짝을 찾을 수 있게 한다
+    const ab = resultEl.querySelector(".qz-answerbook-head");
+    if (ab) ab.textContent = sheetTitle ? `${sheetTitle} — 정답 및 해설` : "정답 및 해설";
+  }
+  function setSheetTitle(v) {
+    sheetTitle = (v || "").trim();
+    applySheetTitle();
+  }
+  // 다른 곳(저장창)에서도 같은 이름을 쓰도록 손잡이를 내준다
+  QUIZ_SHEET_TITLE[prefix] = { get: () => sheetTitle, set: setSheetTitle };
+
+  printBtn.addEventListener("click", () =>
+    printDoc(() => (sheetTitle ? `${docName}_${sanitizeFilename(sheetTitle)}_${todayStr()}` : passageBasedName(docName)), {
+      title: { get: () => sheetTitle, set: setSheetTitle },
+    })
+  );
 
   // 주관식 해설지는 '정답'만 싣는다(buildQuizHtml이 해설 열을 빼는 것과 같은 기준)
   docxBtn.addEventListener("click", () =>
@@ -5975,8 +6030,9 @@ const PASSAGE_TAB = "passage";
 const SAVE_TITLE_SUGGEST = {
   passage: () => passageBasedName("지문"),
   analyze: () => passageBasedName("지문분석"),
-  mcq: () => passageBasedName("객관식문제"),
-  saq: () => passageBasedName("주관식문제"),
+  // 인쇄창에서 적어 둔 시험지명이 있으면 그것을 먼저 제안한다(저장함에서도 같은 이름)
+  mcq: () => (QUIZ_SHEET_TITLE.mcq && QUIZ_SHEET_TITLE.mcq.get()) || passageBasedName("객관식문제"),
+  saq: () => (QUIZ_SHEET_TITLE.saq && QUIZ_SHEET_TITLE.saq.get()) || passageBasedName("주관식문제"),
   workbook: () => titledName("워크북", "wbTitle"),
   vocab: () => titledName("단어장", "vocabTitle"),
   /* 시험지는 공용 지문칸이 아니라 자기 지문칸을 쓰므로 passageBasedName을 못 쓴다.
@@ -6062,6 +6118,11 @@ saveDialogConfirmBtn.addEventListener("click", async () => {
   const tab = pendingSaveTab;
   if (!tab || !TAB_SAVE[tab]) return;
   const title = saveTitleInputEl.value.trim() || "제목 없음";
+  // 문제 제작 탭은 저장 제목을 시험지명으로도 삼는다 — 저장창에서 적은 이름이
+  // 시험지·답지에 바로 찍히므로, 두 곳에 같은 이름을 두 번 적을 필요가 없다.
+  if (QUIZ_SHEET_TITLE[tab] && saveTitleInputEl.value.trim()) {
+    QUIZ_SHEET_TITLE[tab].set(saveTitleInputEl.value.trim());
+  }
   saveDialogErrorEl.textContent = "";
   saveDialogConfirmBtn.disabled = true;
   try {

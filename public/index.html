@@ -1178,6 +1178,13 @@
 <div class="print-guide" id="printGuide" hidden>
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="printGuideTitle">
     <h3 id="printGuideTitle">🖨️ 인쇄 / PDF로 저장</h3>
+    <!-- 시험지명 — 문제 제작 탭에서만 보인다(showPrintGuide가 켜고 끈다).
+         적어 두면 시험지 맨 위와 답지 제목에 함께 찍히고, PDF 파일 이름도 이것으로
+         만들어져 여러 벌을 뽑았을 때 구분된다. -->
+    <div class="field print-guide-title" id="printGuideTitleField" hidden>
+      <label for="printGuideName">시험지명 <span class="chk-sub">(선택 — 시험지와 답지에 함께 찍힙니다)</span></label>
+      <input type="text" id="printGuideName" placeholder="예: 2학기 중간고사 대비 3과">
+    </div>
     <p class="print-guide-lead">아래 버튼을 누르면 브라우저 <b>인쇄 창</b>이 열립니다. 그 창의 <b>‘대상(프린터)’</b>을 무엇으로 고르느냐에 따라 종이 인쇄가 되기도, PDF 파일이 되기도 합니다.</p>
     <ul class="print-guide-steps">
       <li><b>종이로 인쇄</b> — ‘대상’에서 쓰던 프린터를 고르고 <b>[인쇄]</b></li>
