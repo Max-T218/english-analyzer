@@ -5436,16 +5436,16 @@ vocabAnswerChk.addEventListener("change", () => {
    답 쓰는 빈칸이 지면 폭의 절반을 넘게 차지해(실측 34~578pt 중 261pt부터가 빈칸)
    오른쪽이 허전하다. 두 단으로 나누면 그 자리에 다음 단어들이 들어간다.
 
-   ⚠️ 단어가 많으면 오히려 쪽이 늘어난다. 표 하나를 여러 단으로 쪼갤 때 크로미움이
-   쪽 계산을 못 맞춰, 표가 한 쪽에 안 들어가는 순간 '표가 없는 쪽'이 앞에 끼어든다
-   (헤드리스 크롬으로 실제 PDF를 뽑아 실측). 경계는 42단어다 —
-     20·30·39·41·42단어: 1쪽, 표 없는 쪽 0 (좌우로 고르게 갈림)
-     43단어: 2쪽(표 없는 쪽 1),  45·60단어: 4쪽(표 없는 쪽 2) ← 1단보다 손해
-   그래서 막지는 않되(사용자가 고르는 기능이다) 42단어를 넘으면 안내를 띄운다. */
+   ⚠️ 인쇄 CSS의 .table-wrap{break-inside:avoid}를 두 단일 때만 반드시 풀어야 한다
+   (style.css 참고). 안 풀면 2단으로 묶은 표가 한 덩어리로 취급돼 '한 쪽에 못 넣겠다
+   → 다음 쪽으로'를 되풀이하다 앞쪽에 표가 없는 빈 쪽을 만든다. 실사용 85단어에서
+   1·2쪽이 통째로 낭비됐고, 그걸 푼 뒤 4쪽 → 2쪽이 됐다.
+
+   실측(헤드리스 크롬으로 실제 PDF를 뽑아 쟀다): 한 쪽에 51개(둘째 쪽부터 54개).
+     30개 2쪽→1쪽 · 60개 3쪽→2쪽 · 85개 4쪽→2쪽 · 100개 5쪽→3쪽
+   어느 크기에서도 1단보다 쪽수가 늘지 않으므로 경고는 두지 않는다. */
 const vocabTwoColChk = $("vocabTwoColChk");
-const vocabTwoColNote = $("vocabTwoColNote");
 const VOCAB_TWOCOL_STORE = "gemini_vocab_twocol";
-const VOCAB_TWOCOL_MAX = 42;   // 이 개수까지는 2단이 한 쪽에 깔끔히 들어간다(실측)
 vocabTwoColChk.checked = localStorage.getItem(VOCAB_TWOCOL_STORE) === "1";
 
 function applyVocabTwoCol() {
@@ -5453,11 +5453,6 @@ function applyVocabTwoCol() {
   // 반으로 쪼개면 칸이 좁아 읽을 수가 없다.
   const rows = vocabDocEl.querySelectorAll("table.vocab-test tbody tr").length;
   vocabDocEl.classList.toggle("two-col", vocabTwoColChk.checked && rows > 0);
-  // 2단이 되레 쪽수를 늘리는 경우에만 알린다
-  vocabTwoColNote.textContent =
-    vocabTwoColChk.checked && rows > VOCAB_TWOCOL_MAX
-      ? `(단어 ${rows}개 — ${VOCAB_TWOCOL_MAX}개가 넘으면 쪽수가 오히려 늘 수 있습니다)`
-      : "";
 }
 vocabTwoColChk.addEventListener("change", () => {
   localStorage.setItem(VOCAB_TWOCOL_STORE, vocabTwoColChk.checked ? "1" : "0");
