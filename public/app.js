@@ -5432,6 +5432,38 @@ vocabAnswerChk.addEventListener("change", () => {
   applyVocabAnswer();
 });
 
+/* ── 시험지 2단 인쇄 ──
+   답 쓰는 빈칸이 지면 폭의 절반을 넘게 차지해(실측 34~578pt 중 261pt부터가 빈칸)
+   오른쪽이 허전하다. 두 단으로 나누면 그 자리에 다음 단어들이 들어간다.
+
+   ⚠️ 단어가 많으면 오히려 쪽이 늘어난다. 표 하나를 여러 단으로 쪼갤 때 크로미움이
+   쪽 계산을 못 맞춰, 표가 한 쪽에 안 들어가는 순간 '표가 없는 쪽'이 앞에 끼어든다
+   (헤드리스 크롬으로 실제 PDF를 뽑아 실측). 경계는 42단어다 —
+     20·30·39·41·42단어: 1쪽, 표 없는 쪽 0 (좌우로 고르게 갈림)
+     43단어: 2쪽(표 없는 쪽 1),  45·60단어: 4쪽(표 없는 쪽 2) ← 1단보다 손해
+   그래서 막지는 않되(사용자가 고르는 기능이다) 42단어를 넘으면 안내를 띄운다. */
+const vocabTwoColChk = $("vocabTwoColChk");
+const vocabTwoColNote = $("vocabTwoColNote");
+const VOCAB_TWOCOL_STORE = "gemini_vocab_twocol";
+const VOCAB_TWOCOL_MAX = 42;   // 이 개수까지는 2단이 한 쪽에 깔끔히 들어간다(실측)
+vocabTwoColChk.checked = localStorage.getItem(VOCAB_TWOCOL_STORE) === "1";
+
+function applyVocabTwoCol() {
+  // 시험지(단어·빈칸 3열)에만 건다. '단어장'은 뜻·유의어·반의어까지 든 5열 표라
+  // 반으로 쪼개면 칸이 좁아 읽을 수가 없다.
+  const rows = vocabDocEl.querySelectorAll("table.vocab-test tbody tr").length;
+  vocabDocEl.classList.toggle("two-col", vocabTwoColChk.checked && rows > 0);
+  // 2단이 되레 쪽수를 늘리는 경우에만 알린다
+  vocabTwoColNote.textContent =
+    vocabTwoColChk.checked && rows > VOCAB_TWOCOL_MAX
+      ? `(단어 ${rows}개 — ${VOCAB_TWOCOL_MAX}개가 넘으면 쪽수가 오히려 늘 수 있습니다)`
+      : "";
+}
+vocabTwoColChk.addEventListener("change", () => {
+  localStorage.setItem(VOCAB_TWOCOL_STORE, vocabTwoColChk.checked ? "1" : "0");
+  applyVocabTwoCol();
+});
+
 vocabBtn.addEventListener("click", buildVocab);
 vocabPrintBtn.addEventListener("click", () => printDoc(() => titledName("단어장", "vocabTitle")));
 
@@ -5533,6 +5565,7 @@ function buildVocab() {
   parts.push(`<footer>핵심 어휘 단어장 · 자동 생성</footer>`);
   vocabDocEl.innerHTML = parts.join("");
   applyVocabAnswer();
+  applyVocabTwoCol();   // 단어 수가 바뀌었으니 안내 문구도 다시 판단한다
   vocabPrintBtn.style.display = "inline-flex";
   vocabSaveBtn.style.display = "inline-flex";
   vocabDocxBtn.style.display = "inline-flex";
