@@ -5432,33 +5432,6 @@ vocabAnswerChk.addEventListener("change", () => {
   applyVocabAnswer();
 });
 
-/* ── 시험지 2단 인쇄 ──
-   답 쓰는 빈칸이 지면 폭의 절반을 넘게 차지해(실측 34~578pt 중 261pt부터가 빈칸)
-   오른쪽이 허전하다. 두 단으로 나누면 그 자리에 다음 단어들이 들어간다.
-
-   ⚠️ 인쇄 CSS의 .table-wrap{break-inside:avoid}를 두 단일 때만 반드시 풀어야 한다
-   (style.css 참고). 안 풀면 2단으로 묶은 표가 한 덩어리로 취급돼 '한 쪽에 못 넣겠다
-   → 다음 쪽으로'를 되풀이하다 앞쪽에 표가 없는 빈 쪽을 만든다. 실사용 85단어에서
-   1·2쪽이 통째로 낭비됐고, 그걸 푼 뒤 4쪽 → 2쪽이 됐다.
-
-   실측(헤드리스 크롬으로 실제 PDF를 뽑아 쟀다): 한 쪽에 51개(둘째 쪽부터 54개).
-     30개 2쪽→1쪽 · 60개 3쪽→2쪽 · 85개 4쪽→2쪽 · 100개 5쪽→3쪽
-   어느 크기에서도 1단보다 쪽수가 늘지 않으므로 경고는 두지 않는다. */
-const vocabTwoColChk = $("vocabTwoColChk");
-const VOCAB_TWOCOL_STORE = "gemini_vocab_twocol";
-vocabTwoColChk.checked = localStorage.getItem(VOCAB_TWOCOL_STORE) === "1";
-
-function applyVocabTwoCol() {
-  // 시험지(단어·빈칸 3열)에만 건다. '단어장'은 뜻·유의어·반의어까지 든 5열 표라
-  // 반으로 쪼개면 칸이 좁아 읽을 수가 없다.
-  const rows = vocabDocEl.querySelectorAll("table.vocab-test tbody tr").length;
-  vocabDocEl.classList.toggle("two-col", vocabTwoColChk.checked && rows > 0);
-}
-vocabTwoColChk.addEventListener("change", () => {
-  localStorage.setItem(VOCAB_TWOCOL_STORE, vocabTwoColChk.checked ? "1" : "0");
-  applyVocabTwoCol();
-});
-
 vocabBtn.addEventListener("click", buildVocab);
 vocabPrintBtn.addEventListener("click", () => printDoc(() => titledName("단어장", "vocabTitle")));
 
@@ -5550,8 +5523,10 @@ function buildVocab() {
         </tr>`
       )
       .join("");
+    // vocab-2col — 인쇄할 때 좌우 두 단으로 나눈다(style.css). 시험지에만 붙인다.
+    // '단어장'은 뜻·유의어·반의어까지 든 5열 표라 반으로 쪼개면 읽을 수가 없다.
     parts.push(`
-      <div class="table-wrap"><table class="vocab vocab-test">
+      <div class="table-wrap vocab-2col"><table class="vocab vocab-test">
         <thead><tr><th>#</th><th>${askEn ? "단어 / 표현" : "뜻"}</th><th>${askEn ? "뜻" : "영어"}</th></tr></thead>
         <tbody>${body}</tbody>
       </table></div>`);
@@ -5560,7 +5535,6 @@ function buildVocab() {
   parts.push(`<footer>핵심 어휘 단어장 · 자동 생성</footer>`);
   vocabDocEl.innerHTML = parts.join("");
   applyVocabAnswer();
-  applyVocabTwoCol();   // 단어 수가 바뀌었으니 안내 문구도 다시 판단한다
   vocabPrintBtn.style.display = "inline-flex";
   vocabSaveBtn.style.display = "inline-flex";
   vocabDocxBtn.style.display = "inline-flex";
