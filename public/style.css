@@ -1361,9 +1361,13 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   .app-head,.panel,.loading,.result-tools,footer{display:none !important;}
   .sent,.cover,.table-wrap,.legend{box-shadow:none; break-inside:avoid;}
   .wrap{max-width:none; padding:0;}
-  /* 지문마다 새 페이지에서 시작 (첫 지문은 그대로) */
+  /* 지문마다 새 페이지에서 시작 (첫 지문은 그대로).
+     시험지명(.qz-sheet-title)이 맨 위에 붙으면 첫 지문이 더 이상 :first-child가
+     아니게 되어, 그것까지 쪽을 넘겨 버린다 — 1쪽에 제목만 덩그러니 남고 문제는
+     2쪽부터 시작했다. 제목 바로 뒤에 오는 지문도 첫 지문으로 친다. */
   .passage-block{break-before:page; page-break-before:always;}
-  .passage-block:first-child{break-before:auto; page-break-before:auto;}
+  .passage-block:first-child,
+  .qz-sheet-title + .passage-block{break-before:auto; page-break-before:auto;}
   .passage-banner{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
   /* 새 쪽에서 시작 (문제 탭의 '정답 및 해설' 등) */
   .page-break{break-before:page; page-break-before:always;}
