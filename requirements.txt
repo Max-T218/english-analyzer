@@ -10,7 +10,15 @@
 #    버전을 올릴 때는 배포 직후 로그인 한 번을 꼭 확인하세요.
 
 # 저장/불러오기(구글 로그인 + Firestore) 기능을 위해 구글 공식 클라이언트만 추가합니다.
+#
+# ⚠️ firestore 하나만 고정해서는 소용이 없습니다. 구글은 이 넷을 같은 시각에 함께
+#    내놓는데(2026-08-24 21:55 UTC에 넷 다 나왔습니다), firestore만 묶어 두면 나머지
+#    셋이 최신으로 딸려 들어와 똑같이 깨집니다. 실제로 firestore만 고정해 배포했다가
+#    그대로 실패했습니다. 넷을 한 벌로 보고 함께 올리세요.
 google-cloud-firestore==2.28.1
+google-api-core==2.34.0
+google-auth==2.56.3
+google-cloud-core==2.6.1
 # PDF에서 지문 꺼내기(/api/pdfsplit)에 씁니다 — PDF 안의 글자층과 그 좌표를 읽습니다.
 # 없어도 서버는 그대로 뜨고, 이 기능만 꺼집니다(server.py의 PDF_READY 참고).
 pdfminer.six==20260107
