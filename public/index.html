@@ -1051,10 +1051,15 @@
            넣고 로그인합니다"라고 말해 선생님이 학생에게 쓸모없는 코드를 알려 주게
            됐다. 사실과 다른 안내를 남겨 두느니 상자째 치운다(server.py의 코드 발급
            자체는 그대로 남아 있다 — 화면에서만 감춘 것이다). -->
-      <p class="hint" style="margin:0 0 12px;">
-        학생은 <code>/student.html</code>에서 <b>자기 이름</b>을 넣어 로그인합니다.
-        따로 알려 줄 코드는 없습니다.
-      </p>
+      <div class="brand-panel" style="margin-bottom:12px;">
+        <div class="brand-title">🔗 학생에게 알려 줄 주소
+          <span class="sub">(학생은 이 주소에서 <b>자기 이름</b>을 넣어 로그인합니다 — 따로 알려 줄 코드는 없습니다)</span>
+        </div>
+        <div class="brand-body" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <code id="studentUrlDisplay" style="font-size:15px; font-weight:700; word-break:break-all;"></code>
+          <button type="button" class="btn ghost small" id="copyStudentUrlBtn">복사</button>
+        </div>
+      </div>
 
       <div class="field-head">
         <label>학생 목록</label>

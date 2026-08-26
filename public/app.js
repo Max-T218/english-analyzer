@@ -7562,6 +7562,36 @@ newClassBtn.addEventListener("click", async () => {
   }
 });
 
+/* 학생에게 알려 줄 주소 — 화면에서 채운다. '/student.html'처럼 앞이 잘린 주소는
+   선생님이 그대로 복사해 학생에게 보내면 열리지 않는다(로컬인지 배포본인지에 따라
+   앞부분이 다르다). 지금 보고 있는 주소를 그대로 써서 통째로 복사할 수 있게 한다. */
+const studentUrlDisplayEl = $("studentUrlDisplay");
+const copyStudentUrlBtn = $("copyStudentUrlBtn");
+const STUDENT_URL = `${location.origin}/student.html`;
+studentUrlDisplayEl.textContent = STUDENT_URL;
+copyStudentUrlBtn.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(STUDENT_URL);
+    // 눌렸는지 알 수 없으면 몇 번씩 다시 누르게 된다 — 잠깐 글자를 바꿔 알린다
+    copyStudentUrlBtn.textContent = "복사됨";
+    setTimeout(() => {
+      copyStudentUrlBtn.textContent = "복사";
+    }, 1500);
+  } catch (_) {
+    /* 브라우저가 복사를 막는 경우(권한·설정)가 있다. 그냥 '실패'라고만 하면 손쓸
+       길이 없으니, 주소를 통째로 선택해 두어 Ctrl+C로 복사할 수 있게 한다. */
+    const range = document.createRange();
+    range.selectNodeContents(studentUrlDisplayEl);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    copyStudentUrlBtn.textContent = "Ctrl+C로 복사하세요";
+    setTimeout(() => {
+      copyStudentUrlBtn.textContent = "복사";
+    }, 3000);
+  }
+});
+
 /* 반 코드의 '복사'·'재발급' 버튼은 화면에서 뺐다. 학생 로그인이 이름만 받도록
    바뀐 뒤로 그 코드가 로그인에 쓰이지 않아, 버튼을 남겨 두면 선생님이 학생에게
    쓸모없는 코드를 알려 주게 된다. 서버의 발급·재발급(/api/classes/regenerate-code)은
