@@ -1046,16 +1046,15 @@
     </section>
 
     <section class="panel" id="studentsPanel" hidden>
-      <div class="brand-panel" style="margin-bottom:12px;">
-        <div class="brand-title">🔑 이 반의 로그인 코드
-          <span class="sub">(학생은 <code>/student.html</code>에서 이 코드를 넣고, 목록에서 자기 이름을 골라 로그인합니다 — 이름은 몰라도 코드만 알면 됩니다)</span>
-        </div>
-        <div class="brand-body" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-          <code id="classCodeDisplay" style="font-size:20px; font-weight:800; letter-spacing:.06em;"></code>
-          <button type="button" class="btn ghost small" id="copyClassCodeBtn">복사</button>
-          <button type="button" class="btn ghost small" id="regenClassCodeBtn">코드 재발급</button>
-        </div>
-      </div>
+      <!-- 예전에는 여기에 '이 반의 로그인 코드' 상자가 있었다. 학생 로그인이 이름만
+           받도록 바뀐 뒤로 그 코드는 어디에도 쓰이지 않는데, 화면은 계속 "이 코드를
+           넣고 로그인합니다"라고 말해 선생님이 학생에게 쓸모없는 코드를 알려 주게
+           됐다. 사실과 다른 안내를 남겨 두느니 상자째 치운다(server.py의 코드 발급
+           자체는 그대로 남아 있다 — 화면에서만 감춘 것이다). -->
+      <p class="hint" style="margin:0 0 12px;">
+        학생은 <code>/student.html</code>에서 <b>자기 이름</b>을 넣어 로그인합니다.
+        따로 알려 줄 코드는 없습니다.
+      </p>
 
       <div class="field-head">
         <label>학생 목록</label>

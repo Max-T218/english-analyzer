@@ -7509,9 +7509,6 @@ const classSelectEl = $("classSelect");
 const newClassBtn = $("newClassBtn");
 const classErrorEl = $("classError");
 const studentsPanelEl = $("studentsPanel");
-const classCodeDisplayEl = $("classCodeDisplay");
-const copyClassCodeBtn = $("copyClassCodeBtn");
-const regenClassCodeBtn = $("regenClassCodeBtn");
 const newStudentNameEl = $("newStudentName");
 const addStudentBtn = $("addStudentBtn");
 const studentErrorEl = $("studentError");
@@ -7545,8 +7542,6 @@ function onClassSelectChange() {
   studentsPanelEl.hidden = !has;
   assignedTestsPanelEl.hidden = !has;
   if (has) {
-    const cls = classesCache.find((c) => c.id === selectedClassId);
-    classCodeDisplayEl.textContent = cls ? cls.code : "";
     loadStudents();
     loadAssignedTests();
   }
@@ -7567,28 +7562,10 @@ newClassBtn.addEventListener("click", async () => {
   }
 });
 
-copyClassCodeBtn.addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(classCodeDisplayEl.textContent);
-  } catch (_) {}
-});
-
-regenClassCodeBtn.addEventListener("click", async () => {
-  if (!selectedClassId) return;
-  if (!confirm("코드를 다시 만들까요? 기존 코드로는 더 이상 학생이 로그인할 수 없습니다.")) return;
-  try {
-    const data = await postJson(
-      "/api/classes/regenerate-code",
-      { classId: selectedClassId },
-      "재발급에 실패했습니다."
-    );
-    classCodeDisplayEl.textContent = data.code;
-    const cls = classesCache.find((c) => c.id === selectedClassId);
-    if (cls) cls.code = data.code;
-  } catch (err) {
-    alert(err.message || "재발급에 실패했습니다.");
-  }
-});
+/* 반 코드의 '복사'·'재발급' 버튼은 화면에서 뺐다. 학생 로그인이 이름만 받도록
+   바뀐 뒤로 그 코드가 로그인에 쓰이지 않아, 버튼을 남겨 두면 선생님이 학생에게
+   쓸모없는 코드를 알려 주게 된다. 서버의 발급·재발급(/api/classes/regenerate-code)은
+   그대로 살아 있으므로, 코드 로그인을 되살리기로 하면 이 화면만 다시 붙이면 된다. */
 
 async function loadStudents() {
   studentErrorEl.textContent = "";
