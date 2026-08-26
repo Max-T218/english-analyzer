@@ -524,7 +524,58 @@ let currentKrw = null;
 // jobCount를 넘기면 '지문이 너무 많다'는 안내도 같은 창에 함께 넣는다 — PDF에서 한
 // 번에 수십 개를 담을 수 있게 되면서, 담은 줄도 모르고 실행해 몇십 분을 기다리는 일이
 // 생길 수 있기 때문이다. 확인창을 두 번 띄우지 않으려고 비용 안내와 한 창에 합친다.
-function costConfirmed(krw, label, jobCount) {
+// 줄일 것을 알려 주는 문구를 만든다. 탭마다 줄일 수 있는 것이 달라(이미지·유형·단계…)
+// 그 대목은 부르는 쪽에서 받고, 여기서는 '지문 수'만 앞에 붙인다.
+// 지문이 하나뿐이면 그 말은 빼 — 줄일 것이 없는데 줄이라고 하면 헤맨다.
+function reduceAdvice(jobCount, extra) {
+  const parts = [];
+  if (Number.isFinite(jobCount) && jobCount > 1) parts.push("지문 수를 줄이거나");
+  if (extra) parts.push(extra);
+  if (!parts.length) return "";   // 줄일 것이 하나도 없으면 그 줄을 아예 내지 않는다
+  return parts.join(", ") + " 값이 내려갑니다.";
+}
+
+/* 잔액이 값에 1원이라도 모자라면 시작하지 않는다.
+
+   서버는 요청 하나하나마다 잔액을 본다. 그래서 막지 않으면 지문 열 개를 넣었을 때 앞의
+   일곱 개만 만들어지고 나머지는 끊긴다. 중간에 끊긴 자료는 그대로 쓸 수가 없는데
+   (시험지가 일곱 지문에서 끝난다) 만든 값은 이미 나간 뒤다. 시작 전에 막으면 그 돈이
+   안 나간다.
+
+   ⚠️ 화면이 들고 있는 잔액을 그냥 믿지 않고 먼저 다시 받아 온다. 이 값은 만들기가
+   끝날 때만 갱신되므로, 다른 창에서 만들었거나 충전했으면 실제와 어긋나 있다. 그중
+   '실제보다 높게' 어긋난 경우가 문제다 — 모자란데도 통과시켜 버린다.
+
+   잔액을 끝내 모르면(로그인 전이거나 못 받아왔으면) 막지 않는다. 화면이 잘못 아는
+   값으로 사용자를 세우는 것보다, 서버의 요청별 검사에 맡기는 편이 낫다. */
+async function hasEnoughPoints(krw, label, jobCount, advice) {
+  if (!(PRICING !== null && Number.isFinite(krw) && krw > 0)) return true;
+  await refreshTokenDisplay();
+  if (!Number.isFinite(currentKrw) || currentKrw >= krw) return true;
+
+  const short = krw - currentKrw;
+  // 몇 개까지 되는지 함께 알려 준다 — '안 됩니다'로만 끝내면 몇 개를 빼야 할지
+  // 사용자가 직접 나눠 봐야 한다
+  let fitLine = "";
+  if (Number.isFinite(jobCount) && jobCount > 1) {
+    const fit = Math.floor(currentKrw / (krw / jobCount));
+    fitLine =
+      fit > 0
+        ? `\n지금 잔액으로는 ${fit}개까지 만들 수 있습니다.`
+        : "\n지금 잔액으로는 하나도 만들 수 없습니다.";
+  }
+  alert(
+    `포인트가 모자라 만들 수 없습니다.\n\n${label}\n\n` +
+      `필요한 값: ${krw.toLocaleString()}원\n` +
+      `지금 잔액: ${currentKrw.toLocaleString()}원 (${short.toLocaleString()}원 모자람)${fitLine}\n\n` +
+      (advice ? `${advice}\n` : "") +
+      `충전은 화면 오른쪽 위에서 하실 수 있습니다.`
+  );
+  return false;
+}
+
+async function costConfirmed(krw, label, jobCount, advice) {
+  if (!(await hasEnoughPoints(krw, label, jobCount, advice))) return false;
   const manyLine =
     Number.isFinite(jobCount) && jobCount > MANY_PASSAGES_WARN
       ? `지문 ${jobCount}개를 하나씩 차례로 처리합니다 — 시간이 꽤 걸립니다.\n`
@@ -1943,8 +1994,8 @@ async function runPdfImport(fileList, mgr, status) {
       let res = await postJson("/api/pdfsplit", payload, "PDF에서 지문을 꺼내지 못했습니다.");
       if (!res.passages.length && res.canAi) {
         // 규칙으로는 못 나눴다. AI에게 경계만 물어본다 — 값이 매겨져 있으면 먼저 확인한다.
-        if (!costConfirmed(PRICING ? PRICING.pdfSplit : 0,
-                           `${who}\n\n문단을 자동으로 나누지 못했습니다. AI로 다시 찾아볼까요?`)) {
+        if (!(await costConfirmed(PRICING ? PRICING.pdfSplit : 0,
+                           `${who}\n\n문단을 자동으로 나누지 못했습니다. AI로 다시 찾아볼까요?`))) {
           fails.push(`${who} — 문단을 나누지 못했습니다.`);
           continue;
         }
@@ -2646,12 +2697,16 @@ async function analyze() {
   const withInfo = !!(infoChk && infoChk.checked);
   const perPassage =
     (PRICING ? PRICING.analyze : 0) + (withInfo && PRICING ? PRICING.infographic : 0);
-  if (!costConfirmed(
+  if (!(await costConfirmed(
         billableJobCount() * perPassage,
         withInfo
           ? "지문 분석과 요약 이미지를 함께 만듭니다. (이미지는 지문당 8~12초가 더 걸립니다)"
           : "지문 분석을 시작합니다.",
-        jobs.length)) {
+        jobs.length,
+        reduceAdvice(
+          jobs.length,
+          withInfo ? "[요약 이미지 함께 만들기] 체크를 끄면" : ""
+        )))) {
     return;
   }
 
@@ -3407,7 +3462,11 @@ briefBtn.addEventListener("click", async () => {
     const withImg = briefImageChk && briefImageChk.checked;
     const cost = (PRICING.brief + (withImg ? PRICING.infographic : 0)) * jobs.length;
     const what = withImg ? "소책자 분석과 요약 이미지를" : "소책자 분석을";
-    if (!costConfirmed(cost, `지문 ${jobs.length}개의 ${what} 만듭니다.`, jobs.length)) return;
+    if (!(await costConfirmed(cost, `지문 ${jobs.length}개의 ${what} 만듭니다.`, jobs.length,
+        reduceAdvice(
+          jobs.length,
+          withImg ? "[요약 이미지 함께 만들기] 체크를 끄면" : ""
+        )))) return;
   }
   briefBtn.disabled = true;
   briefLoadingEl.classList.add("on");
@@ -4124,14 +4183,22 @@ function setupQuizTab({ prefix, types, footer }) {
       });
       if (!choice) return;
       if (choice === "split") batchSize = perBatch;
-      // 이 창이 요금·잔액까지 이미 보여 줬으므로 costConfirmed는 다시 묻지 않는다
+      // 이 창이 요금·잔액까지 이미 보여 줬으므로 costConfirmed로 다시 묻지는 않는다.
+      // 다만 '보여 주는 것'과 '막는 것'은 다르다 — 여기가 가장 크게 나가는 자리라
+      // 잔액이 모자라면 반드시 세워야 한다.
+      const bigLabel = `${docName}를 만듭니다. (지문 ${billable}개 · 총 ${runQuestions}문항)`;
+      if (!(await hasEnoughPoints(cost, bigLabel, jobs.length,
+        reduceAdvice(jobs.length, "고른 유형 수나 유형별 문항 수를 줄이면") +
+          (vars.length > 1 ? ` 지문 변형 세트를 ${vars.length}개에서 줄여도 값이 내려갑니다.` : "")))) return;
     } else if (PRICING) {
       const label =
         `${docName}를 만듭니다.\n` +
         `지문 ${billable}개 × ${perSetQuestions}문항` +
         (vars.length > 1 ? ` × 변형 ${vars.length}세트` : "") +
         ` = 총 ${runQuestions}문항`;
-      if (!costConfirmed(cost, label, jobs.length)) return;
+      if (!(await costConfirmed(cost, label, jobs.length,
+        reduceAdvice(jobs.length, "고른 유형 수나 유형별 문항 수를 줄이면") +
+          (vars.length > 1 ? ` 지문 변형 세트를 ${vars.length}개에서 줄여도 값이 내려갑니다.` : "")))) return;
     }
 
     btn.disabled = true;
@@ -5048,6 +5115,21 @@ wbStageAllEl.addEventListener("change", () => {
 });
 /* 워크북 값 — 고른 단계 수 × 단계 단가, 상한까지. server.py의 _workbook_cost와 같은 식이다.
    실제 청구는 언제나 서버가 다시 계산하고, 여기 값은 미리 보여 주기 위한 것이다. */
+/* 단계를 몇 개까지 줄여야 값이 실제로 내려가는지 알려 준다.
+   값에 상한(workbookMax)이 있어 7단계부터는 단계를 빼도 700원 그대로다 — "몇 개
+   빼면 내려갑니다"라고만 하면 9단계에서 8단계로 줄인 사람에게 거짓말이 된다. */
+function workbookStageAdvice(stageCount) {
+  if (!PRICING) return "";
+  const per = PRICING.workbookStage || 0;
+  const max = PRICING.workbookMax || 0;
+  if (!per) return "";
+  const capAt = max ? Math.floor(max / per) : 0;   // 이 개수부터는 값이 같다
+  if (capAt && stageCount > capAt) {
+    return `단계를 ${capAt - 1}개 이하로 줄이면`;   // 그 아래로 내려가야 값이 준다
+  }
+  return stageCount > 1 ? "포함할 단계 수를 줄이면" : "";
+}
+
 function workbookCost(stageCount) {
   if (!PRICING || !stageCount) return 0;
   const per = PRICING.workbookStage || 0;
@@ -5164,8 +5246,9 @@ async function generateWorkbook() {
     wbErrorEl.textContent = "포함할 단계를 하나 이상 선택하세요.";
     return;
   }
-  if (!costConfirmed(billableJobCount() * workbookCost(stages.length),
-                     "워크북을 만듭니다.", jobs.length)) {
+  if (!(await costConfirmed(billableJobCount() * workbookCost(stages.length),
+                     "워크북을 만듭니다.", jobs.length,
+      reduceAdvice(jobs.length, workbookStageAdvice(stages.length))))) {
     return;
   }
 
@@ -6286,8 +6369,8 @@ async function runVocabPdf(fileList) {
       const payload = { file: { mime: "application/pdf", data } };
       let res = await postJson("/api/vocabpdf", payload, "PDF에서 단어 목록을 꺼내지 못했습니다.");
       if (!res.items.length && res.canAi) {
-        if (!costConfirmed(PRICING ? PRICING.vocabPdf : 0,
-                           `${who}\n\n표 모양을 규칙으로 읽지 못했습니다. AI로 다시 찾아볼까요?`)) {
+        if (!(await costConfirmed(PRICING ? PRICING.vocabPdf : 0,
+                           `${who}\n\n표 모양을 규칙으로 읽지 못했습니다. AI로 다시 찾아볼까요?`))) {
           fails.push(`${who} — 단어 목록을 규칙으로 읽지 못했습니다.`);
           continue;
         }
@@ -7178,7 +7261,8 @@ async function runExamScan() {
   if (PRICING && PRICING.examScan > 0) {
     // 나눠 부르면 호출 수만큼 값이 매겨진다 — 확인 문구에 실제 총액을 적는다
     const won = PRICING.examScan * batches.length;
-    if (!costConfirmed(won, `기출 시험지 ${examPages.length}쪽을 ${batches.length}번에 나눠 분석합니다.`)) return;
+    if (!(await costConfirmed(won, `기출 시험지 ${examPages.length}쪽을 ${batches.length}번에 나눠 분석합니다.`,
+        examPages.length, "분석할 쪽 수를 줄이면 값이 내려갑니다."))) return;
   }
   examBusy = true;
   examBtn.disabled = true;
@@ -7671,7 +7755,8 @@ async function runExamPaper() {
     ? examPlanNow.slots.reduce((s, sl) => s + examSlotPrice(sl), 0) * copies
     : 0;
   const totalSteps = plans.reduce((n, rows) => n + rows.length, 0);
-  if (!costConfirmed(won, `시험지 ${copies}부(${totalSteps}문항)를 만듭니다.`)) return;
+  if (!(await costConfirmed(won, `시험지 ${copies}부(${totalSteps}문항)를 만듭니다.`, copies,
+      `만들 부수를 ${copies}부에서 줄이거나, 시험지 구성에서 문항 수를 줄이면 값이 내려갑니다.`))) return;
 
   examPaperBusy = true;
   examPaperErrorEl.textContent = "";
