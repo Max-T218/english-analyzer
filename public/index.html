@@ -1300,7 +1300,15 @@
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="savedListTitle">
     <h3 id="savedListTitle">📄 지문 저장함</h3>
     <p class="print-guide-lead" id="savedListLead"></p>
+    <!-- 찾기 줄 — 저장이 쌓이면 목록이 길어져 눈으로 훑기 어려워진다.
+         제목 검색과 종류 거르개를 위에 두고, 목록은 종류별로 묶어 보여 준다. -->
+    <div class="saved-list-tools" id="savedListTools">
+      <input type="search" id="savedSearch" class="saved-search" autocomplete="off"
+             placeholder="제목으로 찾기 (예: 능률, 2단원)">
+      <div class="saved-kinds" id="savedKinds"></div>
+    </div>
     <div id="savedListBody" class="saved-list"></div>
+    <div class="saved-list-count" id="savedListCount"></div>
     <div class="print-guide-actions">
       <button type="button" class="btn ghost" id="savedListClose">닫기</button>
     </div>

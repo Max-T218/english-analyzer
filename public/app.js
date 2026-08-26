@@ -6141,9 +6141,21 @@ Object.keys(TAB_SAVE).forEach((tab) => {
   if (entry && entry.saveBtn) entry.saveBtn.addEventListener("click", () => openSaveDialog(tab));
 });
 
+/* 저장 시각을 짧게 적는다. toLocaleString은 "2026. 8. 25. 오후 8:11:25"처럼 나와
+   한 줄을 다 먹는데, 저장본을 고를 때 필요한 건 '언제쯤'이지 몇 초인지가 아니다.
+   올해 것이면 연도도 뺀다 — 같은 해가 줄줄이 반복되면 눈에 안 들어온다. */
+function savedDateText(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const opt = { month: "long", day: "numeric", hour: "numeric", minute: "2-digit" };
+  if (d.getFullYear() !== new Date().getFullYear()) opt.year = "numeric";
+  return d.toLocaleString("ko-KR", opt);
+}
+
 function savedItemRowHtml(item) {
   const label = TAB_LABELS[item.tab] || item.tab;
-  const date = item.updated_at ? new Date(item.updated_at).toLocaleString("ko-KR") : "";
+  const date = savedDateText(item.updated_at);
   return `
     <div class="saved-list-item" data-id="${esc(item.id)}">
       <span class="saved-list-tag">${esc(label)}</span>
@@ -6179,15 +6191,100 @@ const LIBRARY = {
 };
 
 // 목록은 열 때마다 통째로 받아 두고, 어느 저장함인지는 화면에서만 걸러 낸다
+/* 저장함 목록 그리기.
+
+   저장이 쌓이면 날짜순 한 줄 목록으로는 찾을 수가 없다 — 단어장 열두 개 사이에
+   객관식 하나가 끼어 있는 식이라 스크롤을 위아래로 훑게 된다. 그래서 세 가지를 둔다.
+     ① 제목 검색 — 가장 빠른 길. 종류 이름("단어장")으로도 걸리게 해 둔다.
+     ② 종류 거르개 — 개수를 함께 보여 준다. 무엇이 몇 개 있는지가 먼저 보여야
+        어디를 뒤질지 정할 수 있다.
+     ③ 종류별 묶음 — 거르개가 [전체]일 때는 종류마다 소제목을 달아 끊어 준다.
+   지문 저장함은 종류가 하나뿐이라 ②③이 필요 없다 — 그때는 검색칸만 남긴다. */
+const savedSearchEl = $("savedSearch");
+const savedKindsEl = $("savedKinds");
+const savedListToolsEl = $("savedListTools");
+const savedListCountEl = $("savedListCount");
+
 let savedItemsCache = [];
 let openLibrary = "passage";
+let savedKindFilter = "";   // "" = 전체
+let savedSearchText = "";
+
+// 묶음 순서는 TAB_LABELS에 적은 차례를 그대로 따른다 — 화면 탭 차례와 같아서
+// "워크북은 단어장 앞" 같은 감각이 저장함에서도 그대로 통한다.
+const SAVED_KIND_ORDER = Object.keys(TAB_LABELS);
+
+function savedKindRank(tab) {
+  const i = SAVED_KIND_ORDER.indexOf(tab);
+  return i < 0 ? SAVED_KIND_ORDER.length : i;
+}
+
+function savedItemMatches(item) {
+  if (savedKindFilter && item.tab !== savedKindFilter) return false;
+  if (!savedSearchText) return true;
+  // 종류 이름까지 검색 대상에 넣는다 — "단어장"을 쳤을 때 아무것도 안 나오면
+  // 검색칸이 고장 난 것처럼 보인다.
+  const hay = `${item.title || ""} ${TAB_LABELS[item.tab] || item.tab}`.toLowerCase();
+  return hay.includes(savedSearchText);
+}
 
 function renderSavedList() {
   const lib = LIBRARY[openLibrary];
-  const items = savedItemsCache.filter(lib.match);
-  savedListBodyEl.innerHTML = items.length
-    ? items.map(savedItemRowHtml).join("")
-    : `<p class="saved-list-empty">${esc(lib.empty)}</p>`;
+  const all = savedItemsCache.filter(lib.match);
+
+  // 거르개는 실제로 저장된 종류만 내놓는다. 없는 종류를 0개로 늘어놓아 봐야
+  // 누를 일이 없고 줄만 길어진다.
+  const counts = new Map();
+  all.forEach((it) => counts.set(it.tab, (counts.get(it.tab) || 0) + 1));
+  const kinds = [...counts.keys()].sort((a, b) => savedKindRank(a) - savedKindRank(b));
+  if (savedKindFilter && !counts.has(savedKindFilter)) savedKindFilter = "";
+
+  const multi = kinds.length > 1;
+  savedKindsEl.hidden = !multi;
+  savedListToolsEl.hidden = all.length < 2;   // 한 개뿐이면 찾을 것도 없다
+  if (multi) {
+    savedKindsEl.innerHTML =
+      `<button type="button" class="saved-kind${savedKindFilter ? "" : " on"}" data-kind="">전체 <b>${all.length}</b></button>` +
+      kinds
+        .map(
+          (t) => `<button type="button" class="saved-kind${savedKindFilter === t ? " on" : ""}" data-kind="${esc(t)}">${esc(TAB_LABELS[t] || t)} <b>${counts.get(t)}</b></button>`
+        )
+        .join("");
+  }
+
+  const items = all.filter(savedItemMatches);
+  if (!items.length) {
+    savedListBodyEl.classList.remove("is-grouped");
+    savedListBodyEl.innerHTML = `<p class="saved-list-empty">${esc(
+      all.length ? "조건에 맞는 저장본이 없습니다. 검색어를 지우거나 다른 종류를 눌러 보세요." : lib.empty
+    )}</p>`;
+    savedListCountEl.textContent = "";
+    return;
+  }
+
+  /* 거르개가 [전체]이고 종류가 여럿일 때만 소제목으로 끊는다. 한 종류만 보고 있을
+     때 소제목을 달면 같은 말이 맨 위에 한 번 더 나올 뿐이다. */
+  if (multi && !savedKindFilter) {
+    const groups = new Map();
+    items.forEach((it) => {
+      if (!groups.has(it.tab)) groups.set(it.tab, []);
+      groups.get(it.tab).push(it);
+    });
+    savedListBodyEl.classList.add("is-grouped");
+    savedListBodyEl.innerHTML = [...groups.keys()]
+      .sort((a, b) => savedKindRank(a) - savedKindRank(b))
+      .map(
+        (t) =>
+          `<div class="saved-group-head">${esc(TAB_LABELS[t] || t)}<span>${groups.get(t).length}개</span></div>` +
+          groups.get(t).map(savedItemRowHtml).join("")
+      )
+      .join("");
+  } else {
+    savedListBodyEl.classList.remove("is-grouped");
+    savedListBodyEl.innerHTML = items.map(savedItemRowHtml).join("");
+  }
+  savedListCountEl.textContent =
+    items.length === all.length ? `${all.length}개` : `${all.length}개 중 ${items.length}개`;
 }
 
 async function openSavedList(kind) {
@@ -6195,6 +6292,11 @@ async function openSavedList(kind) {
   const lib = LIBRARY[openLibrary];
   savedListTitleEl.textContent = lib.title;
   savedListLeadEl.textContent = lib.lead;
+  savedKindFilter = "";
+  savedSearchText = "";
+  if (savedSearchEl) savedSearchEl.value = "";
+  savedListCountEl.textContent = "";
+  savedListToolsEl.hidden = true;
   savedListModalEl.hidden = false;
   savedListBodyEl.innerHTML = `<p class="saved-list-empty">불러오는 중…</p>`;
   try {
@@ -6289,6 +6391,17 @@ savedListBodyEl.addEventListener("click", async (e) => {
       alert(err.message || "삭제에 실패했습니다.");
     }
   }
+});
+
+savedSearchEl.addEventListener("input", () => {
+  savedSearchText = savedSearchEl.value.trim().toLowerCase();
+  renderSavedList();
+});
+savedKindsEl.addEventListener("click", (e) => {
+  const btn = e.target.closest(".saved-kind");
+  if (!btn) return;
+  savedKindFilter = btn.dataset.kind || "";
+  renderSavedList();
 });
 
 passageLibraryBtn.addEventListener("click", () => openSavedList("passage"));
