@@ -6017,7 +6017,7 @@ TAB_SAVE.vocab = {
 
 const TAB_LABELS = {
   passage: "📄 지문",
-  analyze: "📖 지문 분석",
+  analyze: "📖 지문 상세분석",
   mcq: "📝 객관식 문제",
   saq: "✍️ 주관식 문제",
   workbook: "📚 워크북",
