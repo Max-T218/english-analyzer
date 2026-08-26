@@ -464,6 +464,7 @@
 
   <nav class="tabs" id="tabNav">
     <button type="button" class="tab-btn active" data-tab="analyze">📖 지문 상세분석</button>
+    <button type="button" class="tab-btn" data-tab="brief">📕 소책자 분석</button>
     <button type="button" class="tab-btn" data-tab="mcq">📝 문제 제작 (객관식)</button>
     <button type="button" class="tab-btn" data-tab="saq">✍️ 문제 제작 (주관식)</button>
     <button type="button" class="tab-btn" data-tab="workbook">📚 워크북 제작</button>
@@ -594,6 +595,41 @@
     </div>
 
     <div id="result"></div>
+  </section>
+
+  <!-- ══════════ 탭: 소책자 분석 ══════════
+       상세분석과 같은 방식으로 만들되(같은 색·같은 루비·같은 문장 카드) 네 가지가
+       다르다 — 해석이 직독직해가 아닌 의역, 오른쪽 칸은 출제 포인트만, 핵심 어휘표
+       없음, 그림은 2K. 셋을 덜어 내야 학생이 들고 다니는 얇은 판이 된다.
+       상세분석 결과를 가져다 쓰지 않는 독립된 도구다. -->
+  <section class="tab-page" id="tab-brief">
+    <section class="panel">
+      <div class="actions">
+        <button class="btn" id="briefBtn">소책자 분석 만들기</button>
+        <button class="btn ghost" id="briefPrintBtn" style="display:none"
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
+        <button class="btn ghost" id="briefPageBtn" style="display:none"
+                title="인쇄했을 때 쪽이 어디서 넘어가는지 보여 주고, 카드·표 단위로 쪽 경계를 옮깁니다.">📄 쪽 구성</button>
+        <button class="btn ghost" id="briefPageResetBtn" style="display:none"
+                title="쪽 구성을 처음 상태로 되돌립니다.">↩ 처음 상태로</button>
+        <button class="btn ghost" id="briefSaveBtn" style="display:none"
+                title="로그인한 계정에 이 소책자와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
+        <label class="chk" title="지문을 한 장으로 요약한 그림을 맨 뒤에 넣습니다. 상세분석과 같은 가로형이되 2K로 그려 값이 절반입니다.">
+          <input type="checkbox" id="briefImageChk"> 요약 이미지 함께 만들기 <span class="chk-sub" id="briefImageNote"></span>
+        </label>
+        <span class="hint">상세분석과 같은 분석이되 <b>해석은 의역</b>, 오른쪽은 <b>출제 포인트만</b>, 핵심 어휘표는 빼서 얇게 만듭니다.</span>
+      </div>
+      <div class="hint" id="briefPageHint" role="status" aria-live="polite"></div>
+      <div class="hint cost-hint" id="briefCostHint" role="status" aria-live="polite"></div>
+      <div class="error" id="briefError"></div>
+    </section>
+
+    <div class="loading" id="briefLoading">
+      <span class="spinner"></span>
+      <span id="briefLoadingText">AI가 소책자 분석을 만들고 있습니다…</span>
+    </div>
+
+    <div id="briefDoc"></div>
   </section>
 
   <!-- ══════════ 탭 2: 문제 제작 (객관식) ══════════ -->

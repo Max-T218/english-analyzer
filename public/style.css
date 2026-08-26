@@ -588,6 +588,47 @@ table.variedkey td:nth-child(2){white-space:nowrap; color:var(--ink-soft); font-
   margin-left:6px; vertical-align:middle;
 }
 
+/* ── 소책자 분석 ──
+   상세분석의 문장 카드(.sent)를 그대로 쓴다 — 색·루비까지 같은 규칙이다. 다른 것은
+   두 가지뿐이라 여기서 그 둘만 덧쓴다.
+     ① 청크 아래 한글이 없고, 문장 전체의 의역이 카드 아래에 한 줄로 붙는다(.sent-ko).
+     ② 오른쪽 해설 칸이 없다. 카드는 지면 폭을 다 쓰고 위아래로만 쌓인다.
+   그래서 카드가 한 열, 세 줄짜리 격자가 된다(머리 / 영어 / 의역).
+
+   ②는 분량 때문이다. 실측(8문장 지문, A4): 오른쪽 칸이 있으면 5쪽, 없애면 4쪽. 영어가
+   지면의 34%를 내주지 않아 줄바꿈이 줄고, 짧은 문장인데 오른쪽 설명이 길어서 카드가
+   늘어나던 것도 없어진다. 출제 포인트는 지문 상세분석에 그대로 있다. */
+.sent.brief{grid-template-columns:1fr; grid-template-areas:"head" "body" "ko";}
+/* 짧은 문장 여러 개를 한 카드에 담았을 때. 머리줄 번호가 "9~11"처럼 범위가 되어
+   문장 하나를 짚지 못하므로, 영어와 의역 양쪽에 같은 번호(①②③)를 달아 짝을 잇는다. */
+.brief-mrow{width:100%;}
+/* 한 줄에 들어가는지 재보는 칸. 화면에 안 보이되 글꼴·자간은 실제 카드와 같아야
+   해서 display:none이 아니라 화면 밖으로 밀어 둔다(none이면 높이가 0으로 나온다). */
+.brief-measure{position:absolute; left:-99999px; top:0; visibility:hidden;
+  pointer-events:none; contain:layout style;}
+.brief-mko + .brief-mko{margin-top:3px;}
+.brief-mno{
+  display:inline-block; min-width:16px; margin-right:2px;
+  color:var(--ink-soft); font-size:11px; font-weight:700; vertical-align:1px;
+}
+.c-eng .brief-mno{vertical-align:2px;}
+.sent-ko{
+  grid-area:ko; min-width:0; margin:0 18px 14px;
+  padding:8px 11px; border-radius:8px; background:var(--accent-soft);
+  font-size:13px; line-height:1.7; color:var(--ink); word-break:keep-all;
+}
+/* 흐름 요약과 요약 그림. 새 쪽을 강제하지 않으므로 자리만 있으면 앞 내용에 이어
+   붙는다. 각각 쪼개지지만 않으면 되고(그래야 표가 두 쪽에 걸리거나 그림이 잘리지
+   않는다), 둘을 한 덩어리로 묶지는 않는다 — 묶으면 합친 높이가 커져 앞 쪽에
+   140mm가 비어 있어도 통째로 다음 쪽으로 넘어간다. */
+.brief-tail{break-inside:avoid; page-break-inside:avoid;}
+/* 폭은 지면을 다 쓰되(그래야 그림 속 글자가 읽힌다) 높이를 한 쪽의 절반으로 묶는다.
+   16:9이면 186mm 폭에 105mm라 걸리지 않지만, 세로로 긴 그림이 들어와도 표를 다음
+   쪽으로 밀어내지 못하게 하는 안전장치다. object-fit:contain이라 눌리지 않는다. */
+.brief-tail .infographic{width:100%; height:auto; max-height:130mm; object-fit:contain;}
+.brief-tail h3.section{margin-top:14px;}
+.brief-tail h3.section:first-child{margin-top:0;}
+
 /* 시험지명 — 문제 제작 탭에서 인쇄창·저장창에 적어 넣은 이름. 지면 맨 위에 한 줄로
    놓아, 여러 벌을 뽑았을 때 어느 시험지인지 바로 보이게 한다. */
 .qz-sheet-title{
@@ -1149,12 +1190,14 @@ u{
    .pg-blk = 인쇄에서 쪼개지지 않는 최소 덩어리(표지 / 문장 카드 하나 / 표 하나).
    평소에는 아무 모양도 주지 않는다 — '쪽 구성'을 켰을 때만 손잡이와 경계선이 보인다.
    결과 폭을 인쇄 폭(210 - 좌우 12mm)에 맞춰야 화면에서 잰 쪽 경계가 실제와 비슷해진다. */
-#result.paging{width:186mm; max-width:100%; margin:0 auto;}
+/* 쪽 구성 중에는 지면 폭으로 맞춰 둔다 — 재는 폭과 인쇄 폭이 달라지면 경계선이
+   엉뚱한 데 그어진다. 지문 상세분석(#result)과 소책자(#briefDoc)가 같이 쓴다. */
+.paging{width:186mm; max-width:100%; margin:0 auto;}
 /* 덩어리마다 위쪽 34px을 손잡이 자리로 비운다. 예전처럼 손잡이를 내용 위에 겹쳐 놓으면
    표 제목('Ⅱ. 주제 & 흐름 요약')을 가려 읽을 수 없었다.
    이 자리는 화면에만 있으므로 쪽 계산에서는 빼고 센다 — app.js의 HANDLE_PAD_PX와
    같은 값이어야 한다. 단추 높이(글자 13px + 위아래 8px + 테두리)보다 커야 한다. */
-#result.paging .pg-blk{position:relative; padding-top:34px;}
+.paging .pg-blk{position:relative; padding-top:34px;}
 .pg-handle{
   position:absolute; top:1px; left:12px; z-index:4;
   display:flex; align-items:center; gap:8px;
@@ -1408,7 +1451,7 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
      전부 화면용이므로 지운다. 지문의 첫 덩어리는 .passage-block이 이미 쪽을 넘기므로
      여기서 또 넘기면 빈 쪽이 생긴다 — 그 경우만 무시한다. */
   .pg-handle,.pg-gap,.pg-edge{display:none !important;}
-  #result.paging{width:auto; max-width:none;}
+  .paging{width:auto; max-width:none;}
   .pg-blk[data-brk="page"]{break-before:page; page-break-before:always;}
   .pg-blk.pg-head[data-brk="page"]{break-before:auto; page-break-before:auto;}
   h3.section{break-after:avoid; page-break-after:avoid;}

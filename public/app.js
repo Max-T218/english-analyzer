@@ -2105,7 +2105,7 @@ function syncFloatPrint() {
   const btn =
     active &&
     active.querySelector(
-      "#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
+      "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
     );
   // 묶음은 페이지 이동 버튼도 담고 있으므로 통째로 감추지 않고 인쇄 버튼만 여닫는다
   floatPrintBtn.hidden = !(btn && btn.style.display !== "none");
@@ -2120,7 +2120,7 @@ function activeSectionBtn(selector) {
 }
 floatPrintBtn.addEventListener("click", () => {
   const b = activeSectionBtn(
-    "#printBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
+    "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
   );
   if (b) b.click();
 });
@@ -2206,6 +2206,10 @@ tabBtns.forEach((btn) => {
     tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
     tabPages.forEach((p) => p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
     syncTabChrome(btn.dataset.tab);
+    // 쪽 구성이 보이지 않는 화면에서 켜진 채로 남으면 안 된다 — 단추 글씨가
+    // '끝내기'로 남아, 다른 탭에서 눌렀을 때 엉뚱한 화면을 건드린다.
+    if (pgHost && !pgHost.closest(`#tab-${btn.dataset.tab}`)) setPagingMode(false);
+    if (btn.dataset.tab === "brief") updateBriefCostHint();
     syncFloatPrint();
   });
 });
@@ -2272,9 +2276,19 @@ editBtn.addEventListener("click", () => {
 
    실제 인쇄에 반영되는 것은 덩어리의 data-brk 하나뿐이고(style.css의 인쇄 규칙),
    손잡이·경계선·빈 칸은 전부 화면 표시라 인쇄에서 빠진다. */
-const pageBtn = $("pageBtn");
-const pageResetBtn = $("pageResetBtn");
-const pageHintEl = $("pageHint");
+/* 쪽 구성은 지문 상세분석과 소책자 분석 둘이 같이 쓴다. 두 벌로 베끼면 한쪽만
+   고쳐져 조용히 어긋나므로(쪽 높이 계산이 특히 그렇다), 대상 화면과 단추만 갈아 끼우고
+   재는 코드는 하나만 둔다. 한 번에 한 화면만 쪽 구성 상태가 된다 — 탭이 하나뿐이니
+   둘을 동시에 켤 일이 없고, 켜 둔 채 탭을 옮기면 아래 setPagingMode(false)가 끈다. */
+let pgHost = null;   // 지금 쪽 구성 중인 결과 화면 (#result 또는 #briefDoc)
+let pgUI = null;     // 그 화면의 단추·안내 { btn, resetBtn, hint }
+
+const PAGING_UI = {
+  analyze: { btn: $("pageBtn"), resetBtn: $("pageResetBtn"), hint: $("pageHint") },
+  brief: { btn: $("briefPageBtn"), resetBtn: $("briefPageResetBtn"), hint: $("briefPageHint") },
+};
+const pageBtn = PAGING_UI.analyze.btn;
+const pageResetBtn = PAGING_UI.analyze.resetBtn;
 
 const PX_PER_MM = 96 / 25.4;              // CSS가 정한 환산값 (1in = 96px)
 const PAGE_W_MM = 210 - 12 * 2;           // A4 폭 - @page 좌우 여백
@@ -2286,11 +2300,11 @@ const PAGE_H_MM = 297 - 14 - 10 - 12;
 const HANDLE_PAD_PX = 34;
 
 function pagingOn() {
-  return resultEl.classList.contains("paging");
+  return !!pgHost;
 }
 
 function pgBlocks() {
-  return [...resultEl.querySelectorAll(".pg-blk")];
+  return pgHost ? [...pgHost.querySelectorAll(".pg-blk")] : [];
 }
 
 // 지문의 첫 덩어리인가 — 지문마다 이미 새 쪽에서 시작하므로 쪽 나눔을 걸 자리가 없다
@@ -2318,12 +2332,12 @@ function ensureHandles() {
 }
 
 function removeHandles() {
-  resultEl.querySelectorAll(".pg-handle").forEach((n) => n.remove());
+  if (pgHost) pgHost.querySelectorAll(".pg-handle").forEach((n) => n.remove());
 }
 
 // 경계선·빈 칸은 잴 때마다 지우고 다시 그린다 (남겨 두면 다음 측정이 그만큼 밀린다)
 function clearPageMarks() {
-  resultEl.querySelectorAll(".pg-gap, .pg-edge").forEach((n) => n.remove());
+  if (pgHost) pgHost.querySelectorAll(".pg-gap, .pg-edge").forEach((n) => n.remove());
 }
 
 function layoutPages() {
@@ -2331,13 +2345,13 @@ function layoutPages() {
   clearPageMarks();
   const blks = pgBlocks();
   if (!blks.length) {
-    pageHintEl.textContent = "";
+    pgUI.hint.textContent = "";
     return;
   }
 
   // 측정 — 덩어리의 높이와, 덩어리 사이 여백(바깥 여백은 접히므로 좌표 차로 구한다).
   // boxH는 화면 상자(손잡이 자리 포함), hs는 종이에서 실제로 차지할 높이다.
-  const base = resultEl.getBoundingClientRect().top;
+  const base = pgHost.getBoundingClientRect().top;
   const rects = blks.map((b) => b.getBoundingClientRect());
   const tops = rects.map((r) => r.top - base);
   const boxH = rects.map((r) => r.height);
@@ -2407,49 +2421,72 @@ function layoutPages() {
     if (note) note.textContent = !on && startAt.has(i) ? `${startAt.get(i)}쪽 첫머리` : "";
   });
 
-  const narrow = Math.abs(resultEl.clientWidth - PAGE_W_MM * PX_PER_MM) > 8;
-  pageHintEl.textContent =
+  const narrow = Math.abs(pgHost.clientWidth - PAGE_W_MM * PX_PER_MM) > 8;
+  pgUI.hint.textContent =
     `모두 ${pages.length}쪽 — 표·문장 카드 위의 [✂ 새 쪽 시작] · [⤴ 위로 올리기]로 옮기세요.` +
     (narrow ? " (창이 좁아 실제 인쇄와 다를 수 있습니다)" : "");
 }
 
-function setPagingMode(on) {
-  if (on && resultEl.classList.contains("editing")) setEditMode(false);
-  resultEl.classList.toggle("paging", on);
-  pageBtn.textContent = on ? "✅ 쪽 구성 끝내기" : "📄 쪽 구성";
-  pageResetBtn.style.display = on ? "inline-flex" : "none";
+/* 되돌리기는 지문 상세분석에만 있다(결과 화면을 통째로 찍어 쌓는 방식이라 #result에
+   묶여 있다). 소책자에서 쪽을 옮길 때 이걸 부르면 엉뚱하게 분석본 화면을 찍으므로
+   대상이 분석본일 때만 부른다. */
+function pgUndo(fn) {
+  if (pgHost === resultEl) fn();
+}
+
+function setPagingMode(on, host, ui) {
+  const nextHost = on ? host || pgHost || resultEl : pgHost;
+  if (!nextHost) return;
+  if (on && nextHost === resultEl && resultEl.classList.contains("editing")) setEditMode(false);
+  if (on) {
+    pgHost = nextHost;
+    pgUI = ui || pgUI || PAGING_UI.analyze;
+  }
+  nextHost.classList.toggle("paging", on);
+  const io = pgUI || PAGING_UI.analyze;
+  io.btn.textContent = on ? "✅ 쪽 구성 끝내기" : "📄 쪽 구성";
+  io.resetBtn.style.display = on ? "inline-flex" : "none";
   if (on) {
     ensureHandles();
     layoutPages();
   } else {
     clearPageMarks();
     removeHandles();
-    pageHintEl.textContent = "";
+    io.hint.textContent = "";
+    pgHost = null;
+    pgUI = null;
   }
   syncUndoBtn();
 }
 
-pageBtn.addEventListener("click", () => setPagingMode(!pagingOn()));
-
-pageResetBtn.addEventListener("click", () => {
-  flushUndo();
-  pgBlocks().forEach((b) => {
-    if (b.dataset.brkDef) b.dataset.brk = b.dataset.brkDef;
-    else delete b.dataset.brk;
+Object.entries(PAGING_UI).forEach(([key, ui]) => {
+  if (!ui.btn) return;
+  // briefDocEl은 이 아래에서 선언되므로 여기서는 DOM에서 바로 집는다(TDZ 회피)
+  const host = key === "brief" ? $("briefDoc") : resultEl;
+  ui.btn.addEventListener("click", () => {
+    // 다른 화면이 켜져 있으면 먼저 끈다 — 한 번에 한 화면만 다룬다
+    if (pgHost && pgHost !== host) setPagingMode(false);
+    setPagingMode(pgHost !== host, host, ui);
   });
-  layoutPages();
-  pushUndo(); // 되돌리기 한 단계 — '처음으로'도 무를 수 있어야 한다
-});
-
-resultEl.addEventListener("click", (e) => {
-  const btn = e.target.closest(".pg-brk-btn");
-  if (!btn || !pagingOn()) return;
-  const blk = btn.closest(".pg-blk");
-  if (!blk || isPassageHead(blk)) return;
-  flushUndo();
-  blk.dataset.brk = blk.dataset.brk === "page" ? "auto" : "page";
-  layoutPages();
-  pushUndo();
+  ui.resetBtn.addEventListener("click", () => {
+    pgUndo(flushUndo);
+    pgBlocks().forEach((b) => {
+      if (b.dataset.brkDef) b.dataset.brk = b.dataset.brkDef;
+      else delete b.dataset.brk;
+    });
+    layoutPages();
+    pgUndo(pushUndo); // 되돌리기 한 단계 — '처음으로'도 무를 수 있어야 한다
+  });
+  host.addEventListener("click", (e) => {
+    const btn = e.target.closest(".pg-brk-btn");
+    if (!btn || pgHost !== host) return;
+    const blk = btn.closest(".pg-blk");
+    if (!blk || isPassageHead(blk)) return;
+    pgUndo(flushUndo);
+    blk.dataset.brk = blk.dataset.brk === "page" ? "auto" : "page";
+    layoutPages();
+    pgUndo(pushUndo);
+  });
 });
 
 // 창 폭이 바뀌면 줄바꿈이 달라져 쪽 경계도 달라진다 — 잠잠해진 뒤 한 번만 다시 잰다
@@ -3061,6 +3098,388 @@ function buildAnalysisHtml(d, job, total, idx) {
   parts.push(`</section>`);
   return parts.join("");
 }
+
+/* ══════════════════════════ 소책자 분석 탭 ══════════════════════════
+   상세분석은 문장마다 해설·출제 포인트가 붙어 지문 하나에 여러 쪽이 나온다. 소책자로
+   묶기엔 너무 두꺼워, 학생이 들고 다니며 볼 것만 남긴 얇은 판을 따로 만든다 —
+   지문·의역·흐름 요약.
+
+   상세분석과는 연결하지 않고 지문에서 바로 만든다(/api/brief). 상세분석 결과를 접어
+   쓰는 길도 만들어 봤지만, 그쪽 해석은 의미단위 직역이라 이어 붙이면 소책자가 원하는
+   의역이 나오지 않았다 — 어차피 AI를 불러야 해서 무료라는 이점도 없었다. */
+const briefBtn = $("briefBtn");
+const briefPrintBtn = $("briefPrintBtn");
+const briefPageBtn = $("briefPageBtn");
+const briefSaveBtn = $("briefSaveBtn");
+const briefDocEl = $("briefDoc");
+const briefErrorEl = $("briefError");
+const briefLoadingEl = $("briefLoading");
+const briefLoadingTextEl = $("briefLoadingText");
+const briefCostHintEl = $("briefCostHint");
+const briefImageChk = $("briefImageChk");
+const briefImageNote = $("briefImageNote");
+let lastBriefEntries = []; // 저장/불러오기용 — {job, data}
+
+/* ── 짧은 문장 여러 개를 한 카드에 담기 ──
+   짧은 문장은 껍데기가 내용보다 크다. 실측(186mm 폭): 한 줄짜리 문장 카드 40mm 중
+   머리줄·테두리·여백이 24mm이고 영어와 의역은 16mm뿐이다. 그런 카드가 줄줄이 오면
+   (대사·인용이 이어지는 지문이 그렇다) 종이의 절반을 껍데기가 먹는다.
+
+   이어 붙이면 껍데기가 한 벌로 줄어 문장 하나당 23mm씩 준다. 실측한 표본에서는
+   9문장 594mm 3쪽 → 4카드 480mm 2쪽이 됐다.
+
+   합칠 조건을 좁게 잡은 이유가 각각 있다.
+     · 유형 딱지(어법·빈칸…)나 주제문 표시가 있으면 안 합친다 — 그 표시는 카드 하나에
+       하나씩 붙는 것이라, 합치면 어느 문장 것인지 알 수 없어진다.
+     · 흐름 태그가 같아야 한다 — 머리줄에 태그를 하나만 쓰기 때문이다. '직접 인용①②③'
+       처럼 번호만 다른 것은 같은 것으로 본다.
+     · 영어가 한 줄에 들어갈 만큼 짧아야 한다. 두 줄짜리를 합치면 어디까지가 한 문장인지
+       흐려진다.
+     · 최대 세 개까지. 합친 카드는 쪽 경계에서 통째로 다음 쪽으로 넘어가므로, 너무 크면
+       쪽 끝에 남은 자리를 통째로 버리게 된다(넷을 합치면 92mm짜리 덩어리가 된다).
+
+   판정은 전부 화면에서 한다 — 서버도 저장한 데이터도 건드리지 않으므로, 예전에 저장해
+   둔 소책자를 다시 열어도 그대로 합쳐져 나온다. */
+const BRIEF_MERGE_MAX = 3;   // 한 카드에 담을 문장 수 상한
+
+/* '짧다'를 글자 수로 어림하지 않고 실제로 그려서 잰다.
+   처음에는 영어 45자 이하로 잡았는데, 한 줄에 넉넉히 들어가는 51자 문장이 제외되어
+   외톨이 카드가 생겼다. 루비(위의 한글)가 낱말보다 넓으면 그만큼 자리를 더 먹고
+   nobreak가 걸린 덩어리는 쪼개지지도 않아서, 글자 수와 실제 폭이 잘 안 맞는다.
+
+   재는 폭은 화면 폭이 아니라 **인쇄 폭**(A4 186mm에서 카드 안쪽 168mm)으로 고정한다.
+   화면 폭으로 재면 노트북과 큰 모니터에서 묶이는 문장이 달라져, 같은 자료를 뽑아도
+   사람마다 쪽수가 달라진다.
+
+   한 줄인지 아닌지는 '아주 넓은 칸에서 잰 높이'와 견줘 판단한다 — 루비가 있으면 줄
+   높이 자체가 달라지므로, 고정된 줄 높이와 비교하는 방식은 믿을 수 없다. */
+const BRIEF_PRINT_INNER_MM = 168;
+
+let briefMeasureBox = null;
+function briefMeasure(html, widthCss) {
+  if (!briefMeasureBox) {
+    briefMeasureBox = document.createElement("div");
+    briefMeasureBox.className = "brief-measure";
+    briefMeasureBox.innerHTML = `<div class="chunks"><div class="chunk brief-mrow"><div class="c-eng"></div></div></div>`;
+    document.body.appendChild(briefMeasureBox);
+  }
+  briefMeasureBox.style.width = widthCss;
+  const el = briefMeasureBox.querySelector(".c-eng");
+  el.innerHTML = html;
+  return el.getBoundingClientRect().height;
+}
+
+function briefFitsOneLine(s) {
+  const html =
+    `<span class="brief-mno">${briefNoMark(s.no)}</span>` +
+    (s.chunks || []).map((c) => c.eng || "").join(" ");
+  const wide = briefMeasure(html, "4000px");            // 반드시 한 줄이 되는 폭
+  const real = briefMeasure(html, BRIEF_PRINT_INNER_MM + "mm");
+  return real <= wide + 1;                              // 인쇄 폭에서도 한 줄인가
+}
+
+// '직접 인용①'과 '직접 인용②'는 같은 태그로 본다
+function briefTagKey(s) {
+  return String(s.tag || "").replace(/[①②③④⑤⑥⑦⑧⑨⑩❶❷❸❹❺❻❼❽❾❿0-9]/g, "").trim();
+}
+
+const BRIEF_CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
+function briefNoMark(n) {
+  const i = Number(n);
+  return i >= 1 && i <= 20 ? BRIEF_CIRCLED[i - 1] : `${esc(n)}.`;
+}
+
+function groupBriefSentences(sents) {
+  /* 먼저 '합쳐도 되는 것이 연이어 오는 구간'을 통째로 모은 다음, 그 구간을 고르게
+     쪼갠다. 앞에서부터 상한까지 채우는 방식(3,3,1…)으로 하면 끝에 한 개짜리가 남아
+     카드가 하나 더 생긴다 — 넷을 3+1로 나누면 133mm, 2+2로 나누면 116mm다. */
+  const runs = [];
+  (sents || []).forEach((s) => {
+    const mergeable =
+      !(s.examTags || []).length &&
+      !s.isTopic &&
+      briefFitsOneLine(s);
+    const last = runs[runs.length - 1];
+    if (mergeable && last && last.mergeable && briefTagKey(last.list[0]) === briefTagKey(s)) {
+      last.list.push(s);
+    } else {
+      runs.push({ mergeable, list: [s] });
+    }
+  });
+
+  const out = [];
+  runs.forEach((run) => {
+    if (!run.mergeable || run.list.length === 1) {
+      out.push({ list: run.list });
+      return;
+    }
+    const parts = Math.ceil(run.list.length / BRIEF_MERGE_MAX);
+    const base = Math.floor(run.list.length / parts);
+    let extra = run.list.length % parts;   // 나머지는 앞쪽 묶음에 하나씩 얹는다
+    let i = 0;
+    for (let p = 0; p < parts; p++) {
+      const take = base + (extra > 0 ? 1 : 0);
+      if (extra > 0) extra--;
+      out.push({ list: run.list.slice(i, i + take) });
+      i += take;
+    }
+  });
+  return out;
+}
+
+// 문장 카드 하나. list가 둘 이상이면 한 카드에 이어 담는다.
+function briefCardHtml(list) {
+  const s = list[0];
+  if (list.length === 1) {
+    const topicBadge = s.isTopic ? `<span class="exam-tag et-topic">주제문</span>` : "";
+    const examBadges = (s.examTags || [])
+      .map((t) => `<span class="exam-tag et-${examCls(t)}">${esc(t)}</span>`)
+      .join("");
+    const chunksHtml = (s.chunks || [])
+      .map((c) => `<div class="chunk"><div class="c-eng">${safeHTML(c.eng)}</div></div>`)
+      .join("");
+    return `
+      <div class="sent brief${s.isTopic ? " is-topic" : ""}">
+        <div class="sent-head"><span class="sent-no">${esc(s.no)}</span><span class="tag">${esc(s.tag || "")}</span><span class="exam-tags">${topicBadge}${examBadges}</span></div>
+        <div class="chunks">${chunksHtml}</div>
+        <div class="sent-ko">${safeHTML(s.ko)}</div>
+      </div>`;
+  }
+  /* 합친 카드. 영어와 의역이 각각 여러 줄이 되므로 양쪽에 같은 번호(①②③)를 달아
+     짝을 잃지 않게 한다 — 머리줄 번호는 '9~11'처럼 범위가 되어 문장 하나를 짚지 못한다. */
+  const last = list[list.length - 1];
+  const eng = list
+    .map(
+      (x) => `<div class="chunk brief-mrow"><div class="c-eng"><span class="brief-mno">${briefNoMark(x.no)}</span>${
+        (x.chunks || []).map((c) => safeHTML(c.eng)).join(" ")
+      }</div></div>`
+    )
+    .join("");
+  const kor = list
+    .map((x) => `<div class="brief-mko"><span class="brief-mno">${briefNoMark(x.no)}</span>${safeHTML(x.ko)}</div>`)
+    .join("");
+  return `
+      <div class="sent brief">
+        <div class="sent-head"><span class="sent-no">${esc(s.no)}~${esc(last.no)}</span><span class="tag">${esc(briefTagKey(s))}</span><span class="exam-tags"></span></div>
+        <div class="chunks">${eng}</div>
+        <div class="sent-ko">${kor}</div>
+      </div>`;
+}
+
+/* 한 지문의 소책자 HTML. 상세분석(buildAnalysisHtml)과 같은 표지·문장 카드·요약표를
+   쓰되 세 군데가 다르다.
+     ① 청크 아래 한글(.c-kor)이 없다. 해석은 문장 하나짜리 의역(.sent-ko)으로 한 번만 붙는다.
+     ② 오른쪽 칸이 통째로 없다 — 문장별 해설도, 출제 포인트도 싣지 않는다.
+     ③ 핵심 어휘표가 없다(단어장이 따로 있다). 그래서 그림이 Ⅳ가 아니라 Ⅲ이다. */
+function buildBriefHtml(d, job, total, image) {
+  const parts = [`<section class="passage-block">`];
+
+  /* 표지 — 색상 범례를 함께 둔다. 소책자도 같은 색·같은 루비를 쓰므로 범례가 없으면
+     빨강·파랑이 무슨 뜻인지 알 길이 없다.
+
+     '목표 어법'(주황)은 실제로 그 색이 쓰였을 때만 내놓는다. 상세분석은 지금 입력칸의
+     값을 보고 정하는데, 소책자는 저장본을 불러오면 그 칸이 비어 있을 수 있어(저장할 때
+     목표 어법을 함께 담지 않는다) 결과물 자체를 보고 정한다 — 주황이 칠해졌는데 범례에
+     설명이 없으면 학생은 그 색이 무슨 뜻인지 알 길이 없다. */
+  const hasTarget = (d.sentences || []).some((x) =>
+    (x.chunks || []).some((c) => String(c.eng || "").includes('class="tg"'))
+  );
+  parts.push(`
+    <div class="pg-blk pg-head">
+    ${passageBanner(job, total)}
+    <div class="cover">
+      <h2>${esc(d.englishTitle || "")}</h2>
+      <div class="ko-title">${esc(d.koreanTitle || "")}</div>
+      <div class="legend">
+        <span class="legend-title">색상 범례</span>
+        <b><span class="dot" style="background:var(--g)"></span><span class="g">어법</span></b>
+        <b><span class="dot" style="background:var(--v)"></span><span class="v">어휘</span></b>
+        <b><span class="dot" style="background:var(--gv)"></span><span class="gv">어법+어휘</span></b>
+        <b><span class="dot" style="background:var(--conj)"></span><span class="dot" style="background:var(--conj2)"></span><span class="dot" style="background:var(--conj3)"></span><span class="conj-hl">병렬구조</span><span class="legend-note">같은 색끼리 한 묶음</span></b>
+        <b><span class="dot" style="background:var(--hl)"></span><span class="hl" style="padding:0 3px;border-radius:3px">강조·연결어</span></b>
+        ${hasTarget ? `<b><span class="dot" style="background:var(--target-hl)"></span><span class="tg" style="padding:0 3px;border-radius:3px">목표 어법</span></b>` : ""}
+      </div>
+    </div>
+    </div>
+  `);
+
+  /* 오른쪽 해설 칸이 없다. 카드는 지면 폭을 다 쓰고 위아래로만 쌓인다 —
+     영어(끊어읽기·루비) 위, 의역 아래.
+
+     출제 포인트를 뺀 것은 분량 때문이다. 실측(8문장 지문, A4): 오른쪽 칸이 있으면
+     5쪽, 없애면 4쪽으로 준다. 두 가지가 한꺼번에 좋아지기 때문이다 — 영어가 34%를
+     내주지 않아 줄바꿈이 줄고, 짧은 문장인데 오른쪽 설명이 길어서 카드가 늘어나던
+     것도 없어진다(어떤 카드는 107mm → 68mm). 출제 포인트는 지문 상세분석에 그대로
+     있다. 머리줄의 유형 딱지(요지·빈칸…)는 한 줄이라 분량을 안 먹으므로 남긴다. */
+  groupBriefSentences(d.sentences).forEach((g) => {
+    parts.push(`<div class="pg-blk">${briefCardHtml(g.list)}</div>`);
+  });
+
+  /* 흐름 요약과 그림을 한 덩어리로 묶는다. 상세분석은 둘을 따로 두고 각각 새 쪽에서
+     시작시키는데(자료가 두꺼워 어차피 쪽이 넘어간다), 소책자에서 그렇게 하면 표 한 장에
+     한 쪽, 그림 한 장에 한 쪽을 써서 뒤쪽 두 장이 거의 비어 버린다. 둘을 합쳐도
+     186mm 폭에서 표 ~50mm + 16:9 그림 ~105mm라 한 쪽(261mm)에 넉넉히 들어간다.
+     새 쪽을 강제하지도 않는다 — 마지막 문장 카드 뒤에 자리가 남으면 거기 이어 붙는다.
+     대신 break-inside:avoid로 이 덩어리가 쪽 경계에서 쪼개지는 것만 막는다. */
+  /* 흐름 요약과 그림은 각각 따로 덩어리를 만든다. 처음에는 둘을 한 덩어리로 묶어
+     "같은 쪽에 오게" 하려 했는데, 묶으면 둘을 합친 높이(그림이 있으면 200mm가 넘는다)가
+     한 덩어리가 되어 앞 쪽에 140mm가 비어 있어도 통째로 다음 쪽으로 넘어갔다.
+
+     따로 두어도 자리만 있으면 어차피 나란히 붙는다 — 각각 쪼개지지만 않으면 되고,
+     그건 break-inside:avoid가 이미 한다. 따로 두면 표만 앞 쪽 빈자리에 들어가고 그림만
+     넘어갈 수 있어 낭비가 준다. 새 쪽을 강제하지 않는 것은 그대로다. */
+  if (d.summary && d.summary.length) {
+    const rows = d.summary.map(
+      (r) => `<tr><td>${esc(r.label)}</td><td>${safeHTML(r.content)}</td></tr>`
+    ).join("");
+    parts.push(`
+      <div class="pg-blk brief-tail">
+      <h3 class="section"><span class="num">Ⅱ.</span> 주제 &amp; 흐름 요약</h3>
+      <div class="table-wrap"><table class="flow"><tbody>${rows}</tbody></table></div>
+      </div>`);
+  }
+  if (image) {
+    parts.push(`
+      <div class="pg-blk brief-tail">
+      <h3 class="section"><span class="num">${d.summary && d.summary.length ? "Ⅲ." : "Ⅱ."}</span> 한눈에 보는 요약</h3>
+      <div class="table-wrap"><img class="infographic" src="${image}" alt="지문 요약 인포그래픽"></div>
+      <p class="info-caution">그림 속 글자는 AI가 그린 것이라 '직접 수정'으로 고칠 수 없습니다.
+        인쇄하기 전에 오탈자가 없는지 한 번 확인해 주세요.</p>
+      </div>`);
+  }
+
+  parts.push(`</section>`);
+  return parts.join("");
+}
+
+function renderBriefEntries(entries) {
+  // 화면을 통째로 다시 그리므로 쪽 구성은 먼저 끈다 — 안 끄면 손잡이와 경계선이
+  // 사라진 채로 '켜져 있다'고 남아, 단추 글씨와 화면이 어긋난다.
+  if (pgHost === briefDocEl) setPagingMode(false);
+  briefDocEl.innerHTML = entries
+    .map(({ job, data, image }) => buildBriefHtml(data, job, entries.length, image))
+    .join("");
+  if (entries.length) {
+    briefDocEl.insertAdjacentHTML("beforeend", `<footer>소책자용 분석 · 자동 생성</footer>`);
+  }
+  const on = entries.length ? "inline-flex" : "none";
+  briefPrintBtn.style.display = on;
+  briefPageBtn.style.display = on;
+  briefSaveBtn.style.display = on;
+  lastBriefEntries = entries;
+  syncFloatPrint();
+  if (entries.length) briefDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function updateBriefCostHint() {
+  if (!briefCostHintEl) return;
+  const n = billableJobCount();
+  if (!PRICING || !n) {
+    briefCostHintEl.textContent = "";
+    return;
+  }
+  const withImg = briefImageChk && briefImageChk.checked;
+  const each = PRICING.brief + (withImg ? PRICING.infographic : 0);
+  briefCostHintEl.innerHTML =
+    `지문 <b>${n}개</b> — <b>${(each * n).toLocaleString()}원</b>` +
+    (withImg ? `<span class="cost-hint-note">(요약 이미지 포함)</span>` : "");
+}
+
+// 지문칸은 이 탭 밖에 있고 다른 탭과 함께 쓰므로, 글자가 바뀔 때마다 예상 금액을
+// 다시 센다(탭을 열 때만 세면 지문을 넣어도 0원이라고 남아 있다).
+passageListEl.addEventListener("input", updateBriefCostHint);
+if (briefImageChk) briefImageChk.addEventListener("change", updateBriefCostHint);
+// 그림 값은 화면에 숫자를 박지 않는다 — 가격은 서버가 유일한 출처다(/api/pricing)
+function syncBriefImageNote() {
+  if (!briefImageNote || !PRICING) return;
+  briefImageNote.textContent = `(지문당 +${PRICING.infographic.toLocaleString()}원 · 8~12초)`;
+}
+onPricingReady(syncBriefImageNote);
+
+briefBtn.addEventListener("click", async () => {
+  briefErrorEl.textContent = "";
+  const jobs = passageMgr.getJobs().filter((j) => j.text && j.text.trim().length >= 20);
+  if (!jobs.length) {
+    briefErrorEl.textContent = "분석할 영어 지문을 입력하세요 (20자 이상).";
+    return;
+  }
+  if (PRICING) {
+    const withImg = briefImageChk && briefImageChk.checked;
+    const cost = (PRICING.brief + (withImg ? PRICING.infographic : 0)) * jobs.length;
+    const what = withImg ? "소책자 분석과 요약 이미지를" : "소책자 분석을";
+    if (!costConfirmed(cost, `지문 ${jobs.length}개의 ${what} 만듭니다.`, jobs.length)) return;
+  }
+  briefBtn.disabled = true;
+  briefLoadingEl.classList.add("on");
+  briefDocEl.innerHTML = "";
+  renderBriefEntries([]);
+  const entries = [];
+  for (let i = 0; i < jobs.length; i++) {
+    const job = jobs[i];
+    briefLoadingTextEl.textContent =
+      jobs.length > 1 ? `${job.name} 분석하는 중… (${i + 1}/${jobs.length})` : "AI가 소책자 분석을 만들고 있습니다…";
+    try {
+      const data = await postJson(
+        "/api/brief",
+        { passage: job.text, targetGrammar: grammarEl.value },
+        "소책자 분석에 실패했습니다."
+      );
+      entries.push({ job, data });
+      renderBriefEntries(entries.slice());   // 하나씩 붙여, 도중에 멈춰도 남게 한다
+      if (briefImageChk && briefImageChk.checked) {
+        briefLoadingTextEl.textContent =
+          jobs.length > 1
+            ? `${job.name} 요약 이미지 그리는 중… (${i + 1}/${jobs.length})`
+            : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
+        try {
+          /* 상세분석과 같은 가로형이되 4K가 아니라 2K다. 소책자는 지면이 작아
+             2K로도 인쇄 해상도가 충분하고, 값이 절반이다. */
+          const img = await postJson(
+            "/api/infographic",
+            { passage: job.text },
+            "요약 이미지를 만들지 못했습니다."
+          );
+          entries[entries.length - 1].image = b64ToBlobUrl(img.image, img.mime || "image/jpeg");
+          renderBriefEntries(entries.slice());
+        } catch (imgErr) {
+          // 그림만 실패해도 요약본은 살린다 — 이미 만들어진 것을 버릴 이유가 없다
+          briefErrorEl.textContent = `${job.name} 요약 이미지: ${imgErr.message || imgErr}`;
+        }
+      }
+    } catch (err) {
+      briefDocEl.insertAdjacentHTML(
+        "beforeend",
+        buildErrorHtml(job, jobs.length, err.message || String(err))
+      );
+      if (isQuotaError(err)) break;
+    }
+  }
+  briefLoadingEl.classList.remove("on");
+  briefBtn.disabled = false;
+  refreshTokenDisplay();
+  if (entries.length) showDoneGuide(`지문 ${entries.length}개의 소책자 분석`, false);
+});
+
+/* 워드(.docx) 내보내기는 두지 않는다 — 지문 상세분석에 없는 것과 같은 이유다.
+   영어 위의 루비(한글 뜻)를 워드가 표현하지 못해, 변환하면 그 뜻이 문장 안으로
+   끼어든다("Many people believe 믿다 that 명사절 접속사 talent is fixed"). 실제로
+   변환해 확인한 결과다. 인쇄/PDF는 브라우저가 루비를 그대로 그려 주므로 문제없다. */
+briefPrintBtn.addEventListener("click", () => printDoc(() => passageBasedName("소책자분석")));
+TAB_SAVE.brief = {
+  saveBtn: briefSaveBtn,
+  canSave: () => (lastBriefEntries.length ? "" : "저장할 소책자 분석이 없습니다. 먼저 만들어 주세요."),
+  getPayload: () => ({
+    passages: passageMgr.getJobs(),
+    entries: lastBriefEntries,
+    settings: { targetGrammar: grammarEl.value },
+  }),
+  applyPayload: (payload) => {
+    passageMgr.setJobs(payload.passages || []);
+    grammarEl.value = (payload.settings && payload.settings.targetGrammar) || "";
+    renderBriefEntries(payload.entries || []);
+  },
+  clearResults: () => renderBriefEntries([]),
+};
 
 /* ══════════════════════════ 문제 제작 탭 (객관식 / 주관식) ══════════════════════════ */
 
@@ -6018,6 +6437,7 @@ TAB_SAVE.vocab = {
 const TAB_LABELS = {
   passage: "📄 지문",
   analyze: "📖 지문 상세분석",
+  brief: "📕 소책자 분석",
   mcq: "📝 객관식 문제",
   saq: "✍️ 주관식 문제",
   workbook: "📚 워크북",
@@ -6030,6 +6450,7 @@ const PASSAGE_TAB = "passage";
 const SAVE_TITLE_SUGGEST = {
   passage: () => passageBasedName("지문"),
   analyze: () => passageBasedName("지문분석"),
+  brief: () => passageBasedName("소책자분석"),
   // 인쇄창에서 적어 둔 시험지명이 있으면 그것을 먼저 제안한다(저장함에서도 같은 이름)
   mcq: () => (QUIZ_SHEET_TITLE.mcq && QUIZ_SHEET_TITLE.mcq.get()) || passageBasedName("객관식문제"),
   saq: () => (QUIZ_SHEET_TITLE.saq && QUIZ_SHEET_TITLE.saq.get()) || passageBasedName("주관식문제"),

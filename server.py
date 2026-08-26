@@ -94,7 +94,11 @@ MODEL_IMAGE = _env("GEMINI_MODEL_IMAGE", "gemini-3-pro-image")
 # 2K는 175dpi로 작은 글자가 뭉개지고, 4K는 350dpi가 나온다. 요금은 두 배다
 # (2K $0.134 / 4K $0.24 per image).
 IMAGE_ASPECT = _env("GEMINI_IMAGE_ASPECT", "16:9")
-IMAGE_SIZE = _env("GEMINI_IMAGE_SIZE", "4K")
+# 요약 그림 화질. 2K면 A4 한 쪽 폭(186mm)에 꽉 채워도 약 280dpi라 인쇄에 충분하다.
+# 4K는 그 두 배 값인데 종이에서 차이가 눈에 띄지 않아 낮췄다.
+# ⚠️ 이 값을 바꾸면 PRICE_INFOGRAPHIC_KRW도 함께 봐야 한다 — 구글 단가가 크기에
+#    따라 두 배 차이 나서, 한쪽만 바꾸면 곧바로 역마진이 된다.
+IMAGE_SIZE = _env("GEMINI_IMAGE_SIZE", "2K")
 # 모델명은 URL 경로에 들어가므로 안전한 형식만 허용 (하드코딩 목록 대신 형식 검증)
 _MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]+$")
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
@@ -140,11 +144,16 @@ KST = timezone(timedelta(hours=9))
 # 관리자 입장에서도 "이 버튼 한 번 = 얼마"가 분명해진다. 실제 Gemini 비용과의 차액은
 # 관리자가 마진으로 흡수한다. 값은 전부 원(KRW) 단위이며 환경변수로 조정 가능하다.
 PRICE_ANALYZE_KRW = int(os.environ.get("PRICE_ANALYZE_KRW", "300"))        # 지문분석, 지문 1개당
-# 지문 요약 인포그래픽, 지문 1개당(분석에 얹는 값). 다른 항목과 달리 마진이 얇다 —
-# 여기만 원가가 크다. 4K 이미지 1장이 $0.24라 환율 1,400원이면 원가만 약 339원이고
+# 지문 요약 인포그래픽, 지문 1개당(분석·소책자에 얹는 값). 다른 항목과 달리 마진이
+# 얇다 — 여기만 원가가 크다. 2K 이미지 1장이 $0.134라 환율 1,400원이면 원가만 약 188원이고
 # (1단계 Flash 호출은 그에 비하면 무시할 수준), 남는 건 60원 남짓이다.
 # 환율이 오르거나 구글이 단가를 올리면 곧바로 역마진이 되니 그때는 이 값을 올려야 한다.
-PRICE_INFOGRAPHIC_KRW = int(os.environ.get("PRICE_INFOGRAPHIC_KRW", "400"))
+# 예전에는 4K($0.24 · 400원)였는데, 종이에서 차이가 안 보여 2K로 낮추고 값도 함께 내렸다.
+PRICE_INFOGRAPHIC_KRW = int(os.environ.get("PRICE_INFOGRAPHIC_KRW", "250"))
+# 소책자 분석(요약), 지문 1개당. 상세분석의 절반으로 잡는다 — 담는 것이 영어 한 줄·
+# 해석 한 줄·요약·어휘뿐이라 문장별 해설·출제 포인트가 빠지고, 그만큼 출력 토큰이 적다.
+# 이미 만들어 둔 상세분석을 소책자로 다시 그리는 길은 AI를 부르지 않으므로 0원이다.
+PRICE_BRIEF_KRW = int(os.environ.get("PRICE_BRIEF_KRW", "150"))
 PRICE_MCQ_PLAIN_KRW = int(os.environ.get("PRICE_MCQ_PLAIN_KRW", "250"))    # 객관식·지문유지, (지문×유형) 1개당
 PRICE_MCQ_TRANSFORM_KRW = int(os.environ.get("PRICE_MCQ_TRANSFORM_KRW", "250"))  # 객관식·지문변형, (지문×유형) 1개당
 # 주관식, (지문×유형) 1개당. 객관식과 같은 250원으로 맞춘다 — 주관식도 열다섯 유형 중
@@ -673,15 +682,15 @@ class RefineTrace:
         if stage not in self.done:
             self.done.append(stage)
 
-    def log(self, model, passage, error=None):
-        """한 줄로 남긴다. Render 로그에서 '[분석]'으로 걸러 보면 된다.
+    def log(self, model, passage, error=None, label="분석"):
+        """한 줄로 남긴다. Render 로그에서 '[분석]'·'[소책자]'로 걸러 보면 된다.
         진단용 기록이 본 작업을 망치면 안 되므로, 출력이 실패해도 넘어간다
         (콘솔 인코딩이 한글을 못 쓰는 환경 등)."""
         total = time.monotonic() - self.t0
         first = f"{self.first:.1f}초" if self.first is not None else "-"
         try:
             print(
-                f"[분석] 호출 {self.calls}회 | 1차 {first} | 총 {total:.1f}초"
+                f"[{label}] 호출 {self.calls}회 | 1차 {first} | 총 {total:.1f}초"
                 f" | 보정 {','.join(self.done) or '없음'}"
                 f" | 중단 {self.cut or '없음'}"
                 f" | 예산 {REFINE_BUDGET:.0f}초 | {model} | 지문 {len(passage)}자"
@@ -2834,9 +2843,11 @@ def call_gemini_infographic(passage, api_key, model=None):
         "input": [{"type": "text", "text": _infographic_prompt(plan)}],
         "response_format": {
             "type": "image",
-            # PNG는 4K에서 파일이 몇 MB로 뛴다. 브라우저로 실어 나르고 인쇄까지 해야 해서
+            # PNG는 파일이 몇 MB로 뛴다. 브라우저로 실어 나르고 인쇄까지 해야 해서
             # JPEG로 받는다(평면 일러스트라 화질 손해가 눈에 띄지 않는다).
             "mime_type": "image/jpeg",
+            # 비율·크기는 서버가 정한다. 화면이 고르게 두면 4K를 달라면서 2K 값만 내는
+            # 길이 열린다 — 가격을 서버가 쥐고 있는 것과 같은 이유다.
             "aspect_ratio": IMAGE_ASPECT,
             "image_size": IMAGE_SIZE,
         },
@@ -4259,6 +4270,308 @@ Only return JSON after all eight checks.
   English (use "—" when none).
 
 Return valid JSON only. No markdown fences, no extra prose."""
+
+
+# ── 소책자 분석 ──
+# 상세분석(GEMINI_SCHEMA/SYSTEM_PROMPT)과 **같은 방식**으로 만든다 — 문장을 청크로 쪼개고,
+# 서버가 평문 영어 위에 색·루비를 겹쳐 붙인다(assemble_eng). 영어가 사라질 수 없는 그
+# 구조를 그대로 쓰는 것이 핵심이다. 상세분석과 다른 것은 네 가지뿐이다.
+#   1. 해석이 청크별 직독직해가 아니라 문장 하나짜리 의역이다(`ko`).
+#   2. 오른쪽 칸에서 문장별 해설(note)을 빼고 출제 포인트(examNote)만 남긴다.
+#   3. 핵심 어휘 표(vocab)가 없다 — 단어장이 따로 있다.
+#   4. 요약 그림을 4K가 아니라 2K로 그린다(가로형은 상세분석과 같다).
+# 셋을 덜어 낸 이유는 하나다. 그 셋이 상세분석 분량의 대부분이라, 빼야 학생이 들고
+# 다니는 얇은 소책자가 된다. 영어 본문과 루비 표시는 손대지 않았다 — 그게 본체다.
+BRIEF_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "englishTitle": {"type": "STRING"},
+        "koreanTitle": {"type": "STRING"},
+        "sentences": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "no": {"type": "INTEGER"},
+                    "tag": {"type": "STRING"},
+                    "chunks": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "text": {"type": "STRING"},
+                                "anns": {
+                                    "type": "ARRAY",
+                                    "items": {
+                                        "type": "OBJECT",
+                                        "properties": {
+                                            "t": {"type": "STRING"},
+                                            "role": {"type": "STRING"},
+                                            "rt": {"type": "STRING"},
+                                            "num": {"type": "INTEGER"},
+                                            "grp": {"type": "INTEGER"},
+                                        },
+                                        "required": ["t", "role", "rt", "num", "grp"],
+                                        "propertyOrdering": ["t", "role", "rt", "num", "grp"],
+                                    },
+                                },
+                            },
+                            "required": ["text", "anns"],
+                            "propertyOrdering": ["text", "anns"],
+                        },
+                    },
+                    "ko": {"type": "STRING"},
+                    "isTopic": {"type": "BOOLEAN"},
+                    "examTags": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "examNote": {"type": "STRING"},
+                },
+                "required": ["no", "tag", "chunks", "ko", "isTopic", "examTags", "examNote"],
+                "propertyOrdering": ["no", "tag", "chunks", "ko", "isTopic",
+                                     "examTags", "examNote"],
+            },
+        },
+        "summary": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "label": {"type": "STRING"},
+                    "content": {"type": "STRING"},
+                },
+                "required": ["label", "content"],
+                "propertyOrdering": ["label", "content"],
+            },
+        },
+    },
+    "required": ["englishTitle", "koreanTitle", "sentences", "summary"],
+    "propertyOrdering": ["englishTitle", "koreanTitle", "sentences", "summary"],
+}
+
+
+def _prompt_part(start, end):
+    """상세분석 프롬프트(SYSTEM_PROMPT)에서 소책자와 공유하는 대목만 잘라 온다.
+
+    같은 규칙을 두 벌 적어 두면 한쪽만 고쳐져 두 자료의 표시가 조용히 어긋난다 —
+    상세분석에서는 빨간 어법인 것이 소책자에서는 파란 어휘로 나오는 식이다. 잘라 쓰는
+    대목은 '문장 나누기'와 '색·루비 고르기'로, 둘 다 무엇을 어떻게 표시할지에 대한
+    규칙이라 소책자에서 달라야 할 이유가 없다."""
+    try:
+        return SYSTEM_PROMPT[SYSTEM_PROMPT.index(start):SYSTEM_PROMPT.index(end)]
+    except ValueError:
+        # 상세분석 프롬프트의 소제목을 고치면 여기서 걸린다. 조용히 넘어가면 소책자만
+        # 규칙 없이 나가므로, 서버가 아예 안 뜨게 두는 편이 낫다.
+        raise RuntimeError(
+            f"SYSTEM_PROMPT에서 '{start}' ~ '{end}' 대목을 못 찾았습니다. "
+            "상세분석 프롬프트의 소제목을 고쳤다면 _prompt_part의 표식도 함께 고치세요."
+        )
+
+
+def _brief_terms(text):
+    """잘라 온 대목에 남은 상세분석 전용 필드 이름을 소책자 것으로 바꾼다.
+
+    공유 대목은 군데군데 '왼쪽 rt와 오른쪽 note를 같은 용어로 맞춰라' 같은 말을 한다.
+    소책자에는 note도 kor도 없으므로(각각 examNote·ko), 그대로 두면 모델이 있지도 않은
+    필드를 채우려 든다. 이름만 바꾸고 규칙은 건드리지 않는다."""
+    text = re.sub(r"(?<!exam)\bnote\b", "examNote", text)
+    return re.sub(r"\bkor\b", "ko", text)
+
+
+BRIEF_SYSTEM_PROMPT = (
+    r"""You are an expert Korean high-school English teacher who produces a POCKET BOOKLET
+(소책자) study sheet for exam passages (수능·모의고사·내신).
+
+It is built EXACTLY like the detailed sheet — same sentence cards, same chunking, same
+colors and the same Korean ruby glosses over the English. Three things are left out to keep
+it thin: the per-sentence commentary, the vocabulary table, and the chunk-by-chunk literal
+Korean. In place of that literal Korean, each sentence carries ONE idiomatic Korean
+rendering of the whole sentence (`ko`).
+
+You will receive one English passage. Return ONLY the structured JSON described by the
+schema. Follow these rules exactly.
+
+"""
+    + _prompt_part("## Sentence splitting", "## chunks —")
+    + r"""## chunks — 청크(의미 단위) 배열: 각 청크마다 {text, anns}
+IMPORTANT: You do NOT write ANY HTML for the English. The server paints the colors from your
+plain English (`text`) + an annotation list (`anns`). This makes it IMPOSSIBLE to lose English
+words. So for English your only job is: give the plain text, then list what to mark.
+
+- Break the sentence into meaning units (chunks: phrases/clauses), IN ORDER, in `chunks`.
+  Chunk size = a natural phrase/clause (주어부, 동사구, 전치사구, 관계절, 부사절 등); not a
+  single article, not a whole long sentence. 청크 경계는 화면에서 끊어읽기 자리가 된다.
+
+### 청크를 자르는 자리
+▸ 판정 기준은 단 하나: **그 청크만 따로 우리말로 옮겨 읽어도 말이 되는가.**
+  안 되면 자른 자리가 틀린 것이다. 영어 길이가 아니라 우리말이 기준이다.
+▸ 후치수식어(분사구·전치사구·관계절·to부정사구)를 떼어 낼 때는 **수식어의 첫 단어부터**
+  새 청크를 시작한다. 수식어의 머리(spent, watching, that, of, to …)를 앞 청크 꼬리에
+  남기면 앞 청크가 반드시 어색해진다.
+    WRONG  <after a lifetime spent> / <watching those creatures>
+    RIGHT  <after a lifetime> / <spent watching those creatures>
+▸ 절대 가르지 않는 덩어리: 조동사+본동사, be+p.p.(수동태), have+p.p.(완료),
+  to+동사원형, 전치사+그 목적어, 관사·소유격+명사, 구동사(give up, account for),
+  상관어구의 한쪽(so ~ that의 so만, not only만).
+▸ 한 청크가 두 줄을 넘길 만큼 길면 자를 자리를 다시 찾되, 위 규칙을 어기면서까지
+  자르지 마라. 자를 자리가 없으면 길게 두는 편이 낫다.
+
+- For EACH chunk provide {text, anns}:
+  * `text` = the chunk's ORIGINAL ENGLISH words, PLAIN — verbatim, in order, NO markup at all.
+    Every English word of the passage MUST appear across the chunks' `text`. Drop nothing.
+  * `anns` = list of things to mark INSIDE this chunk's `text`. Each item = {t, role, rt, num, grp}:
+      · `t`    = the EXACT substring of `text` to mark (copy it verbatim, letter for letter).
+      · `role` = one of:
+            "g"    어법(빨강)          "v"  어휘(파랑)        "gv" 어법+어휘(보라)
+            "hl"   강조·연결어(노랑)    "tg" 목표 어법(주황, 목표 어법이 지정된 경우만)
+            "conj" 등위·상관접속사(형광)     "num" 색 없이 병렬 번호만
+      · `rt`   = short Korean explanation shown above the word (for "conj"/"num" use "").
+      · `num`  = 0 normally. For parallel numbering use 1,2,3… (adds a small superscript number).
+      · `grp`  = 0 normally. 병렬 표시(conj/num)에만 쓰는 **묶음 번호** — 아래 설명 참고.
+    If nothing to mark, `anns` = [].
+
+## ko — 문장 하나짜리 의역 (⚠️ 상세분석과 가장 다른 곳)
+- `ko` = 그 문장 **전체**의 의역. 자연스러운 한국어 문어체 한 문장으로 쓴다.
+- ⚠️ 직독직해가 아니다. 청크마다 따로 옮긴 뒤 이어 붙이지 마라 — 그 일은 상세분석이
+  이미 하고 있고, 소책자는 '한국어로 다시 쓴 문장'을 담는 자리다.
+  · 한국어 어순에 맞게 자유롭게 순서를 바꾸고, 읽기 좋으면 절을 합치거나 나눠도 된다.
+  · 단어 대 단어로 옮기지 말고 우리말에서 실제로 쓰는 표현으로 바꿔라.
+  · 슬래시·대괄호·문법 용어·청크 경계 표시를 넣지 마라. 영어 낱말을 남겨 두지 마라.
+  · 소리 내어 읽어 막히는 데가 없는 한 문장이어야 한다.
+
+"""
+    + _brief_terms(_prompt_part("### COLOR DECISION RULE", "### FINAL SELF-CHECK"))
+    + r"""### FINAL SELF-CHECK (mandatory, before returning)
+1. ENGLISH: mentally read all chunks' `text` in order — they MUST reconstruct the WHOLE
+   passage with no words missing. 마지막 문장까지 갔는지 특히 확인하라.
+2. `t` 정확성: every ann's `t` must be an exact substring of its chunk's `text` (아니면 무시됨).
+3. GRAMMAR COVERAGE: every grammar point in the coverage list has a "g" ann.
+4. VOCAB COVERAGE: re-read each sentence — any content word/expression that would block
+   comprehension if unknown, or that fits the vocabulary-coverage criteria above, has a
+   "v" or "gv" ann. A sentence with a "g" ann but zero "v"/"gv" is suspicious — double-check it.
+5. 등위접속사 COUNT (숫자로 대조하라 — 눈으로 훑지 말 것):
+   (a) 지문 전체에서 낱말 "and / or / but / nor"가 몇 번 나오는지 센다 → N
+   (b) 굳어진 표현(and so on, as well as, all but …) 안에 든 것을 뺀다 → N'
+   (c) 내가 만든 "conj" ann의 개수를 센다 → M
+   (d) M < N' 이면 반드시 누락이다. 빠뜨린 것을 찾아 conj ann과 번호를 추가한 뒤
+       다시 세어 M = N' 이 될 때까지 반복한다. 상관접속사(both…and 등)는 짝마다 1개씩 센다.
+6. 병렬 번호: 모든 "conj" ann에는 그것이 잇는 요소들의 num ann이 최소 2개 딸려 있어야 한다.
+   번호는 **묶음(grp)마다** 1부터 시작해 빠진 숫자가 없어야 한다 (2가 있는데 1이 없으면
+   화면에 짝 없는 위첨자가 뜬다). 한 문장에 접속사가 둘 이상이면 grp를 1,2,3…으로 서로
+   다르게 매기고, 각 요소가 자기 접속사와 같은 grp를 갖는지 확인하라.
+7. 의역: 각 문장의 `ko`를 소리 내어 읽어, 영어를 모르는 사람이 읽어도 말이 되는 우리말
+   문장인지 확인한다. 청크를 이어 붙인 티가 나면(끊긴 어미, 어색한 조사, 남은 영어 낱말)
+   처음부터 다시 써라.
+8. 용어 일치: 같은 단어를 두고 왼쪽 루비(rt)와 오른쪽 examNote가 다른 문법 용어를 쓰고
+   있지 않은지 대조한다. 다르면 rt 쪽을 옳은 것으로 고치고 examNote를 거기에 맞춘다.
+Only return JSON after all eight checks.
+
+## examNote — 출제 포인트 (오른쪽 칸에 남는 유일한 설명)
+- 상세분석의 문장별 해설은 소책자에 없다. 오른쪽 칸에는 출제 포인트만 실린다.
+- isTopic이 true이거나 examTags가 비어 있지 않은 문장에만 쓴다. 둘 다 아니면 빈 문자열
+  "". 소책자는 얇아야 하므로 낼 만하지 않은 문장에 억지로 붙이지 마라.
+- 한국어 문어체 한두 문장. 어느 유형으로 낼 만한지와 그 근거가 되는 표현까지 밝힌다.
+- 영어 낱말을 인용할 때는 <code>에 역할별 색을 실어 왼쪽 루비와 같은 색으로 맞춘다:
+  <code class="g">that</code> / <code class="v">derogatory</code> /
+  <code class="gv">regardless of</code> / <code class="tg">to find</code>
+- <code> 외의 태그는 쓰지 마라. <ruby>·<rt>는 절대 넣지 마라.
+
+"""
+    + _prompt_part("## summary (주제 & 흐름 요약)", "## vocab (핵심 어휘 & 표현)")
+    + r"""Do NOT output a vocabulary list — 어휘표는 소책자에 넣지 않는다(단어장이 따로 있다).
+
+Return valid JSON only. No markdown fences, no extra prose."""
+)
+
+_BRIEF_TRUNC_MSG = "지문이 너무 길어 소책자 분석을 만들다가 잘렸습니다. 지문을 나눠 시도해 주세요."
+
+
+def build_brief_user_prompt(passage, target_grammar="", complete_hint=None, english_fix=False):
+    lines = ["다음 영어 지문으로 소책자용 분석을 만들어 주세요."]
+    # 목표 어법은 상세분석과 같은 문구로 넘긴다 — 같은 지문에 같은 값을 주면 두 자료가
+    # 같은 자리를 주황으로 짚어야 한다. 문구가 다르면 짚는 자리가 달라진다.
+    if (target_grammar or "").strip():
+        lines.append(
+            "목표 어법(이 문법 포인트를 특히 꼼꼼히 표시할 것): " + target_grammar.strip()
+        )
+    if complete_hint:
+        expected, got = complete_hint
+        lines.append(
+            f"⚠️ 지난번 결과는 문장 {got}개만 담아 왔습니다. 이 지문은 약 {expected}개 "
+            "문장입니다. 마지막 문장까지 하나도 빠짐없이 담아 주세요."
+        )
+    if english_fix:
+        lines.append(
+            "⚠️ 지난번 결과에 영어 원문이 빠진 자리가 있었습니다. 각 chunk의 text에 "
+            "지문의 영어 낱말을 그대로, 빠짐없이 담아 주세요."
+        )
+    return "\n".join(lines) + f"\n\n{passage}"
+
+
+def call_gemini_brief(passage, api_key, model, target_grammar="",
+                      complete_hint=None, english_fix=False):
+    """소책자용 분석. 상세분석과 같은 구조를 만들지만 보정 재요청 고리는 훨씬 짧다 —
+    담는 것이 적어(해설·어휘 없음) 값도 싸고 시간 예산도 작기 때문이다. 다만 '영어가
+    빠지는 것'만은 상세분석과 똑같이 막는다. 그게 이 자료의 본체다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+    payload = {
+        "systemInstruction": {"parts": [{"text": BRIEF_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": build_brief_user_prompt(
+            passage, target_grammar, complete_hint, english_fix)}]}],
+        "generationConfig": {
+            "temperature": 0.25,
+            "maxOutputTokens": 65536,
+            "responseMimeType": "application/json",
+            "responseSchema": BRIEF_SCHEMA,
+        },
+    }
+    return _finish_brief(_gemini_json(payload, api_key, model, _BRIEF_TRUNC_MSG))
+
+
+def _finish_brief(result):
+    """모델이 준 평문 영어 위에 색·루비를 겹치고, 한국어·출제 포인트를 정화한다.
+
+    상세분석의 같은 자리(sanitize_analysis)에서 하는 일과 같다. 다르게 하면 두 자료의
+    표시가 어긋나므로 같은 함수들(assemble_eng·sanitize_inline·clean_korean)을 쓴다."""
+    for s in result.get("sentences", []):
+        if not isinstance(s, dict):
+            continue
+        for c in s.get("chunks", []):
+            if not isinstance(c, dict):
+                continue
+            plain = _TAG_STRIP_RE.sub("", c.get("text", "") or "").strip()
+            c["eng"] = assemble_eng(plain, c.get("anns", []))
+            c.pop("text", None)
+            c.pop("anns", None)
+        if s.get("ko"):
+            s["ko"] = _fix_known_typos(sanitize_inline(clean_korean(s["ko"])))
+        if s.get("examNote"):
+            s["examNote"] = _fix_known_typos(sanitize_inline(clean_note(s["examNote"])))
+    for item in result.get("summary", []):
+        if isinstance(item, dict) and item.get("content"):
+            item["content"] = _fix_known_typos(sanitize_inline(item["content"]))
+    return result
+
+
+def brief_english_incomplete(result, passage):
+    """소책자에서 영어가 빠졌는지 본다.
+
+    상세분석의 english_incomplete를 그대로 쓸 수 없다 — 그쪽은 '한글은 있는데 영어가
+    빈 chunk'를 함께 보는데, 소책자 chunk에는 한글이 아예 없기 때문이다. 남은 기준
+    (전체 영어량이 원문의 60% 미만)만 같은 값으로 가져온다."""
+    src = sum(1 for ch in passage if ("a" <= ch <= "z") or ("A" <= ch <= "Z"))
+    if src < 30:
+        return False
+    got = 0
+    for s in result.get("sentences", []):
+        for c in s.get("chunks", []):
+            if isinstance(c, dict):
+                got += _english_letters(c.get("eng", ""))
+    return got < src * 0.6
 
 
 _RT_RE = re.compile(r"<rt[^>]*>.*?</rt>", re.S)
@@ -6552,6 +6865,31 @@ CHANGELOG = [
             "'8월 25일 오후 8:11'처럼 짧게 바뀌었습니다.",
         ],
     },
+    {
+        "version": 12,
+        "date": "2026-08-26",
+        "items": [
+            "지문 상세분석 — 요약 이미지 값이 400원에서 250원으로 내렸습니다. 그림 크기를 "
+            "4K에서 2K로 낮췄는데, A4 한 쪽 폭에 꽉 채워도 약 280dpi라 인쇄물에서는 "
+            "차이가 보이지 않습니다. 화면에서 크게 확대해 보실 때만 조금 덜 또렷합니다.",
+        ],
+    },
+    {
+        "version": 13,
+        "date": "2026-08-26",
+        "items": [
+            "📕 소책자 분석 — 새 탭이 생겼습니다. 지문 상세분석과 같은 방식으로 분석하되"
+            "(같은 색·같은 루비 표시) 학생이 들고 다닐 수 있게 얇게 만듭니다. 상세분석과 "
+            "다른 점은 셋입니다 — 해석이 끊어읽기 직역이 아니라 문장 하나짜리 의역이고, "
+            "오른쪽 해설 칸이 없으며, 핵심 어휘표를 싣지 않습니다. 지문당 150원입니다.",
+            "📕 소책자 분석 — 짧은 문장이 줄줄이 이어지면(대사·인용이 많은 지문) 최대 세 "
+            "문장까지 한 카드에 모아 담습니다. 문장마다 머리줄과 테두리가 따로 붙던 것이 "
+            "한 벌로 줄어, 같은 내용이 더 적은 쪽수에 들어갑니다.",
+            "📕 소책자 분석 — 지문 상세분석에 있던 '쪽 구성'을 여기서도 쓸 수 있습니다. "
+            "인쇄했을 때 쪽이 어디서 넘어가는지 미리 보여 주고, 앞 쪽에 몇 mm가 비는지 "
+            "알려 줍니다. 카드·표 위의 단추로 쪽 경계를 옮기세요.",
+        ],
+    },
 ]
 
 
@@ -7885,6 +8223,9 @@ class Handler(BaseHTTPRequestHandler):
             # 로그인 여부와 무관하게 조회 가능(가격표일 뿐 실제 과금은 아니다).
             self._send_json({
                 "analyze": PRICE_ANALYZE_KRW,
+                # 소책자 분석(요약) — 이미 만든 상세분석을 다시 그리는 길은 0원이라
+                # 화면이 이 값을 쓰지 않는다. 지문으로 새로 만들 때만 쓰인다.
+                "brief": PRICE_BRIEF_KRW,
                 # 지문 요약 인포그래픽 — 분석과 따로 부르므로 값도 따로 매긴다
                 "infographic": PRICE_INFOGRAPHIC_KRW,
                 "mcqPlain": PRICE_MCQ_PLAIN_KRW,
@@ -8196,7 +8537,7 @@ class Handler(BaseHTTPRequestHandler):
         self._pending_label = "사용"
 
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/analyze", "/api/models", "/api/quiz", "/api/workbook",
+        if path not in ("/api/analyze", "/api/brief", "/api/models", "/api/quiz", "/api/workbook",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit",
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
@@ -8239,7 +8580,7 @@ class Handler(BaseHTTPRequestHandler):
         # 로그인이 곧 '누가 관리자 키를 쓰는지' 구분하는 유일한 장치다.
         # 그중 실제로 콘텐츠를 생성하는 여섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
-        GENERATE_PATHS = ("/api/analyze", "/api/quiz", "/api/workbook",
+        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/quiz", "/api/workbook",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf")
         # /api/docx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
@@ -8260,7 +8601,10 @@ class Handler(BaseHTTPRequestHandler):
                 # 무엇을 몇 개 만드는지 아는 유일한 자리다. 지문 원문은 넣지 않는다.
                 if path == "/api/analyze":
                     cost = PRICE_ANALYZE_KRW
-                    self._pending_label = "지문 분석"
+                    self._pending_label = "지문 상세분석"
+                elif path == "/api/brief":
+                    cost = PRICE_BRIEF_KRW
+                    self._pending_label = "소책자 분석"
                 elif path == "/api/infographic":
                     # 지문 1개에 그림 1장. 분석과 달리 한 번에 여러 장을 받지 않는다 —
                     # 1장에 8~12초가 걸려서 여러 장을 한 요청에 묶으면 프록시가 끊는다.
@@ -9270,6 +9614,59 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
+            charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
+            self._send_json(result)
+            return
+
+        # 소책자 분석(요약). 상세분석과 달리 보정 재요청 고리가 없다 — 담는 것이
+        # 단순해 문장이 빠질 여지가 적고, 그만큼 빨리 끝난다.
+        if path == "/api/brief":
+            passage = (req.get("passage") or "").strip()
+            if len(passage) < 20:
+                self._send_json({"error": "분석할 영어 지문을 입력하세요 (20자 이상)."}, 400)
+                return
+            api_key = req.get("apiKey") or ""
+            target_grammar = req.get("targetGrammar") or ""
+            t0 = time.monotonic()
+            trace = RefineTrace(t0)
+            try:
+                result = call_gemini_brief(passage, api_key, MODEL, target_grammar)
+                trace.first_done()
+                # 문장 누락 방어 — 상세분석과 같은 기준으로, 실제 문장 수보다 많이
+                # 모자라면 다시 요청한다. 소책자의 값어치는 '지문 전체가 들어 있는
+                # 얇은 판'이라는 데 있어, 뒤가 잘리면 자료 자체가 못 쓰게 된다.
+                expected = rough_sentence_count(passage)
+                for _ in range(2):
+                    got = len(result.get("sentences", []))
+                    if got >= expected - 2:  # 약어로 인한 과다추정 대비 허용오차
+                        break
+                    if trace.blocked("문장"):
+                        break
+                    trace.retry("문장")
+                    result = call_gemini_brief(passage, api_key, MODEL, target_grammar,
+                                               complete_hint=(expected, got))
+                # 영어 원문 누락 방어
+                for _ in range(2):
+                    if not brief_english_incomplete(result, passage):
+                        break
+                    if trace.blocked("영어"):
+                        break
+                    trace.retry("영어")
+                    result = call_gemini_brief(passage, api_key, MODEL, target_grammar,
+                                               english_fix=True)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+                return
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+                return
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+                return
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+                return
+            trace.log(MODEL, passage, label="소책자")
             charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
             self._send_json(result)
             return
