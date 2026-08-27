@@ -585,9 +585,20 @@
                 title="직접 지정한 쪽 나눔을 모두 지우고 처음 상태로 되돌립니다.">↺ 쪽 구성 처음으로</button>
         <span class="edit-hint" id="editHint"></span>
         <span class="edit-hint" id="pageHint"></span>
-        <label class="chk chk-lg" title="지문 내용을 한 장으로 요약한 가로형 그림을 분석본 맨 뒤에 넣습니다. 지문 1개에 8~12초가 더 걸리고, 만들어진 그림 속 글자는 '직접 수정'으로 고칠 수 없으며 저장함에도 담기지 않습니다.">
-          <input type="checkbox" id="infoChk" checked> 요약 이미지 <span class="chk-sub" id="infoChkPrice">(지문당 추가)</span>
-        </label>
+
+        <div class="img-langs" id="infoLangBox">
+          <span class="img-langs-title">요약 이미지</span>
+          <label class="chk" title="설명은 한국어로, 지문의 핵심 영어 표현은 영어 그대로 넣습니다. 우리말로 뜻을 잡으면서 지문의 실제 낱말과 이어 볼 수 있습니다.">
+            <input type="checkbox" class="img-lang" data-lang="mix" id="infoLangMix" checked> 한국어＋영어 <span class="chk-sub">(기본)</span>
+          </label>
+          <label class="chk" title="그림과 우리말만으로 내용을 잡게 합니다. 지문을 이해하지 못한 학생에게 줍니다. ⚠️ 그림 속 한글은 AI가 그리는 것이라 오탈자가 가장 잘 생기는 판입니다 — 인쇄 전에 꼭 확인하세요.">
+            <input type="checkbox" class="img-lang" data-lang="ko" id="infoLangKo"> 한글요약
+          </label>
+          <label class="chk" title="그림이 뜻을 나르고, 글자는 지문에 쓰인 영어만 씁니다. 수업 게시·발표용으로 쓰기 좋고, 그림 속 오탈자도 가장 적습니다.">
+            <input type="checkbox" class="img-lang" data-lang="en" id="infoLangEn"> 영어요약 <span class="chk-sub">(수업 게시용)</span>
+          </label>
+          <span class="chk-sub img-langs-note" id="infoLangNote"></span>
+        </div>
         <span class="hint">Ctrl+Enter 로도 실행됩니다.</span>
       </div>
       <div class="error" id="error"></div>
@@ -618,9 +629,20 @@
                 title="쪽 구성을 처음 상태로 되돌립니다.">↩ 처음 상태로</button>
         <button class="btn ghost" id="briefSaveBtn" style="display:none"
                 title="로그인한 계정에 이 소책자와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
-        <label class="chk" title="지문을 한 장으로 요약한 그림을 맨 뒤에 넣습니다. 상세분석과 같은 가로형이되 2K로 그려 값이 절반입니다.">
-          <input type="checkbox" id="briefImageChk"> 요약 이미지 함께 만들기 <span class="chk-sub" id="briefImageNote"></span>
-        </label>
+
+        <div class="img-langs" id="briefLangBox">
+          <span class="img-langs-title">요약 이미지</span>
+          <label class="chk" title="설명은 한국어로, 지문의 핵심 영어 표현은 영어 그대로 넣습니다. 우리말로 뜻을 잡으면서 지문의 실제 낱말과 이어 볼 수 있습니다.">
+            <input type="checkbox" class="img-lang" data-lang="mix" id="briefLangMix"> 한국어＋영어 <span class="chk-sub">(기본)</span>
+          </label>
+          <label class="chk" title="그림과 우리말만으로 내용을 잡게 합니다. 지문을 이해하지 못한 학생에게 줍니다. ⚠️ 그림 속 한글은 AI가 그리는 것이라 오탈자가 가장 잘 생기는 판입니다 — 인쇄 전에 꼭 확인하세요.">
+            <input type="checkbox" class="img-lang" data-lang="ko" id="briefLangKo"> 한글요약
+          </label>
+          <label class="chk" title="그림이 뜻을 나르고, 글자는 지문에 쓰인 영어만 씁니다. 수업 게시·발표용으로 쓰기 좋고, 그림 속 오탈자도 가장 적습니다.">
+            <input type="checkbox" class="img-lang" data-lang="en" id="briefLangEn"> 영어요약 <span class="chk-sub">(수업 게시용)</span>
+          </label>
+          <span class="chk-sub img-langs-note" id="briefLangNote"></span>
+        </div>
         <span class="hint">상세분석과 같은 분석이되 <b>해석은 의역</b>, 오른쪽은 <b>출제 포인트만</b>, 핵심 어휘표는 빼서 얇게 만듭니다.</span>
       </div>
       <div class="hint" id="briefPageHint" role="status" aria-live="polite"></div>

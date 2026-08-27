@@ -2457,13 +2457,13 @@ INFOGRAPHIC_SCHEMA = {
             "items": {
                 "type": "OBJECT",
                 "properties": {
-                    "label_en": {"type": "STRING"},
-                    "body_ko": {"type": "STRING"},
-                    "bold_en": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "label": {"type": "STRING"},
+                    "body": {"type": "STRING"},
+                    "bold": {"type": "ARRAY", "items": {"type": "STRING"}},
                     "icon": {"type": "STRING"},
                 },
-                "required": ["label_en", "body_ko", "bold_en", "icon"],
-                "propertyOrdering": ["label_en", "body_ko", "bold_en", "icon"],
+                "required": ["label", "body", "bold", "icon"],
+                "propertyOrdering": ["label", "body", "bold", "icon"],
             },
         },
         # 하위 갈래는 '있을 때만' 쓰지만, 구조화 출력은 required를 비워 두면 모델이
@@ -2472,23 +2472,23 @@ INFOGRAPHIC_SCHEMA = {
             "type": "OBJECT",
             "properties": {
                 "parent": {"type": "INTEGER"},
-                "label_en": {"type": "STRING"},
+                "label": {"type": "STRING"},
                 "items": {
                     "type": "ARRAY",
                     "items": {
                         "type": "OBJECT",
                         "properties": {
-                            "body_ko": {"type": "STRING"},
-                            "bold_en": {"type": "ARRAY", "items": {"type": "STRING"}},
+                            "body": {"type": "STRING"},
+                            "bold": {"type": "ARRAY", "items": {"type": "STRING"}},
                             "icon": {"type": "STRING"},
                         },
-                        "required": ["body_ko", "bold_en", "icon"],
-                        "propertyOrdering": ["body_ko", "bold_en", "icon"],
+                        "required": ["body", "bold", "icon"],
+                        "propertyOrdering": ["body", "bold", "icon"],
                     },
                 },
             },
-            "required": ["parent", "label_en", "items"],
-            "propertyOrdering": ["parent", "label_en", "items"],
+            "required": ["parent", "label", "items"],
+            "propertyOrdering": ["parent", "label", "items"],
         },
         "note": {"type": "STRING"},
     },
@@ -2496,15 +2496,82 @@ INFOGRAPHIC_SCHEMA = {
     "propertyOrdering": ["layout", "title", "stages", "branch", "note"],
 }
 
+"""요약 그림의 말 — 섞기(지금까지의 기본) · 한국어만 · 영어만.
+
+셋을 두는 이유가 각각 다르다.
+  mix — 설명은 한국어라 뜻이 바로 들어오고, 핵심 영어는 남아 지문의 실제 낱말과 잇는다.
+  ko  — 지문을 이해하지 못한 학생을 위한 판. 그림과 우리말만으로 내용을 잡게 한다.
+  en  — 그림이 뜻을 나르고 영어는 지문과 잇는 고리로만 쓴다. 수업 게시·발표용.
+
+⚠️ 글자 수 제한이 말마다 다르다. 한국어 45자는 영어로 90자쯤이라, 영어판에 45자를
+   그대로 쓰면 문장이 토막 난다. 그림 안에 들어가는 글이라 이 제한은 권고가 아니다.
+⚠️ 그림 모델은 라틴 문자를 한글보다 잘 그린다. 오탈자 위험은 en < mix < ko 순으로
+   커진다 — 화면에서 ko를 고를 때 오탈자 확인 안내를 더 세게 보여 준다."""
+INFOGRAPHIC_LANGS = {
+    "mix": {
+        "body_limit": 45,
+        "branch_limit": 30,
+        "rule": (
+            "## What language each field is written in\n"
+            "- `title`: ENGLISH, ALL CAPS, max 60 characters.\n"
+            "- every `label`: ENGLISH, ALL CAPS, max 30 characters. Prefer the passage's own wording.\n"
+            "- `body`: ONE Korean sentence (문어체 — \"~한다\", \"~이다\"), max 45 characters\n"
+            "  including spaces. Never translate word-for-word if it produces awkward Korean.\n"
+            "- `bold`: 0 to 2 English words or short phrases taken VERBATIM from the passage.\n"
+            "  CRITICAL: each must appear EXACTLY as written inside that entry's `body`. So the\n"
+            "  Korean sentence has to contain that English wording. If none belongs, use [].\n"
+            "- inside a `branch`, `body` is capped at 30 characters — those sit in narrow columns.\n"
+            "The explanations are Korean so the meaning lands immediately; the key English\n"
+            "wording stays English so the student connects it to the words on the page.\n"
+        ),
+    },
+    "ko": {
+        "body_limit": 45,
+        "branch_limit": 30,
+        "rule": (
+            "## What language each field is written in — KOREAN ONLY\n"
+            "This sheet is for a student who did NOT understand the passage. The artwork and\n"
+            "the Korean together have to carry the whole meaning. **No English anywhere.**\n"
+            "- `title`: Korean, max 30 characters. A noun phrase, not a sentence. No period.\n"
+            "- every `label`: Korean, max 14 characters. A heading, not a sentence. No period.\n"
+            "- `body`: ONE Korean sentence (문어체), max 45 characters including spaces.\n"
+            "  Inside a `branch`, `body` is capped at 30 — those sit in narrow columns.\n"
+            "- `bold`: 0 to 2 KOREAN words or short phrases that must appear EXACTLY as written\n"
+            "  inside that entry's `body`. Pick the words that carry the point — they are what\n"
+            "  the student's eye should land on first. If nothing stands out, use [].\n"
+            "⚠️ Do not put a single English word in `title`, `label`, `body`, or `bold` — not\n"
+            "even a proper noun, unless the passage's meaning is lost without it.\n"
+        ),
+    },
+    "en": {
+        "body_limit": 90,
+        "branch_limit": 60,
+        "rule": (
+            "## What language each field is written in — ENGLISH ONLY\n"
+            "The artwork carries the meaning; the English is the label on it and the link back\n"
+            "to the passage the student actually read. **No Korean anywhere.**\n"
+            "- `title`: ENGLISH, ALL CAPS, max 60 characters.\n"
+            "- every `label`: ENGLISH, ALL CAPS, max 30 characters. A heading, no period.\n"
+            "- `body`: ONE English sentence, max 90 characters including spaces. Plain,\n"
+            "  present tense, no semicolons. Use the passage's own vocabulary wherever you can —\n"
+            "  a student who half-understood the passage should recognise the words.\n"
+            "  Inside a `branch`, `body` is capped at 60 — those sit in narrow columns.\n"
+            "- `bold`: 0 to 2 English words or short phrases taken VERBATIM from the passage.\n"
+            "  CRITICAL: each must appear EXACTLY as written inside that entry's `body`.\n"
+            "⚠️ Do not put a single Korean word in any field.\n"
+        ),
+    },
+}
+
+
 INFOGRAPHIC_SYSTEM_PROMPT = r"""You plan a ONE-PAGE horizontal infographic that helps a Korean
 high-school student understand an English reading passage. You do NOT draw it — you decide the
 structure and write the exact strings that will be typeset into the image later.
 Return ONLY the structured JSON in the schema — no markdown, no commentary.
 
 ## The reader
-A Korean student who has just read the English passage. The explanations are in Korean so the
-meaning lands immediately; the key English wording stays in English so the student connects the
-Korean to the words actually on the page.
+A Korean high-school student who has just read the English passage. Which language you write
+in is decided for you further down — follow that section exactly.
 
 ## Use ONLY the passage
 Every claim must come from the passage. Add no examples, no background facts, no advice, no
@@ -2533,8 +2600,8 @@ For `contrast`, the two sides go in `stages` as exactly two entries — the firs
 the passage introduces first (often the common belief), the second is the side it argues for.
 
 ## title
-The passage's overall point, in ENGLISH, ALL CAPS. Max 60 characters.
-Prefer the passage's own vocabulary over invented phrasing.
+The passage's overall point in one line. Prefer the passage's own vocabulary over invented
+phrasing. Language and length: see the language section below.
 
 ## stages — the parts of the passage
 How many, and what they are, depends on the layout you chose:
@@ -2548,16 +2615,14 @@ How many, and what they are, depends on the layout you chose:
 Do not force a number — use as many as the passage actually has, within those limits.
 Fewer, clearer parts beat more, thinner ones. Each entry:
 
-- `label_en` — the part's name in ENGLISH, ALL CAPS. Max 30 characters. This is a heading,
-  not a sentence: no final period.
-- `body_ko` — ONE Korean sentence explaining that stage. Max 45 characters INCLUDING spaces.
-  This goes inside a picture, so length is a hard limit, not a suggestion. Write natural
-  Korean (해요체가 아니라 문어체 — "~한다", "~이다"). Never translate word-for-word if it
-  produces awkward Korean.
-- `bold_en` — 0 to 2 English words or short phrases, taken VERBATIM from the passage, that
-  will be shown in bold. CRITICAL: every string here must appear EXACTLY as written inside
-  this stage's `body_ko`. If you want to bold "K-drama", then `body_ko` must literally
-  contain "K-drama". If nothing English belongs in this sentence, use an empty array.
+- `label` — the part's name. A heading, not a sentence: no final period.
+- `body` — ONE sentence explaining that stage. This goes inside a picture, so the length
+  limit below is a hard limit, not a suggestion.
+- `bold` — 0 to 2 short phrases from that entry's own `body`, shown in bold.
+  CRITICAL: every string here must appear EXACTLY as written inside this stage's `body`.
+  If you want to bold "K-drama", then `body` must literally contain "K-drama".
+  If nothing stands out, use an empty array.
+(Language and character limits for all three: see the language section below.)
 - `icon` — what to DRAW for this part, in English. Max 80 characters. This is the part that
   actually carries the meaning, so make it worth looking at: a scene, a moment, a place, a
   gesture, an object, a visual metaphor — whatever would make this part click for someone
@@ -2571,14 +2636,15 @@ Fewer, clearer parts beat more, thinner ones. Each entry:
 Some passages list two or more parallel things under a single part (e.g. three things the
 writer wants to do). When that happens, fill `branch`:
 - `parent` — the 1-based index of the part that splits.
-- `label_en` — ENGLISH, ALL CAPS heading for the group. Max 30 characters.
-- `items` — 2 to 3 entries, each with the same `body_ko` / `bold_en` / `icon` rules as a stage
-  (but `body_ko` max 30 characters — these sit in narrow columns).
+- `label` — heading for the group, same language and limit as a stage's `label`.
+- `items` — 2 to 3 entries, each with the same `body` / `bold` / `icon` rules as a stage
+  (but `body` is capped shorter — these sit in narrow columns; see the language section).
 
-When nothing splits, set `parent` to 0, `label_en` to "", and `items` to [].
+When nothing splits, set `parent` to 0, `label` to "", and `items` to [].
 Use at most ONE branch per passage. Never branch a part that has only one item.
 Do not use a branch with `contrast` — the two sides are already the split.
 
+{LANG_RULE}
 ## note (Korean, short)
 "" when the passage structured cleanly. Otherwise one sentence naming the concrete problem:
 지문이 너무 짧아 나누기 어려웠음, 논증문이라 흐름 대신 주장·근거로 묶었음 등.
@@ -2621,11 +2687,21 @@ WHAT YOU MUST NOT CHANGE
 - Every supplied string must appear somewhere in the image, and must be legible.
 - Add NO text that is not supplied — no labels of your own, no captions, no watermark,
   no logo, no page number, no signature.
+- The «» marks themselves are NOT text: draw what is inside them, never the marks.
+  Never draw the field words (title, heading, line, bold, draw) or the "part 1/2/3"
+  numbering — those tell you what each string is for, they are not content.
 - Draw nothing the passage does not support. No invented facts, no added examples.
 - No text may be smaller than 1/50 of the image height. If the text does not fit, make the
   artwork simpler — never shrink the text.
 - Leave at least 4% margin on every edge and crop nothing.
 """
+
+def infographic_system_prompt(lang):
+    """고른 말의 규칙을 끼워 넣은 1단계 지시문. 나머지 대목은 셋이 함께 쓴다 —
+    배치 고르기·지문 밖 이야기 금지 같은 규칙은 말과 무관하기 때문이다."""
+    spec = INFOGRAPHIC_LANGS.get(lang) or INFOGRAPHIC_LANGS["mix"]
+    return INFOGRAPHIC_SYSTEM_PROMPT.replace("{LANG_RULE}", spec["rule"])
+
 
 _INFOGRAPHIC_TRUNC_MSG = "지문이 너무 길어 요약 구조를 만들다가 잘렸습니다. 지문을 나눠 시도해 주세요."
 
@@ -2639,31 +2715,40 @@ def _clip(text, limit):
     return s if len(s) <= limit else s[:limit].rstrip()
 
 
-def _clean_infographic_plan(plan):
+def _clean_infographic_plan(plan, lang="mix"):
     """1단계 결과를 그림에 넘길 수 있는 형태로 다듬는다.
 
-    가장 중요한 일은 bold_en 검사다. 볼드로 칠할 영어 표현은 반드시 그 칸의 한국어
-    문장 안에 그대로 들어 있어야 한다. 없는 표현을 '굵게 하라'고 시키면 그림 모델이
-    문장에 없는 낱말을 새로 그려 넣는다 — 지문에 없는 말이 결과물에 나타나는 경로가
-    되므로, 문장에서 찾지 못한 것은 조용히 버린다."""
+    가장 중요한 일은 bold 검사다. 굵게 칠할 표현은 반드시 그 칸의 문장 안에 그대로
+    들어 있어야 한다. 없는 표현을 '굵게 하라'고 시키면 그림 모델이 문장에 없는 낱말을
+    새로 그려 넣는다 — 지문에 없는 말이 결과물에 나타나는 경로가 되므로, 문장에서 찾지
+    못한 것은 조용히 버린다.
+
+    글자 수 상한은 말마다 다르다(INFOGRAPHIC_LANGS). 한국어 45자는 영어로 90자쯤이라
+    같은 값을 쓰면 영어판 문장이 토막 난다."""
+    spec = INFOGRAPHIC_LANGS.get(lang) or INFOGRAPHIC_LANGS["mix"]
+
     def _one(d, body_limit):
-        body = _clip(d.get("body_ko"), body_limit)
+        body = _clip(d.get("body"), body_limit)
         bold = [
-            b for b in (_clip(x, 40) for x in (d.get("bold_en") or []))
+            b for b in (_clip(x, 40) for x in (d.get("bold") or []))
             if b and b in body
         ][:2]
-        return {"body_ko": body, "bold_en": bold, "icon": _clip(d.get("icon"), 80)}
+        return {"body": body, "bold": bold, "icon": _clip(d.get("icon"), 80)}
 
     # 모르는 값이 오면 claim으로 떨어뜨린다 — 화살표를 안 그리는 쪽이 늘 안전하다
     layout = plan.get("layout")
     if layout not in INFOGRAPHIC_LAYOUTS:
         layout = "claim"
 
+    # 한국어 제목은 대문자가 없고, 억지로 올리면 자모가 깨져 보인다
+    caps = lang != "ko"
+    label_limit = 14 if lang == "ko" else 30
     stages = []
     for st in (plan.get("stages") or [])[:5]:
-        item = _one(st, 45)
-        item["label_en"] = _clip(st.get("label_en"), 30).upper().rstrip(".")
-        if item["body_ko"] and item["label_en"]:
+        item = _one(st, spec["body_limit"])
+        lab = _clip(st.get("label"), label_limit).rstrip(".")
+        item["label"] = lab.upper() if caps else lab
+        if item["body"] and item["label"]:
             stages.append(item)
     if len(stages) < 2:
         raise RuntimeError(
@@ -2676,23 +2761,25 @@ def _clean_infographic_plan(plan):
 
     raw_branch = plan.get("branch") or {}
     parent = raw_branch.get("parent") or 0
-    items = [_one(x, 30) for x in (raw_branch.get("items") or [])[:3]]
-    items = [x for x in items if x["body_ko"]]
+    items = [_one(x, spec["branch_limit"]) for x in (raw_branch.get("items") or [])[:3]]
+    items = [x for x in items if x["body"]]
     # parent가 범위를 벗어나면(모델이 없는 단계를 가리킴) 갈래를 통째로 버린다 —
     # 어느 칸에 매달지 모르는 채로 그리게 두면 자리가 엉킨다.
     branch = None
     if 1 <= parent <= len(stages) and len(items) >= 2:
+        grp = _clip(raw_branch.get("label"), label_limit).rstrip(".")
         branch = {
             "parent": parent,
-            "label_en": _clip(raw_branch.get("label_en"), 30).upper().rstrip(".") or "DETAILS",
+            "label": (grp.upper() if caps else grp) or ("자세히" if lang == "ko" else "DETAILS"),
             "items": items,
         }
     # 대조는 좌우 두 쪽이 곧 나뉜 모습이라, 거기 또 갈래를 달면 한쪽만 무거워진다
     if layout == "contrast":
         branch = None
+    title = _clip(plan.get("title"), 30 if lang == "ko" else 60)
     return {
         "layout": layout,
-        "title": _clip(plan.get("title"), 60).upper(),
+        "title": title.upper() if caps else title,
         "stages": stages,
         "branch": branch,
         "note": _clip(plan.get("note"), 200),
@@ -2721,32 +2808,36 @@ def _infographic_prompt(plan):
         f"WHAT THE PASSAGE IS LIKE: {relation}",
         "",
         "TEXT TO PLACE IN THE IMAGE",
-        f'  Title: {plan["title"]}',
+        "  Draw ONLY what is inside the «» marks. The words before each «» (title,",
+        "  heading, line, bold, draw) and the item numbers are instructions to you —",
+        "  they are NOT part of the text and must never appear in the picture.",
+        f'  title «{plan["title"]}»',
     ]
     for i, st in enumerate(plan["stages"], 1):
         out.append("")
-        out.append(f'  {i}. English label: {st["label_en"]}')
-        out.append(f'     Korean line:   {st["body_ko"]}')
-        if st["bold_en"]:
+        out.append(f'  part {i}')
+        out.append(f'    heading «{st["label"]}»')
+        out.append(f'    line «{st["body"]}»')
+        if st["bold"]:
             out.append(
-                '     Set these exact substrings in bold inside that Korean line: '
-                + " | ".join(st["bold_en"])
+                '    bold inside that line: '
+                + " | ".join(f"«{b}»" for b in st["bold"])
             )
-        out.append(f'     Draw: {st["icon"]}')
+        out.append(f'    draw: {st["icon"]}')
     br = plan.get("branch")
     if br:
         out.append("")
         out.append(
-            f'  These belong under "{plan["stages"][br["parent"] - 1]["label_en"]}", '
-            f'grouped as: {br["label_en"]}'
+            f'  These belong under «{plan["stages"][br["parent"] - 1]["label"]}», '
+            f'grouped under the heading «{br["label"]}»'
         )
         for it in br["items"]:
-            out.append(f'     Korean line: {it["body_ko"]}')
-            if it["bold_en"]:
+            out.append(f'    line «{it["body"]}»')
+            if it["bold"]:
                 out.append(
-                    '     Bold inside it: ' + " | ".join(it["bold_en"])
+                    '    bold inside it: ' + " | ".join(f"«{b}»" for b in it["bold"])
                 )
-            out.append(f'     Draw: {it["icon"]}')
+            out.append(f'    draw: {it["icon"]}')
     out.append(INFOGRAPHIC_RULES)
     return "\n".join(out)
 
@@ -2805,7 +2896,7 @@ def _describe_json(node, depth=0):
     return f"{pad}{node!r}"
 
 
-def call_gemini_infographic(passage, api_key, model=None):
+def call_gemini_infographic(passage, api_key, model=None, lang="mix"):
     """지문 1개 → 가로형 요약 인포그래픽 1장.
 
     두 번 부른다: Flash가 문구를 확정하고(_infographic_plan), Pro 이미지 모델이
@@ -2823,7 +2914,7 @@ def call_gemini_infographic(passage, api_key, model=None):
 
     # --- 1단계: 무엇을 어떤 문구로 그릴지 정한다 (Flash) ---
     plan_payload = {
-        "systemInstruction": {"parts": [{"text": INFOGRAPHIC_SYSTEM_PROMPT}]},
+        "systemInstruction": {"parts": [{"text": infographic_system_prompt(lang)}]},
         "contents": [{"role": "user", "parts": [{"text": text}]}],
         "generationConfig": {
             "temperature": 0.3,
@@ -2833,7 +2924,7 @@ def call_gemini_infographic(passage, api_key, model=None):
         },
     }
     plan = _clean_infographic_plan(
-        _gemini_json(plan_payload, api_key, MODEL, _INFOGRAPHIC_TRUNC_MSG)
+        _gemini_json(plan_payload, api_key, MODEL, _INFOGRAPHIC_TRUNC_MSG), lang
     )
 
     # --- 2단계: 그 문구를 그대로 조판시킨다 (나노바나나 프로) ---
@@ -4044,7 +4135,11 @@ words. So for English your only job is: give the plain text, then list what to m
     구조 자체가 포인트라 뜻을 우리말로 옮기기 어려운 틀(so ~ that, not only A but B,
     the 비교급 ~ the 비교급)만 예외로 "너무 ~해서 …하다"처럼 **뜻이 담긴 해석 틀**을 쓴다.
     이때도 "상관접속사"처럼 범주 이름만 적는 것은 금지.
-  ▸ 연결어(However, Therefore, In addition …) → "hl". rt = 역접/대조/첨가 등 기능.
+  ▸ 연결어(And, So, However, Therefore, In addition …) → "hl".
+  rt = 그 연결어의 **기능 이름**을 국어 문법에서 쓰는 말로: 순접(And·So — 앞을 같은
+  방향으로 이음) / 역접(But·However) / 대조 / 첨가(In addition·Moreover) /
+  인과(Therefore·Thus) / 예시(For example) / 요약(In short).
+  ⚠️ 이 목록에 없는 기능이면 목록 밖의 말을 지어내지 말고, 가장 가까운 것을 골라라.
     예외: 상관접속사의 일부인 말은 "hl"이 아니라 "conj"다. 특히 **not only A but also B**의
     "also"는 첨가 연결어처럼 보여도 상관접속사 구문의 일부이므로 "conj"로 표시한다(아래 병렬 규칙).
   ▸ 목표 어법이 지정되면 그 구조만 "tg"(주황), 나머지 어법은 "g".
@@ -4747,6 +4842,9 @@ _ROLE_RUBY = {
 # 같은 종류의 오타가 더 발견되면 이 목록에 추가하면 된다.
 _KNOWN_TERM_FIXES = (
     (re.compile(r"투부정사"), "to부정사"),
+    # 문장 첫머리 And에 붙일 이름이 프롬프트 예시에 없던 시절 모델이 지어낸 말.
+    # 예시에 순접을 넣어 막았지만 규칙은 확률이라, 새면 여기서 잡는다.
+    (re.compile(r"순목"), "순접"),
 )
 
 
@@ -6903,6 +7001,22 @@ CHANGELOG = [
             "안내 아래에는 그 탭에서 실제로 나오는 자료를 그대로 그려 보여 드립니다. "
             "지문 상세분석과 소책자 분석을 나란히 눌러 보시면 무엇이 다른지 한눈에 "
             "보입니다 — 소책자에는 오른쪽 해설 칸과 어휘표가 없고 해석이 의역 한 줄입니다.",
+        ],
+    },
+    {
+        "version": 16,
+        "date": "2026-08-27",
+        "items": [
+            "요약 이미지를 세 가지로 만들 수 있습니다. [한국어＋영어]는 지금까지와 같이 "
+            "설명은 우리말, 핵심 표현은 영어로 넣습니다. [한글요약]은 그림과 우리말만으로 "
+            "내용을 잡게 해 지문을 이해하지 못한 학생에게 주기 좋고, [영어요약]은 글자를 "
+            "지문에 쓰인 영어로만 채워 수업 게시·발표용으로 쓰기 좋습니다.",
+            "[한글요약]과 [영어요약]은 함께 고를 수 있고, 두 장을 고르면 인쇄에서 "
+            "한 쪽에 위아래로 나란히 나옵니다. [한국어＋영어]는 그 한 장에 이미 두 말이 "
+            "다 들어 있어 혼자만 고를 수 있습니다.",
+            "지문 상세분석 — 문장 첫머리의 And 같은 연결어에 '순목'처럼 있지도 않은 문법 "
+            "용어가 붙던 것을 고쳤습니다. 이제 순접·역접·인과처럼 국어 문법에서 쓰는 "
+            "이름으로 나옵니다.",
         ],
     },
 ]
@@ -9391,7 +9505,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "요약할 지문을 넣어 주세요."}, 400)
                 return
             try:
-                result = call_gemini_infographic(passage, req.get("apiKey") or "")
+                # 말은 화면이 고른다(뜻만 달라질 뿐 호출 수도 원가도 같다).
+                # 크기·비율과 달리 값에 영향이 없으므로 화면이 정해도 안전하다.
+                lang = req.get("lang")
+                if lang not in INFOGRAPHIC_LANGS:
+                    lang = "mix"
+                result = call_gemini_infographic(passage, req.get("apiKey") or "", lang=lang)
                 charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
                 self._send_json(result)
             except NeedsPro as e:

@@ -2694,18 +2694,25 @@ async function analyze() {
     return;
   }
   // 요약 이미지를 함께 만들면 지문당 값이 얹힌다 — 확인 창에 합친 금액이 나가야 한다
-  const withInfo = !!(infoChk && infoChk.checked);
+  const imgLangs = pickedImgLangs("info");
+  const withInfo = imgLangs.length > 0;
   const perPassage =
-    (PRICING ? PRICING.analyze : 0) + (withInfo && PRICING ? PRICING.infographic : 0);
+    (PRICING ? PRICING.analyze : 0) +
+    (PRICING ? PRICING.infographic * imgLangs.length : 0);
   if (!(await costConfirmed(
         billableJobCount() * perPassage,
         withInfo
-          ? "지문 분석과 요약 이미지를 함께 만듭니다. (이미지는 지문당 8~12초가 더 걸립니다)"
+          ? `지문 분석과 요약 이미지 ${imgLangs.length}종(${imgLangs.map((l) => IMG_LANG_NAME[l]).join(" · ")})을 함께 만듭니다.\n` +
+            "(이미지는 한 장에 8~12초가 더 걸립니다)"
           : "지문 분석을 시작합니다.",
         jobs.length,
         reduceAdvice(
           jobs.length,
-          withInfo ? "[요약 이미지 함께 만들기] 체크를 끄면" : ""
+          imgLangs.length > 1
+            ? "요약 이미지를 한 종만 고르면"
+            : withInfo
+            ? "요약 이미지 체크를 끄면"
+            : ""
         )))) {
     return;
   }
@@ -2838,24 +2845,112 @@ function revokeInfographics() {
   infographicUrls = [];
 }
 
-function infographicBlockHtml(idx, src) {
-  // data-brk="page" — 가로로 꽉 차는 그림이라 앞 내용에 이어 붙이면 반쪽이 잘린다.
-  // '쪽 구성'에서 끌 수 있는 기본값이고, data-brk-def가 [처음 상태로]의 되돌릴 값이다.
-  return `
-    <div class="pg-blk" data-brk="page" data-brk-def="page" data-infographic="${idx}">
-      <h3 class="section"><span class="num">Ⅳ.</span> 한눈에 보는 요약</h3>
-      <div class="table-wrap"><img class="infographic" src="${src}" alt="지문 요약 인포그래픽"></div>
-      <p class="info-caution">그림 속 글자는 AI가 그린 것이라 '직접 수정'으로 고칠 수 없습니다.
-        인쇄하기 전에 오탈자가 없는지 한 번 확인해 주세요.</p>
-    </div>`;
+/* 지문 하나의 요약 그림들을 담는 한 덩어리. 두 장을 고르면 같은 덩어리에 위아래로
+   쌓아, 인쇄에서 한 쪽에 함께 나오게 한다.
+
+   가로형을 그대로 두고 위아래로 쌓는 쪽을 골랐다. 좌우 2단으로 놓으면 한 장이 90mm
+   폭이 되는데, 그림 규칙이 '글자는 그림 높이의 1/50보다 작으면 안 된다'로 잡혀 있어
+   그 크기에서는 글자가 1mm가 된다 — 종이에서 못 읽는다. 위아래로 쌓으면 폭을 그대로
+   쓰므로 글자 크기가 유지된다. 두 장이면 각각 높이를 조금 낮춰 한 쪽에 맞춘다.
+
+   data-brk="page" — 가로로 꽉 차는 그림이라 앞 내용에 이어 붙이면 반쪽이 잘린다. */
+function infographicHost(idx) {
+  const sec = resultEl.querySelector(`section.passage-block[data-entry="${idx}"]`);
+  if (!sec) return null;
+  let host = sec.querySelector(`[data-infographic="${idx}"]`);
+  if (!host) {
+    sec.insertAdjacentHTML(
+      "beforeend",
+      `<div class="pg-blk info-pair" data-brk="page" data-brk-def="page" data-infographic="${idx}">
+        <h3 class="section"><span class="num">Ⅳ.</span> 한눈에 보는 요약</h3>
+        <div class="info-shots"></div>
+        <p class="info-caution">그림 속 글자는 AI가 그린 것이라 '직접 수정'으로 고칠 수 없습니다.
+          인쇄하기 전에 오탈자가 없는지 한 번 확인해 주세요.</p>
+      </div>`
+    );
+    host = sec.querySelector(`[data-infographic="${idx}"]`);
+  }
+  return host;
 }
 
-const infoChk = $("infoChk");
+function addInfographic(idx, src, langName) {
+  const host = infographicHost(idx);
+  if (!host) return false;
+  host.querySelector(".info-shots").insertAdjacentHTML(
+    "beforeend",
+    `<figure class="info-shot">
+      <img class="infographic" src="${src}" alt="지문 요약 인포그래픽">
+      ${langName ? `<figcaption>${esc(langName)}</figcaption>` : ""}
+    </figure>`
+  );
+  // 두 장이 되면 둘 다 조금 낮춰 한 쪽에 들어가게 한다
+  host.classList.toggle("two", host.querySelectorAll(".info-shot").length > 1);
+  return true;
+}
+
+/* 요약 이미지의 말 — 셋을 다 고를 수 있고, 고른 만큼 장수와 값이 늘어난다.
+   셋의 쓰임이 서로 달라서다: 섞기는 학생이 우리말로 뜻을 잡으며 지문의 영어와 잇는 판,
+   한글요약은 지문을 이해하지 못한 학생용, 영어요약은 그림이 뜻을 나르고 글자는 지문의
+   영어로만 두는 수업 게시·발표용이다. 서버에서는 값이 같다 — 한 장이 한 호출이다. */
+const IMG_LANG_NAME = { mix: "한국어＋영어", ko: "한글요약", en: "영어요약" };
+
+/* 고를 수 있는 조합을 제한한다.
+     한국어＋영어  … 혼자만 (그 한 장 안에 이미 두 말이 다 들어 있다)
+     한글요약 · 영어요약   … 둘을 함께 고를 수 있다 (쓰는 사람이 다르다 — 이해 못 한 학생 / 수업 게시)
+   한국어＋영어와 한글요약을 같이 만들면 같은 내용이 두 장에 겹쳐 나오므로 막는다. */
+function enforceImgLangRule(prefix, changed) {
+  const box = $(prefix + "LangBox");
+  if (!box) return;
+  const get = (l) => box.querySelector(`.img-lang[data-lang="${l}"]`);
+  const mix = get("mix"), ko = get("ko"), en = get("en");
+  if (!mix || !ko || !en) return;
+  if (changed === "mix" && mix.checked) {
+    ko.checked = false;
+    en.checked = false;
+  } else if (changed !== "mix" && (ko.checked || en.checked)) {
+    mix.checked = false;
+  }
+}
+
+function pickedImgLangs(prefix) {
+  const box = $(prefix + "LangBox");
+  if (!box) return [];
+  return [...box.querySelectorAll(".img-lang")].filter((c) => c.checked).map((c) => c.dataset.lang);
+}
+
+// 고른 말·장수·값을 그 자리에 적어 준다 — 체크를 하나 더 누를 때 값이 얼마나
+// 늘어나는지 눌러 보기 전에 보이게 한다
+function syncImgLangNote(prefix, perImage) {
+  const el = $(prefix + "LangNote");
+  if (!el) return;
+  const picked = pickedImgLangs(prefix);
+  const n = billableJobCount();
+  if (!picked.length) {
+    el.textContent = "그림 없이 만듭니다.";
+    return;
+  }
+  const each = PRICING ? perImage : 0;
+  const total = each * picked.length * Math.max(n, 1);
+  el.textContent =
+    `지문 1개당 ${picked.length}장` +
+    (each ? ` · 지문당 +${(each * picked.length).toLocaleString()}원` : "") +
+    (n > 1 && each ? ` (지문 ${n}개면 그림 값만 ${total.toLocaleString()}원)` : "");
+}
+
 // 가격표는 화면이 다 그려진 뒤에 도착하므로, 도착하면 체크박스 옆 금액을 채워 넣는다
-onPricingReady(() => {
-  const el = $("infoChkPrice");
-  if (el && PRICING) el.textContent = `(지문당 +${PRICING.infographic.toLocaleString()}원 · 8~12초)`;
-});
+function syncInfoLangNote() {
+  syncImgLangNote("info", PRICING ? PRICING.infographic : 0);
+}
+onPricingReady(syncInfoLangNote);
+const infoLangBox = $("infoLangBox");
+if (infoLangBox) {
+  infoLangBox.addEventListener("change", (e) => {
+    const c = e.target.closest(".img-lang");
+    if (c) enforceImgLangRule("info", c.dataset.lang);
+    syncInfoLangNote();
+  });
+}
+passageListEl.addEventListener("input", syncInfoLangNote);
 
 /* 분석이 끝난 뒤 이어서 그림을 만든다. 부르는 곳은 analyze() 하나뿐이고, 금액은
    거기 확인 창에서 이미 합쳐 물었으므로 여기서 다시 묻지 않는다.
@@ -2869,30 +2964,35 @@ async function makeInfographics(todo) {
   setPagingMode(false); // 쪽 경계도 다시 잡아야 한다
   loadingEl.classList.add("on");
 
+  const langs = pickedImgLangs("info");
+  const total = todo.length * langs.length;
   let okCount = 0;
-  for (let n = 0; n < todo.length; n++) {
+  let done = 0;
+  let stop = false;
+  for (let n = 0; n < todo.length && !stop; n++) {
     const idx = todo[n];
     const job = entries[idx].job;
-    loadingTextEl.textContent =
-      todo.length > 1
-        ? `${job.name} 요약 이미지 만드는 중… (${n + 1}/${todo.length})`
-        : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
-    try {
-      const data = await postJson(
-        "/api/infographic",
-        { passage: job.text },
-        "요약 이미지를 만들지 못했습니다."
-      );
-      const host = resultEl.querySelector(`section.passage-block[data-entry="${idx}"]`);
-      if (host) {
+    for (const lang of langs) {
+      done++;
+      const what = langs.length > 1 ? ` [${IMG_LANG_NAME[lang]}]` : "";
+      loadingTextEl.textContent =
+        total > 1
+          ? `${job.name}${what} 요약 이미지 만드는 중… (${done}/${total})`
+          : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
+      try {
+        const data = await postJson(
+          "/api/infographic",
+          { passage: job.text, lang },
+          "요약 이미지를 만들지 못했습니다."
+        );
         const src = b64ToBlobUrl(data.image, data.mime || "image/jpeg");
-        host.insertAdjacentHTML("beforeend", infographicBlockHtml(idx, src));
-        okCount++;
+        // 두 종 이상 만들면 어느 판인지 적어 준다 — 안 적으면 인쇄한 뒤 구별이 안 된다
+        if (addInfographic(idx, src, langs.length > 1 ? IMG_LANG_NAME[lang] : "")) okCount++;
+      } catch (err) {
+        // 한 장이 실패해도 나머지는 계속 만든다. 다만 한도 소진은 기다려도 안 풀린다.
+        errorEl.textContent = `${job.name}${what}: ${err.message || String(err)}`;
+        if (isQuotaError(err)) { stop = true; break; }
       }
-    } catch (err) {
-      // 한 지문이 실패해도 나머지는 계속 만든다. 다만 한도 소진은 기다려도 안 풀린다.
-      errorEl.textContent = `${job.name}: ${err.message || String(err)}`;
-      if (isQuotaError(err)) break;
     }
   }
 
@@ -3171,8 +3271,7 @@ const briefErrorEl = $("briefError");
 const briefLoadingEl = $("briefLoading");
 const briefLoadingTextEl = $("briefLoadingText");
 const briefCostHintEl = $("briefCostHint");
-const briefImageChk = $("briefImageChk");
-const briefImageNote = $("briefImageNote");
+
 let lastBriefEntries = []; // 저장/불러오기용 — {job, data}
 
 /* ── 짧은 문장 여러 개를 한 카드에 담기 ──
@@ -3326,7 +3425,7 @@ function briefCardHtml(list) {
      ① 청크 아래 한글(.c-kor)이 없다. 해석은 문장 하나짜리 의역(.sent-ko)으로 한 번만 붙는다.
      ② 오른쪽 칸이 통째로 없다 — 문장별 해설도, 출제 포인트도 싣지 않는다.
      ③ 핵심 어휘표가 없다(단어장이 따로 있다). 그래서 그림이 Ⅳ가 아니라 Ⅲ이다. */
-function buildBriefHtml(d, job, total, image) {
+function buildBriefHtml(d, job, total, images) {
   const parts = [`<section class="passage-block">`];
 
   /* 표지 — 색상 범례를 함께 둔다. 소책자도 같은 색·같은 루비를 쓰므로 범례가 없으면
@@ -3393,11 +3492,26 @@ function buildBriefHtml(d, job, total, image) {
       <div class="table-wrap"><table class="flow"><tbody>${rows}</tbody></table></div>
       </div>`);
   }
-  if (image) {
+  /* 고른 말마다 한 장씩 붙는다. 예전에는 한 장(image)만 받았는데, 말을 고를 수 있게
+     되면서 목록(images)으로 바꿨다 — 저장해 둔 예전 자료는 image 하나만 갖고 있으므로
+     renderBriefEntries에서 목록으로 감싸 준다. */
+  /* 그림은 몇 장이든 한 덩어리에 담는다 — 두 장을 고르면 위아래로 쌓여 한 쪽에
+     함께 나온다(.info-pair.two가 높이를 낮춰 맞춘다). */
+  const list = images || [];
+  if (list.length) {
+    const roman = d.summary && d.summary.length ? "Ⅲ" : "Ⅱ";
+    const shots = list
+      .map(
+        (im) => `<figure class="info-shot">
+          <img class="infographic" src="${im.src}" alt="지문 요약 인포그래픽">
+          ${list.length > 1 && im.name ? `<figcaption>${esc(im.name)}</figcaption>` : ""}
+        </figure>`
+      )
+      .join("");
     parts.push(`
-      <div class="pg-blk brief-tail">
-      <h3 class="section"><span class="num">${d.summary && d.summary.length ? "Ⅲ." : "Ⅱ."}</span> 한눈에 보는 요약</h3>
-      <div class="table-wrap"><img class="infographic" src="${image}" alt="지문 요약 인포그래픽"></div>
+      <div class="pg-blk brief-tail info-pair${list.length > 1 ? " two" : ""}">
+      <h3 class="section"><span class="num">${roman}.</span> 한눈에 보는 요약</h3>
+      <div class="info-shots">${shots}</div>
       <p class="info-caution">그림 속 글자는 AI가 그린 것이라 '직접 수정'으로 고칠 수 없습니다.
         인쇄하기 전에 오탈자가 없는지 한 번 확인해 주세요.</p>
       </div>`);
@@ -3412,7 +3526,10 @@ function renderBriefEntries(entries) {
   // 사라진 채로 '켜져 있다'고 남아, 단추 글씨와 화면이 어긋난다.
   if (pgHost === briefDocEl) setPagingMode(false);
   briefDocEl.innerHTML = entries
-    .map(({ job, data, image }) => buildBriefHtml(data, job, entries.length, image))
+    .map(({ job, data, image, images }) =>
+      // image는 예전에 저장한 자료가 갖고 있는 한 장짜리 값이다
+      buildBriefHtml(data, job, entries.length, images || (image ? [{ src: image, name: "" }] : []))
+    )
     .join("");
   if (entries.length) {
     briefDocEl.insertAdjacentHTML("beforeend", `<footer>소책자용 분석 · 자동 생성</footer>`);
@@ -3433,23 +3550,32 @@ function updateBriefCostHint() {
     briefCostHintEl.textContent = "";
     return;
   }
-  const withImg = briefImageChk && briefImageChk.checked;
-  const each = PRICING.brief + (withImg ? PRICING.infographic : 0);
+  const langs = pickedImgLangs("brief");
+  const each = PRICING.brief + PRICING.infographic * langs.length;
   briefCostHintEl.innerHTML =
     `지문 <b>${n}개</b> — <b>${(each * n).toLocaleString()}원</b>` +
-    (withImg ? `<span class="cost-hint-note">(요약 이미지 포함)</span>` : "");
+    (langs.length
+      ? `<span class="cost-hint-note">(요약 이미지 ${langs.length}종 포함)</span>`
+      : "");
 }
 
 // 지문칸은 이 탭 밖에 있고 다른 탭과 함께 쓰므로, 글자가 바뀔 때마다 예상 금액을
 // 다시 센다(탭을 열 때만 세면 지문을 넣어도 0원이라고 남아 있다).
 passageListEl.addEventListener("input", updateBriefCostHint);
-if (briefImageChk) briefImageChk.addEventListener("change", updateBriefCostHint);
-// 그림 값은 화면에 숫자를 박지 않는다 — 가격은 서버가 유일한 출처다(/api/pricing)
-function syncBriefImageNote() {
-  if (!briefImageNote || !PRICING) return;
-  briefImageNote.textContent = `(지문당 +${PRICING.infographic.toLocaleString()}원 · 8~12초)`;
+const briefLangBox = $("briefLangBox");
+if (briefLangBox) {
+  briefLangBox.addEventListener("change", (e) => {
+    const c = e.target.closest(".img-lang");
+    if (c) enforceImgLangRule("brief", c.dataset.lang);
+    updateBriefCostHint();
+    syncBriefLangNote();
+  });
 }
-onPricingReady(syncBriefImageNote);
+function syncBriefLangNote() {
+  syncImgLangNote("brief", PRICING ? PRICING.infographic : 0);
+}
+onPricingReady(syncBriefLangNote);
+// 그림 값은 화면에 숫자를 박지 않는다 — 가격은 서버가 유일한 출처다(/api/pricing)
 
 briefBtn.addEventListener("click", async () => {
   briefErrorEl.textContent = "";
@@ -3459,13 +3585,19 @@ briefBtn.addEventListener("click", async () => {
     return;
   }
   if (PRICING) {
-    const withImg = briefImageChk && briefImageChk.checked;
-    const cost = (PRICING.brief + (withImg ? PRICING.infographic : 0)) * jobs.length;
-    const what = withImg ? "소책자 분석과 요약 이미지를" : "소책자 분석을";
+    const langs = pickedImgLangs("brief");
+    const cost = (PRICING.brief + PRICING.infographic * langs.length) * jobs.length;
+    const what = langs.length
+      ? `소책자 분석과 요약 이미지 ${langs.length}종을`
+      : "소책자 분석을";
     if (!(await costConfirmed(cost, `지문 ${jobs.length}개의 ${what} 만듭니다.`, jobs.length,
         reduceAdvice(
           jobs.length,
-          withImg ? "[요약 이미지 함께 만들기] 체크를 끄면" : ""
+          langs.length > 1
+            ? "요약 이미지를 한 종만 고르면"
+            : langs.length
+            ? "요약 이미지 체크를 끄면"
+            : ""
         )))) return;
   }
   briefBtn.disabled = true;
@@ -3485,24 +3617,29 @@ briefBtn.addEventListener("click", async () => {
       );
       entries.push({ job, data });
       renderBriefEntries(entries.slice());   // 하나씩 붙여, 도중에 멈춰도 남게 한다
-      if (briefImageChk && briefImageChk.checked) {
+      const imgLangs = pickedImgLangs("brief");
+      for (const lang of imgLangs) {
+        const what = imgLangs.length > 1 ? ` [${IMG_LANG_NAME[lang]}]` : "";
         briefLoadingTextEl.textContent =
-          jobs.length > 1
-            ? `${job.name} 요약 이미지 그리는 중… (${i + 1}/${jobs.length})`
+          jobs.length > 1 || imgLangs.length > 1
+            ? `${job.name}${what} 요약 이미지 그리는 중… (${i + 1}/${jobs.length})`
             : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
         try {
-          /* 상세분석과 같은 가로형이되 4K가 아니라 2K다. 소책자는 지면이 작아
-             2K로도 인쇄 해상도가 충분하고, 값이 절반이다. */
           const img = await postJson(
             "/api/infographic",
-            { passage: job.text },
+            { passage: job.text, lang },
             "요약 이미지를 만들지 못했습니다."
           );
-          entries[entries.length - 1].image = b64ToBlobUrl(img.image, img.mime || "image/jpeg");
+          const cur = entries[entries.length - 1];
+          cur.images = cur.images || [];
+          cur.images.push({
+            src: b64ToBlobUrl(img.image, img.mime || "image/jpeg"),
+            name: IMG_LANG_NAME[lang],
+          });
           renderBriefEntries(entries.slice());
         } catch (imgErr) {
-          // 그림만 실패해도 요약본은 살린다 — 이미 만들어진 것을 버릴 이유가 없다
-          briefErrorEl.textContent = `${job.name} 요약 이미지: ${imgErr.message || imgErr}`;
+          // 그림 한 장이 실패해도 소책자와 나머지 장은 살린다
+          briefErrorEl.textContent = `${job.name}${what} 요약 이미지: ${imgErr.message || imgErr}`;
         }
       }
     } catch (err) {

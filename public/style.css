@@ -95,6 +95,38 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
    ".panel label"(0,1,1)이 ".chk-lg" 단독(0,1,0)보다 구체적이라 글자 크기가 거기
    먹혀 있었다 — label.chk-lg로 우선순위를 명시적으로 올린다. */
 label.chk-lg{gap:8px; font-size:14.5px;}
+/* 요약 이미지 말 고르기 — 셋을 다 고를 수 있다(고른 만큼 장수가 늘어난다).
+   라디오가 아닌 이유: 셋의 쓰임이 서로 달라(학생용 / 이해 못 한 학생용 / 수업 게시용)
+   같은 지문으로 두 판을 뽑고 싶은 경우가 실제로 있다. */
+.img-langs{
+  display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px;
+  padding:8px 12px; border:1px solid var(--line); border-radius:9px;
+  background:var(--paper);
+}
+.img-langs-title{font-size:12.5px; font-weight:800; color:var(--accent); margin-right:2px;}
+.img-langs .chk{font-size:13px;}
+.img-langs-note{width:100%; color:var(--ink-soft);}
+/* 요약 그림이 두 종 이상일 때 제목 옆에 붙는 말 이름 — 인쇄한 뒤 어느 판인지
+   가릴 수 있어야 한다. 제목보다 흐리게 두어 제목을 가리지 않게 한다. */
+.section-sub{font-size:12px; font-weight:700; color:var(--ink-soft); margin-left:6px;}
+/* 요약 그림 묶음 — 한 지문의 그림들을 한 덩어리에 담아 인쇄에서 갈라지지 않게 한다.
+   좌우 2단이 아니라 위아래로 쌓는다: 좌우로 놓으면 한 장이 90mm 폭이 되는데, 그림
+   안의 글자는 그림 높이의 1/50 이상이어야 해서 그 크기면 1mm가 된다 — 종이에서
+   못 읽는다. 위아래로 쌓으면 폭을 그대로 쓰므로 글자가 살아 있다. */
+.info-shots{display:flex; flex-direction:column; gap:10px;}
+.info-shot{margin:0;}
+.info-shot img{display:block; width:100%; height:auto;}
+.info-shot figcaption{
+  margin-top:4px; font-size:11.5px; font-weight:700; color:var(--ink-soft);
+}
+/* 두 장일 때만 높이를 낮춘다. A4 한 쪽에서 쓸 수 있는 높이가 261mm인데,
+   16:9 그림은 186mm 폭에서 105mm다. 두 장이면 210mm에 제목·이름표까지 얹혀 빠듯하다.
+   118mm로 묶으면 어떤 비율이 와도 두 장이 한 쪽에 들어간다. */
+.info-pair.two .info-shot img{max-height:118mm; width:auto; max-width:100%; margin:0 auto;}
+@media print{
+  /* 덩어리가 쪽 경계에서 갈라지면 두 장을 한 쪽에 담은 뜻이 없어진다 */
+  .info-pair{break-inside:avoid; page-break-inside:avoid;}
+}
 .chk-lg input{width:20px; height:20px;}
 .error{
   margin-top:14px; padding:11px 14px; border-radius:9px; font-size:13px;
