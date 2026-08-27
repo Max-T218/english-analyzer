@@ -472,6 +472,10 @@
     <button type="button" class="tab-btn" data-tab="exam">🧾 동형 모의고사 제작</button>
     <!-- 관리자가 허가한 선생님에게만 보인다 — renderAccount가 hidden을 켜고 끈다 -->
     <button type="button" class="tab-btn" data-tab="students" id="studentsTabBtn" hidden>🏫 학생 관리</button>
+    <!-- 지금 열려 있는 탭의 만드는 순서를 보여 준다. 사이드바가 sticky라 스크롤해도
+         따라와서, 탭을 누른 자리에서 바로 눌러 볼 수 있다. -->
+    <button type="button" class="howto-btn" id="howtoBtn"
+            title="지금 보고 있는 탭에서 자료를 만드는 순서를 처음부터 보여 줍니다.">❓ 만드는 법</button>
   </nav>
 
   <div class="main-content">
@@ -1209,6 +1213,25 @@
     <div class="update-panel-body" id="updatePanelBody"></div>
     <div class="update-panel-foot">
       <button type="button" class="btn" id="updatePanelOkBtn">확인했습니다</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ 만드는 법 안내 ══════════
+     탭마다 순서가 다르므로, 그 탭의 [❓ 만드는 법]을 누르면 그 탭 것만 보여 준다.
+     내용은 public/app.js의 HOWTO에 있다 — 탭을 새로 만들면 거기에 한 칸 더한다. -->
+<div class="print-guide" id="howtoGuide" hidden>
+  <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="howtoTitle">
+    <h3 id="howtoTitle"></h3>
+    <p class="print-guide-lead" id="howtoLead"></p>
+    <ol class="print-guide-steps" id="howtoSteps"></ol>
+    <p class="print-guide-note" id="howtoTip" hidden></p>
+    <!-- 이런 게 나옵니다 — 결과물을 그리는 실제 함수로 그 자리에서 그린다.
+         사진을 넣지 않는 이유는 화면이 바뀌면 사진만 옛것으로 남기 때문. -->
+    <div class="howto-sample-head" id="howtoSampleHead" hidden>이런 자료가 나옵니다</div>
+    <div class="howto-sample" id="howtoSample" hidden></div>
+    <div class="print-guide-actions">
+      <button type="button" class="btn ghost" id="howtoClose">닫기</button>
     </div>
   </div>
 </div>

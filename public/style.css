@@ -409,6 +409,39 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .tab-page{display:none;}
 .tab-page.active{display:block;}
 @media print{ .tabs{display:none !important;} }
+/* 만드는 법 — 탭 목록 아래에 붙는다. 탭 단추와 같은 자리에 있지만 탭이 아니므로
+   위에 선을 하나 그어 갈라 놓고, 색도 흐리게 두어 탭과 헷갈리지 않게 한다. */
+.howto-btn{
+  font:inherit; font-size:12.5px; font-weight:700; cursor:pointer;
+  color:var(--ink-soft); background:transparent;
+  border:1px solid var(--line); border-radius:8px;
+  padding:8px 10px; text-align:left; margin-top:10px;
+  transition:color .15s, background .15s, border-color .15s;
+}
+.howto-btn:hover{color:var(--accent); border-color:var(--accent); background:var(--accent-soft);}
+/* 만드는 법 창의 '이런 자료가 나옵니다' — 결과물을 실제로 그려 넣는 자리.
+   결과물은 A4 폭에 맞춰 만들어져 있어 520px 창에 넣으면 줄바꿈이 달라 실제와
+   다르게 보인다. 예시가 있을 때만 창을 넓히고, 그래도 넘치면 그 안에서만 스크롤한다. */
+.print-guide-card.wide{max-width:780px;}
+.howto-sample-head{
+  font-size:11.5px; font-weight:800; color:var(--accent);
+  letter-spacing:.03em; margin:14px 0 6px;
+}
+.howto-sample[hidden]{display:none;}
+.howto-sample-head[hidden]{display:none;}
+.howto-sample{
+  max-height:46vh; overflow:auto; padding:12px;
+  border:1px solid var(--line); border-radius:10px; background:var(--paper);
+  margin-bottom:14px;
+}
+/* 예시 안에서는 지문 이름표와 쪽 넘김이 필요 없다 */
+.howto-sample .passage-banner{display:none;}
+.howto-sample .passage-block{margin:0;}
+.howto-sample .sent{margin-bottom:0;}
+@media (max-width:820px){
+  /* 가로 탭으로 바뀌면 격자의 한 칸을 차지한다 — 줄 밖으로 삐져나가지 않게 */
+  .howto-btn{margin-top:0; text-align:center; grid-column:1 / -1;}
+}
 /* 좁은 화면(예: 태블릿 세로)에서는 사이드바를 유지할 폭이 안 나와, 예전처럼
    본문 위 가로 탭(3열 그리드, 좁으면 2열)으로 되돌린다. */
 @media (max-width:820px){

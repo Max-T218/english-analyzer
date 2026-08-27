@@ -6914,6 +6914,327 @@ savedListCloseBtn.addEventListener("click", () => { savedListModalEl.hidden = tr
 savedListModalEl.addEventListener("click", (e) => {
   if (e.target === savedListModalEl) savedListModalEl.hidden = true;
 });
+/* ══════════════════════════ 만드는 법 안내 ══════════════════════════
+   탭마다 만드는 순서가 다르고, 처음 온 선생님에게는 어느 칸부터 채워야 하는지가
+   화면만 봐서는 드러나지 않는다. 탭마다 [❓ 만드는 법] 단추를 두고 그 탭 순서만
+   보여 준다.
+
+   저절로 뜨지는 않는다 — 탭을 옮길 때마다 창이 뜨면 익숙한 사람에게는 방해다.
+
+   ⚠️ 여기 적은 단추 이름·차례는 화면과 같아야 한다. 탭에 단추를 더하거나 이름을
+   바꾸면 이 글도 함께 고쳐라. 안내가 화면과 어긋나면 없느니만 못하다. */
+const HOWTO = {
+  analyze: {
+    title: "📖 지문 상세분석 만드는 법",
+    lead: "영어 지문을 청크(의미 단위)로 끊어 색과 루비를 달고, 문장마다 해설·출제 포인트·핵심 어휘까지 붙인 자료입니다. 가장 두껍습니다.",
+    steps: [
+      "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. 여러 개면 <b>[+ 지문 추가]</b>로 칸을 늘리세요.",
+      "(선택) 지문 칸 아래 <b>목표 어법</b>에 문법 이름을 적으면(예: 분사구문) 그 구조가 <b>주황색</b>으로 표시됩니다.",
+      "요약 이미지가 필요 없으면 <b>[요약 이미지 함께 만들기]</b> 체크를 끄세요 — 지문당 값이 더 붙습니다.",
+      "<b>[분석하기]</b>를 누르면 지문을 하나씩 차례로 만듭니다.",
+      "만든 뒤에 고칠 수 있습니다 — <b>[✏️ 직접 수정]</b>은 글자를, <b>[📄 쪽 구성]</b>은 인쇄될 쪽 경계를 옮깁니다. <b>[↩ 되돌리기]</b>로 한 단계씩 무릅니다.",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑고, <b>[💾 사이트 저장]</b>으로 남겨 두면 나중에 지문·설정과 함께 되불러옵니다.",
+    ],
+    tip: "요약 이미지는 사이트 저장함에 담기지 않습니다. 그림이 필요하시면 인쇄 창에서 PDF로 먼저 저장해 두세요.",
+  },
+
+  brief: {
+    title: "📕 소책자 분석 만드는 법",
+    lead: "상세분석과 같은 방식으로 분석하되(같은 색·같은 루비) 학생이 들고 다닐 수 있게 얇게 만듭니다.",
+    steps: [
+      "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
+      "(선택) <b>[요약 이미지 함께 만들기]</b>를 켜면 지문을 한 장으로 요약한 그림이 맨 뒤에 붙습니다.",
+      "<b>[소책자 분석 만들기]</b>를 누릅니다.",
+      "<b>[📄 쪽 구성]</b>을 누르면 인쇄했을 때 쪽이 어디서 넘어가는지 보이고, 앞 쪽에 몇 mm가 비는지도 알려 줍니다. 카드 위 단추로 경계를 옮기세요.",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>",
+    ],
+    tip: "상세분석과 다른 점 셋 — 해석이 끊어읽기 직역이 아니라 문장 하나짜리 의역이고, 오른쪽 해설 칸이 없으며, 핵심 어휘표를 싣지 않습니다. 짧은 문장이 이어지면 최대 세 문장까지 한 카드에 모아 담아 쪽수를 줄입니다.",
+  },
+
+  mcq: {
+    title: "📝 객관식 문제 만드는 법",
+    lead: "지문 하나로 수능·내신 어투의 5지선다 문항을 만듭니다.",
+    steps: [
+      "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
+      "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추).",
+      "(선택) <b>지문 변형</b> — 원문 그대로 / 단어 5개 내외 변형 / 5개 이상 변형. 여러 개 고르면 고른 만큼 세트가 늘어납니다.",
+      "<b>출제 순서</b>를 고릅니다 — 유형 순서 / 지문 내 유형 섞기 / 전체 문항 섞기.",
+      "<b>[문제 만들기]</b>를 누릅니다.",
+      "만든 뒤 <b>[🔀 문제 섞기]</b>로 순서만 다시 섞을 수 있습니다. AI를 다시 부르지 않아 <b>요금이 들지 않습니다</b> — 같은 문제로 A형·B형을 뽑을 때 쓰세요.",
+      "<b>시험지명</b>은 <b>[인쇄]</b>나 <b>[사이트 저장]</b>을 누를 때 적습니다. 시험지와 답지 양쪽에 함께 찍힙니다.",
+    ],
+    tip: "한 번에 200문항이 넘으면 나눠서 만들지 물어봅니다 — 한 번에 너무 많이 만들면 중간에 실패할 확률이 커지기 때문입니다.",
+  },
+
+  saq: {
+    title: "✍️ 주관식 문제 만드는 법",
+    lead: "쓰는 문제를 만듭니다 — 조건 영작·문장 전환·빈칸 쓰기·OX 진위 등.",
+    steps: [
+      "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
+      "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다.",
+      "(선택) <b>지문 변형</b>과 <b>출제 순서</b>를 고릅니다.",
+      "<b>[문제 만들기]</b>를 누릅니다.",
+      "만든 뒤 <b>[🔀 문제 섞기]</b>로 순서만 다시 섞을 수 있습니다(요금 없음).",
+      "<b>시험지명</b>은 <b>[인쇄]</b>나 <b>[사이트 저장]</b>을 누를 때 적습니다.",
+    ],
+    tip: "OX 진위형은 한 지문에 최대 5개까지만 만들어집니다. 유형이 하나뿐인데 문항을 많이 잡으면 비슷한 문제가 나오기 때문입니다.",
+  },
+
+  workbook: {
+    title: "📚 워크북 만드는 법",
+    lead: "한 지문을 여러 단계로 나눠 학생이 차례로 풀어 나가는 자습 자료를 만듭니다.",
+    steps: [
+      "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
+      "넣을 <b>단계</b>를 고릅니다. 값이 단계 수에 걸려 있고, 7단계부터는 더 올라가지 않습니다.",
+      "(선택) <b>제목</b>과 <b>시험명</b>을 적으면 맨 앞에 <b>표지가 한 장</b> 생깁니다.",
+      "<b>[워크북 만들기]</b>를 누릅니다.",
+      "<b>[정답 표시]</b>를 끄면 학생용으로, 켜면 선생님용으로 인쇄됩니다. 뒤쪽 <b>정답 별지</b>는 만들 때 정해집니다.",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>",
+    ],
+    tip: "워크북은 인쇄에서 1단으로 나갑니다 — 단계마다 답을 적는 칸이 있어 2단으로 좁히면 쓸 자리가 모자랍니다.",
+  },
+
+  vocab: {
+    title: "📒 단어장 만드는 법",
+    lead: "단어를 모으는 길이 넷입니다. 모은 단어는 한 단어장에 함께 쌓입니다.",
+    steps: [
+      "<b>지문 상세분석</b>을 돌리면 그 지문의 핵심 어휘가 <b>저절로</b> 여기 모입니다.",
+      "그 밖에 <b>[✏️ 직접 입력]</b> · 사진 · PDF로도 넣을 수 있습니다 — 사진과 PDF는 이 탭 위 칸에 끌어다 놓거나 붙여넣기(Ctrl+V) 하면 됩니다.",
+      "사진·PDF로 읽은 결과는 바로 들어가지 않습니다. <b>편집 표</b>에서 확인·수정한 뒤 <b>[이 단어장에 추가]</b>를 눌러야 확정됩니다.",
+      "<b>시험지 형식</b>으로 바꾸면 뜻 칸이 빈칸이 됩니다. <b>[정답 표시]</b>를 켜면 교사용으로 답이 함께 찍힙니다.",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> — 단어장은 <b>2단</b>으로 인쇄됩니다.",
+      "(관리자 승인을 받은 선생님) <b>[🏫 반에 시험 내기]</b>로 학생에게 온라인 단어시험을 낼 수 있습니다. AI를 부르지 않아 <b>요금이 없습니다</b>.",
+    ],
+    tip: "지문 분석으로 모인 단어는 다시 분석하면 그것만 갈아 끼웁니다 — 직접 입력·사진·PDF로 넣은 것은 그대로 남습니다.",
+  },
+
+  exam: {
+    title: "🧾 동형 모의고사 만드는 법",
+    lead: "기출 시험지의 유형 구성을 본떠, 내 지문으로 같은 모양의 시험지를 만듭니다.",
+    steps: [
+      "이 탭에는 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). 시험 범위 지문을 여기에 넣으세요.",
+      "(선택) 기출 시험지를 PDF·사진으로 올리고 <b>[유형 분석하기]</b>를 누르면 그 시험의 문항 구성을 읽어 옵니다.",
+      "<b>구성표</b>에서 문항 수와 유형을 손봅니다.",
+      "<b>[시험지 만들기]</b>를 누릅니다.",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>",
+    ],
+    tip: "목표 어법도 이 탭의 칸을 씁니다 — 지문 칸이 따로이므로 위 공용 칸의 값은 여기에 쓰이지 않습니다.",
+  },
+
+  students: {
+    title: "🏫 반 · 학생 관리하는 법",
+    lead: "반을 만들고 학생을 등록하면, 단어장으로 온라인 단어시험을 내고 결과를 받아 볼 수 있습니다. AI를 부르지 않아 요금이 없습니다.",
+    steps: [
+      "<b>[+ 새 반 만들기]</b>로 반을 만듭니다.",
+      "학생을 등록합니다. <b>이름은 앱 전체에서 겹치면 안 됩니다</b> — 학생이 이름만으로 로그인하기 때문에, 같은 이름이 있으면 누구인지 가릴 수 없습니다.",
+      "<b>단어장 탭</b>에서 단어장을 만든 뒤 <b>[🏫 반에 시험 내기]</b>를 누릅니다. 반 전체에도, 학생 한 명에게만도 낼 수 있습니다.",
+      "시험을 낼 때 <b>합격 기준</b>을 두면, 기준에 못 미친 학생은 통과할 때까지 재시험을 봅니다. 회차마다 문제 순서와 보기 자리가 다시 섞입니다.",
+      "<b>[🔗 학생에게 알려 줄 주소]</b>를 복사해 문자·알림장으로 보냅니다. 학생은 그 주소에서 <b>자기 이름만</b> 넣어 로그인합니다.",
+      "제출된 결과는 이 탭에서 봅니다.",
+    ],
+    tip: "이 탭은 관리자 승인을 받은 선생님에게만 보입니다. 학생 이름은 미성년자 개인정보라, 시험 삼아 넣어 보실 때는 실제 이름 대신 아무 말이나 쓰세요.",
+  },
+};
+
+/* ── 만드는 법에 붙는 '이런 게 나옵니다' 예시 ──
+   스크린샷을 넣지 않는다. 이 세션만 해도 소책자 배치가 네 번 바뀌었는데, 그때마다
+   사진을 다시 찍어 넣지 않으면 안내가 화면과 어긋난다. 대신 **결과물을 실제로 그리는
+   그 함수**(buildAnalysisHtml·buildBriefHtml·buildQuizHtml·buildWorkbookHtml)에 짧은
+   본보기 자료를 넣어 그 자리에서 그린다. 그리는 코드나 CSS를 고치면 예시도 같이 바뀐다.
+
+   본보기 자료는 AI가 만든 것이 아니라 여기 적어 둔 고정된 글이다 — 예시를 보려고
+   요금이 나가면 안 된다. 영어 위의 색·루비는 평소 서버가 조립해 주는 모양(ruby 태그)을
+   그대로 적어 두었다. */
+const SAMPLE_JOB = { name: "지문 1", named: false, text: "" };
+
+function sRuby(word, rt, role) {
+  const cls = role === "g" ? "over-tag" : role === "gv" ? "over-tag theme-rt" : "over-tag vocab-rt";
+  return `<ruby class="${cls} nobreak"><span class="${role}">${word}</span><rt>${rt}</rt></ruby>`;
+}
+
+const S_EN1 =
+  `Many people ${sRuby("believe", "믿다", "v")} ${sRuby("that", "명사절 접속사", "g")} ` +
+  `${sRuby("talent", "재능", "v")} ${sRuby("is fixed", "수동태", "g")},`;
+const S_EN2 =
+  `<span class="conj-hl cg1 nobreak">but</span> research ${sRuby("suggests", "시사하다", "v")} ` +
+  `${sRuby("otherwise", "그렇지 않게", "v")}.`;
+
+// 상세분석 — 문장 카드 하나(왼쪽 청크별 직독직해, 오른쪽 해설·출제 포인트)
+const SAMPLE_ANALYZE = {
+  englishTitle: "Talent Is Not Fixed",
+  koreanTitle: "재능은 정해져 있지 않다",
+  sentences: [
+    {
+      no: 1,
+      tag: "도입·통념 제시",
+      chunks: [
+        { eng: S_EN1, kor: "많은 사람들은 믿는다 / 재능이 정해져 있다고," },
+        { eng: S_EN2, kor: "그러나 연구는 시사한다 / 그렇지 않다고." },
+      ],
+      note: `추상명사 <code class="v">talent</code>를 설명하는 명사절 접속사 <code class="g">that</code>이 쓰였고, <code class="g">is fixed</code>는 수동태다.`,
+      isTopic: false,
+      examTags: ["어법"],
+      examNote: `명사절 접속사 <code class="g">that</code>과 수동태 <code class="g">is fixed</code>가 어법 출제 포인트다.`,
+    },
+  ],
+  summary: [
+    { label: "주제", content: "Talent is not fixed.<br>재능은 정해져 있지 않다." },
+    { label: "도입 ❶", content: "재능이 고정되어 있다는 통념과 이를 반박하는 연구" },
+  ],
+  vocab: [
+    { word: "talent", pos: "n.", meaning: "재능", synonym: "gift", antonym: "—" },
+    { word: "fixed", pos: "adj.", meaning: "고정된", synonym: "settled", antonym: "flexible" },
+  ],
+};
+
+// 소책자 — 같은 문장을 소책자 방식으로(오른쪽 칸 없음, 해석은 의역 한 줄)
+const SAMPLE_BRIEF = {
+  englishTitle: "Talent Is Not Fixed",
+  koreanTitle: "재능은 정해져 있지 않다",
+  sentences: [
+    {
+      no: 1,
+      tag: "도입·통념 제시",
+      chunks: [{ eng: S_EN1 }, { eng: S_EN2 }],
+      ko: "많은 사람들은 재능이 고정되어 있다고 믿지만, 연구 결과는 그렇지 않다는 점을 보여 준다.",
+      isTopic: false,
+      examTags: [],
+      examNote: "",
+    },
+  ],
+  summary: [
+    { label: "주제", content: "Talent is not fixed.<br>재능은 정해져 있지 않다." },
+    { label: "도입 ❶", content: "재능이 고정되어 있다는 통념과 이를 반박하는 연구" },
+  ],
+};
+
+const SAMPLE_PASSAGE_HTML =
+  "Many people believe that talent is fixed, but research suggests otherwise. " +
+  "When students are told that intelligence can grow, they take on harder tasks.";
+
+const SAMPLE_MCQ = {
+  questions: [
+    {
+      no: 1,
+      type: "주제",
+      format: "mc",
+      instruction: "다음 글의 주제로 가장 적절한 것은?",
+      passageHtml: SAMPLE_PASSAGE_HTML,
+      choices: [
+        "the fixed nature of human talent",
+        "the belief that ability can grow",
+        "the danger of praising students",
+        "the limits of classroom research",
+        "the history of intelligence tests",
+      ],
+      answer: 2,
+      explanation: "재능이 고정되어 있지 않다는 것이 글 전체의 요지이므로 ②가 알맞다.",
+    },
+  ],
+};
+
+const SAMPLE_SAQ = {
+  questions: [
+    {
+      no: 1,
+      type: "빈칸 쓰기",
+      format: "short",
+      instruction: "다음 글을 읽고, 빈칸에 들어갈 말을 본문에서 찾아 쓰시오.",
+      passageHtml: SAMPLE_PASSAGE_HTML,
+      answerText: "harder tasks",
+      explanation: "지능이 자란다고 들은 학생들이 무엇을 택하는지 묻는 문제다.",
+    },
+  ],
+};
+
+const SAMPLE_WORKBOOK = {
+  englishTitle: "Talent Is Not Fixed",
+  koreanTitle: "재능은 정해져 있지 않다",
+  sentences: [
+    { no: 1, en: "Many people believe that talent is fixed, but research suggests otherwise.",
+      ko: "많은 사람들은 재능이 고정되어 있다고 믿지만, 연구 결과는 그렇지 않다는 점을 보여 준다." },
+    { no: 2, en: "When students are told that intelligence can grow, they take on harder tasks.",
+      ko: "학생들은 지능이 발달할 수 있다는 말을 들으면 더 어려운 과제에 도전한다." },
+  ],
+};
+
+/* 단어장만 그리는 함수를 그대로 쓰지 못한다 — buildVocab()이 화면에 쌓인 단어장
+   전체(vocabSets)를 읽어 그리므로, 예시를 그리려면 선생님이 만들어 둔 단어장을
+   건드려야 한다. 대신 같은 CSS 클래스(table.vocab)로 표 몇 줄만 적어 둔다. */
+function sampleVocabHtml() {
+  const rows = [
+    ["talent", "n.", "재능", "gift", "—"],
+    ["fixed", "adj.", "고정된", "settled", "flexible"],
+    ["suggest", "v.", "시사하다", "imply", "—"],
+  ];
+  return `<div class="table-wrap"><table class="vocab">
+    <thead><tr><th>단어 / 표현</th><th>품사</th><th>뜻</th><th>유의어</th><th>반의어</th></tr></thead>
+    <tbody>${rows.map((r) => `<tr><td>${r[0]}</td><td class="pos">${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td></tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+// 탭 → 예시 HTML. 없는 탭은 예시를 붙이지 않는다.
+const HOWTO_SAMPLE = {
+  analyze: () => buildAnalysisHtml(SAMPLE_ANALYZE, SAMPLE_JOB, 1, null),
+  brief: () => buildBriefHtml(SAMPLE_BRIEF, SAMPLE_JOB, 1, null),
+  mcq: () => buildQuizHtml(SAMPLE_MCQ, SAMPLE_JOB, 1, "mcq", "", ""),
+  saq: () => buildQuizHtml(SAMPLE_SAQ, SAMPLE_JOB, 1, "saq", "", ""),
+  workbook: () => buildWorkbookHtml(SAMPLE_WORKBOOK, [1], SAMPLE_JOB, 1, ""),
+  vocab: sampleVocabHtml,
+  // 동형 시험지 본문도 문제 탭과 같은 buildQuizHtml이 그린다 — 같은 본보기를 쓴다
+  exam: () => buildQuizHtml(SAMPLE_MCQ, SAMPLE_JOB, 1, "mcq", "", ""),
+};
+
+function howtoSampleHtml(tab) {
+  const make = HOWTO_SAMPLE[tab];
+  if (!make) return "";
+  try {
+    const out = make();
+    // buildQuizHtml·buildWorkbookHtml은 {html, answerHtml} 꼴로 돌려주기도 한다
+    return typeof out === "string" ? out : (out && out.html) || "";
+  } catch (err) {
+    // 예시 하나 때문에 안내 창이 안 뜨면 안 된다 — 조용히 글 안내만 남긴다
+    return "";
+  }
+}
+
+const howtoGuideEl = $("howtoGuide");
+const howtoTitleEl = $("howtoTitle");
+const howtoLeadEl = $("howtoLead");
+const howtoStepsEl = $("howtoSteps");
+const howtoTipEl = $("howtoTip");
+const howtoSampleEl = $("howtoSample");
+const howtoSampleHeadEl = $("howtoSampleHead");
+
+function openHowto(tab) {
+  const h = HOWTO[tab];
+  if (!h) return;
+  howtoTitleEl.textContent = h.title;
+  howtoLeadEl.textContent = h.lead;
+  // steps는 우리가 쓴 글이라 <b>를 그대로 살린다(사용자 입력이 섞이지 않는다)
+  howtoStepsEl.innerHTML = h.steps.map((t) => `<li>${t}</li>`).join("");
+  howtoTipEl.innerHTML = h.tip ? `💡 ${h.tip}` : "";
+  howtoTipEl.hidden = !h.tip;
+  // 예시가 있는 탭은 창을 넓혀 준다 — 결과물이 좁은 창에 밀려 들어가면 실제 모양과
+  // 달라 보여서, 예시를 보여 준 뜻이 없어진다
+  const sample = howtoSampleHtml(tab);
+  howtoSampleEl.innerHTML = sample;
+  howtoSampleEl.hidden = !sample;
+  howtoSampleHeadEl.hidden = !sample;   // 예시가 없는 탭에서는 머리글도 숨긴다
+  howtoGuideEl.querySelector(".print-guide-card").classList.toggle("wide", !!sample);
+  howtoGuideEl.hidden = false;
+}
+
+// 단추는 사이드바에 하나뿐이고, 어느 탭 안내를 열지는 '지금 열려 있는 탭'으로 정한다
+$("howtoBtn").addEventListener("click", () => {
+  const active = document.querySelector(".tab-page.active");
+  if (active) openHowto(active.id.replace(/^tab-/, ""));
+});
+$("howtoClose").addEventListener("click", () => { howtoGuideEl.hidden = true; });
+howtoGuideEl.addEventListener("click", (e) => {
+  if (e.target === howtoGuideEl) howtoGuideEl.hidden = true;   // 바깥을 눌러도 닫힌다
+});
+
 /* ══════════════════════════ 이용 내역 ══════════════════════════
    포인트가 언제 무엇에 얼마나 쓰였는지 보여 준다. 만들기 전에는 "예상 비용 900원"을
    매번 알려 주면서 지나간 것은 확인할 방법이 없었다 — 유료로 바뀌면 그게 곧 문의가 된다.
