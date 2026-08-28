@@ -443,9 +443,69 @@
       <article class="gate-show gate-show-wide">
         <div class="gate-show-head">
           <b>🧾 동형 모의고사</b>
-          <span>기출 시험지를 올리면 <strong>그 시험의 문항 구성</strong>(몇 번이 무슨 유형인지)을 읽어 내고, 시험 범위 지문으로 <strong>같은 모양의 시험지 한 벌</strong>을 만듭니다. 학교·과목·시험 시간과 반·번호·성명 칸까지 실제 시험지처럼 찍힙니다.</span>
+          <span>기출 시험지를 올리면 <strong>그 시험의 문항 구성</strong>(몇 번이 무슨 유형인지)을 읽어 내 <strong>구성표</strong>로 보여 주고, 시험 범위 지문으로 <strong>같은 모양의 시험지 한 벌</strong>을 만듭니다. 학교·과목·시험 시간과 반·번호·성명 칸까지 실제 시험지처럼 찍힙니다.</span>
         </div>
         <div class="gate-preview">
+          <div class="gate-step">① 기출 시험지를 읽어 낸 결과</div>
+          <section class="panel exam-report">
+            <h3 class="exam-title">○○고 2학년 2학기 중간고사 (기출)</h3>
+            <p class="exam-summary">
+              문항 <b>6개</b> (선다형 5 · 서답형 1) —
+              그대로 만들 수 있음 <b class="ok">4</b> ·
+              비슷한 걸로 대체 <b class="warn">1</b> ·
+              못 만듦 <b class="no">1</b>
+            </p>
+            <p class="hint">문항마다 발문을 읽어 어떤 유형인지 가려내고, 이 앱으로 같은 걸 만들 수 있는지까지 판정합니다.</p>
+            <div class="exam-table-wrap">
+              <table class="exam-table">
+                <thead><tr>
+                  <th>번호</th><th>형식</th><th>발문</th><th>판정</th><th>앱 유형</th><th>어느 탭</th><th>비고</th>
+                </tr></thead>
+                <tbody>
+                  <tr class="exam-row-ok">
+                    <td class="exam-no">20</td><td class="exam-fmt">선다형</td>
+                    <td class="exam-prompt">다음 글에서 필자가 주장하는 바로 가장 적절한 것은?</td>
+                    <td class="exam-fit"><span class="exam-badge ok">그대로 만들 수 있음</span></td>
+                    <td class="exam-kind">주장</td><td class="exam-engine">객관식</td><td class="exam-note"></td>
+                  </tr>
+                  <tr class="exam-row-ok">
+                    <td class="exam-no">29</td><td class="exam-fmt">선다형</td>
+                    <td class="exam-prompt">다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?</td>
+                    <td class="exam-fit"><span class="exam-badge ok">그대로 만들 수 있음</span></td>
+                    <td class="exam-kind">어법</td><td class="exam-engine">객관식</td><td class="exam-note"></td>
+                  </tr>
+                  <tr class="exam-row-ok">
+                    <td class="exam-no">31</td><td class="exam-fmt">선다형</td>
+                    <td class="exam-prompt">다음 빈칸에 들어갈 말로 가장 적절한 것은?</td>
+                    <td class="exam-fit"><span class="exam-badge ok">그대로 만들 수 있음</span></td>
+                    <td class="exam-kind">빈칸</td><td class="exam-engine">객관식</td><td class="exam-note"></td>
+                  </tr>
+                  <tr class="exam-row-warn">
+                    <td class="exam-no">36</td><td class="exam-fmt">선다형</td>
+                    <td class="exam-prompt">주어진 글 다음에 이어질 글의 순서로 가장 적절한 것은?</td>
+                    <td class="exam-fit"><span class="exam-badge warn">비슷한 걸로 대체</span></td>
+                    <td class="exam-kind">순서</td><td class="exam-engine">객관식</td>
+                    <td class="exam-note">지문이 짧으면 문장삽입으로 대체합니다</td>
+                  </tr>
+                  <tr class="exam-row-ok">
+                    <td class="exam-no">42</td><td class="exam-fmt">서답형</td>
+                    <td class="exam-prompt">밑줄 친 우리말을 &lt;조건&gt;에 맞게 영작하시오.</td>
+                    <td class="exam-fit"><span class="exam-badge ok">그대로 만들 수 있음</span></td>
+                    <td class="exam-kind">조건 영작</td><td class="exam-engine">주관식</td><td class="exam-note"></td>
+                  </tr>
+                  <tr class="exam-row-no">
+                    <td class="exam-no">43~45</td><td class="exam-fmt">선다형</td>
+                    <td class="exam-prompt">다음 글을 읽고 물음에 답하시오. (장문 복합)</td>
+                    <td class="exam-fit"><span class="exam-badge no">못 만듦</span></td>
+                    <td class="exam-kind">—</td><td class="exam-engine">—</td>
+                    <td class="exam-note">한 지문에 세 문항이 딸린 복합 유형은 만들지 않습니다</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <div class="gate-step">② 그 구성으로 내 지문을 넣어 만든 시험지</div>
           <div class="exam-sheet-head">
             <div class="exam-sheet-top">
               <div class="exam-sheet-id">
