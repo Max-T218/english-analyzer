@@ -2783,6 +2783,7 @@ async function analyze() {
   lastAnalyzeEntries = entries; // 저장 버튼이 이 값을 그대로 payload로 보낸다
   // 모든 지문 분석이 끝난 뒤 한 번에 렌더 (중간에 화면이 바뀌지 않도록)
   resultEl.innerHTML = htmlParts.join("");
+  syncDocCovers();
   if (okCount) {
     printBtn.style.display = "inline-flex";
     editBtn.style.display = "inline-flex";
@@ -3017,6 +3018,7 @@ function renderAnalyzeEntries(entries) {
   setPagingMode(false);
   revokeInfographics(); // 불러오기로 화면을 갈아엎기 전에 이전 그림을 놓아준다
   resultEl.innerHTML = htmlParts.join("");
+  syncDocCovers();
   printBtn.style.display = total ? "inline-flex" : "none";
   editBtn.style.display = total ? "inline-flex" : "none";
   pageBtn.style.display = total ? "inline-flex" : "none";
@@ -4659,6 +4661,7 @@ function setupQuizTab({ prefix, types, footer }) {
     docxBtn.style.display = entries.length ? "inline-flex" : "none";
     lastEntries = entries;
     applySheetTitle();   // 새로 그렸으니 시험지명을 다시 얹는다
+    syncDocCovers();
     syncShuffleBtns();
     syncFloatPrint();
     // 비우는 호출일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
@@ -4736,6 +4739,7 @@ function setupQuizTab({ prefix, types, footer }) {
   function setSheetTitle(v) {
     sheetTitle = (v || "").trim();
     applySheetTitle();
+    syncDocCovers();
   }
   // 다른 곳(저장창)에서도 같은 이름을 쓰도록 손잡이를 내준다
   QUIZ_SHEET_TITLE[prefix] = { get: () => sheetTitle, set: setSheetTitle };
@@ -5312,6 +5316,91 @@ const wbLoadingTextEl = $("wbLoadingText");
 const wbTitleEl = $("wbTitle");
 const wbExamEl = $("wbExam");
 const wbAnswerChk = $("wbAnswerChk");
+
+/* ── 워크북 쪽 조이기 ──
+   워크북에서 쪽이 넘어가는 까닭은 큰 빈자리가 남아서가 아니다. 실측하면(A4, 12문항)
+   문항 하나가 22.6mm인데 쪽 아래에 20mm쯤 남아 2mm 차이로 통째로 밀리고, 밀려간 쪽에는
+   STEP 머리말이 다시 그려져 15mm를 또 먹는다. 그래서 지문 상세분석식 '경계 옮기기'는
+   여기서 쓸모가 없다 — 올릴 자리가 애초에 없다. 자투리를 메우는 쪽으로 푼다.
+
+   쪽 수는 여기서 직접 세어 보여 준다. 인쇄해 보기 전에 몇 쪽이 주는지 알아야 켤지
+   말지를 정할 수 있기 때문이다. 세는 방법은 브라우저가 인쇄할 때 하는 일을 흉내내는
+   것이다 — 지문·단계마다 새 쪽에서 시작하고, 문항(.wb-q)은 쪼개지지 않으니 한 개씩
+   담다가 안 들어가면 다음 쪽으로 넘긴다. */
+const wbTightBox = $("wbTightBox");
+const wbTightChk = $("wbTightChk");
+const wbNoRepeatChk = $("wbNoRepeatChk");
+const wbTightNote = $("wbTightNote");
+
+// 인쇄 폭에서 재야 실제와 맞는다. 화면 폭으로 재면 줄바꿈이 달라져 쪽 수가 어긋난다.
+function wbCountPages() {
+  const doc = workbookDocEl;
+  if (!doc || !doc.querySelector(".wb-passage")) return 0;
+  const prev = doc.getAttribute("style") || "";
+  doc.style.width = PAGE_W_MM + "mm";
+  doc.style.maxWidth = "none";
+
+  const px = (el) => {
+    if (!el) return 0;
+    const cs = getComputedStyle(el);
+    return el.getBoundingClientRect().height + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom);
+  };
+  const pageH = PAGE_H_MM * PX_PER_MM;
+  let pages = 0;
+
+  if (doc.querySelector(".wb-cover")) pages++;            // 표지는 한 쪽을 통째로 쓴다
+  const repeatHead = !doc.classList.contains("wb-norepeat");
+
+  doc.querySelectorAll(".wb-passage").forEach((sec) => {
+    const title = px(sec.querySelector(".wb-titlebar"));
+    sec.querySelectorAll("table.wb-page").forEach((tbl, ti) => {
+      const head = px(tbl.querySelector("thead"));
+      pages++;                                            // 단계마다 새 쪽
+      let used = head + (ti === 0 ? title : 0);
+      tbl.querySelectorAll(".wb-q").forEach((q) => {
+        const h = px(q);
+        if (used + h > pageH) {                           // 안 들어가면 다음 쪽
+          pages++;
+          used = repeatHead ? head : 0;                   // 이어지는 쪽의 머리말
+        }
+        used += h;
+      });
+    });
+  });
+  if (doc.querySelector(".wb-answerbook")) pages++;       // 정답 별지(어림)
+
+  doc.setAttribute("style", prev);
+  return pages;
+}
+
+/* 지금 설정과 '둘 다 켠' 설정의 쪽 수를 함께 보여 준다. 잠깐 클래스를 붙였다 떼며
+   재는데, 화면을 다시 그리는 게 아니라 재고 되돌리는 것이라 눈에 띄지 않는다. */
+function syncWbTight() {
+  const doc = workbookDocEl;
+  if (!wbTightBox) return;
+  const has = !!(doc && doc.querySelector(".wb-passage"));
+  wbTightBox.hidden = !has;
+  if (!has) return;
+
+  doc.classList.toggle("wb-tight", wbTightChk.checked);
+  doc.classList.toggle("wb-norepeat", wbNoRepeatChk.checked);
+
+  const now = wbCountPages();
+  const tight = doc.classList.contains("wb-tight");
+  const norep = doc.classList.contains("wb-norepeat");
+  doc.classList.add("wb-tight", "wb-norepeat");
+  const best = wbCountPages();
+  doc.classList.toggle("wb-tight", tight);
+  doc.classList.toggle("wb-norepeat", norep);
+
+  wbTightNote.textContent =
+    `인쇄하면 약 ${now}쪽` +
+    (best < now ? ` — 둘 다 켜면 ${best}쪽까지 줄어듭니다.` : " (더 줄일 자리는 없습니다.)");
+}
+
+if (wbTightChk) wbTightChk.addEventListener("change", syncWbTight);
+if (wbNoRepeatChk) wbNoRepeatChk.addEventListener("change", syncWbTight);
+
 const wbAnswerBookChk = $("wbAnswerBookChk");
 const workbookDocEl = $("workbookDoc");
 const workbookPrintBtn = $("workbookPrintBtn");
@@ -5394,6 +5483,7 @@ async function generateWorkbook() {
   clearPassagesBtn.disabled = true;
   wbLoadingEl.classList.add("on");
   workbookDocEl.innerHTML = "";
+  syncWbTight();
   workbookPrintBtn.style.display = "none";
   wbAnswerPrintBtn.style.display = "none";
   workbookSaveBtn.style.display = "none";
@@ -5468,6 +5558,7 @@ async function generateWorkbook() {
   }
   if (okCount) htmlParts.push(`<footer>단계별 WORKBOOK · 자동 생성</footer>`);
   workbookDocEl.innerHTML = htmlParts.join("");
+  syncWbTight();   // 새로 그렸으니 쪽 수를 다시 센다
   applyAnswerVisibility();
   if (okCount) {
     workbookPrintBtn.style.display = "inline-flex";
@@ -5524,6 +5615,7 @@ function renderWorkbookEntries(entries) {
   }
   if (total) htmlParts.push(`<footer>단계별 WORKBOOK · 자동 생성</footer>`);
   workbookDocEl.innerHTML = htmlParts.join("");
+  syncWbTight();   // 새로 그렸으니 쪽 수를 다시 센다
   applyAnswerVisibility();
   workbookPrintBtn.style.display = total ? "inline-flex" : "none";
   wbAnswerPrintBtn.style.display = total && hasAnswerBook ? "inline-flex" : "none";
@@ -6228,6 +6320,7 @@ function buildVocab() {
 
   parts.push(`<footer>핵심 어휘 단어장 · 자동 생성</footer>`);
   vocabDocEl.innerHTML = parts.join("");
+  syncDocCovers();
   applyVocabAnswer();
   vocabPrintBtn.style.display = "inline-flex";
   vocabSaveBtn.style.display = "inline-flex";
@@ -8001,6 +8094,74 @@ const examPlanBtn = $("examPlanBtn");
 const examPaperLoadingEl = $("examPaperLoading");
 const examPaperLoadingTextEl = $("examPaperLoadingText");
 const examPaperResultEl = $("examPaperResult");
+
+/* ── 표지 ──
+   워크북에만 있던 표지(.wb-cover)를 모든 탭이 나눠 쓴다. 새로 디자인하지 않고 그 모양을
+   그대로 옮긴다 — 제목·부제·날짜 세 줄에 인쇄에서 한 장을 차지한다.
+
+   붙이는 방식은 시험지명(.qz-sheet-title)이 쓰는 것과 같다. 만든 뒤 화면을 직접 고쳐
+   끼운다 — 제목이 정해질 때마다 결과를 다시 그리면 문제 섞기가 다시 섞이고, 직접
+   수정해 둔 글자도 날아간다.
+
+   ⚠️ 표지를 맨 앞에 끼우면 그 뒤 첫 지문이 :first-child가 아니게 된다. 인쇄 규칙이
+   ".passage-block{break-before:page}"이고 첫 지문만 예외였으므로, 그대로 두면 표지 뒤에
+   빈 쪽이 한 장 생긴다 — 시험지명을 처음 넣었을 때 실제로 났던 문제다. style.css에
+   "표지 다음에 오는 것은 쪽을 또 넘기지 않는다"는 예외를 함께 넣어 두었다. */
+function docCoverHtml(title, sub) {
+  const t = String(title || "").trim();
+  if (!t) return "";   // 제목이 없으면 표지도 없다 (워크북과 같은 규칙)
+  const s = String(sub || "").trim();
+  return (
+    `<div class="doc-cover">` +
+    `<h1>${esc(t)}</h1>` +
+    (s ? `<div class="doc-cover-sub">${esc(s)}</div>` : "") +
+    `<div class="doc-cover-date">${esc(new Date().toLocaleDateString("ko-KR"))}</div>` +
+    `</div>`
+  );
+}
+
+/* 결과 화면 맨 앞의 표지를 지금 제목에 맞춘다. 없으면 만들고, 제목이 비면 지운다.
+   결과가 아직 없으면 표지도 붙이지 않는다 — 표지만 한 장 인쇄되는 일을 막는다. */
+function applyDocCover(host, title, sub) {
+  if (!host) return;
+  const old = host.querySelector(":scope > .doc-cover");
+  const html = host.children.length - (old ? 1 : 0) > 0 ? docCoverHtml(title, sub) : "";
+  if (!html) {
+    if (old) old.remove();
+    return;
+  }
+  if (old) old.outerHTML = html;
+  else host.insertAdjacentHTML("afterbegin", html);
+}
+
+/* 탭마다 '어디에 붙이고 제목을 어디서 읽는가'만 다르다.
+   워크북은 이미 제 표지를 갖고 있어 건드리지 않는다. */
+const DOC_COVERS = [
+  { host: () => resultEl, title: () => ($("analyzeTitle") || {}).value, input: "analyzeTitle" },
+  { host: () => briefDocEl, title: () => ($("briefTitle") || {}).value, input: "briefTitle" },
+  { host: () => vocabDocEl, title: () => ($("vocabTitle") || {}).value, input: "vocabTitle" },
+  { host: () => examPaperResultEl, title: () => ($("examPaperTitle") || {}).value, input: "examPaperTitle" },
+  // 문제 제작 둘은 인쇄·저장 때 적는 시험지명을 쓴다(기존 한 줄 띠는 그대로 둔다)
+  { host: () => $("mcqResult"), title: () => (QUIZ_SHEET_TITLE.mcq ? QUIZ_SHEET_TITLE.mcq.get() : "") },
+  { host: () => $("saqResult"), title: () => (QUIZ_SHEET_TITLE.saq ? QUIZ_SHEET_TITLE.saq.get() : "") },
+];
+
+function syncDocCovers() {
+  DOC_COVERS.forEach((c) => {
+    try {
+      applyDocCover(c.host(), c.title(), c.sub ? c.sub() : "");
+    } catch (_) {
+      /* 아직 안 만들어진 탭이 섞여 있어도 나머지는 붙는다 */
+    }
+  });
+}
+
+DOC_COVERS.forEach((c) => {
+  if (!c.input) return;
+  const el = $(c.input);
+  if (el) el.addEventListener("input", syncDocCovers);
+});
+
 // 목표 어법 — 이 탭은 지문칸이 따로라 공용 칸(grammarEl)과 별개로 받는다
 const examGrammarEl = $("examTargetGrammar");
 const examCopiesEl = radioGroup("examCopies");

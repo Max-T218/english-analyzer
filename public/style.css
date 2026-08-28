@@ -798,6 +798,18 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
 .wb-cover .wb-exam{font-size:14px; color:var(--ink); margin-bottom:6px;}
 .wb-cover .wb-date{color:var(--ink-soft); font-size:13px;}
 
+/* ── 표지(모든 탭 공용) ──
+   워크북 표지(.wb-cover)와 같은 모양이다. 새로 디자인하지 않고 그 생김새를
+   그대로 옮겼다 — 제목·부제·날짜 세 줄에 인쇄에서 한 장을 차지한다.
+   워크북은 제 것을 그대로 쓰므로 이 규칙에 끌어들이지 않는다. */
+.doc-cover{
+  text-align:center; padding:60px 20px; border:1px solid var(--line); border-radius:14px;
+  margin-bottom:16px; background:var(--card);
+}
+.doc-cover h1{font-family:var(--font); font-size:28px; margin:0 0 10px;}
+.doc-cover-sub{font-size:14px; color:var(--ink); margin-bottom:6px;}
+.doc-cover-date{color:var(--ink-soft); font-size:13px;}
+
 .wb-titlebar{
   display:flex; flex-wrap:wrap; align-items:baseline; gap:10px;
   padding:12px 16px; margin-bottom:14px; border-radius:10px;
@@ -836,6 +848,30 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
   break-inside:avoid; page-break-inside:avoid;
 }
 .wb-q:last-child{border-bottom:none;}
+/* ── 쪽 조이기 ──
+   워크북에서 쪽이 넘어가는 까닭은 큰 빈자리가 남아서가 아니다. 실측하면 문항 하나가
+   22.6mm인데 쪽 아래에 20mm쯤 남아, 2mm 차이로 통째로 밀린다. 그리고 밀려간 쪽에는
+   STEP 머리말이 15mm를 또 먹는다.
+
+   그래서 '경계를 옮기는' 대신 '자투리를 메우는' 쪽으로 푼다. 글자 크기는 건드리지
+   않는다 — 학생이 읽는 크기라 줄이면 안 된다. 줄이는 것은 여백과 반복 머리말뿐이다.
+
+   실측(A4·12문항): 여백 12px→8px 만으로 1쪽에 담기는 문항이 10개에서 11개가 됐다. */
+#workbookDoc.wb-tight .wb-q{padding:8px 0;}
+#workbookDoc.wb-tight .wb-q-body{gap:8px;}
+/* thead를 보통 행으로 내리면 쪽마다 다시 그려지지 않는다(그 단계 맨 앞에 한 번만).
+   display:none으로 지우지 않는 이유는 첫 쪽의 머리말까지 사라지기 때문이다. */
+#workbookDoc.wb-norepeat table.wb-page > thead{display:table-row-group;}
+
+.wb-tight-box{
+  display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px;
+  padding:8px 12px; border:1px solid var(--line); border-radius:9px;
+  background:var(--paper);
+}
+.wb-tight-box[hidden]{display:none;}
+.wb-tight-title{font-size:12.5px; font-weight:800; color:var(--accent);}
+.wb-tight-box .chk{font-size:13px;}
+.wb-tight-note{width:100%; color:var(--ink-soft);}
 .wb-q-body{display:flex; gap:10px; align-items:flex-start;}
 .wb-q-main{flex:1; min-width:0;}
 .wb-no{
@@ -1508,6 +1544,16 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   .passage-block{break-before:page; page-break-before:always;}
   .passage-block:first-child,
   .qz-sheet-title + .passage-block{break-before:auto; page-break-before:auto;}
+  /* 표지는 한 장을 차지한다.
+     아래 예외는 크로미움에서는 없어도 된다 — 표지의 break-after:page와 다음 지문의
+     break-before:page를 하나로 합쳐 주어 빈 쪽이 생기지 않는다(예외를 끄고 인쇄해
+     확인했다. 3쪽으로 같았다). 시험지명 때 났던 빈 쪽 문제는 사정이 달랐다 —
+     그쪽은 break-after가 없어서 지문의 break-before만 홀로 걸렸다.
+     그래도 남겨 두는 것은 브라우저마다 두 지시를 합쳐 준다는 보장이 없어서다. */
+  .doc-cover{break-after:page; page-break-after:always; box-shadow:none;}
+  .doc-cover + .passage-block,
+  .doc-cover + .qz-sheet-title + .passage-block,
+  .doc-cover + .wb-passage{break-before:auto; page-break-before:auto;}
   .passage-banner{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
   /* 새 쪽에서 시작 (문제 탭의 '정답 및 해설' 등) */
   .page-break{break-before:page; page-break-before:always;}
