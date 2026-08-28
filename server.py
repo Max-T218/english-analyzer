@@ -556,7 +556,7 @@ def _asset_version():
 
 # --- 요청 본문 상한 ---------------------------------------------------------
 # 본문은 통째로 메모리에 올라간다. 상한이 없으면 큰 요청 몇 개에 인스턴스가
-# 죽을 수 있다(Render 무료 512MB).
+# 죽을 수 있다(Render Starter 512MB).
 MAX_BODY_BYTES = int(os.environ.get("MAX_BODY_BYTES", str(14 * 1024 * 1024)))
 # 사진 1장의 상한. 화면이 긴 변 1600px JPEG로 줄여 보내므로 보통 0.3~0.6MB가 된다.
 MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", str(10 * 1024 * 1024)))
@@ -8685,7 +8685,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("content-length", "0"))
             # 본문을 통째로 메모리에 올리므로 상한이 없으면 큰 사진 몇 장에
-            # 인스턴스가 죽는다(Render 무료 512MB). 읽기 '전에' 막는다.
+            # 인스턴스가 죽는다(Render Starter 512MB). 읽기 '전에' 막는다.
             if length > MAX_BODY_BYTES:
                 # 응답만 보내고 끊으면 클라이언트는 아직 본문을 보내는 중이라
                 # 응답을 읽지 못하고 연결 오류만 본다. 본문을 조각내어 버리며 끝까지
