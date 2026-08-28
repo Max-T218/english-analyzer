@@ -50,7 +50,7 @@
   <!-- ══════════ 시작 화면 (소개 + 키 입력) ══════════ -->
   <section class="gate" id="gate">
     <div class="gate-intro">
-      <h2>영어 지문 하나로, 수업 자료 다섯 가지를 만듭니다</h2>
+      <h2>영어 지문 하나로, 수업 자료 여섯 가지를 만듭니다</h2>
       <p class="gate-lead">
         교과서·모의고사 지문을 붙여 넣으면 AI가 <b>구문 단위 직독직해 분석본</b>부터
         <b>수능형 문제</b>, <b>단계별 워크북</b>, <b>단어장</b>까지 자동으로 만들어 줍니다.
@@ -76,7 +76,7 @@
          지문은 저작권 문제가 없도록 직접 쓴 문장을 쓴다. -->
     <div class="gate-showcase">
       <h3 class="gate-showcase-title">이런 자료가 만들어집니다</h3>
-      <p class="gate-showcase-lead">아래는 실제 출력물의 일부입니다. 지문 한 개를 넣으면 다섯 가지가 모두 나옵니다.</p>
+      <p class="gate-showcase-lead">아래는 실제 출력물의 일부입니다. 지문 한 개를 넣으면 여섯 가지가 모두 나오고, 시험 범위 지문을 모으면 동형 모의고사 한 벌까지 만듭니다.</p>
 
       <article class="gate-show gate-show-wide">
         <div class="gate-show-head">
@@ -197,6 +197,51 @@
           <p class="info-caution">지문 분석을 실행할 때 <b>요약 이미지</b>를 함께 고르면 이 그림까지 만들어집니다.
             <b>한글요약 · 영어요약</b>처럼 두 장을 한 번에 만들 수도 있습니다(위 두 장은 다른 지문으로
             실제 만들어진 것이며, 그림은 지문 내용에 맞춰 AI가 매번 새로 그립니다).</p>
+        </div>
+      </article>
+
+      <!-- 소책자 분석 — 상세분석과 같은 색·같은 루비를 쓰되 오른쪽 해설 칸이 없고
+           해석이 의역 한 줄이다. 그 차이가 카드 한 장에서 바로 보이게 둔다. -->
+      <article class="gate-show gate-show-wide">
+        <div class="gate-show-head">
+          <b>📕 소책자 분석</b>
+          <span>상세분석과 같은 방식으로 끊어 읽고 같은 색으로 표시하되, 오른쪽 해설 칸을 빼고 해석을 <b>의역 한 줄</b>로 받습니다. 학생이 들고 다닐 수 있게 얇게 나옵니다(같은 지문이 상세분석 5쪽이면 소책자는 4쪽).</span>
+        </div>
+        <div class="gate-preview">
+          <div class="sent brief is-topic">
+            <div class="sent-head">
+              <span class="sent-no">1</span>
+              <span class="tag">S + V + O</span>
+              <span class="exam-tags"><span class="exam-tag et-topic">주제문</span></span>
+            </div>
+            <div class="chunks">
+              <div class="chunk">
+                <div class="c-eng">Small habits <ruby class="over-tag vocab-rt"><span class="v">shape</span><rt>형성하다</rt></ruby> our lives <ruby class="over-tag theme-rt"><span class="gv">more than</span><rt>~보다 더</rt></ruby> dramatic decisions <ruby class="over-tag"><span class="g">do</span><rt>대동사</rt></ruby>.</div>
+              </div>
+            </div>
+            <div class="sent-ko">작은 습관은 극적인 결정보다 우리의 삶을 더 크게 형성한다.</div>
+          </div>
+
+          <div class="sent brief">
+            <div class="sent-head">
+              <span class="sent-no">2</span>
+              <span class="tag">S + V + C, and S + V + O</span>
+              <span class="exam-tags"><span class="exam-tag et-grammar">어법</span></span>
+            </div>
+            <div class="chunks">
+              <div class="chunk">
+                <div class="c-eng"><sup class="conj-num-top cg1">1</sup>A choice <ruby class="over-tag"><span class="g">repeated</span><rt>과거분사</rt></ruby> for years quietly becomes who we are, <span class="conj-hl cg1">and</span> <sup class="conj-num-top cg1">2</sup>it shapes <span class="conj-hl cg2">both</span> our health <span class="conj-hl cg2">and</span> our relationships.</div>
+              </div>
+            </div>
+            <div class="sent-ko">수년간 반복된 선택은 조용히 우리 자신이 되고, 우리의 건강과 인간관계를 모두 만든다.</div>
+          </div>
+
+          <h3 class="section"><span class="num">Ⅱ.</span> 주제 &amp; 흐름 요약</h3>
+          <div class="table-wrap"><table class="flow"><tbody>
+            <tr><td>주제</td><td>Small habits, not dramatic decisions, shape who we are.<br>극적인 결정이 아니라 작은 습관이 우리를 만든다.</td></tr>
+            <tr><td>도입 ❶</td><td>작은 습관과 극적인 결정의 비교</td></tr>
+            <tr><td>전개 ❷</td><td>반복된 선택이 정체성과 건강·관계로 이어짐</td></tr>
+          </tbody></table></div>
         </div>
       </article>
 
@@ -392,6 +437,64 @@
         </div>
       </article>
 
+      <!-- 동형 모의고사 — 다른 자료와 달리 지문 하나가 아니라 '시험 범위 지문 여러 개'로
+           만드는 한 벌짜리 시험지다. 그래서 머리글(학교·과목·시험시간·반/번호/성명)까지
+           지면에 함께 찍힌다. 그 모양이 이 카드의 핵심이라 머리글부터 보여 준다. -->
+      <article class="gate-show gate-show-wide">
+        <div class="gate-show-head">
+          <b>🧾 동형 모의고사</b>
+          <span>기출 시험지를 올리면 <b>그 시험의 문항 구성</b>(몇 번이 무슨 유형인지)을 읽어 내고, 시험 범위 지문으로 <b>같은 모양의 시험지 한 벌</b>을 만듭니다. 학교·과목·시험 시간과 반·번호·성명 칸까지 실제 시험지처럼 찍힙니다.</span>
+        </div>
+        <div class="gate-preview">
+          <div class="exam-sheet-head">
+            <div class="exam-sheet-top">
+              <div class="exam-sheet-id">
+                <div class="exam-sheet-exam">2학기 중간고사 대비 동형 모의고사</div>
+                <div class="exam-sheet-school">○○고등학교 · 2학년</div>
+              </div>
+              <div class="exam-sheet-subject">
+                <div class="exam-sheet-subject-name">영어</div>
+                <div class="exam-sheet-form">A형</div>
+              </div>
+            </div>
+            <div class="exam-sheet-bar">
+              <span class="exam-sheet-info">시험 시간 50분 · 총 20문항 · 출제 ○○○</span>
+              <span class="exam-sheet-fill">반 <u></u> 번호 <u></u> 성명 <u class="wide"></u></span>
+            </div>
+          </div>
+
+          <div class="qz-card">
+            <div class="qz-head"><span class="qz-no">20</span><span class="qz-type">주장</span></div>
+            <div class="qz-instruction">다음 글에서 필자가 주장하는 바로 가장 적절한 것은?</div>
+            <div class="qz-passage">Small habits shape our lives more than dramatic decisions do. A choice repeated for years quietly becomes who we are, and it shapes both our health and our relationships.</div>
+            <ol class="qz-choices">
+              <li><span class="qz-num">①</span><span class="qz-choice-text">큰 결심보다 매일의 작은 습관에 공을 들여야 한다.</span></li>
+              <li><span class="qz-num">②</span><span class="qz-choice-text">건강을 위해 규칙적인 운동을 시작해야 한다.</span></li>
+              <li><span class="qz-num">③</span><span class="qz-choice-text">인간관계를 넓히려면 결단력을 길러야 한다.</span></li>
+              <li><span class="qz-num">④</span><span class="qz-choice-text">중요한 결정은 시간을 두고 내려야 한다.</span></li>
+              <li><span class="qz-num">⑤</span><span class="qz-choice-text">자신의 성격을 바꾸려는 노력을 멈춰야 한다.</span></li>
+            </ol>
+            <div class="qz-answer-box show"><b>정답 ①</b> 반복되는 작은 선택이 삶을 만든다는 것이 필자의 주장입니다.</div>
+          </div>
+
+          <div class="qz-card">
+            <div class="qz-head"><span class="qz-no">31</span><span class="qz-type">빈칸</span></div>
+            <div class="qz-instruction">다음 빈칸에 들어갈 말로 가장 적절한 것은?</div>
+            <div class="qz-passage">A choice repeated for years quietly becomes <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u>, and it shapes both our health and our relationships.</div>
+            <ol class="qz-choices">
+              <li><span class="qz-num">①</span><span class="qz-choice-text">a passing mood</span></li>
+              <li><span class="qz-num">②</span><span class="qz-choice-text">who we are</span></li>
+              <li><span class="qz-num">③</span><span class="qz-choice-text">a lucky accident</span></li>
+              <li><span class="qz-num">④</span><span class="qz-choice-text">a temporary rule</span></li>
+              <li><span class="qz-num">⑤</span><span class="qz-choice-text">a forgotten promise</span></li>
+            </ol>
+            <div class="qz-answer-box show"><b>정답 ②</b> 반복된 선택이 곧 정체성이 된다는 흐름입니다.</div>
+          </div>
+
+          <p class="info-caution">문항 번호와 유형 구성은 <b>구성표</b>에서 직접 손볼 수 있습니다. 기출 시험지를 올리지 않고 처음부터 짜도 됩니다.</p>
+        </div>
+      </article>
+
       <div class="gate-show-grid">
         <article class="gate-show">
           <div class="gate-show-head">
@@ -423,7 +526,7 @@
     <div class="gate-auth-launch gate-auth-bottom">
       <button type="button" class="btn js-open-login" id="openLoginBtn">로그인</button>
       <button type="button" class="btn ghost js-open-signup" id="openSignupBtn">회원가입</button>
-      <span class="gate-auth-note">지문 한 개로 다섯 가지를 다 만들어 보세요.</span>
+      <span class="gate-auth-note">지문 한 개로 여섯 가지를 다 만들어 보세요.</span>
     </div>
   </section>
 
