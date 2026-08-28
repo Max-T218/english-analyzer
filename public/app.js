@@ -7621,30 +7621,42 @@ function sampleVocabHtml() {
 }
 
 /* 요약 이미지 예시 — 그림은 AI가 지문마다 새로 그리는 것이라, 예시를 열 때마다
-   만들 수는 없다(예시를 보려고 요금이 나가면 안 된다). 그래서 미리 뽑아 둔 그림
-   한 장을 public/sample-summary.jpg에 두고 그것만 보여 준다.
+   만들 수는 없다(예시를 보려고 요금이 나가면 안 된다). 그래서 실제로 만들어 둔
+   분석본 PDF에서 뽑아 크기를 줄인 그림을 public/에 두고 그것만 보여 준다.
+
+   두 장씩 붙이는 이유: 요약 이미지는 한 번에 두 장(예: 한글요약·영어요약)까지
+   만들 수 있고, 그때 지면이 어떻게 나뉘는지가 한 장만 봐서는 드러나지 않는다.
+   실제 산출물과 같은 마크업(.info-pair.two > .info-shot)을 쓰므로 인쇄 CSS도 그대로다.
+
+   ⚠️ 캡션(SAMPLE_INFO_CAPTIONS)은 넣어 둔 그림이 실제로 어느 모드로 만들어졌는지와
+   같아야 한다(IMG_LANG_NAME의 값과 같은 말을 쓴다). 그림을 갈아 끼우면서 캡션을
+   그대로 두면 안내가 실제와 어긋난다 — 그럴 바에는 캡션을 비우는 편이 낫다.
 
    파일이 없으면 이 칸은 스스로 사라진다(openHowto의 error 처리) — 깨진 그림 아이콘을
-   남기느니 없는 편이 낫고, 파일을 나중에 넣어도 코드를 고칠 필요가 없다.
-   실제 산출물과 같은 마크업(.info-shot)을 쓰므로 인쇄 CSS도 그대로 적용된다. */
-function sampleInfographicHtml() {
-  return `<div class="pg-blk info-pair" data-infographic="sample">
+   남기느니 없는 편이 낫고, 파일을 갈아 끼워도 코드를 고칠 필요가 없다. */
+const SAMPLE_INFO_CAPTIONS = ["한글요약", "영어요약"];
+function sampleInfographicHtml(prefix) {
+  const shots = SAMPLE_INFO_CAPTIONS
+    .map(
+      (cap, i) => `<figure class="info-shot">
+        <img class="infographic" src="/${prefix}-${i + 1}.jpg" alt="요약 인포그래픽 예시 ${i + 1}">
+        ${cap ? `<figcaption>${esc(cap)}</figcaption>` : ""}
+      </figure>`
+    )
+    .join("");
+  return `<div class="pg-blk info-pair two" data-infographic="sample">
     <h3 class="section"><span class="num">Ⅳ.</span> 한눈에 보는 요약</h3>
-    <div class="info-shots">
-      <figure class="info-shot">
-        <img class="infographic" src="/sample-summary.jpg" alt="요약 인포그래픽 예시">
-        <figcaption>예시 그림입니다 — 지문에 따라 그림의 구성과 내용은 매번 달라집니다.</figcaption>
-      </figure>
-    </div>
-    <p class="info-caution">그림 속 글자는 AI가 그린 것이라 '직접 수정'으로 고칠 수 없습니다.
-      인쇄하기 전에 오탈자가 없는지 한 번 확인해 주세요.</p>
+    <div class="info-shots">${shots}</div>
+    <p class="info-caution">예시 그림입니다 — 지문에 따라 구성과 내용은 매번 달라집니다.
+      그림 속 글자는 AI가 그린 것이라 '직접 수정'으로 고칠 수 없으니, 인쇄 전에 오탈자를
+      한 번 확인해 주세요.</p>
   </div>`;
 }
 
 // 탭 → 예시 HTML. 없는 탭은 예시를 붙이지 않는다.
 const HOWTO_SAMPLE = {
-  analyze: () => buildAnalysisHtml(SAMPLE_ANALYZE, SAMPLE_JOB, 1, null) + sampleInfographicHtml(),
-  brief: () => buildBriefHtml(SAMPLE_BRIEF, SAMPLE_JOB, 1, null) + sampleInfographicHtml(),
+  analyze: () => buildAnalysisHtml(SAMPLE_ANALYZE, SAMPLE_JOB, 1, null) + sampleInfographicHtml("sample-analyze"),
+  brief: () => buildBriefHtml(SAMPLE_BRIEF, SAMPLE_JOB, 1, null) + sampleInfographicHtml("sample-brief"),
   mcq: () => buildQuizHtml(SAMPLE_MCQ, SAMPLE_JOB, 1, "mcq", "", ""),
   saq: () => buildQuizHtml(SAMPLE_SAQ, SAMPLE_JOB, 1, "saq", "", ""),
   workbook: () => buildWorkbookHtml(SAMPLE_WORKBOOK, [1], SAMPLE_JOB, 1, ""),
@@ -7690,8 +7702,12 @@ function openHowto(tab) {
   // 예시 그림 파일을 아직 안 넣었으면 그 칸을 통째로 지운다 (깨진 그림 대신 없음)
   howtoSampleEl.querySelectorAll("img.infographic").forEach((img) => {
     img.addEventListener("error", () => {
+      // 못 불러온 그림만 걷어내고, 한 장도 안 남으면 칸째 지운다
       const block = img.closest("[data-infographic]");
-      if (block) block.remove();
+      const shot = img.closest(".info-shot");
+      if (shot) shot.remove();
+      if (block && !block.querySelector(".info-shot")) block.remove();
+      else if (block) block.classList.toggle("two", block.querySelectorAll(".info-shot").length > 1);
     });
   });
   howtoSampleEl.hidden = !sample;
