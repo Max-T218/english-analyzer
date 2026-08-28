@@ -7194,6 +7194,7 @@ const HOWTO = {
       "<b>시험지명</b>은 <b>[인쇄]</b>나 <b>[사이트 저장]</b>을 누를 때 적습니다. 시험지와 답지 양쪽에 함께 찍힙니다.",
     ],
     tip: "한 번에 200문항이 넘으면 나눠서 만들지 물어봅니다 — 한 번에 너무 많이 만들면 중간에 실패할 확률이 커지기 때문입니다.",
+    sampleHead: "객관식은 이렇게 나옵니다 — 유형은 23가지이고, 아래는 그려지는 모양이 다른 둘만 모은 것입니다",
   },
 
   saq: {
@@ -7208,6 +7209,7 @@ const HOWTO = {
       "<b>시험지명</b>은 <b>[인쇄]</b>나 <b>[사이트 저장]</b>을 누를 때 적습니다.",
     ],
     tip: "OX 진위형은 한 지문에 최대 5개까지만 만들어집니다. 유형이 하나뿐인데 문항을 많이 잡으면 비슷한 문제가 나오기 때문입니다.",
+    sampleHead: "주관식은 이렇게 나옵니다 — 유형은 18가지이고, 아래는 그려지는 모양이 다른 12가지를 한 벌씩 모은 것입니다",
   },
 
   workbook: {
@@ -7282,59 +7284,117 @@ function sRuby(word, rt, role) {
   return `<ruby class="${cls} nobreak"><span class="${role}">${word}</span><rt>${rt}</rt></ruby>`;
 }
 
+/* 본보기 문장 — 청크마다 낱말 뜻(v)·문법 이름(g)을 루비로 얹는다. 실제 산출물에서
+   가장 눈에 띄는 것이 이 루비와 오른쪽 해설 칸이라, 예시에도 같은 밀도로 담는다. */
 const S_EN1 =
   `Many people ${sRuby("believe", "믿다", "v")} ${sRuby("that", "명사절 접속사", "g")} ` +
   `${sRuby("talent", "재능", "v")} ${sRuby("is fixed", "수동태", "g")},`;
 const S_EN2 =
   `<span class="conj-hl cg1 nobreak">but</span> research ${sRuby("suggests", "시사하다", "v")} ` +
   `${sRuby("otherwise", "그렇지 않게", "v")}.`;
+const S_EN3 =
+  `${sRuby("When", "시간 부사절 접속사", "g")} students ${sRuby("are told", "수동태", "gv")} ` +
+  `${sRuby("that", "명사절 접속사", "g")} ${sRuby("intelligence", "지능", "v")} can grow,`;
+const S_EN4 =
+  `they ${sRuby("take on", "떠맡다·도전하다", "v")} ${sRuby("harder", "더 어려운", "v")} tasks.`;
+const S_EN5 =
+  `Effort, ${sRuby("not", "부정어", "g")} ${sRuby("innate ability", "타고난 능력", "v")}, ` +
+  `${sRuby("shapes", "형성하다", "v")} what they become.`;
 
-// 상세분석 — 문장 카드 하나(왼쪽 청크별 직독직해, 오른쪽 해설·출제 포인트)
+// 상세분석 — 문장 카드(왼쪽 청크별 직독직해, 오른쪽 해설·출제 포인트)
 const SAMPLE_ANALYZE = {
   englishTitle: "Talent Is Not Fixed",
   koreanTitle: "재능은 정해져 있지 않다",
   sentences: [
     {
       no: 1,
-      tag: "도입·통념 제시",
+      tag: "도입 · 통념 제시",
       chunks: [
         { eng: S_EN1, kor: "많은 사람들은 믿는다 / 재능이 정해져 있다고," },
         { eng: S_EN2, kor: "그러나 연구는 시사한다 / 그렇지 않다고." },
       ],
-      note: `추상명사 <code class="v">talent</code>를 설명하는 명사절 접속사 <code class="g">that</code>이 쓰였고, <code class="g">is fixed</code>는 수동태다.`,
+      note: `추상명사 <code class="v">talent</code>를 설명하는 명사절 접속사 <code class="g">that</code>이 쓰였고, <code class="g">is fixed</code>는 수동태다. <code class="g">but</code>이 통념과 연구 결과를 갈라 놓는다.`,
       isTopic: false,
-      examTags: ["어법"],
-      examNote: `명사절 접속사 <code class="g">that</code>과 수동태 <code class="g">is fixed</code>가 어법 출제 포인트다.`,
+      examTags: ["어법", "연결어"],
+      examNote: `명사절 접속사 <code class="g">that</code>과 수동태 <code class="g">is fixed</code>가 어법 출제 포인트다. 역접 <code class="g">but</code>은 연결어 문항으로 자주 나온다.`,
+    },
+    {
+      no: 2,
+      tag: "전개 · 연구 결과",
+      chunks: [
+        { eng: S_EN3, kor: "학생들이 들을 때 / 지능이 자랄 수 있다고," },
+        { eng: S_EN4, kor: "그들은 떠맡는다 / 더 어려운 과제를." },
+      ],
+      note: `시간 부사절 <code class="g">When ...</code>이 조건처럼 쓰였다. <code class="gv">are told</code>는 학생이 '듣는' 쪽이므로 수동태이며, 목표 어법으로 지정하면 주황색으로 표시된다.`,
+      isTopic: false,
+      examTags: ["어법", "빈칸"],
+      examNote: `<code class="gv">are told</code>의 태(態)를 묻거나, <code class="v">harder tasks</code>를 빈칸으로 뚫는 문항이 만들어진다.`,
+    },
+    {
+      no: 3,
+      tag: "결론 · 주제문",
+      chunks: [{ eng: S_EN5, kor: "노력이, 타고난 능력이 아니라, / 그들이 무엇이 되는지를 형성한다." }],
+      note: `삽입구 <code class="g">not innate ability</code>가 주어와 동사 사이에 끼어 있다. 콤마를 걷어내면 <code class="v">Effort shapes ...</code>가 뼈대다.`,
+      isTopic: true,
+      examTags: ["주제", "요약문"],
+      examNote: `글 전체의 주제문이라 주제·제목·요약문 문항의 근거가 되는 문장이다.`,
     },
   ],
   summary: [
-    { label: "주제", content: "Talent is not fixed.<br>재능은 정해져 있지 않다." },
-    { label: "도입 ❶", content: "재능이 고정되어 있다는 통념과 이를 반박하는 연구" },
+    { label: "주제", content: "Talent is not fixed; effort shapes ability.<br>재능은 정해져 있지 않고, 노력이 능력을 만든다." },
+    { label: "도입 ❶", content: "재능이 고정되어 있다는 통념" },
+    { label: "전개 ❷", content: "지능이 자란다고 들은 학생은 더 어려운 과제를 택한다는 연구" },
+    { label: "결론 ❸", content: "타고난 능력이 아니라 노력이 결과를 만든다" },
   ],
   vocab: [
     { word: "talent", pos: "n.", meaning: "재능", synonym: "gift", antonym: "—" },
     { word: "fixed", pos: "adj.", meaning: "고정된", synonym: "settled", antonym: "flexible" },
+    { word: "suggest", pos: "v.", meaning: "시사하다", synonym: "imply", antonym: "—" },
+    { word: "take on", pos: "phr.", meaning: "떠맡다, 도전하다", synonym: "undertake", antonym: "avoid" },
+    { word: "innate", pos: "adj.", meaning: "타고난", synonym: "inborn", antonym: "acquired" },
   ],
 };
 
-// 소책자 — 같은 문장을 소책자 방식으로(오른쪽 칸 없음, 해석은 의역 한 줄)
+/* 소책자 — 같은 색·같은 루비를 쓰되 오른쪽 해설 칸이 없고, 해석이 끊어읽기가 아니라
+   문장 하나짜리 의역이다. 짧은 문장이 이어지면 한 카드에 최대 세 문장까지 모인다 —
+   그 모양을 보여 주려고 둘째 카드에 짧은 문장 둘을 붙여 두었다. */
 const SAMPLE_BRIEF = {
   englishTitle: "Talent Is Not Fixed",
   koreanTitle: "재능은 정해져 있지 않다",
   sentences: [
     {
       no: 1,
-      tag: "도입·통념 제시",
+      tag: "도입 · 통념 제시",
       chunks: [{ eng: S_EN1 }, { eng: S_EN2 }],
       ko: "많은 사람들은 재능이 고정되어 있다고 믿지만, 연구 결과는 그렇지 않다는 점을 보여 준다.",
       isTopic: false,
       examTags: [],
       examNote: "",
     },
+    {
+      no: 2,
+      tag: "전개 · 연구 결과",
+      chunks: [{ eng: S_EN3 }, { eng: S_EN4 }],
+      ko: "학생들은 지능이 발달할 수 있다는 말을 들으면 더 어려운 과제에 도전한다.",
+      isTopic: false,
+      examTags: [],
+      examNote: "",
+    },
+    {
+      no: 3,
+      tag: "결론 · 주제문",
+      chunks: [{ eng: S_EN5 }],
+      ko: "그들이 어떤 사람이 되는지를 만드는 것은 타고난 능력이 아니라 노력이다.",
+      isTopic: true,
+      examTags: [],
+      examNote: "",
+    },
   ],
   summary: [
-    { label: "주제", content: "Talent is not fixed.<br>재능은 정해져 있지 않다." },
-    { label: "도입 ❶", content: "재능이 고정되어 있다는 통념과 이를 반박하는 연구" },
+    { label: "주제", content: "Talent is not fixed; effort shapes ability.<br>재능은 정해져 있지 않고, 노력이 능력을 만든다." },
+    { label: "도입 ❶", content: "재능이 고정되어 있다는 통념" },
+    { label: "전개 ❷", content: "지능이 자란다고 들은 학생은 더 어려운 과제를 택한다는 연구" },
+    { label: "결론 ❸", content: "타고난 능력이 아니라 노력이 결과를 만든다" },
   ],
 };
 
@@ -7342,11 +7402,20 @@ const SAMPLE_PASSAGE_HTML =
   "Many people believe that talent is fixed, but research suggests otherwise. " +
   "When students are told that intelligence can grow, they take on harder tasks.";
 
+/* 문제 예시 — 유형 41종을 다 싣지 않고 '그려지는 모양'이 다른 것만 한 벌씩 담는다.
+   모양은 서답형 12가지(quizBodyHtml의 format 분기)와 객관식 2가지(보기가 글인 것,
+   지문의 밑줄이 곧 보기인 것)뿐이라, 이 14개면 "어떤 식으로 나오는지"는 다 보인다.
+   41개를 다 쓰면 창이 수십 화면이 되고, 유형이 늘 때마다 여기까지 고쳐야 하는
+   세 번째 목록이 생긴다(서버 QUIZ_TYPE_LABELS · 화면 MCQ_TYPES/SAQ_TYPES와 어긋난다).
+
+   카드 머리의 유형 이름에는 그 모양을 함께 쓰는 유형들을 나란히 적는다 — 선생님이
+   "내가 고른 유형은 어느 모양으로 나오지?"를 이 한 줄로 알 수 있게 하기 위해서다.
+   AI를 부르지 않는 고정된 글이라, 예시를 열어도 요금이 나가지 않는다. */
 const SAMPLE_MCQ = {
   questions: [
     {
       no: 1,
-      type: "주제",
+      type: "주제 · 제목 · 요지 · 빈칸 · 순서 · 문장삽입 등",
       format: "mc",
       instruction: "다음 글의 주제로 가장 적절한 것은?",
       passageHtml: SAMPLE_PASSAGE_HTML,
@@ -7360,6 +7429,20 @@ const SAMPLE_MCQ = {
       answer: 2,
       explanation: "재능이 고정되어 있지 않다는 것이 글 전체의 요지이므로 ②가 알맞다.",
     },
+    {
+      /* 어법·어휘처럼 '지문의 밑줄 친 곳이 곧 보기'인 유형 — 아래에 ①~⑤를 한 번 더
+         나열하지 않는다(quizBodyHtml의 markerOnly). 모양이 눈에 띄게 다르므로 따로 싣는다. */
+      no: 2,
+      type: "어법 · 어휘 (지문의 밑줄이 곧 보기)",
+      format: "mc",
+      instruction: "다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?",
+      passageHtml:
+        "Many people ①<u>believe</u> that talent ②<u>is fixed</u>, but research ③<u>suggests</u> otherwise. " +
+        "When students ④<u>are told</u> that intelligence can grow, they ⑤<u>takes</u> on harder tasks.",
+      choices: ["①", "②", "③", "④", "⑤"],
+      answer: 5,
+      explanation: "주어 they가 복수이므로 ⑤ takes는 take가 되어야 한다.",
+    },
   ],
 };
 
@@ -7368,11 +7451,145 @@ const SAMPLE_SAQ = {
     {
       no: 1,
       type: "빈칸 쓰기",
-      format: "short",
-      instruction: "다음 글을 읽고, 빈칸에 들어갈 말을 본문에서 찾아 쓰시오.",
+      format: "fill",
+      instruction: "다음 글의 빈칸에 들어갈 말을 본문에서 찾아 쓰시오.",
+      passageHtml:
+        "Many people believe that talent is fixed, but research suggests otherwise. " +
+        "When students are told that intelligence can (|grow), they take on (|harder) tasks.",
+      explanation: "빈칸에는 지문에 그대로 있는 낱말이 들어간다.",
+    },
+    {
+      no: 2,
+      type: "동사형 쓰기",
+      format: "verb",
+      instruction: "괄호 안 동사를 어법에 맞는 형태로 바꿔 쓰시오.",
+      passageHtml:
+        "Many people believe that talent is fixed, but research suggests otherwise. " +
+        "When students (tell|are told) that intelligence (grow|can grow), they take on harder tasks.",
+      explanation: "학생이 '듣는' 쪽이므로 수동태 are told, 가능을 나타내는 can grow가 알맞다.",
+    },
+    {
+      no: 3,
+      type: "어휘 선택형 · 어법 선택형",
+      format: "pick",
+      instruction: "네모 안에서 문맥과 어법에 맞는 낱말을 골라 쓰시오.",
+      passageHtml:
+        "Many people believe that talent is [fixed|flexible], but research [suggests|deny] otherwise. " +
+        "When students are told that intelligence can grow, they take on harder tasks.",
+      explanation: "통념은 '고정되어 있다'는 쪽이고, 주어 research가 단수라 suggests가 맞다.",
+    },
+    {
+      no: 4,
+      type: "틀린 어휘 찾기 · 틀린 어법 찾기",
+      format: "fix",
+      instruction: "밑줄 친 부분에서 어법상 틀린 곳을 찾아 바르게 고쳐 쓰시오.",
+      passageHtml:
+        "Many people believes that talent is fixed, but research suggest otherwise. " +
+        "When students are told that intelligence can grow, they take on harder tasks.",
+      fixes: [
+        { wrong: "believes", right: "believe" },
+        { wrong: "suggest", right: "suggests" },
+      ],
+      explanation: "주어 Many people은 복수, research는 단수다.",
+    },
+    {
+      no: 5,
+      type: "OX진위(영) · OX진위(한)",
+      format: "tf",
+      instruction: "다음 글의 내용과 일치하면 O, 일치하지 않으면 X를 쓰시오.",
       passageHtml: SAMPLE_PASSAGE_HTML,
-      answerText: "harder tasks",
-      explanation: "지능이 자란다고 들은 학생들이 무엇을 택하는지 묻는 문제다.",
+      tfItems: [
+        { text: "Research supports the idea that talent never changes.", isTrue: false },
+        { text: "Students who hear that intelligence can grow choose harder tasks.", isTrue: true },
+      ],
+      explanation: "연구는 재능이 고정되어 있지 않다는 쪽을 시사한다.",
+    },
+    {
+      no: 6,
+      type: "표현 찾아 쓰기",
+      format: "find",
+      instruction: "다음 우리말과 같은 뜻의 표현을 본문에서 찾아 쓰시오.",
+      passageHtml: SAMPLE_PASSAGE_HTML,
+      findItems: [
+        { ko: "그렇지 않다고 시사하다", en: "suggests otherwise" },
+        { ko: "더 어려운 과제에 도전하다", en: "take on harder tasks" },
+      ],
+      explanation: "지문을 손대지 않으므로 답이 본문 안에 그대로 있다.",
+    },
+    {
+      no: 7,
+      type: "영영풀이 쓰기",
+      format: "gloss",
+      instruction: "다음 영영풀이에 해당하는 낱말·표현을 본문에서 찾아 쓰시오.",
+      passageHtml: SAMPLE_PASSAGE_HTML,
+      glossItems: [
+        { def: "a natural ability to do something well", en: "talent" },
+        { def: "to accept and begin to deal with a difficult job", en: "take on" },
+      ],
+      explanation: "정의가 길어질 수 있어 답란을 정의 아래에 따로 둔다.",
+    },
+    {
+      no: 8,
+      type: "서술형배열",
+      format: "write",
+      instruction: "밑줄 친 우리말과 같은 뜻이 되도록 <보기>의 낱말을 바르게 배열하시오.",
+      passageHtml:
+        "Many people believe that talent is fixed, but research suggests otherwise. " +
+        "<b><u>학생들은 지능이 발달할 수 있다는 말을 들으면 더 어려운 과제에 도전한다.</u></b>",
+      answerText: "When students are told that intelligence can grow, they take on harder tasks.",
+      explanation: "<보기>는 정답 문장의 낱말을 섞어 만든 것이다.",
+    },
+    {
+      no: 9,
+      type: "조건 영작",
+      format: "compose",
+      instruction: "밑줄 친 우리말을 <보기>와 <조건>에 맞게 영작하시오.",
+      passageHtml:
+        "Many people believe that talent is fixed, but research suggests otherwise. " +
+        "<b><u>학생들은 지능이 발달할 수 있다는 말을 들으면 더 어려운 과제에 도전한다.</u></b>",
+      wordBank: ["tell", "student", "intelligence", "grow", "take", "hard", "task"],
+      conditions: [
+        "<보기>의 낱말을 모두 활용할 것(형태는 바꿀 수 있음)",
+        "수동태를 사용할 것",
+        "When으로 시작할 것",
+      ],
+      answerText: "When students are told that intelligence can grow, they take on harder tasks.",
+      explanation: "<보기>가 원형으로 주어져 형태를 스스로 정해야 한다 — 배열과 다른 점이다.",
+    },
+    {
+      no: 10,
+      type: "문장 전환",
+      format: "convert",
+      instruction: "밑줄 친 문장을 <조건>에 맞게 바꿔 쓰시오.",
+      passageHtml:
+        "<b><u>Many people believe that talent is fixed</u></b>, but research suggests otherwise. " +
+        "When students are told that intelligence can grow, they take on harder tasks.",
+      conditions: ["수동태로 바꿔 쓸 것", "It으로 시작할 것"],
+      answerText: "It is believed that talent is fixed.",
+      explanation: "무엇으로 바꾸는지는 문항마다 <조건>이 정한다.",
+    },
+    {
+      no: 11,
+      type: "질문에 답하기",
+      format: "answer",
+      instruction:
+        "다음 글을 읽고 물음에 영어로 답하시오.<br><br>" +
+        "<b>Q:</b> What do students do when they are told that intelligence can grow?",
+      passageHtml: SAMPLE_PASSAGE_HTML,
+      answerText: "They take on harder tasks.",
+      explanation: "<보기> 없이 자유롭게 쓰는 문항이 많아, 낱말이 주어지지 않으면 <보기>를 아예 빼고 그린다.",
+    },
+    {
+      no: 12,
+      type: "무관한 문장 쓰기 · 요약문 완성",
+      format: "short",
+      instruction: "다음 글에서 전체 흐름과 관계 없는 문장을 찾아 그대로 쓰시오.",
+      passageHtml:
+        "Many people believe that talent is fixed, but research suggests otherwise. " +
+        "Sleeping eight hours a night improves memory. " +
+        "When students are told that intelligence can grow, they take on harder tasks.",
+      answerText: "Sleeping eight hours a night improves memory.",
+      explanation: "정답을 낱말로 흩어 보여 주면 안 되는 유형이라 <보기> 없이 답란만 둔다.",
     },
   ],
 };
@@ -7403,10 +7620,31 @@ function sampleVocabHtml() {
   </table></div>`;
 }
 
+/* 요약 이미지 예시 — 그림은 AI가 지문마다 새로 그리는 것이라, 예시를 열 때마다
+   만들 수는 없다(예시를 보려고 요금이 나가면 안 된다). 그래서 미리 뽑아 둔 그림
+   한 장을 public/sample-summary.jpg에 두고 그것만 보여 준다.
+
+   파일이 없으면 이 칸은 스스로 사라진다(openHowto의 error 처리) — 깨진 그림 아이콘을
+   남기느니 없는 편이 낫고, 파일을 나중에 넣어도 코드를 고칠 필요가 없다.
+   실제 산출물과 같은 마크업(.info-shot)을 쓰므로 인쇄 CSS도 그대로 적용된다. */
+function sampleInfographicHtml() {
+  return `<div class="pg-blk info-pair" data-infographic="sample">
+    <h3 class="section"><span class="num">Ⅳ.</span> 한눈에 보는 요약</h3>
+    <div class="info-shots">
+      <figure class="info-shot">
+        <img class="infographic" src="/sample-summary.jpg" alt="요약 인포그래픽 예시">
+        <figcaption>예시 그림입니다 — 지문에 따라 그림의 구성과 내용은 매번 달라집니다.</figcaption>
+      </figure>
+    </div>
+    <p class="info-caution">그림 속 글자는 AI가 그린 것이라 '직접 수정'으로 고칠 수 없습니다.
+      인쇄하기 전에 오탈자가 없는지 한 번 확인해 주세요.</p>
+  </div>`;
+}
+
 // 탭 → 예시 HTML. 없는 탭은 예시를 붙이지 않는다.
 const HOWTO_SAMPLE = {
-  analyze: () => buildAnalysisHtml(SAMPLE_ANALYZE, SAMPLE_JOB, 1, null),
-  brief: () => buildBriefHtml(SAMPLE_BRIEF, SAMPLE_JOB, 1, null),
+  analyze: () => buildAnalysisHtml(SAMPLE_ANALYZE, SAMPLE_JOB, 1, null) + sampleInfographicHtml(),
+  brief: () => buildBriefHtml(SAMPLE_BRIEF, SAMPLE_JOB, 1, null) + sampleInfographicHtml(),
   mcq: () => buildQuizHtml(SAMPLE_MCQ, SAMPLE_JOB, 1, "mcq", "", ""),
   saq: () => buildQuizHtml(SAMPLE_SAQ, SAMPLE_JOB, 1, "saq", "", ""),
   workbook: () => buildWorkbookHtml(SAMPLE_WORKBOOK, [1], SAMPLE_JOB, 1, ""),
@@ -7449,7 +7687,17 @@ function openHowto(tab) {
   // 달라 보여서, 예시를 보여 준 뜻이 없어진다
   const sample = howtoSampleHtml(tab);
   howtoSampleEl.innerHTML = sample;
+  // 예시 그림 파일을 아직 안 넣었으면 그 칸을 통째로 지운다 (깨진 그림 대신 없음)
+  howtoSampleEl.querySelectorAll("img.infographic").forEach((img) => {
+    img.addEventListener("error", () => {
+      const block = img.closest("[data-infographic]");
+      if (block) block.remove();
+    });
+  });
   howtoSampleEl.hidden = !sample;
+  // 탭마다 머리글을 달리 쓸 수 있다 — 문제 탭은 "모양이 다른 것만 모았다"는 단서가
+  // 없으면 예시 개수를 유형 개수로 오해한다
+  howtoSampleHeadEl.textContent = h.sampleHead || "이런 자료가 나옵니다";
   howtoSampleHeadEl.hidden = !sample;   // 예시가 없는 탭에서는 머리글도 숨긴다
   howtoGuideEl.querySelector(".print-guide-card").classList.toggle("wide", !!sample);
   howtoGuideEl.hidden = false;
