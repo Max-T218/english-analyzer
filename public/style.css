@@ -208,6 +208,16 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .gate-preview .qz-reveal-btn{display:none;}
 .gate-preview table.vocab{font-size:12.5px;}
 .gate-preview .wb-q:first-of-type{padding-top:4px;}
+/* 소책자 카드는 오른쪽 해설 칸이 없고 의역(.sent-ko)이 아래에 붙는다. 미리보기의
+   .sent 격자에는 ko 자리가 없어(head/body/note) 의역이 격자 밖으로 밀려 카드가
+   무너졌다. 본문(.sent.brief)과 같은 세 줄짜리 한 열을 미리보기에서도 지킨다.
+   아래 min-width:760px 규칙과 무게가 같아지지 않도록 .gate-show-wide까지 붙여 둔다 —
+   붙이지 않으면 넓은 화면에서 그 규칙이 나중에 와서 이겨 다시 무너진다. */
+.gate-preview .sent.brief,
+.gate-show-wide .gate-preview .sent.brief{
+  grid-template-columns:1fr; grid-template-areas:"head" "body" "ko";
+}
+
 /* 지문 분석(넓은 카드)만은 실제 지면 그대로 보여 준다 — 가입 전 방문자가 무엇을 받게 되는지
    판단하는 근거라, 잘라내거나 배치를 바꾸면 '실제 출력물의 일부'라는 말과 어긋난다. */
 .gate-show-wide .gate-preview{
