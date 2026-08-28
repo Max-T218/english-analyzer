@@ -7628,15 +7628,15 @@ function sampleVocabHtml() {
    만들 수 있고, 그때 지면이 어떻게 나뉘는지가 한 장만 봐서는 드러나지 않는다.
    실제 산출물과 같은 마크업(.info-pair.two > .info-shot)을 쓰므로 인쇄 CSS도 그대로다.
 
-   ⚠️ 캡션(SAMPLE_INFO_CAPTIONS)은 넣어 둔 그림이 실제로 어느 모드로 만들어졌는지와
-   같아야 한다(IMG_LANG_NAME의 값과 같은 말을 쓴다). 그림을 갈아 끼우면서 캡션을
-   그대로 두면 안내가 실제와 어긋난다 — 그럴 바에는 캡션을 비우는 편이 낫다.
+   ⚠️ 캡션은 넣어 둔 그림이 실제로 어느 모드로 만들어졌는지와 같아야 한다
+   (IMG_LANG_NAME의 값과 같은 말을 쓴다). 그래서 탭마다 따로 넘긴다 — 상세분석 쪽은
+   한글요약·영어요약 한 쌍이고, 소책자 쪽은 기본 모드로 만든 두 장이다. 그림을 갈아
+   끼우면서 캡션을 그대로 두면 안내가 실제와 어긋난다.
 
    파일이 없으면 이 칸은 스스로 사라진다(openHowto의 error 처리) — 깨진 그림 아이콘을
    남기느니 없는 편이 낫고, 파일을 갈아 끼워도 코드를 고칠 필요가 없다. */
-const SAMPLE_INFO_CAPTIONS = ["한국어＋영어", "한국어＋영어"];
-function sampleInfographicHtml(prefix) {
-  const shots = SAMPLE_INFO_CAPTIONS
+function sampleInfographicHtml(prefix, captions) {
+  const shots = captions
     .map(
       (cap, i) => `<figure class="info-shot">
         <img class="infographic" src="/${prefix}-${i + 1}.jpg" alt="요약 인포그래픽 예시 ${i + 1}">
@@ -7655,8 +7655,12 @@ function sampleInfographicHtml(prefix) {
 
 // 탭 → 예시 HTML. 없는 탭은 예시를 붙이지 않는다.
 const HOWTO_SAMPLE = {
-  analyze: () => buildAnalysisHtml(SAMPLE_ANALYZE, SAMPLE_JOB, 1, null) + sampleInfographicHtml("sample-analyze"),
-  brief: () => buildBriefHtml(SAMPLE_BRIEF, SAMPLE_JOB, 1, null) + sampleInfographicHtml("sample-brief"),
+  analyze: () =>
+    buildAnalysisHtml(SAMPLE_ANALYZE, SAMPLE_JOB, 1, null) +
+    sampleInfographicHtml("sample-analyze", ["한글요약", "영어요약"]),
+  brief: () =>
+    buildBriefHtml(SAMPLE_BRIEF, SAMPLE_JOB, 1, null) +
+    sampleInfographicHtml("sample-brief", ["한국어＋영어", "한국어＋영어"]),
   mcq: () => buildQuizHtml(SAMPLE_MCQ, SAMPLE_JOB, 1, "mcq", "", ""),
   saq: () => buildQuizHtml(SAMPLE_SAQ, SAMPLE_JOB, 1, "saq", "", ""),
   workbook: () => buildWorkbookHtml(SAMPLE_WORKBOOK, [1], SAMPLE_JOB, 1, ""),
