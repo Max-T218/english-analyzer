@@ -7634,7 +7634,7 @@ function sampleVocabHtml() {
 
    파일이 없으면 이 칸은 스스로 사라진다(openHowto의 error 처리) — 깨진 그림 아이콘을
    남기느니 없는 편이 낫고, 파일을 갈아 끼워도 코드를 고칠 필요가 없다. */
-const SAMPLE_INFO_CAPTIONS = ["한글요약", "영어요약"];
+const SAMPLE_INFO_CAPTIONS = ["한국어＋영어", "한국어＋영어"];
 function sampleInfographicHtml(prefix) {
   const shots = SAMPLE_INFO_CAPTIONS
     .map(
