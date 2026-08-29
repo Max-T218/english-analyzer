@@ -85,20 +85,30 @@ MODEL = _env("GEMINI_MODEL", "gemini-3.7-flash")
 # 지금 Pro로 가는 것: 지문을 변형해 만드는 문제(객관식·주관식 모두), 지문변형 '5개 이상'.
 # 분석본·워크북·사진 옮기기는 Flash다(분석본은 서버가 여섯 가지로 기계 검사해 보완한다).
 MODEL_PRO = _env("GEMINI_MODEL_PRO", "gemini-3.1-pro-preview")
-# 지문 요약 인포그래픽을 '그리는' 모델(나노바나나 프로). 글자를 그림 안에 찍는 작업이라
-# 한글이 깨지지 않는 모델이 필요해 Pro로 고정한다 — Flash 계열은 검증하지 않았다.
+# 지문 요약 인포그래픽을 '그리는' 모델(나노바나나 2 = Gemini 3.1 Flash Image).
+# 글자를 그림 안에 픽셀로 찍는 작업이라 '한글이 안 깨지는가'가 첫 조건이고, 그래서
+# 오래 프로(gemini-3-pro-image)로 고정해 두었다. 2026-08-29에 같은 지문으로 둘을
+# 나란히 뽑아 인쇄까지 견주고 이쪽으로 옮겼다 — 받침이 겹치는 글자(왔·곁·었·찾)까지
+# 멀쩡했고 원가는 절반이다. 이름이 '2'라 구형처럼 보이지만 세대는 3.1로, 프로보다
+# 나중에 나온 모델이다.
 # 위의 두 모델과 달리 부르는 곳이 다르다: :generateContent가 아니라 Interactions API다
 # (GEMINI_IMAGE_URL 참고).
-MODEL_IMAGE = _env("GEMINI_MODEL_IMAGE", "gemini-3-pro-image")
-# 가로형 인포그래픽. 4K인 이유는 인쇄물이기 때문이다 — A4 가로(297mm)에 깔면
-# 2K는 175dpi로 작은 글자가 뭉개지고, 4K는 350dpi가 나온다. 요금은 두 배다
-# (2K $0.134 / 4K $0.24 per image).
+MODEL_IMAGE = _env("GEMINI_MODEL_IMAGE", "gemini-3.1-flash-image")
+# 가로형. 인쇄물이라 A4를 가로로 눕힌 비율에 맞춘다.
 IMAGE_ASPECT = _env("GEMINI_IMAGE_ASPECT", "16:9")
-# 요약 그림 화질. 2K면 A4 한 쪽 폭(186mm)에 꽉 채워도 약 280dpi라 인쇄에 충분하다.
-# 4K는 원가가 두 배인데 종이에서 차이가 눈에 띄지 않아 낮췄다.
-# ⚠️ 이 값을 올리면 원가가 두 배가 되므로 PRICE_INFOGRAPHIC_KRW를 함께 봐야 한다 —
-#    4K로 되돌리면서 값을 그대로 두면 남는 게 60원까지 줄어든다.
-IMAGE_SIZE = _env("GEMINI_IMAGE_SIZE", "2K")
+# 요약 그림 화질. 1K는 가로가 약 1,376px이라 A4 한 쪽 폭(186mm)에 깔면 약 190dpi다
+# ('1K'라고 1,024px이 아니다 — 그렇게 어림잡으면 140dpi로 잘못 계산하게 된다).
+# 인쇄 기준 300dpi에는 못 미치지만 실제로 뽑아 인쇄해 보니 한글·영어 모두 멀쩡했다.
+#
+# 알려진 흠: 1K에서 지시문의 «» 구분 기호가 그림에 그대로 그려진 적이 있다(2K에서
+# 두 번 뽑았을 때는 안 났다). 표본이 적어 1K 탓인지 그때그때 다른 것인지는 가리지
+# 못했고, 값이 반값인 쪽을 택하고 넘어갔다. 자주 나오면 _infographic_prompt의
+# 구분 기호부터 손보면 된다.
+#
+# ⚠️ 이 값을 올리면 원가가 오르므로 PRICE_INFOGRAPHIC_KRW를 함께 봐야 한다.
+#    나노바나나 2는 1K $0.067 / 2K $0.101 / 4K $0.151로 단계마다 값이 다르다.
+#    프로로 되돌린다면 1K와 2K가 같은 값($0.134)이라 1K를 쓸 이유가 없다.
+IMAGE_SIZE = _env("GEMINI_IMAGE_SIZE", "1K")
 # 모델명은 URL 경로에 들어가므로 안전한 형식만 허용 (하드코딩 목록 대신 형식 검증)
 _MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]+$")
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
@@ -145,10 +155,10 @@ KST = timezone(timedelta(hours=9))
 # 관리자가 마진으로 흡수한다. 값은 전부 원(KRW) 단위이며 환경변수로 조정 가능하다.
 PRICE_ANALYZE_KRW = int(os.environ.get("PRICE_ANALYZE_KRW", "300"))        # 지문분석, 지문 1개당
 # 지문 요약 인포그래픽, 지문 1개당(분석·소책자에 얹는 값). 여기만 원가가 크다.
-# 2K 이미지 1장이 $0.134라 환율 1,400원이면 원가가 약 188원이다(1단계 Flash 호출은
-# 그에 비하면 무시할 수준). 그림을 4K에서 2K로 낮췄지만 값은 400원 그대로 둔다 —
-# 4K 시절에는 원가 339원에 60원 남는 얇은 마진이었고, 그 폭을 되찾는 셈이다.
-# 환율이 오르거나 구글이 단가를 올리면 그때 다시 본다.
+# 나노바나나 2 · 1K 한 장이 $0.067이라 환율 1,400원이면 원가가 약 94원이다(1단계
+# Flash 호출은 그에 비하면 무시할 수준). 원가를 두 번 내리면서도(프로 4K 339원 →
+# 프로 2K 188원 → 지금 94원) 값은 400원 그대로 두었다 — 4K 시절에 60원밖에 안 남던
+# 얇은 마진을 되찾는 것이다. 환율이 오르거나 구글이 단가를 올리면 그때 다시 본다.
 PRICE_INFOGRAPHIC_KRW = int(os.environ.get("PRICE_INFOGRAPHIC_KRW", "400"))
 # 소책자 분석, 지문 1개당. 상세분석(300원)보다 싸게 잡는다 — 문장을 청크로 쪼개고
 # 색·루비를 다는 일은 똑같이 하지만, 문장별 해설·출제 포인트·어휘표가 빠져 그만큼
@@ -9957,7 +9967,10 @@ def main():
         f"재시도상한 {MAX_RETRY_TOTAL:.0f}초({_src('MAX_RETRY_TOTAL')}) | "
         f"호출타임아웃 {GEMINI_TIMEOUT:.0f}초({_src('GEMINI_TIMEOUT')}) | "
         f"모델 {MODEL}({_src('GEMINI_MODEL')}) | "
-        f"Pro {MODEL_PRO}({_src('GEMINI_MODEL_PRO')})",
+        f"Pro {MODEL_PRO}({_src('GEMINI_MODEL_PRO')}) | "
+        # 그림은 모델과 화질이 곧 원가라, 바꿔 놓고 적용됐는지 여기서 확인한다.
+        # 이 두 줄이 없어서 모델을 갈아 끼우고도 눈으로 확인할 길이 없었다.
+        f"그림 {MODEL_IMAGE}({_src('GEMINI_MODEL_IMAGE')}) {IMAGE_SIZE}({_src('GEMINI_IMAGE_SIZE')})",
         file=sys.stderr,
     )
     print("영어 지문 분석본 웹앱 실행 중 (Google Gemini)")
