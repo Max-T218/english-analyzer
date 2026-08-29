@@ -4024,11 +4024,15 @@ function setupQuizTab({ prefix, types, footer }) {
   const docxBtn = $(prefix + "DocxBtn");
   const shuffleBtn = $(prefix + "ShuffleBtn");
   let lastEntries = []; // 저장/불러오기용 — {job, label, set, total}
-  /* 시험지명 — 인쇄창·저장창에서 적어 넣는다. 시험지 맨 위와 답지 제목에 함께 찍히고
-     PDF 파일 이름도 이것으로 만들어져, 같은 지문으로 여러 벌을 뽑았을 때 구분된다.
-     화면에 입력칸을 따로 두지 않는 이유 — 만들 때는 필요 없고 '뽑을 때' 필요한
-     정보라, 뽑는 자리에서 묻는 편이 잊지 않는다. */
+  /* 시험지명 — 시험지 맨 위와 답지 제목에 함께 찍히고 표지에도 쓰인다. PDF 파일
+     이름도 이것으로 만들어져, 같은 지문으로 여러 벌을 뽑았을 때 구분된다.
+
+     적는 곳이 셋이다 — 탭 위 입력칸(prefixTitle), 인쇄창, 저장창. 원래는 뒤의 둘뿐이었다
+     ("뽑을 때 필요한 정보니 뽑는 자리에서 묻는다"). 그런데 저장함에서 다른 자료를
+     불러와도 앞 자료의 이름이 그대로 남아 엉뚱한 표지가 붙었고, 그때 고칠 자리가
+     화면 어디에도 없었다. 그래서 늘 보이는 칸을 하나 두고 셋을 같은 값으로 묶었다. */
   let sheetTitle = "";
+  const titleEl = $(prefix + "Title");
   const docName = prefix === "mcq" ? "객관식문제" : "주관식문제";
   const errorEl = $(prefix + "Error");
   const loadingEl = $(prefix + "Loading");
@@ -4738,11 +4742,15 @@ function setupQuizTab({ prefix, types, footer }) {
   }
   function setSheetTitle(v) {
     sheetTitle = (v || "").trim();
+    if (titleEl && titleEl.value.trim() !== sheetTitle) titleEl.value = sheetTitle;
     applySheetTitle();
     syncDocCovers();
   }
-  // 다른 곳(저장창)에서도 같은 이름을 쓰도록 손잡이를 내준다
+  // 다른 곳(저장창·불러오기)에서도 같은 이름을 쓰도록 손잡이를 내준다
   QUIZ_SHEET_TITLE[prefix] = { get: () => sheetTitle, set: setSheetTitle };
+  // 입력칸 → 시험지명. 되받아 쓸 때 trim한 값과 견주는 까닭은, 끝에 띄어쓰기를 치는
+  // 순간 그 공백이 지워져 글자가 씹히기 때문이다.
+  if (titleEl) titleEl.addEventListener("input", () => setSheetTitle(titleEl.value));
 
   printBtn.addEventListener("click", () =>
     printDoc(() => (sheetTitle ? `${docName}_${sanitizeFilename(sheetTitle)}_${todayStr()}` : passageBasedName(docName)), {
@@ -6861,6 +6869,8 @@ saveDialogConfirmBtn.addEventListener("click", async () => {
   saveDialogConfirmBtn.disabled = true;
   try {
     const payload = TAB_SAVE[tab].getPayload();
+    // 표지 제목도 함께 담는다 — 안 담으면 불러왔을 때 앞 자료의 제목이 그대로 남는다
+    if (DOC_TITLES[tab]) payload.coverTitle = DOC_TITLES[tab].get();
     await postJson("/api/saved", { tab, title, payload }, "저장에 실패했습니다.");
     closeSaveDialog();
   } catch (err) {
@@ -7059,8 +7069,14 @@ async function loadSavedItem(id, mode) {
        지문으로 만든 것인지 알 수 없게 된다(지문만 불러온 경우가 특히 그랬다).
        뒤에 붙일 때는 지우지 않는다. 앞서 있던 지문이 그 자리에 그대로 남으므로
        그 지문으로 만든 결과물도 여전히 맞는 짝이다. */
-    if (!append) clearAllTabResults();
+    if (!append) {
+      clearAllTabResults();
+      clearDocTitles();
+    }
     TAB_SAVE[tab].applyPayload(item.payload || {}, append ? "append" : "replace");
+    /* 표지 제목을 되살린다. 제목을 담기 전에 저장한 옛 저장본은 빈칸으로 남는데,
+       앞 자료의 이름이 남아 있는 것보다 낫다 — 탭 위 칸에 새로 적으면 된다. */
+    if (!append && DOC_TITLES[tab]) DOC_TITLES[tab].set((item.payload || {}).coverTitle || "");
   } catch (err) {
     alert(err.message || "불러오기에 실패했습니다.");
   }
@@ -8429,6 +8445,47 @@ DOC_COVERS.forEach((c) => {
   const el = $(c.input);
   if (el) el.addEventListener("input", syncDocCovers);
 });
+
+/* ── 표지 제목 손잡이 ──
+   저장·불러오기가 탭마다 다른 칸 이름을 몰라도 되도록 한 곳에 모은다.
+   워크북·단어장은 제 설정 안에 제목을 이미 저장하고 있어 여기 넣지 않는다
+   — 넣으면 같은 값을 두 군데에 담게 된다. 비우는 일에는 함께 참여한다. */
+function titleHandle(id) {
+  return {
+    get: () => String(($(id) || {}).value || ""),
+    set: (v) => {
+      const el = $(id);
+      if (!el) return;
+      el.value = v || "";
+      syncDocCovers();
+    },
+  };
+}
+function quizTitleHandle(prefix) {
+  return {
+    get: () => (QUIZ_SHEET_TITLE[prefix] ? QUIZ_SHEET_TITLE[prefix].get() : ""),
+    set: (v) => QUIZ_SHEET_TITLE[prefix] && QUIZ_SHEET_TITLE[prefix].set(v),
+  };
+}
+const DOC_TITLES = {
+  analyze: titleHandle("analyzeTitle"),
+  brief: titleHandle("briefTitle"),
+  exam: titleHandle("examPaperTitle"),
+  mcq: quizTitleHandle("mcq"),
+  saq: quizTitleHandle("saq"),
+};
+
+/* 통째로 불러오기 직전에 모든 탭의 제목을 비운다. 안 비우면 앞 자료의 이름이 남아,
+   새로 불러온 자료에 엉뚱한 표지가 붙는다 — 실제로 났던 문제다. 비운 직후
+   loadSavedItem이 applyPayload와 DOC_TITLES로 그 자료의 제목을 다시 채운다. */
+function clearDocTitles() {
+  Object.values(DOC_TITLES).forEach((h) => h.set(""));
+  ["wbTitle", "vocabTitle"].forEach((id) => {
+    const el = $(id);
+    if (el) el.value = "";
+  });
+  syncDocCovers();   // DOC_TITLES 밖(워크북·단어장)의 표지도 함께 걷어낸다
+}
 
 // 목표 어법 — 이 탭은 지문칸이 따로라 공용 칸(grammarEl)과 별개로 받는다
 const examGrammarEl = $("examTargetGrammar");
