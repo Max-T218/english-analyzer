@@ -171,8 +171,8 @@ Gemini 실사용량을 그때그때 재는 대신, **행동 하나당 고정 가
 | `HOST` | `0.0.0.0` | 바인딩 주소 |
 | `GEMINI_MODEL` | `gemini-3.7-flash` | 기본(Flash) 모델 — 지문 분석·워크북·OCR·지문변형(light), 그리고 지문을 그대로 싣는 유형만 고른 문제 제작에 씀 |
 | `GEMINI_MODEL_PRO` | `gemini-3.1-pro-preview` | 정확도가 더 필요한 작업 전용 모델 — 지문을 고쳐 만드는 유형이 섞인 문제 제작(객관식·주관식 모두)과 지문변형(heavy)에 씀 |
-| `GEMINI_MODEL_IMAGE` | `gemini-3.1-flash-image` | 요약 그림을 그리는 모델(나노바나나 2). 상세분석·소책자가 함께 씀 |
-| `GEMINI_IMAGE_SIZE` | `1K` | 요약 그림 화질. 올리면 원가가 오르니 `PRICE_INFOGRAPHIC_KRW`와 함께 볼 것 |
+| `GEMINI_MODEL_IMAGE` | `gemini-3-pro-image` | 요약 그림을 그리는 모델(나노바나나 프로). 상세분석·소책자가 함께 씀 — 값싼 모델로 바꾸려면 여러 장 뽑아 보고 정할 것(server.py 주석 참고) |
+| `GEMINI_IMAGE_SIZE` | `2K` | 요약 그림 화질. 올리면 원가가 두 배가 되니 `PRICE_INFOGRAPHIC_KRW`와 함께 볼 것 |
 | `GEMINI_IMAGE_ASPECT` | `16:9` | 요약 그림 비율(가로형) |
 | `GEMINI_TIMEOUT` | `300` | Gemini 호출 1회의 소켓 타임아웃(초) |
 | `MAX_RETRY_TOTAL` | `150` | 누적 재시도 대기 상한(초). 넘으면 한국어 오류로 안내 |
