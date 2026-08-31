@@ -424,6 +424,69 @@ function showSignupStep(step) {
   verifyPanelEl.hidden = step !== "verify";
 }
 
+/* ── 가입 동의 ──
+   약관은 동의를 받아야 계약 내용이 된다(약관규제법). 동의 없이 만든 계정에는 약관
+   조항을 나중에 근거로 들기 어렵다 — 특히 "입력한 지문의 저작권 책임은 이용자에게
+   있다"는 9조가 그렇다.
+
+   셋을 하나로 묶지 않는다. 개인정보 동의를 약관 동의에 끼워 받는 것은 개인정보보호법상
+   문제가 되고, 만14세는 미성년자 계약 취소와도 얽혀 근거가 각각 다르다.
+
+   화면에서 막는 것은 친절이지 방어가 아니다. 진짜 방어는 서버의 _consent_record가 한다. */
+const AGREE_BOXES = ["agreeTerms", "agreePrivacy", "agreeAge14"];
+const agreeAllEl = $("agreeAll");
+const signupGoogleLockEl = $("signupGoogleLock");
+
+function agreeValues() {
+  return {
+    terms: !!($("agreeTerms") || {}).checked,
+    privacy: !!($("agreePrivacy") || {}).checked,
+    age14: !!($("agreeAge14") || {}).checked,
+  };
+}
+function agreeAllChecked() {
+  return AGREE_BOXES.every((id) => ($(id) || {}).checked);
+}
+function syncAgree() {
+  const ok = agreeAllChecked();
+  if (agreeAllEl) agreeAllEl.checked = ok;
+  const btn = $("signupBtn");
+  if (btn) btn.disabled = !ok;
+  const wrap = $("signupGoogleWrap");
+  if (wrap) wrap.classList.toggle("locked", !ok);
+}
+AGREE_BOXES.forEach((id) => {
+  const el = $(id);
+  if (el) el.addEventListener("change", syncAgree);
+});
+if (agreeAllEl) {
+  agreeAllEl.addEventListener("change", () => {
+    AGREE_BOXES.forEach((id) => {
+      const el = $(id);
+      if (el) el.checked = agreeAllEl.checked;
+    });
+    syncAgree();
+  });
+}
+// 덮개를 눌렀다는 것은 동의 전에 구글 버튼을 눌렀다는 뜻이다. 왜 안 눌리는지
+// 말해 주지 않으면 버튼이 고장 난 줄 안다.
+if (signupGoogleLockEl) {
+  signupGoogleLockEl.addEventListener("click", () => {
+    signupErrorEl.textContent = "먼저 위 세 항목에 동의해 주세요.";
+    const first = AGREE_BOXES.map((id) => $(id)).find((el) => el && !el.checked);
+    if (first) first.focus();
+  });
+}
+// 창을 열 때마다 동의는 처음부터 다시 받는다 — 동의는 눌러 둔 설정이 아니라
+// 그때그때 하는 의사표시라, 지난번 체크가 남아 있으면 안 된다.
+function resetAgree() {
+  AGREE_BOXES.concat(["agreeAll"]).forEach((id) => {
+    const el = $(id);
+    if (el) el.checked = false;
+  });
+  syncAgree();
+}
+
 // 시작 화면이 길어져서 로그인 버튼을 위아래 두 곳에 둔다 — 처음 온 사람은 소개를
 // 읽고 아래에서, 다시 온 사람은 위에서 바로 누른다. id는 하나뿐이라 클래스로 건다.
 document.querySelectorAll(".js-open-login").forEach((btn) =>
@@ -435,6 +498,7 @@ document.querySelectorAll(".js-open-login").forEach((btn) =>
 document.querySelectorAll(".js-open-signup").forEach((btn) =>
   btn.addEventListener("click", () => {
     signupErrorEl.textContent = "";
+    resetAgree();   // 동의는 창을 열 때마다 처음부터
     showSignupStep("form");
     openModal(signupModalEl);
   })
@@ -701,9 +765,13 @@ async function refreshTokenDisplay() {
 // index.html의 data-callback="handleGoogleCredential"이 로그인 성공 시 이 함수를 부른다.
 window.handleGoogleCredential = async function (response) {
   try {
+    /* 동의는 계정을 새로 만들 때만 서버가 따진다. 이미 있는 회원이 로그인하는
+       길에서는 무시되므로, 로그인 창에서 눌러 체크가 다 비어 있어도 문제가 없다.
+       반대로 처음 오는 사람이 로그인 창의 구글 버튼을 누르면 서버가 거절하고
+       회원가입 창으로 안내한다 — 그 버튼도 계정을 만들 수 있기 때문이다. */
     const info = await postJson(
       "/api/auth/google",
-      { credential: response.credential },
+      { credential: response.credential, agree: agreeValues() },
       "구글 로그인에 실패했습니다."
     );
     renderAccount(info);
@@ -859,6 +927,10 @@ const verifyHintEl = $("verifyHint");
 let pendingSignupEmail = "";
 signupPanelEl.addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (!agreeAllChecked()) {
+    signupErrorEl.textContent = "먼저 위 세 항목에 동의해 주세요.";
+    return;
+  }
   const name = $("signupName").value.trim();
   const email = $("signupEmail").value.trim();
   const password = $("signupPassword").value;
@@ -874,7 +946,11 @@ signupPanelEl.addEventListener("submit", async (e) => {
   signupBtn.disabled = true;
   signupStatusEl.textContent = "인증코드 보내는 중…";
   try {
-    await postJson("/api/auth/signup", { email, password, name }, "회원가입에 실패했습니다.");
+    await postJson(
+      "/api/auth/signup",
+      { email, password, name, agree: agreeValues() },
+      "회원가입에 실패했습니다."
+    );
     pendingSignupEmail = email;
     verifyHintEl.textContent = `${email} 로 인증코드를 보냈습니다. 메일함(스팸함 포함)을 확인하세요.`;
     $("verifyCode").value = "";

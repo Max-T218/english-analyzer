@@ -270,6 +270,31 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .gate-auth-bottom{margin-top:16px;}
 
 .auth-google{display:flex; justify-content:center; margin-bottom:16px;}
+/* ── 가입 동의 ──
+   필수 항목이라 눈에 띄어야 하지만, 가입 창의 주인공은 아니다. 옅은 테두리로
+   묶어 "여기부터 저기까지가 한 덩어리"만 보이게 한다. */
+.agree-box{
+  border:1px solid var(--line); border-radius:10px;
+  padding:10px 12px; margin:0 0 14px; display:flex; flex-direction:column; gap:6px;
+}
+.agree-box .chk{font-size:13px; align-items:flex-start; gap:7px;}
+.agree-box .chk b{color:var(--accent); font-weight:800;}
+.agree-box a{text-decoration:underline;}
+.agree-box .agree-all{
+  border-top:1px dashed var(--line); margin-top:2px; padding-top:7px; font-weight:700;
+}
+.agree-hint{margin:2px 0 0; font-size:12px; line-height:1.5;}
+
+/* 구글 버튼은 구글이 iframe으로 그려서 disabled가 안 걸린다. 동의 전에는 투명한
+   덮개로 클릭을 가로채고(그래야 왜 안 되는지 말해 줄 수 있다) 흐리게 보인다. */
+.auth-google.agree-gated{position:relative;}
+.agree-lock{
+  display:none; position:absolute; inset:0; width:100%; height:100%;
+  border:0; background:transparent; cursor:not-allowed; padding:0;
+}
+.auth-google.agree-gated.locked{opacity:.45; filter:grayscale(1);}
+.auth-google.agree-gated.locked .agree-lock{display:block;}
+
 .auth-divider{
   display:flex; align-items:center; gap:10px; margin:4px 0 18px;
   font-size:12px; color:var(--ink-soft);

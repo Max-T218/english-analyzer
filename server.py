@@ -135,6 +135,11 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30일
 # 사용자에게 더 주고 싶으면 관리자 페이지(/admin.html)에서 충전하거나 Firestore
 # 콘솔에서 users/<id> 문서의 krw_remaining 값을 직접 고치면 된다.
 DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "10000"))
+# 지금 걸려 있는 이용약관의 판(public/terms.html의 시행일). 가입할 때 이 값을 계정에
+# 함께 적어 둬야, 나중에 약관을 고쳤을 때 "누가 어느 판에 동의했는지"를 가릴 수 있다.
+# ⚠️ terms.html을 고치면 이 값도 함께 올릴 것 — 안 올리면 옛 판에 동의한 사람과
+#    새 판에 동의한 사람이 기록상 구분되지 않는다.
+TERMS_VERSION = "2026-08-19"
 
 # --- 결제(포트원) -----------------------------------------------------------
 # 셋 다 비어 있으면 "충전하기"가 결제창을 못 띄운다(503) — 결제사가 아직
@@ -445,7 +450,37 @@ def _user_doc_id(email):
     return "email:" + email.strip().lower()
 
 
-def start_signup(email, password, name):
+def _consent_record(agree):
+    """가입 화면에서 받은 동의를 검사하고, 계정에 적을 형태로 돌려준다.
+
+    약관은 동의를 받아야 계약 내용이 된다(약관규제법). 동의 없이 만든 계정에는
+    약관 조항(저작권 책임을 이용자에게 두는 9조, 면책 12조 등)을 나중에 근거로
+    들기 어렵다. 그래서 화면에서 막는 것만으로는 부족하고 여기서 한 번 더 막는다 —
+    화면을 거치지 않고 API를 직접 부르는 길이 열려 있기 때문이다.
+
+    셋은 근거가 각각 다르다. 약관은 약관규제법, 개인정보는 개인정보보호법(약관에
+    묶어서 받으면 안 된다), 만14세는 개인정보보호법과 미성년자 계약 취소 문제다."""
+    a = agree if isinstance(agree, dict) else {}
+    missing = [
+        label for key, label in (
+            ("terms", "이용약관"),
+            ("privacy", "개인정보 수집·이용"),
+            ("age14", "만 14세 이상"),
+        ) if not a.get(key)
+    ]
+    if missing:
+        raise ValueError(
+            "가입하려면 " + " · ".join(missing) + " 항목에 동의해야 합니다."
+        )
+    return {
+        "terms_agreed_at": _now_iso(),
+        "terms_version": TERMS_VERSION,
+        "privacy_agreed": True,
+        "age14_confirmed": True,
+    }
+
+
+def start_signup(email, password, name, agree=None):
     """1단계: 이메일·비밀번호를 임시 저장하고 인증코드를 보낸다.
     아직 users 컬렉션에는 만들지 않는다 — complete_signup에서 코드 확인 후 만든다."""
     _require_db()
@@ -456,6 +491,9 @@ def start_signup(email, password, name):
         raise ValueError("비밀번호는 8자 이상이어야 합니다.")
     if DB.collection("users").document(_user_doc_id(email)).get().exists:
         raise ValueError("이미 가입된 이메일입니다. 로그인해 주세요.")
+    # 동의는 인증코드를 보내기 전에 확인한다 — 동의하지 않은 사람에게 메일부터
+    # 나가면 안 되고, 여기서 막아야 pending_signups에 남지도 않는다.
+    consent = _consent_record(agree)
 
     ref = DB.collection("pending_signups").document(email)
     snap = ref.get()
@@ -480,6 +518,9 @@ def start_signup(email, password, name):
         "attempts": 0,
         "created_at": _now_iso(),
         "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=VERIFY_CODE_TTL)).isoformat(),
+        # 동의한 시각은 '지금'이지 인증코드를 넣는 때가 아니다. 그래서 여기서 굳혀
+        # 두고, complete_signup이 계정을 만들 때 그대로 옮겨 적는다.
+        "consent": consent,
     })
     try:
         send_verification_email(email, code)
@@ -533,6 +574,9 @@ def complete_signup(email, code):
         "krw_paid": 0,
         # upsert_user와 같은 이유 — 방금 가입했으니 지난 업데이트 소식은 최신으로 맞춰 둔다
         "last_seen_changelog": CHANGELOG[0]["version"] if CHANGELOG else 0,
+        # 1단계에서 받아 둔 동의를 그대로 옮겨 적는다. 옛 계정에는 이 값이 없는데,
+        # 동의 절차가 생기기 전에 가입한 사람이라는 뜻이다(지우거나 막지 않는다).
+        **{k: v for k, v in (d.get("consent") or {}).items()},
     })
     ref.delete()
     _log_signup_grant(user_id, starting_krw)
@@ -6795,10 +6839,18 @@ def _was_previously_deleted(email):
     return DB.collection("deleted_accounts").document(email.strip().lower()).get().exists
 
 
-def upsert_user(sub, email, name):
+def upsert_user(sub, email, name, agree=None):
+    """구글 계정으로 들어온 사람을 계정에 반영한다.
+
+    구글 버튼 하나가 로그인과 가입을 겸한다. 그래서 동의는 **계정을 새로 만들 때만**
+    묻는다 — 이미 있는 회원에게 로그인할 때마다 동의를 다시 물으면 성가시고, 그
+    사람은 가입할 때 이미 동의했다. 동의 없이 새 계정을 만들려 하면 거절하고
+    회원가입 창으로 안내한다(로그인 창의 구글 버튼으로도 새 계정이 만들어지므로,
+    화면이 아니라 여기서 막아야 빠짐없이 막힌다)."""
     _require_db()
     ref = DB.collection("users").document(sub)
     if not ref.get().exists:
+        consent = _consent_record(agree)
         starting_krw = 0 if _was_previously_deleted(email) else DEFAULT_USER_KRW
         ref.set({
             "email": email, "name": name, "created_at": _now_iso(),
@@ -6808,6 +6860,7 @@ def upsert_user(sub, email, name):
             # 방금 가입했으니 지금까지의 업데이트 소식은 이미 다 겪은 셈이다 —
             # 첫 로그인부터 지난 소식이 쏟아지지 않게 최신 번호로 맞춰 둔다.
             "last_seen_changelog": CHANGELOG[0]["version"] if CHANGELOG else 0,
+            **consent,
         })
         _log_signup_grant(sub, starting_krw)
     else:
@@ -8788,7 +8841,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 claims = verify_google_id_token(credential)
                 sub = claims["sub"]
-                upsert_user(sub, claims.get("email", ""), claims.get("name", ""))
+                upsert_user(sub, claims.get("email", ""), claims.get("name", ""),
+                            req.get("agree"))
                 token = create_session(sub)
             except ValueError as e:
                 self._send_json({"error": str(e)}, 401)
@@ -8807,7 +8861,7 @@ class Handler(BaseHTTPRequestHandler):
             password = req.get("password") or ""
             name = (req.get("name") or "").strip()
             try:
-                start_signup(email, password, name)
+                start_signup(email, password, name, req.get("agree"))
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
                 return

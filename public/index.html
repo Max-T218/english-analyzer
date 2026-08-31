@@ -626,9 +626,31 @@
       <button type="button" class="modal-close" id="signupModalClose" aria-label="닫기">&times;</button>
       <h3 class="modal-title">회원가입</h3>
 
-      <div class="auth-google">
+      <!-- 동의는 구글·이메일 두 방법 위에 한 번만 둔다. 방법을 고르기 전에 먼저
+           동의하는 순서라, 어느 쪽으로 가입해도 빠지지 않는다.
+           셋을 따로 받는 이유: 약관은 약관규제법, 개인정보는 개인정보보호법(약관에
+           묶어서 받으면 안 된다), 만14세는 미성년자 계약 취소 문제로 근거가 다르다. -->
+      <div class="agree-box" id="signupAgree">
+        <label class="chk"><input type="checkbox" id="agreeTerms">
+          <span><b>[필수]</b> <a href="/terms.html" target="_blank" rel="noopener">이용약관</a>에 동의합니다</span></label>
+        <label class="chk"><input type="checkbox" id="agreePrivacy">
+          <span><b>[필수]</b> <a href="/privacy.html" target="_blank" rel="noopener">개인정보 수집·이용</a>에 동의합니다</span></label>
+        <label class="chk"><input type="checkbox" id="agreeAge14">
+          <span><b>[필수]</b> 만 14세 이상입니다</span></label>
+        <label class="chk agree-all"><input type="checkbox" id="agreeAll">
+          <span>모두 동의</span></label>
+        <p class="hint agree-hint">유상 포인트는 충전일로부터 7일 이내에 청약철회(환불)할 수 있고,
+          그 뒤에도 남은 잔액은 위약금 없이 돌려받을 수 있습니다.
+          자세한 내용은 <a href="/refund.html" target="_blank" rel="noopener">환불정책</a>에 있습니다.</p>
+      </div>
+
+      <!-- 구글 버튼은 구글이 그리는 것이라 disabled를 걸 수 없다. 동의 전에는
+           덮개(.agree-lock)로 클릭을 가로채 안내만 띄운다. -->
+      <div class="auth-google agree-gated" id="signupGoogleWrap">
         <div class="g_id_signin" data-type="standard" data-size="large" data-theme="outline"
              data-text="signup_with" data-shape="rectangular" data-logo_alignment="left"></div>
+        <button type="button" class="agree-lock" id="signupGoogleLock"
+                aria-label="먼저 위 항목에 동의해 주세요"></button>
       </div>
       <div class="auth-divider"><span>또는</span></div>
 
@@ -640,7 +662,7 @@
         <label for="signupPassword">비밀번호 <span class="opt-sub">(8자 이상)</span></label>
         <input type="password" id="signupPassword" autocomplete="new-password" placeholder="비밀번호">
         <div class="gate-actions">
-          <button type="submit" class="btn" id="signupBtn">인증코드 받기</button>
+          <button type="submit" class="btn" id="signupBtn" disabled>인증코드 받기</button>
           <span class="gate-status" id="signupStatus"></span>
         </div>
         <div class="error" id="signupError"></div>
