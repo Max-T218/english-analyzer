@@ -7842,6 +7842,7 @@ const USAGE_KIND_LABEL = {
   grant: "지급",
   carry: "이월",
   adjust: "조정",
+  expire: "소멸",
 };
 
 let usageRows = [];      // 지금까지 받아 둔 줄 (더 보기로 이어 붙인다)
@@ -7854,12 +7855,21 @@ function usageRowHtml(row) {
   const kind = USAGE_KIND_LABEL[row.kind] || row.kind || "";
   // 이월 줄은 금액이 0이고 잔액만 의미가 있다 — 금액칸을 비워 혼동을 막는다
   const moneyText = row.kind === "carry" ? "" : money;
+  /* 충전 줄에는 그 충전분이 언제 소멸하는지를 함께 보여 준다. 약관에 "결제 시점부터
+     5년"이라고 적어 두었어도, 내 돈이 언제 사라지는지는 내역에서 바로 보여야 한다 —
+     소멸시키고 나서 알리면 그 자체가 분쟁이 된다. */
+  const expires = row.expiresAt ? String(row.expiresAt).slice(0, 10) : "";
+  const expiresLine =
+    expires && amount > 0
+      ? `<div class="saved-list-date">소멸 예정 ${esc(expires)}</div>`
+      : "";
   return `
     <div class="saved-list-item">
       <span class="saved-list-tag">${esc(kind)}</span>
       <div class="saved-list-info">
         <div class="saved-list-title">${esc(row.label || "")}</div>
         <div class="saved-list-date">${esc(row.date || "")}</div>
+        ${expiresLine}
       </div>
       <div class="saved-list-actions" style="display:block; text-align:right;">
         <div style="font-weight:700;">${esc(moneyText)}</div>

@@ -139,7 +139,7 @@ DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "10000"))
 # 함께 적어 둬야, 나중에 약관을 고쳤을 때 "누가 어느 판에 동의했는지"를 가릴 수 있다.
 # ⚠️ terms.html을 고치면 이 값도 함께 올릴 것 — 안 올리면 옛 판에 동의한 사람과
 #    새 판에 동의한 사람이 기록상 구분되지 않는다.
-TERMS_VERSION = "2026-08-31"
+TERMS_VERSION = "2026-09-01"
 
 # --- 결제(포트원) -----------------------------------------------------------
 # 셋 다 비어 있으면 "충전하기"가 결제창을 못 띄운다(503) — 결제사가 아직
@@ -162,6 +162,14 @@ LEDGER_KEEP_MONTHS = int(os.environ.get("LEDGER_KEEP_MONTHS", "18"))
 # 켜기 전에 반드시 가입 화면과 이용 내역에 소멸 예정일을 먼저 안내해야 한다
 # (고지 없이 소멸시키면 그것 자체가 분쟁이 된다).
 FREE_POINT_EXPIRE_DAYS = int(os.environ.get("FREE_POINT_EXPIRE_DAYS", "0"))
+# 유상(충전) 포인트 소진기한(일). 기본 1825일 = 5년.
+#
+# 5년인 이유: 원래 약관에 1년으로 적혀 있었는데, 유상분을 1년 만에 전부 소멸시키는 것은
+# 상법상 소멸시효(5년)에 견주어 소비자의 재산권을 과도하게 제한하는 불공정 약관으로
+# 읽힐 수 있다는 지적을 받아 2026-08-31에 5년으로 고쳤다. 화면 세 곳(충전 창·이용약관
+# 7조·환불정책 3항)이 이 값과 같은 말을 하고 있으므로 **여기를 바꾸면 그 세 곳도 함께
+# 고쳐야 한다.** 0으로 두면 만료 없음(소멸 기능 자체가 꺼진다).
+PAID_POINT_EXPIRE_DAYS = int(os.environ.get("PAID_POINT_EXPIRE_DAYS", "1825"))
 USAGE_PAGE_SIZE = 50   # 이용 내역 한 쪽에 보여 줄 줄 수
 # 사용자가 보는 날짜라 UTC로 적으면 오전 9시 이전 사용분이 전날로 표시된다
 KST = timezone(timedelta(hours=9))
@@ -7053,6 +7061,20 @@ CHANGELOG = [
             "고쳤습니다.",
         ],
     },
+    {
+        "version": 19,
+        "date": "2026-09-01",
+        "items": [
+            "이용 내역 — 충전한 포인트마다 소멸 예정일(결제 시점부터 5년)이 함께 "
+            "표시됩니다. 기한이 지난 포인트는 '소멸'로 한 줄 남기고 빠져나가며, "
+            "포인트를 쓸 때는 기한이 이른 것부터 먼저 쓰입니다.",
+            "충전 창 — 결제 전에 청약철회·환불 조건을 한자리에 모아 보여 드립니다. "
+            "결제 수단에 따른 추가 수수료는 받지 않습니다.",
+            "이용약관이 2026년 9월 1일자로 개정되었습니다. 비밀번호 관리 책임, "
+            "휴면계정(1년 미접속 시 전환, 잔액은 유지), 학생 로그인에 비밀번호가 없다는 "
+            "점을 새로 담았습니다.",
+        ],
+    },
 ]
 
 
@@ -7085,6 +7107,10 @@ def _account_payload(user_id):
     표시하는 데 쓴다."""
     _require_db()
     info = DB.collection("users").document(user_id).get().to_dict() or {}
+    # 정기 실행 장치가 없어 소멸을 훑을 자리가 여기뿐이다(로그인·새로고침·/api/me).
+    # 만료된 묶음이 없으면 아무것도 쓰지 않고, 걷어냈으면 그 뒤 잔액을 다시 읽는다.
+    if expire_due_paid(user_id, info):
+        info = DB.collection("users").document(user_id).get().to_dict() or {}
     krw, free, paid = _split_balance(info)
     return {
         "loggedIn": True,
@@ -7128,7 +7154,7 @@ def _ledger_row(user_id, kind, label, amount, paid_delta, free_delta, balance_af
     now = datetime.now(timezone.utc)
     return {
         "user_id": user_id,
-        "kind": kind,                 # use=사용 charge=유상충전 grant=무상지급 carry=이월
+        "kind": kind,                 # use=사용 charge=유상충전 grant=무상지급 carry=이월 expire=소멸
         "label": label,
         "amount": int(amount),        # 사용은 음수, 충전·지급은 양수
         "paid_delta": int(paid_delta),
@@ -7136,8 +7162,9 @@ def _ledger_row(user_id, kind, label, amount, paid_delta, free_delta, balance_af
         "balance_after": int(balance_after),
         "created_at": now.isoformat(),
         "date_kst": now.astimezone(KST).strftime("%Y-%m-%d %H:%M"),
-        # 무상 포인트 소멸 예정일. 지금은 FREE_POINT_EXPIRE_DAYS=0이라 항상 None이고,
-        # 나중에 켜면 이 값을 가진 지급분부터 대상이 된다(이미 준 것은 소급되지 않는다).
+        # 이 줄로 들어온 포인트의 소멸 예정일. 유상 충전은 PAID_POINT_EXPIRE_DAYS(5년),
+        # 무상 지급은 FREE_POINT_EXPIRE_DAYS(지금 0이라 항상 None)를 따른다.
+        # 실제로 깎는 근거는 회원 문서의 paid_lots이고, 이 값은 이용 내역에 보여 주는 용도다.
         "expires_at": expires_at,
     }
 
@@ -7146,6 +7173,139 @@ def _free_expiry():
     if FREE_POINT_EXPIRE_DAYS <= 0:
         return None
     return (datetime.now(timezone.utc) + timedelta(days=FREE_POINT_EXPIRE_DAYS)).isoformat()
+
+
+def _paid_expiry():
+    """유상 충전분의 소멸 예정일. PAID_POINT_EXPIRE_DAYS가 0이면 만료 없음."""
+    if PAID_POINT_EXPIRE_DAYS <= 0:
+        return None
+    return (datetime.now(timezone.utc) + timedelta(days=PAID_POINT_EXPIRE_DAYS)).isoformat()
+
+
+def _paid_lots(d):
+    """회원 문서에서 '유상 충전 묶음' 목록을 꺼낸다.
+
+    잔액(krw_paid)은 총액 하나뿐이라 어느 충전분이 기한을 넘겼는지 가릴 수 없다.
+    그래서 충전할 때마다 {산 날짜, 소멸 예정일, 남은 금액}을 한 묶음으로 남긴다.
+
+    ⚠️ 원장(POINT_LEDGER)이 아니라 회원 문서에 두는 이유: 원장은 18개월이 지나면
+    _fold_old_ledger가 '이월' 한 줄로 접어 지운다. 소진기한은 5년이라 원장에서
+    되짚으려 하면 접힌 구간의 충전분을 영영 잃는다.
+
+    묶음이 없는데 유상 잔액만 있는 계정(이 기능 이전에 충전한 사람)은 **소멸시키지
+    않는다** — 언제 산 것인지 모르는 돈을 날짜를 지어내 지울 수는 없다. 만료 없는
+    묶음 하나로 본다."""
+    lots = d.get("paid_lots")
+    if not isinstance(lots, list):
+        lots = []
+    out = []
+    for lot in lots:
+        if not isinstance(lot, dict):
+            continue
+        try:
+            remaining = int(lot.get("remaining", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if remaining <= 0:
+            continue
+        out.append({
+            "at": lot.get("at") or "",
+            "expires_at": lot.get("expires_at"),
+            "remaining": remaining,
+        })
+    # 기한이 이른 것부터 쓴다 — 그래야 그냥 두면 소멸할 돈이 먼저 쓰인다.
+    # 기한 없는 묶음(옛 충전분)은 맨 뒤로 보낸다.
+    out.sort(key=lambda x: x.get("expires_at") or "9999")
+    _total, _free, paid = _split_balance(d)
+    tracked = sum(x["remaining"] for x in out)
+    if paid > tracked:
+        # 묶음으로 설명되지 않는 유상 잔액 — 기한 없는 묶음으로 본다(위 주석 참고)
+        out.append({"at": "", "expires_at": None, "remaining": paid - tracked})
+    return out
+
+
+def _draw_paid_lots(lots, amount):
+    """오래(=기한이 이른) 순으로 amount만큼 뺀다. (남은 묶음 목록, 실제로 뺀 금액)"""
+    left = int(amount)
+    out = []
+    for lot in lots:
+        if left <= 0:
+            out.append(lot)
+            continue
+        take = min(lot["remaining"], left)
+        left -= take
+        rest = lot["remaining"] - take
+        if rest > 0:
+            out.append({**lot, "remaining": rest})
+    return out, int(amount) - left
+
+
+def _due_paid_lots(lots, now_iso=None):
+    """소멸 예정일이 지난 묶음과 남은 묶음으로 가른다. (만료분, 살아 있는 묶음, 만료 합계)"""
+    now_iso = now_iso or datetime.now(timezone.utc).isoformat()
+    dead, alive, amount = [], [], 0
+    for lot in lots:
+        exp = lot.get("expires_at")
+        if exp and exp <= now_iso:
+            dead.append(lot)
+            amount += lot["remaining"]
+        else:
+            alive.append(lot)
+    return dead, alive, amount
+
+
+def expire_due_paid(user_id, info=None):
+    """소진기한이 지난 유상 포인트를 걷어낸다. 걷어낸 금액을 돌려준다(없으면 0).
+
+    이 앱에는 정기 실행 장치(cron)가 없어 밤에 전체를 훑을 수가 없다. 그래서 계정
+    정보를 읽는 길목(_account_payload — 로그인·새로고침·/api/me)에서 겸사겸사 본다.
+    만료된 묶음이 없으면 Firestore에 아무것도 쓰지 않는다.
+
+    소멸은 고지 없이 하면 그 자체가 분쟁이 되므로 원장에 'expire' 한 줄을 남긴다 —
+    이용 내역에 '소멸'로 표시되고, 충전 줄에는 소멸 예정일이 함께 보인다."""
+    if PAID_POINT_EXPIRE_DAYS <= 0:
+        return 0
+    _require_db()
+    user_ref = DB.collection("users").document(user_id)
+    if info is None:
+        snap = user_ref.get()
+        if not snap.exists:
+            return 0
+        info = snap.to_dict() or {}
+    # 쓸 일이 없으면 트랜잭션을 열지 않는다 (대부분의 조회가 여기서 끝난다)
+    _dead, _alive, due = _due_paid_lots(_paid_lots(info))
+    if due <= 0:
+        return 0
+
+    row_ref = DB.collection(POINT_LEDGER).document()
+
+    @firestore.transactional
+    def _apply(tx):
+        snap = user_ref.get(transaction=tx)
+        if not snap.exists:
+            return 0
+        d = snap.to_dict() or {}
+        _total, free, paid = _split_balance(d)
+        dead, alive, amount = _due_paid_lots(_paid_lots(d))
+        amount = min(amount, paid)      # 잔액보다 많이 지우지 않는다
+        if amount <= 0:
+            return 0
+        new_paid = paid - amount
+        tx.update(user_ref, {
+            "krw_remaining": free + new_paid,
+            "krw_paid": new_paid,
+            "paid_lots": alive,
+        })
+        tx.set(row_ref, _ledger_row(
+            user_id, "expire", "소진기한 경과로 소멸", -amount, -amount, 0, free + new_paid
+        ))
+        return amount
+
+    try:
+        return _apply(DB.transaction())
+    except Exception:
+        traceback.print_exc()   # 소멸에 실패해도 로그인·조회는 계속되어야 한다
+        return 0
 
 
 def _log_signup_grant(user_id, amount):
@@ -7180,15 +7340,21 @@ def charge_krw(user_id, amount, label="사용", kind="use"):
         snap = user_ref.get(transaction=tx)
         if not snap.exists:
             raise ValueError("해당 회원을 찾을 수 없습니다.")
-        _total, free, paid = _split_balance(snap.to_dict() or {})
+        d = snap.to_dict() or {}
+        _total, free, paid = _split_balance(d)
         use_free = min(free, amount)
         use_paid = amount - use_free
         new_free, new_paid = free - use_free, paid - use_paid
-        tx.update(user_ref, {
+        # 유상분을 썼으면 어느 충전 묶음에서 뺐는지도 함께 적는다 — 안 적으면
+        # 잔액만 줄고 묶음이 그대로 남아 나중에 그 묶음이 통째로 소멸 대상이 된다.
+        update = {
             "krw_remaining": new_free + new_paid,
             "krw_free": new_free,
             "krw_paid": new_paid,
-        })
+        }
+        if use_paid > 0:
+            update["paid_lots"], _took = _draw_paid_lots(_paid_lots(d), use_paid)
+        tx.update(user_ref, update)
         tx.set(row_ref, _ledger_row(
             user_id, kind, label, -amount, -use_paid, -use_free, new_free + new_paid
         ))
@@ -7202,22 +7368,32 @@ def add_krw(user_id, amount, kind, label):
     _require_db()
     user_ref = DB.collection("users").document(user_id)
     row_ref = DB.collection(POINT_LEDGER).document()
-    expires_at = _free_expiry() if kind == "grant" else None
+    # 무상분은 FREE_POINT_EXPIRE_DAYS(지금 0=만료 없음), 유상분은 PAID_POINT_EXPIRE_DAYS(5년)
+    expires_at = _free_expiry() if kind == "grant" else _paid_expiry()
 
     @firestore.transactional
     def _apply(tx):
         snap = user_ref.get(transaction=tx)
         if not snap.exists:
             raise ValueError("해당 회원을 찾을 수 없습니다.")
-        _total, free, paid = _split_balance(snap.to_dict() or {})
+        d = snap.to_dict() or {}
+        _total, free, paid = _split_balance(d)
         add_free = amount if kind == "grant" else 0
         add_paid = amount if kind != "grant" else 0
         new_free, new_paid = free + add_free, paid + add_paid
-        tx.update(user_ref, {
+        update = {
             "krw_remaining": new_free + new_paid,
             "krw_free": new_free,
             "krw_paid": new_paid,
-        })
+        }
+        if add_paid > 0:
+            # 이 충전분이 언제 소멸하는지를 여기서만 정한다 — 나중에 되짚을 방법이 없다
+            update["paid_lots"] = _paid_lots(d) + [{
+                "at": datetime.now(timezone.utc).isoformat(),
+                "expires_at": expires_at,
+                "remaining": int(add_paid),
+            }]
+        tx.update(user_ref, update)
         tx.set(row_ref, _ledger_row(
             user_id, kind, label, amount, add_paid, add_free, new_free + new_paid,
             expires_at=expires_at,
@@ -7506,8 +7682,10 @@ def recharge_user_krw(user_id, amount, kind="grant", label=None):
 def _fold_old_ledger(user_id):
     """보관 기간(LEDGER_KEEP_MONTHS)이 지난 줄을 '이월' 한 줄로 접는다.
 
-    포인트에 유효기간이 없어서 잔액은 몇 년이고 살아 있는데 근거만 사라지면,
-    (지급+충전-사용=잔액) 검산이 영영 깨진다. 그래서 지우기 전에 합계를 한 줄 남긴다.
+    잔액은 근거보다 오래 살아 있다(유상분 소진기한이 5년인데 원장 보관은 18개월이다).
+    근거만 사라지면 (지급+충전-사용=잔액) 검산이 영영 깨지므로, 지우기 전에 합계를
+    한 줄 남긴다. 소멸에 필요한 '언제 산 충전분인지'는 원장이 아니라 회원 문서의
+    paid_lots가 들고 있으므로(_paid_lots 주석 참고) 여기서 접어도 잃지 않는다.
 
     정기 실행 장치(cron)가 없으므로 이용 내역을 열 때 겸사겸사 한다. 접을 게 없으면
     질의 한 번으로 끝나고, 실패해도 조회 자체는 계속되어야 하므로 호출부에서 삼킨다.

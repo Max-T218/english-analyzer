@@ -208,6 +208,19 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .gate-preview .qz-reveal-btn{display:none;}
 .gate-preview table.vocab{font-size:12.5px;}
 .gate-preview .wb-q:first-of-type{padding-top:4px;}
+/* 결제 전 고지 상자 — 청약철회와 그 제한은 약관 링크로 미루지 않고 결제하는 자리에서
+   보여야 한다(전자상거래 표준약관 3조②·15조②③). 눈에 띄되 결제 버튼을 밀어내지
+   않도록 글자를 줄이고 스크롤을 둔다. */
+.recharge-terms{
+  margin:12px 0; padding:11px 13px; border:1px solid var(--line); border-radius:10px;
+  background:var(--card); font-size:12.5px; line-height:1.7; color:var(--ink);
+  max-height:210px; overflow-y:auto;
+}
+.recharge-terms > b{display:block; margin-bottom:6px; color:var(--accent);}
+.recharge-terms ul{margin:0; padding-left:18px;}
+.recharge-terms li + li{margin-top:5px;}
+.recharge-terms-more{display:block; margin-top:8px; font-size:12px; color:var(--ink-soft);}
+
 /* 미리보기 안의 단계 이름 — 동형 모의고사는 '기출을 읽어 낸 결과'와 '그것으로 만든
    시험지' 두 장면이 이어지는데, 구분이 없으면 한 장면처럼 보여 무엇이 분석 결과이고
    무엇이 결과물인지 알 수 없다. */
