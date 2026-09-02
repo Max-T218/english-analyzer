@@ -16,6 +16,7 @@ import base64
 import copy
 import difflib
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -148,6 +149,13 @@ PORTONE_STORE_ID = os.environ.get("PORTONE_STORE_ID", "")
 PORTONE_CHANNEL_KEY_CARD = os.environ.get("PORTONE_CHANNEL_KEY_CARD", "")
 PORTONE_API_SECRET = os.environ.get("PORTONE_API_SECRET", "")
 PORTONE_API_BASE = "https://api.portone.io"
+# 결제 취소 알림(웹훅)의 서명을 확인할 열쇠. 포트원 콘솔의 '결제알림(Webhook) 관리'에서
+# 받는다. 비어 있으면 서명 확인을 건너뛰되 로그에 남긴다 — 알림은 '다시 확인해 보라'는
+# 신호로만 쓰고 실제 취소 금액은 서버가 포트원 API에 직접 물어보므로, 가짜 알림이 와도
+# 없는 취소를 만들어 내지는 못한다. 그래도 실서비스에서는 반드시 채워 두어야 한다.
+PORTONE_WEBHOOK_SECRET = os.environ.get("PORTONE_WEBHOOK_SECRET", "")
+# 알림 시각이 이보다 오래되면 버린다(가로챈 알림을 나중에 되쏘는 것을 막는다).
+WEBHOOK_MAX_AGE = 5 * 60
 
 # --- 포인트 원장(이용 내역) ------------------------------------------------
 # 잔액은 숫자 하나로만 남아 있어서 "언제 무엇에 얼마를 썼는지"를 아무도 알 수 없었다.
@@ -7653,6 +7661,126 @@ def confirm_payment_intent(user_id, payment_id):
     return result if result is not None else get_user_krw(user_id)
 
 
+def _verify_portone_webhook(raw, headers):
+    """포트원 결제 알림의 서명을 확인한다. 규격은 Standard Webhooks다.
+
+    서명 대상은 본문 자체가 아니라 "{알림id}.{시각}.{본문}" 문자열이고, 열쇠는
+    'whsec_' 뒤를 base64로 푼 바이트다. 본문은 **받은 그대로의 바이트**로 확인해야
+    한다 — JSON으로 읽었다 다시 쓰면 공백·순서가 달라져 서명이 어긋난다.
+
+    돌려주는 값은 (통과 여부, 사유). 열쇠가 없으면 (True, "열쇠 없음")이다."""
+    if not PORTONE_WEBHOOK_SECRET:
+        return True, "웹훅 열쇠(PORTONE_WEBHOOK_SECRET)가 없어 서명을 확인하지 않았다"
+
+    wid = headers.get("webhook-id") or ""
+    wts = headers.get("webhook-timestamp") or ""
+    wsig = headers.get("webhook-signature") or ""
+    if not (wid and wts and wsig):
+        return False, "서명 헤더가 없다"
+
+    try:
+        sent_at = int(wts)
+    except (TypeError, ValueError):
+        return False, "시각 헤더를 읽을 수 없다"
+    if abs(time.time() - sent_at) > WEBHOOK_MAX_AGE:
+        return False, "알림이 너무 오래됐다(되쏘기 의심)"
+
+    secret = PORTONE_WEBHOOK_SECRET
+    if secret.startswith("whsec_"):
+        secret = secret[len("whsec_"):]
+    try:
+        key = base64.b64decode(secret)
+    except Exception:
+        key = secret.encode("utf-8")   # base64가 아니면 글자 그대로 쓴다
+
+    signed = wid.encode("utf-8") + b"." + wts.encode("utf-8") + b"." + raw
+    expected = base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode()
+
+    # 헤더에는 "v1,서명 v1,서명" 처럼 여러 개가 실릴 수 있다(열쇠를 바꾸는 중일 때).
+    for part in wsig.split():
+        got = part.split(",", 1)[1] if "," in part else part
+        if hmac.compare_digest(got, expected):
+            return True, ""
+    return False, "서명이 맞지 않는다"
+
+
+def apply_payment_cancellation(payment_id):
+    """포트원에서 결제가 취소된 만큼 유상 포인트를 되돌린다.
+
+    알림에 실린 금액은 믿지 않고 포트원 API에 직접 물어본다(충전할 때와 같은 원칙).
+    기준은 결제 건의 누적 취소액이고, 회원 문서에는 '어디까지 반영했는지'를 남겨
+    같은 알림이 두 번 와도, 부분취소가 여러 번 나뉘어 와도 한 번씩만 빠지게 한다.
+
+    ⚠️ **이미 써 버린 포인트는 되돌리지 않는다** — 남아 있는 유상분에서만 뺀다.
+    약관의 '쓴 만큼은 돌려드릴 수 없습니다'와 같은 규칙이다. 잔액을 음수로 만들면
+    다음 충전이 그 빚부터 갚게 되어, 낸 돈보다 적게 받는 일이 생긴다.
+
+    돌려주는 값은 실제로 뺀 금액(뺄 것이 없으면 0, 우리 결제가 아니면 None)."""
+    _require_db()
+    intent_ref = DB.collection("payment_intents").document(payment_id)
+    snap = intent_ref.get()
+    if not snap.exists:
+        return None                      # 이 서비스가 만든 결제가 아니다
+    intent = snap.to_dict() or {}
+    user_id = intent.get("user_id")
+    if not user_id:
+        return None
+
+    payment = _fetch_portone_payment(payment_id)
+    amt = payment.get("amount") or {}
+    try:
+        cancelled_total = int(amt.get("cancelled") or 0)
+    except (TypeError, ValueError):
+        cancelled_total = 0
+    if cancelled_total <= 0:
+        return 0                         # 아직 취소된 것이 없다
+
+    user_ref = DB.collection("users").document(user_id)
+    row_ref = DB.collection(POINT_LEDGER).document()
+
+    @firestore.transactional
+    def _apply(tx):
+        i = (intent_ref.get(transaction=tx).to_dict() or {})
+        # 충전까지 끝난 건에서만 되돌린다. 확인이 안 돼 포인트가 나간 적 없는 건은
+        # 되돌릴 것도 없다(그 상태로 취소되면 손해 본 사람이 없다).
+        if i.get("status") != "completed":
+            return None
+        already = int(i.get("cancelled_applied") or 0)
+        want = cancelled_total - already
+        if want <= 0:
+            return 0                     # 이미 반영됐다
+        u_snap = user_ref.get(transaction=tx)
+        if not u_snap.exists:
+            return None
+        d = u_snap.to_dict() or {}
+        _total, free, paid = _split_balance(d)
+        taken = max(0, min(want, paid))  # 남아 있는 유상분까지만
+        lots, _drawn = _draw_paid_lots(_paid_lots(d), taken)
+        new_paid = paid - taken
+        tx.update(user_ref, {
+            "krw_remaining": free + new_paid,
+            "krw_free": free,
+            "krw_paid": new_paid,
+            "paid_lots": lots,
+        })
+        if taken > 0:
+            tx.set(row_ref, _ledger_row(
+                user_id, "cancel", "카드 결제 취소", -taken, -taken, 0, free + new_paid,
+            ))
+        # 못 뺀 만큼(이미 쓴 포인트)도 기록해 둔다 — 나중에 되짚을 때 필요하다
+        update = {
+            "cancelled_applied": cancelled_total,
+            "cancelled_at": _now_iso(),
+            "cancelled_short": int(want - taken),
+        }
+        if cancelled_total >= int(i.get("amount", 0) or 0):
+            update["status"] = "cancelled"
+        tx.update(intent_ref, update)
+        return taken
+
+    return _apply(DB.transaction())
+
+
 def create_session(sub):
     _require_db()
     token = secrets.token_urlsafe(32)
@@ -9062,7 +9190,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
                         "/api/account/recharge", "/api/account/recharge/confirm",
-                        "/api/account/ack-update",
+                        "/api/account/ack-update", "/api/portone/webhook",
                         "/api/saved", "/api/saved/delete",
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
@@ -9092,6 +9220,36 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(raw.decode("utf-8"))
         except (ValueError, json.JSONDecodeError):
             self._send_json({"error": "잘못된 요청입니다."}, 400)
+            return
+
+        # 결제 취소 알림(포트원 → 서버). 로그인도 세션도 없는 유일한 POST라 여기서
+        # 먼저 처리한다. 서명 확인에 '받은 그대로의 본문'(raw)이 필요해, 아래 로그인
+        # 검사보다 위에 둔다.
+        if path == "/api/portone/webhook":
+            ok, why = _verify_portone_webhook(raw, self.headers)
+            if not ok:
+                print(f"[웹훅거부] {why}", flush=True)
+                self._send_json({"error": "서명을 확인할 수 없습니다."}, 401)
+                return
+            if why:
+                print(f"[웹훅주의] {why}", flush=True)
+            kind = str(req.get("type") or "")
+            data = req.get("data") or {}
+            payment_id = str(data.get("paymentId") or "").strip()
+            # 취소만 처리한다. 나머지 알림(결제완료 등)은 받아만 두고 넘긴다 —
+            # 충전은 이미 화면이 부르는 confirm에서 끝나 있다.
+            if kind in ("Transaction.Cancelled", "Transaction.PartialCancelled") and payment_id:
+                try:
+                    taken = apply_payment_cancellation(payment_id)
+                    print(f"[결제취소반영] {payment_id} {kind} → "
+                          f"{'우리 결제 아님' if taken is None else f'{taken}원 회수'}", flush=True)
+                except Exception as e:
+                    # 포트원은 200이 아니면 다시 보낸다. 여기서 실패를 알려야 재시도를
+                    # 받을 수 있다 — 조용히 200을 주면 취소가 영영 반영되지 않는다.
+                    traceback.print_exc()
+                    self._send_json({"error": f"취소 반영 실패: {e}"}, 500)
+                    return
+            self._send_json({"ok": True})
             return
 
         # AI를 실제로 호출하는 엔드포인트는 전부 로그인이 있어야 쓸 수 있다 —

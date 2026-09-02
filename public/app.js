@@ -7857,6 +7857,7 @@ const USAGE_KIND_LABEL = {
   carry: "이월",
   adjust: "조정",
   expire: "소멸",
+  cancel: "결제취소",
 };
 
 let usageRows = [];      // 지금까지 받아 둔 줄 (더 보기로 이어 붙인다)
