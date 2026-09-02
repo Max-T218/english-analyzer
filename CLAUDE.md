@@ -45,7 +45,7 @@ Get-NetTCPConnection -LocalPort 8000 -State Listen | ForEach-Object { Stop-Proce
 `.env` 파일을 만들지 마세요.** 지금 무엇이 채워져 있는지는 값을 찍지 말고 이걸로 확인하세요.
 
 ```powershell
-foreach ($n in 'GEMINI_API_KEY','GOOGLE_APPLICATION_CREDENTIALS_JSON','GOOGLE_CLIENT_ID','SMTP_USER','SMTP_PASSWORD','ADMIN_USERNAME','ADMIN_PASSWORD','PORTONE_STORE_ID','PORTONE_CHANNEL_KEY_CARD','PORTONE_API_SECRET') {
+foreach ($n in 'GEMINI_API_KEY','GOOGLE_APPLICATION_CREDENTIALS_JSON','GOOGLE_CLIENT_ID','SMTP_USER','SMTP_PASSWORD','ADMIN_USERNAME','ADMIN_PASSWORD','PORTONE_STORE_ID','PORTONE_CHANNEL_KEY_CARD','PORTONE_API_SECRET','PORTONE_WEBHOOK_SECRET') {
   $v = [Environment]::GetEnvironmentVariable($n, 'User')
   "{0,-38} {1}" -f $n, $(if ($v) { "설정됨" } else { "없음" })
 }
@@ -130,7 +130,8 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | 가격 계산 | `_quiz_type_base_price`, `_quiz_action_cost`, `_workbook_cost`(단계 수 × 단가, 상한 있음) |
 | 포인트 원장(이용 내역)·유상무상 구분 | `POINT_LEDGER`, `_split_balance`, `charge_krw`, `add_krw`, `list_usage`, `_fold_old_ledger` |
 | 유상 포인트 소진기한(5년) | `PAID_POINT_EXPIRE_DAYS`, `_paid_lots`(충전분을 묶음으로 회원 문서에 둔다 — 원장은 18개월이면 접히는데 기한은 5년이라), `_draw_paid_lots`(기한 이른 것부터 쓴다), `_due_paid_lots`, `expire_due_paid`(cron이 없어 `_account_payload`에서 겸사겸사 훑는다) |
-| 결제(포트원) — 결제창 열기 전 요청 생성 → 결제 후 서버가 직접 확인하고서만 충전 | `PORTONE_STORE_ID`/`PORTONE_CHANNEL_KEY_CARD`/`PORTONE_API_SECRET`, `create_payment_intent`, `confirm_payment_intent`(`payment_intents` 컬렉션, 브라우저가 보고하는 성공 여부를 그대로 믿지 않는다) |
+| 결제(포트원) — 결제창 열기 전 요청 생성 → 결제 후 서버가 직접 확인하고서만 충전 | `PORTONE_STORE_ID`/`PORTONE_CHANNEL_KEY_CARD`/`PORTONE_API_SECRET`, `create_payment_intent`, `confirm_payment_intent`(`payment_intents` 컬렉션, 브라우저가 보고하는 성공 여부를 그대로 믿지 않는다). **포트원 V2 응답의 필드 이름을 손볼 때는 스키마를 먼저 확인하세요** — `channel`을 `selectedChannel`로, 통화를 `amount` 안으로 잘못 읽어 실결제가 돈만 빠져나가고 충전이 안 되던 사고가 있었습니다 |
+| 결제 취소 → 포인트 자동 회수(웹훅) | `PORTONE_WEBHOOK_SECRET`, `_verify_portone_webhook`(Standard Webhooks 규격 — 서명 대상은 `{id}.{시각}.{본문}`이라 **받은 그대로의 바이트**가 필요하다. 그래서 라우팅이 `_handle_post` 앞쪽, `raw`가 살아 있는 자리에 있다), `apply_payment_cancellation`(알림 금액을 믿지 않고 포트원에 다시 물어본다. 이미 쓴 포인트는 빼지 않고 남은 유상분에서만 회수하며, 누적 취소액 기준이라 같은 알림이 두 번 와도 한 번만 반영된다). 실패하면 일부러 200이 아닌 응답을 보내 포트원이 재전송하게 한다 |
 | 반 · 학생 · 단어시험(AI 안 씀) | `_classroom_approved`/`set_classroom_approved`(관리자 승인 게이트), `create_class`/`regenerate_class_code`(반 하나당 코드 하나, `classes`/`class_codes` 컬렉션)/`create_student`/`delete_student`(`students` 컬렉션, 개별 코드 없음. `create_student`가 이름을 앱 전체에서 유일하도록 등록 시점에 동명이인을 거부한다), `login_student`(이름만 받아 로그인 — 반 코드 없음, `students` 전체를 이름으로 검색)/`create_student_session`/`_student_session_user`(학생 세션, `admin_sessions`와 같은 모양), `create_test_assignment`(`student_id`를 주면 그 학생 한 명에게만, 안 주면 반 전체에)/`_assignment_targets_student`(반 전체/개별 배정 판정, 조회·응시·제출 세 곳이 공유)/`_build_student_questions`(객관식 오답을 같은 단어장의 다른 뜻/단어에서 결정적으로 뽑음)/`grade_and_submit_attempt`(`test_assignments`/`test_attempts` 컬렉션, 문서 ID를 `{assignment_id}_{student_id}_{round}`로 고정해 그 회차의 중복 제출을 막음 — 재시험 기준은 아래 참고)/`_get_student_attempts`/`_attempt_progress`(합격 여부·합격 회차·다음 회차 계산)/`delete_assignment`(시험과 딸린 답안까지 삭제) |
 | Firestore 연결 | `_load_firestore` |
 | 회원가입·인증코드·비밀번호 | `start_signup`, `complete_signup`, `login_with_password`, `_hash_password` |
@@ -211,6 +212,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `/api/vocabocr` `/api/vocabpdf` `/api/models`
 `/api/auth/google` `/api/auth/signup` `/api/auth/verify` `/api/auth/login` `/api/auth/delete`
 `/api/logout` `/api/account/recharge` `/api/account/recharge/confirm` `/api/account/ack-update`
+`/api/portone/webhook`(포트원 → 서버. 로그인·세션이 없는 유일한 POST다)
 `/api/saved` `/api/saved/delete`
 `/api/admin/login` `/api/admin/logout` `/api/admin/recharge` `/api/admin/approve-classroom`
 `/api/classes` `/api/classes/regenerate-code` `/api/students` `/api/students/delete`
@@ -254,12 +256,13 @@ localStorage를 통째로 비우기 때문입니다).
   막아두었지만, 코드 안에 박아 넣는 건 막지 못합니다. `origin`은 공개 저장소입니다.
 - **`git push`는 곧 배포입니다.** Render가 `origin/main`의 push를 받아 자동 재배포합니다.
   사용자가 명시적으로 요청하지 않으면 push하지 마세요.
-- **🚨 결제(포트원) 코드는 지금 GitHub에 올리면 안 됩니다.** `PORTONE_STORE_ID` /
-  `PORTONE_CHANNEL_KEY_CARD` 등에 지금 등록되어 있는 값은 KG이니시스 **테스트 채널**
-  값입니다. 이 상태로 배포하면 실제 서비스에서 결제가 안 되거나 이상 동작합니다.
-  KG이니시스 실연동(live) 심사가 통과해서 실제 채널 키로 환경변수를 바꾸고, 실결제로
-  한 번 더 확인을 마친 뒤에만 push하세요. 사용자가 "이제 됐다"고 명시적으로 말하기
-  전에는 결제 관련 커밋을 만들지도, 올리지도 마세요.
+- **결제는 2026-09-02에 실연동으로 열렸습니다.** 예전에 여기 있던 "결제 코드는 올리면
+  안 된다"는 금지는 풀렸습니다 — 실서비스(Render)의 `PORTONE_*`은 KG이니시스 실연동
+  채널 값이고, 실결제로 충전·취소가 도는 것까지 확인했습니다. 다만 **로컬 환경변수는
+  여전히 테스트 채널 값**이라, 로컬과 실서비스의 값이 다르다는 점을 잊지 마세요
+  (위 "로컬 서버도 실서비스 Firestore를 씁니다" 항목 참고).
+  카드사 심사는 10곳 중 5곳(롯데·BC·삼성·신한·NH)만 등록됐고 하나·우리·현대·국민·
+  하나SK는 진행 중이라, **그 카드로는 아직 결제가 안 됩니다**(2026-09-02 기준).
 - 이 폴더는 **Google Drive 동기화 경로**(`G:\...`)입니다. 파일 감시가 늦을 수 있으니,
   외부에서 바뀐 파일은 캐시를 믿지 말고 다시 읽으세요.
 
