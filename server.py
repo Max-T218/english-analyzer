@@ -183,6 +183,21 @@ FREE_POINT_EXPIRE_DAYS = int(os.environ.get("FREE_POINT_EXPIRE_DAYS", "0"))
 # 충전한 건이 2028년 윤일 때문에 2031-09-03이 아닌 2031-09-02로 잡혔다. 하루라도
 # 약속보다 이르게 소멸시키면 약관과 어긋나므로, 달력상 같은 날짜로 잡는다(_plus_years).
 PAID_POINT_EXPIRE_YEARS = int(os.environ.get("PAID_POINT_EXPIRE_YEARS", "5"))
+# 휴면계정 — 이용약관 14조 6항이 "1년 이상 로그인하지 않은 계정"을 휴면으로 전환할 수
+# 있다고 하고, "전환 예정일 30일 전까지" 13조의 방법(가입 시 등록한 이메일)으로 알린다고
+# 약속한다. 그 두 숫자가 여기 있다. DORMANT_AFTER_DAYS를 0으로 두면 기능 자체가 꺼진다.
+#
+# 전환되어도 **잔액은 건드리지 않는다**(약관: 유상 포인트 잔액은 그대로 유지되며 소진기한도
+# 그대로 적용된다). 그래서 이 기능이 실제로 하는 일은 표시(dormant 깃발)와 통지뿐이고,
+# 다시 로그인하면 sweep이 아니라 로그인 경로에서 즉시 깃발을 내린다.
+DORMANT_AFTER_DAYS = int(os.environ.get("DORMANT_AFTER_DAYS", "365"))
+DORMANT_NOTICE_DAYS = int(os.environ.get("DORMANT_NOTICE_DAYS", "30"))
+# 훑는 간격(시간). cron이 없어 요청 길목에서 겸사겸사 도는데, 매 요청마다 회원 전체를
+# 훑을 수는 없다 — 이 간격 안에는 한 번만 돈다(_sweep_due 참고).
+DORMANT_SWEEP_HOURS = int(os.environ.get("DORMANT_SWEEP_HOURS", "24"))
+# 한 번에 처리할 최대 인원. 회원이 많아졌을 때 로그인 한 건이 오래 붙들리지 않도록
+# 끊는다 — 남은 사람은 다음 훑기에서 처리된다(하루 늦어도 30일 통지 기한에 여유가 있다).
+DORMANT_SWEEP_LIMIT = int(os.environ.get("DORMANT_SWEEP_LIMIT", "200"))
 USAGE_PAGE_SIZE = 50   # 이용 내역 한 쪽에 보여 줄 줄 수
 # 사용자가 보는 날짜라 UTC로 적으면 오전 9시 이전 사용분이 전날로 표시된다
 KST = timezone(timedelta(hours=9))
@@ -7274,6 +7289,9 @@ def _account_payload(user_id):
     # 만료된 묶음이 없으면 아무것도 쓰지 않고, 걷어냈으면 그 뒤 잔액을 다시 읽는다.
     if expire_due_paid(user_id, info):
         info = DB.collection("users").document(user_id).get().to_dict() or {}
+    # 휴면계정 훑기도 같은 이유로 여기 붙는다. 다만 소멸과 달리 '이 사람'이 아니라
+    # 회원 전체가 대상이라, 하루에 한 번만 돌도록 _sweep_due가 막는다.
+    sweep_dormant_accounts()
     krw, free, paid = _split_balance(info)
     return {
         "loggedIn": True,
@@ -7485,6 +7503,154 @@ def expire_due_paid(user_id, info=None):
     except Exception:
         traceback.print_exc()   # 소멸에 실패해도 로그인·조회는 계속되어야 한다
         return 0
+
+
+def _send_dormant_notice(to_email, name, due_date):
+    """휴면 전환 예정 통지. 보냈으면 True.
+
+    약관 13조 1항이 정한 방법(가입 시 등록한 전자우편)으로 보내고, 14조 6항이 요구하는
+    두 가지 — 그 사실과 대상 계정 — 을 본문에 적는다. 전환 예정일도 함께 적는다.
+
+    실패해도 예외를 올리지 않는다. 이 통지는 훑기 도중에 여러 사람에게 나가는데, 한
+    사람의 메일이 막혔다고 나머지가 멈추면 안 된다. **대신 False를 돌려주고, 부른 쪽은
+    보내지 못한 계정을 휴면으로 넘기지 않는다** — 30일 전 통지는 전환의 전제 조건이라
+    통지 없이 전환하면 약관 위반이다."""
+    if not (SMTP_USER and SMTP_PASSWORD):
+        print("[휴면] SMTP 설정이 없어 휴면 예정 통지를 보내지 못했다.", flush=True)
+        return False
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = "[English Lab] 휴면계정 전환 예정 안내"
+        msg["From"] = SMTP_USER
+        msg["To"] = to_email
+        msg.set_content(
+            f"{name or to_email}님, 안녕하세요.\n\n"
+            f"아래 계정이 1년 이상 로그인되지 않아 {due_date}에 휴면계정으로 전환될 "
+            "예정임을 알려 드립니다.\n\n"
+            f"  · 대상 계정: {to_email}\n"
+            f"  · 전환 예정일: {due_date}\n\n"
+            "전환 예정일 전에 한 번만 로그인하시면 휴면 전환은 취소됩니다.\n\n"
+            "휴면계정으로 전환되어도 충전하신 유상 포인트 잔액은 그대로 유지되며"
+            "(이용약관 제7조의 소진기한은 그대로 적용됩니다), 다시 로그인하시면 즉시 "
+            "원래대로 복구됩니다.\n\n"
+            "— English Lab (https://englishlab.ai.kr)"
+        )
+        context = ssl.create_default_context()
+        with _IPv4SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context, timeout=20) as server:
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+        return True
+    except Exception:
+        traceback.print_exc()
+        return False
+
+
+_LAST_DORMANT_SWEEP = 0.0   # 이 프로세스가 마지막으로 훑은 시각(time.time)
+
+
+def _sweep_due():
+    """지금 훑을 차례인지. 프로세스 안 시계로 먼저 걸러 Firestore를 덜 읽는다.
+
+    프로세스가 다시 뜨거나 여럿이면 안 시계는 못 믿으므로, 통과한 뒤 Firestore의
+    표식(system/dormant_sweep)을 한 번 더 본다 — 그쪽이 최종 판단이다."""
+    global _LAST_DORMANT_SWEEP
+    now = time.time()
+    gap = DORMANT_SWEEP_HOURS * 3600
+    if now - _LAST_DORMANT_SWEEP < gap:
+        return False
+    _LAST_DORMANT_SWEEP = now          # 실패하든 말든 이 프로세스는 당분간 다시 안 본다
+    ref = DB.collection("system").document("dormant_sweep")
+    snap = ref.get()
+    last = (snap.to_dict() or {}).get("last_run") if snap.exists else None
+    if last:
+        try:
+            if datetime.now(timezone.utc) - datetime.fromisoformat(last) < timedelta(seconds=gap):
+                return False
+        except ValueError:
+            pass                       # 못 읽는 값이면 훑는 쪽으로 간다
+    ref.set({"last_run": _now_iso()}, merge=True)
+    return True
+
+
+def sweep_dormant_accounts():
+    """1년 이상 로그인하지 않은 계정에 휴면 예정을 알리고, 30일이 지나면 전환한다.
+
+    약관 14조 6항이 정한 순서를 그대로 따른다.
+      ① last_login + 1년 이 다가온 계정에 **전환 예정일 30일 전까지** 메일로 알린다.
+      ② 알린 지 30일이 지나고 전환 예정일도 지났으면 dormant 깃발을 세운다.
+      ③ 잔액·묶음·원장은 건드리지 않는다(약관이 잔액 유지를 약속한다).
+
+    ⚠️ **통지가 실패한 계정은 전환하지 않는다.** 30일 전 통지는 전환의 전제 조건이라,
+    통지 없이 깃발만 세우면 약관을 어기는 것이 된다. 다음 훑기에서 다시 시도한다.
+
+    ⚠️ last_login이 없는 계정(이 기능 이전에 가입해 아직 한 번도 로그인하지 않은 계정)은
+    **손대지 않는다** — 마지막 접속이 언제인지 모르는데 날짜를 지어내 휴면으로 돌릴 수는
+    없다. 그런 계정은 다음 로그인 때 _touch_login이 시계를 시작해 준다.
+
+    cron이 없어 _account_payload(로그인·새로고침·/api/me)에서 겸사겸사 부른다.
+    돌려주는 값은 (알린 수, 전환한 수)."""
+    if DORMANT_AFTER_DAYS <= 0:
+        return 0, 0
+    _require_db()
+    if not _sweep_due():
+        return 0, 0
+
+    now = datetime.now(timezone.utc)
+    # 통지 대상은 '전환 예정일 30일 전'에 이미 도달한 계정 — 즉 마지막 로그인이
+    # (1년 - 30일) 보다 오래된 계정이다. 이 조건으로 한 번에 좁혀 읽는다.
+    cutoff = (now - timedelta(days=max(0, DORMANT_AFTER_DAYS - DORMANT_NOTICE_DAYS))).isoformat()
+    notified = turned = 0
+    try:
+        q = (DB.collection("users")
+             .where("last_login", "<=", cutoff)
+             .limit(DORMANT_SWEEP_LIMIT))
+        for doc in q.stream():
+            d = doc.to_dict() or {}
+            if d.get("dormant"):
+                continue                       # 이미 휴면
+            last_login = d.get("last_login")
+            if not last_login:
+                continue                       # 위 주석 참고 — 모르는 것은 건드리지 않는다
+            try:
+                due = datetime.fromisoformat(last_login) + timedelta(days=DORMANT_AFTER_DAYS)
+            except (TypeError, ValueError):
+                continue
+            sent_at = d.get("dormant_notified_at")
+            if not sent_at:
+                # ① 아직 안 알렸다 — 지금 알린다. 전환은 이 통지로부터 30일 뒤다.
+                #    이미 1년이 지난 계정이라도 통지가 먼저다(그래서 due를 다시 잡는다).
+                due = max(due, now + timedelta(days=DORMANT_NOTICE_DAYS))
+                email = d.get("email")
+                if not email:
+                    continue                   # 알릴 곳이 없으면 전환하지 않는다
+                if not _send_dormant_notice(email, d.get("name"), due.astimezone(KST).strftime("%Y-%m-%d")):
+                    continue                   # 못 알렸으면 다음 훑기에서 다시
+                doc.reference.set({
+                    "dormant_notified_at": _now_iso(),
+                    "dormant_due_at": due.isoformat(),
+                }, merge=True)
+                notified += 1
+                continue
+            # ② 알린 지 30일이 지났고 전환 예정일도 지났으면 전환한다
+            try:
+                sent = datetime.fromisoformat(sent_at)
+            except (TypeError, ValueError):
+                continue
+            due_at = d.get("dormant_due_at")
+            try:
+                due = datetime.fromisoformat(due_at) if due_at else due
+            except (TypeError, ValueError):
+                pass
+            if now - sent < timedelta(days=DORMANT_NOTICE_DAYS) or now < due:
+                continue
+            doc.reference.set({"dormant": True, "dormant_at": _now_iso()}, merge=True)
+            turned += 1
+    except Exception:
+        traceback.print_exc()   # 훑기가 실패해도 로그인·조회는 계속되어야 한다
+
+    if notified or turned:
+        print(f"[휴면] 예정 통지 {notified}건 · 전환 {turned}건", flush=True)
+    return notified, turned
 
 
 def _log_signup_grant(user_id, amount):
@@ -7840,7 +8006,32 @@ def create_session(sub):
         "created_at": _now_iso(),
         "expires_at": expires.isoformat(),
     })
+    _touch_login(sub)
     return token
+
+
+def _touch_login(user_id):
+    """마지막 로그인 시각을 남기고, 휴면이었다면 깨운다.
+
+    로그인 경로가 셋(구글·가입 직후·비밀번호)인데 모두 create_session을 거치므로
+    여기 한 곳에서만 적으면 빠짐이 없다.
+
+    약관 14조 6항의 '다시 로그인하면 즉시 원래대로 복구됩니다'를 지키는 자리이기도
+    하다 — 훑기(sweep)를 기다리지 않고 이 자리에서 바로 깃발을 내린다. 잔액은 애초에
+    건드린 적이 없으므로 되돌릴 것이 없다.
+
+    실패해도 로그인은 계속되어야 한다 — 기록을 못 남기면 그 계정의 휴면 시계가 늦게
+    갈 뿐이고, 그건 이용자에게 불리하지 않다."""
+    try:
+        DB.collection("users").document(user_id).set({
+            "last_login": _now_iso(),
+            "dormant": False,
+            "dormant_at": None,
+            "dormant_notified_at": None,
+            "dormant_due_at": None,
+        }, merge=True)
+    except Exception:
+        traceback.print_exc()
 
 
 def delete_session(token):
@@ -7960,7 +8151,12 @@ def delete_admin_session(token):
 
 
 def list_all_users():
-    """회원 목록 — 이메일·이름·가입방식·잔액·가입일. 가입일 최신순."""
+    """회원 목록 — 이메일·이름·가입방식·잔액·가입일·마지막 로그인·휴면 여부. 가입일 최신순.
+
+    마지막 로그인과 휴면 여부를 함께 내보내는 이유: 휴면 전환은 사람 손을 거치지 않고
+    조용히 일어나는데, 관리자 화면에 아무것도 안 보이면 "이 계정이 왜 휴면이냐"는 문의가
+    왔을 때 확인할 자리가 없다. last_login이 비어 있는 계정은 이 기능 이전에 가입해 아직
+    다시 로그인하지 않은 사람이고, 휴면 판정에서 제외된다(sweep_dormant_accounts 참고)."""
     _require_db()
     rows = []
     for doc in DB.collection("users").stream():
@@ -7977,6 +8173,10 @@ def list_all_users():
             "krwRemaining": krw,
             "createdAt": d.get("created_at", ""),
             "classroomApproved": bool(d.get("classroom_approved")),
+            "lastLogin": _kst_date(d.get("last_login")) or "",
+            "dormant": bool(d.get("dormant")),
+            # 휴면 예정 통지를 보낸 계정은 예정일까지 함께 보여 준다
+            "dormantDue": _kst_date(d.get("dormant_due_at")) or "",
         })
     rows.sort(key=lambda r: r["createdAt"], reverse=True)
     return rows

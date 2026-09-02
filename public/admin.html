@@ -71,6 +71,7 @@
             <th style="padding:8px 6px;">이름</th>
             <th style="padding:8px 6px;">가입</th>
             <th style="padding:8px 6px;">가입일</th>
+            <th style="padding:8px 6px;" title="마지막으로 로그인한 날(KST). 1년 넘게 비면 이용약관 14조 6항에 따라 휴면으로 전환된다 — 전환 30일 전에 메일로 알린다">최근 로그인</th>
             <th style="padding:8px 6px; text-align:right;">잔액(원)</th>
             <th style="padding:8px 6px;" title="반/학생 등록 기능 사용 허가 — 미성년자 데이터가 걸려 있어 기본은 꺼짐">학생기능</th>
             <th style="padding:8px 6px;">관리</th>
@@ -258,6 +259,17 @@ function renderPending(pending, mailReady) {
       : "");
 }
 
+/* 최근 로그인 칸. 휴면이면 그 사실을, 전환 예정이면 예정일을 함께 보여 준다 —
+   "왜 휴면이냐"는 문의가 왔을 때 관리자가 확인할 자리가 여기뿐이다.
+   비어 있는 계정은 이 기능 이전에 가입해 아직 다시 로그인하지 않은 사람이고,
+   서버도 그런 계정은 휴면 판정에서 제외한다(sweep_dormant_accounts). */
+function dormancyCell(u) {
+  const when = u.lastLogin ? esc(u.lastLogin) : "<span style=\"opacity:.5\">기록 없음</span>";
+  if (u.dormant) return `${when} <b style="color:var(--g)">· 휴면</b>`;
+  if (u.dormantDue) return `${when} <span title="휴면 전환 예정일">· ${esc(u.dormantDue)} 예정</span>`;
+  return when;
+}
+
 function renderUsers() {
   renderSummary();
 
@@ -269,6 +281,7 @@ function renderUsers() {
           title="${esc(u.name)}">${esc(u.name)}</td>
       <td style="padding:8px 6px; white-space:nowrap;">${u.provider === "google" ? "구글" : "이메일"}</td>
       <td style="padding:8px 6px; white-space:nowrap; color:var(--ink-soft); font-size:12px;">${esc(fmtDate(u.createdAt))}</td>
+      <td style="padding:8px 6px; white-space:nowrap; color:var(--ink-soft); font-size:12px;">${dormancyCell(u)}</td>
       <td style="padding:8px 6px; text-align:right; font-weight:700; white-space:nowrap;" class="cell-krw">${u.krwRemaining.toLocaleString()}원</td>
       <td style="padding:8px 6px;">
         <button type="button" class="btn ${u.classroomApproved ? "" : "ghost"} small classroom-btn"
