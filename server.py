@@ -7449,16 +7449,46 @@ def confirm_payment_intent(user_id, payment_id):
     except Exception as e:
         raise ValueError(f"결제 확인에 실패했습니다: {e}")
 
+    # 포트원 V2 결제 객체(PaidPayment)의 실제 필드 이름을 그대로 읽는다.
+    #   · 채널은 `channel`이다. 문서에 크게 적힌 `SelectedChannel`은 그 필드의 **타입**
+    #     이름이지 필드 이름이 아니다 — 예전에 `selectedChannel`로 읽고 있었고, 그러면
+    #     항상 None이라 어떤 결제도 통과하지 못했다.
+    #   · 통화는 `amount` 안이 아니라 **최상위**에 있다. PaymentAmount에는 total·taxFree·
+    #     vat·supply·discount·paid·cancelled·cancelledTaxFree만 있고 currency는 없다.
+    # 둘 다 None이 나오던 탓에 실결제가 돈만 빠져나가고 충전은 되지 않았다.
     paid_amount = payment.get("amount") or {}
-    ok = (
-        payment.get("status") == "PAID"
-        and int(paid_amount.get("total", -1)) == amount
-        and paid_amount.get("currency") == "KRW"
-        and payment.get("storeId") == PORTONE_STORE_ID
-        and (payment.get("selectedChannel") or {}).get("key") == PORTONE_CHANNEL_KEY_CARD
-    )
-    if not ok:
-        intent_ref.update({"status": "failed", "checked_at": _now_iso()})
+    got_status = payment.get("status")
+    got_currency = payment.get("currency")
+    got_channel = (payment.get("channel") or {}).get("key")
+    # 어느 조건에서 걸렸는지 남긴다. 예전에는 참/거짓만 보고 "확인되지 않았습니다"라고만
+    # 했는데, 실결제에서 걸렸을 때 원인을 짚을 방법이 없었다(돈은 빠져나갔는데 왜
+    # 안 맞는지 알 수가 없다). 사유는 회원 문서·로그에만 남기고 브라우저에는 보내지
+    # 않는다 — 상점 식별코드·채널키가 그대로 드러나기 때문이다.
+    reasons = []
+    if got_status != "PAID":
+        reasons.append(f"status={got_status!r} (PAID 아님)")
+    if int(paid_amount.get("total", -1)) != amount:
+        reasons.append(f"금액 {paid_amount.get('total')!r} ≠ 요청 {amount}")
+    if got_currency != "KRW":
+        reasons.append(f"통화={got_currency!r}")
+    if payment.get("storeId") != PORTONE_STORE_ID:
+        reasons.append("상점 식별코드(storeId)가 서버 환경변수와 다름")
+    if got_channel != PORTONE_CHANNEL_KEY_CARD:
+        reasons.append("채널키가 서버 환경변수와 다름 — 결제창은 다른 채널로 열렸다")
+
+    if reasons:
+        why = " / ".join(reasons)
+        print(f"[결제확인실패] {payment_id} — {why}", flush=True)
+        # 상태는 pending 그대로 둔다. 예전에는 여기서 failed로 못 박았는데, 그러면
+        # 서버 설정이 틀려서 못 맞춘 경우에도 그 결제가 영영 되살아나지 못한다 —
+        # 돈은 빠져나갔는데 다시 확인할 길이 사라진다. 설정을 고친 뒤 같은 paymentId로
+        # 다시 부르면 그때 충전되도록 열어 둔다. 진짜로 결제되지 않은 건은 아래
+        # 조건에서만 못 박는다(그건 되살릴 것이 없다).
+        if got_status in ("FAILED", "CANCELLED"):
+            intent_ref.update({"status": "failed", "checked_at": _now_iso(),
+                               "fail_reason": why})
+        else:
+            intent_ref.update({"checked_at": _now_iso(), "fail_reason": why})
         raise ValueError("결제가 확인되지 않았습니다.")
 
     user_ref = DB.collection("users").document(user_id)
