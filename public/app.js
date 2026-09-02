@@ -7873,7 +7873,9 @@ function usageRowHtml(row) {
   /* 충전 줄에는 그 충전분이 언제 소멸하는지를 함께 보여 준다. 약관에 "결제 시점부터
      5년"이라고 적어 두었어도, 내 돈이 언제 사라지는지는 내역에서 바로 보여야 한다 —
      소멸시키고 나서 알리면 그 자체가 분쟁이 된다. */
-  const expires = row.expiresAt ? String(row.expiresAt).slice(0, 10) : "";
+  // 서버가 KST로 계산해 보내 준 날짜를 쓴다. expiresAt(UTC)을 여기서 자르면
+  // 오전 9시 이전 시각이 하루 앞선 날짜로 보인다.
+  const expires = row.expiresDate || "";
   const expiresLine =
     expires && amount > 0
       ? `<div class="saved-list-date">소멸 예정 ${esc(expires)}</div>`

@@ -170,14 +170,19 @@ LEDGER_KEEP_MONTHS = int(os.environ.get("LEDGER_KEEP_MONTHS", "18"))
 # 켜기 전에 반드시 가입 화면과 이용 내역에 소멸 예정일을 먼저 안내해야 한다
 # (고지 없이 소멸시키면 그것 자체가 분쟁이 된다).
 FREE_POINT_EXPIRE_DAYS = int(os.environ.get("FREE_POINT_EXPIRE_DAYS", "0"))
-# 유상(충전) 포인트 소진기한(일). 기본 1825일 = 5년.
+# 유상(충전) 포인트 소진기한(년). 기본 5년.
 #
 # 5년인 이유: 원래 약관에 1년으로 적혀 있었는데, 유상분을 1년 만에 전부 소멸시키는 것은
 # 상법상 소멸시효(5년)에 견주어 소비자의 재산권을 과도하게 제한하는 불공정 약관으로
 # 읽힐 수 있다는 지적을 받아 2026-08-31에 5년으로 고쳤다. 화면 세 곳(충전 창·이용약관
 # 7조·환불정책 3항)이 이 값과 같은 말을 하고 있으므로 **여기를 바꾸면 그 세 곳도 함께
 # 고쳐야 한다.** 0으로 두면 만료 없음(소멸 기능 자체가 꺼진다).
-PAID_POINT_EXPIRE_DAYS = int(os.environ.get("PAID_POINT_EXPIRE_DAYS", "1825"))
+#
+# ⚠️ 일수(1825일)가 아니라 **햇수**인 이유: 약관이 "결제한 시점으로부터 5년"이라고
+# 약속하는데, 1825일은 그 사이에 윤일이 끼면 5주년보다 하루 이르다. 실제로 2026-09-03에
+# 충전한 건이 2028년 윤일 때문에 2031-09-03이 아닌 2031-09-02로 잡혔다. 하루라도
+# 약속보다 이르게 소멸시키면 약관과 어긋나므로, 달력상 같은 날짜로 잡는다(_plus_years).
+PAID_POINT_EXPIRE_YEARS = int(os.environ.get("PAID_POINT_EXPIRE_YEARS", "5"))
 USAGE_PAGE_SIZE = 50   # 이용 내역 한 쪽에 보여 줄 줄 수
 # 사용자가 보는 날짜라 UTC로 적으면 오전 9시 이전 사용분이 전날로 표시된다
 KST = timezone(timedelta(hours=9))
@@ -6947,6 +6952,22 @@ def _now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _kst_date(iso):
+    """UTC ISO 문자열 → 사용자가 보는 KST 날짜(YYYY-MM-DD). 못 읽으면 None.
+
+    앞 10글자를 그냥 자르면 안 된다 — 저장된 값은 UTC라 KST 오전 9시 이전 시각이
+    하루 앞선 날짜로 보인다."""
+    if not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(iso))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(KST).strftime("%Y-%m-%d")
+
+
 def _require_db():
     if DB is None:
         raise RuntimeError(
@@ -7304,7 +7325,7 @@ def _ledger_row(user_id, kind, label, amount, paid_delta, free_delta, balance_af
         "balance_after": int(balance_after),
         "created_at": now.isoformat(),
         "date_kst": now.astimezone(KST).strftime("%Y-%m-%d %H:%M"),
-        # 이 줄로 들어온 포인트의 소멸 예정일. 유상 충전은 PAID_POINT_EXPIRE_DAYS(5년),
+        # 이 줄로 들어온 포인트의 소멸 예정일. 유상 충전은 PAID_POINT_EXPIRE_YEARS(5년),
         # 무상 지급은 FREE_POINT_EXPIRE_DAYS(지금 0이라 항상 None)를 따른다.
         # 실제로 깎는 근거는 회원 문서의 paid_lots이고, 이 값은 이용 내역에 보여 주는 용도다.
         "expires_at": expires_at,
@@ -7317,11 +7338,27 @@ def _free_expiry():
     return (datetime.now(timezone.utc) + timedelta(days=FREE_POINT_EXPIRE_DAYS)).isoformat()
 
 
+def _plus_years(dt, years):
+    """달력상 n년 뒤의 같은 날짜·같은 시각. 2월 29일은 그 해에 없으면 2월 28일로 당긴다.
+
+    timedelta(days=365*n)를 쓰지 않는 이유는 윤일이다 — 5년 사이에 윤일이 한 번
+    끼면 1825일은 5주년보다 하루 이르고, 약관이 약속한 '5년'보다 먼저 소멸시키게 된다."""
+    try:
+        return dt.replace(year=dt.year + years)
+    except ValueError:
+        # 2월 29일 → 그 해에는 없는 날. 하루 당겨 2월 28일로 본다(늦추면 3월로 넘어간다).
+        return dt.replace(year=dt.year + years, day=dt.day - 1)
+
+
 def _paid_expiry():
-    """유상 충전분의 소멸 예정일. PAID_POINT_EXPIRE_DAYS가 0이면 만료 없음."""
-    if PAID_POINT_EXPIRE_DAYS <= 0:
+    """유상 충전분의 소멸 예정일. PAID_POINT_EXPIRE_YEARS가 0이면 만료 없음."""
+    if PAID_POINT_EXPIRE_YEARS <= 0:
         return None
-    return (datetime.now(timezone.utc) + timedelta(days=PAID_POINT_EXPIRE_DAYS)).isoformat()
+    # 사용자가 보는 날짜는 KST다. 결제 순간을 KST로 옮겨 그 날짜의 5년 뒤를 잡아야
+    # "9월 3일에 결제 → 5년 뒤 9월 3일"이 되고, 이용 내역 표시와도 어긋나지 않는다.
+    # (UTC로 계산하면 밤 9시 이후 결제분이 하루 앞선 날짜로 잡힌다.)
+    now_kst = datetime.now(timezone.utc).astimezone(KST)
+    return _plus_years(now_kst, PAID_POINT_EXPIRE_YEARS).astimezone(timezone.utc).isoformat()
 
 
 def _paid_lots(d):
@@ -7405,7 +7442,7 @@ def expire_due_paid(user_id, info=None):
 
     소멸은 고지 없이 하면 그 자체가 분쟁이 되므로 원장에 'expire' 한 줄을 남긴다 —
     이용 내역에 '소멸'로 표시되고, 충전 줄에는 소멸 예정일이 함께 보인다."""
-    if PAID_POINT_EXPIRE_DAYS <= 0:
+    if PAID_POINT_EXPIRE_YEARS <= 0:
         return 0
     _require_db()
     user_ref = DB.collection("users").document(user_id)
@@ -7510,7 +7547,7 @@ def add_krw(user_id, amount, kind, label):
     _require_db()
     user_ref = DB.collection("users").document(user_id)
     row_ref = DB.collection(POINT_LEDGER).document()
-    # 무상분은 FREE_POINT_EXPIRE_DAYS(지금 0=만료 없음), 유상분은 PAID_POINT_EXPIRE_DAYS(5년)
+    # 무상분은 FREE_POINT_EXPIRE_DAYS(지금 0=만료 없음), 유상분은 PAID_POINT_EXPIRE_YEARS(5년)
     expires_at = _free_expiry() if kind == "grant" else _paid_expiry()
 
     @firestore.transactional
@@ -8056,6 +8093,10 @@ def list_usage(user_id, limit=50, before=None):
             "date": d.get("date_kst") or "",
             "createdAt": d.get("created_at") or "",
             "expiresAt": d.get("expires_at"),
+            # 화면에 그대로 찍을 소멸 예정일(KST). 저장된 값은 UTC라 화면에서 앞
+            # 10글자만 자르면 오전 9시 이전 시각이 하루 앞선 날짜로 보인다 —
+            # date_kst를 서버가 만들어 주는 것과 같은 이유로 여기서 맞춰 보낸다.
+            "expiresDate": _kst_date(d.get("expires_at")),
         })
     return rows
 
