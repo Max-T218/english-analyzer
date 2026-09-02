@@ -136,6 +136,16 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30일
 # 사용자에게 더 주고 싶으면 관리자 페이지(/admin.html)에서 충전하거나 Firestore
 # 콘솔에서 users/<id> 문서의 krw_remaining 값을 직접 고치면 된다.
 DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "10000"))
+# 가입 축하금 배수 이벤트. SIGNUP_BONUS_UNTIL(KST 날짜, 그날까지 포함)이 지나면 저절로
+# 원래 금액으로 돌아간다.
+#
+# 배수를 손으로 올렸다가 끝나면 손으로 내리는 방식은 쓰지 않는다 — 내리는 것을 잊으면
+# 이벤트가 끝난 뒤에도 계속 두 배가 나가고, 그건 원장에 '무상 지급'으로 쌓이기만 할 뿐
+# 아무 데서도 경고해 주지 않는다. 끝나는 날을 코드가 알고 있어야 한다.
+#
+# 비워 두면(SIGNUP_BONUS_UNTIL="") 이벤트가 없는 것으로 본다.
+SIGNUP_BONUS_MULTIPLIER = int(os.environ.get("SIGNUP_BONUS_MULTIPLIER", "2"))
+SIGNUP_BONUS_UNTIL = os.environ.get("SIGNUP_BONUS_UNTIL", "2026-09-30").strip()
 # 지금 걸려 있는 이용약관의 판(public/terms.html의 시행일). 가입할 때 이 값을 계정에
 # 함께 적어 둬야, 나중에 약관을 고쳤을 때 "누가 어느 판에 동의했는지"를 가릴 수 있다.
 # ⚠️ terms.html을 고치면 이 값도 함께 올릴 것 — 안 올리면 옛 판에 동의한 사람과
@@ -596,7 +606,8 @@ def complete_signup(email, code):
         raise ValueError("인증코드가 올바르지 않습니다.")
 
     user_id = _user_doc_id(email)
-    starting_krw = 0 if _was_previously_deleted(email) else DEFAULT_USER_KRW
+    grant_krw, grant_label = _signup_grant()
+    starting_krw = 0 if _was_previously_deleted(email) else grant_krw
     DB.collection("users").document(user_id).set({
         "email": email,
         "name": d.get("name") or "",
@@ -615,7 +626,7 @@ def complete_signup(email, code):
         **{k: v for k, v in (d.get("consent") or {}).items()},
     })
     ref.delete()
-    _log_signup_grant(user_id, starting_krw)
+    _log_signup_grant(user_id, starting_krw, grant_label)
     return user_id
 
 
@@ -6972,6 +6983,33 @@ def _now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _signup_bonus_active():
+    """가입 축하금 배수 이벤트가 지금(KST 기준) 살아 있는지.
+
+    끝나는 날은 '그날까지 포함'이다 — 9월 30일로 적으면 9월 30일 자정 직전까지 들어온
+    가입이 이벤트 대상이다. 사람이 읽는 안내문("9월 한정")과 코드가 어긋나지 않게
+    하려면 이쪽이 맞다."""
+    if SIGNUP_BONUS_MULTIPLIER <= 1 or not SIGNUP_BONUS_UNTIL:
+        return False
+    try:
+        end = datetime.strptime(SIGNUP_BONUS_UNTIL, "%Y-%m-%d").date()
+    except ValueError:
+        print(f"[이벤트] SIGNUP_BONUS_UNTIL를 읽을 수 없다: {SIGNUP_BONUS_UNTIL!r}", flush=True)
+        return False
+    return datetime.now(timezone.utc).astimezone(KST).date() <= end
+
+
+def _signup_grant():
+    """새 회원에게 넣어 줄 축하금과 원장에 적을 이름. (금액, 이름)을 돌려준다.
+
+    이름을 나눠 두는 이유: 이벤트로 두 배를 받은 사람과 평상시에 받은 사람이 원장에서
+    구분되어야 한다. 나중에 "왜 이 사람만 2만원이냐"는 물음이 나왔을 때 답할 근거다."""
+    if _signup_bonus_active():
+        return (DEFAULT_USER_KRW * SIGNUP_BONUS_MULTIPLIER,
+                f"가입 축하 지급 ({SIGNUP_BONUS_MULTIPLIER}배 이벤트)")
+    return DEFAULT_USER_KRW, "가입 축하 지급"
+
+
 def _kst_date(iso):
     """UTC ISO 문자열 → 사용자가 보는 KST 날짜(YYYY-MM-DD). 못 읽으면 None.
 
@@ -7029,7 +7067,8 @@ def upsert_user(sub, email, name, agree=None):
     ref = DB.collection("users").document(sub)
     if not ref.get().exists:
         consent = _consent_record(agree)
-        starting_krw = 0 if _was_previously_deleted(email) else DEFAULT_USER_KRW
+        grant_krw, grant_label = _signup_grant()
+        starting_krw = 0 if _was_previously_deleted(email) else grant_krw
         ref.set({
             "email": email, "name": name, "created_at": _now_iso(),
             "krw_remaining": starting_krw,
@@ -7040,7 +7079,7 @@ def upsert_user(sub, email, name, agree=None):
             "last_seen_changelog": CHANGELOG[0]["version"] if CHANGELOG else 0,
             **consent,
         })
-        _log_signup_grant(sub, starting_krw)
+        _log_signup_grant(sub, starting_krw, grant_label)
     else:
         ref.set({"email": email, "name": name}, merge=True)
 
@@ -7658,14 +7697,17 @@ def sweep_dormant_accounts():
     return notified, turned
 
 
-def _log_signup_grant(user_id, amount):
+def _log_signup_grant(user_id, amount, label="가입 축하 지급"):
     """가입 축하금을 원장에 남긴다. 잔액은 계정 문서를 만들 때 이미 넣었으므로 여기서는
-    기록만 한다. 기록이 실패했다고 가입까지 막을 이유는 없으므로 예외는 삼킨다."""
+    기록만 한다. 기록이 실패했다고 가입까지 막을 이유는 없으므로 예외는 삼킨다.
+
+    label을 받는 이유는 배수 이벤트다 — 두 배를 받은 사람은 이용 내역에도 그렇게
+    적혀야 나중에 되짚을 수 있다(_signup_grant 참고)."""
     if amount <= 0:
         return
     try:
         DB.collection(POINT_LEDGER).document().set(_ledger_row(
-            user_id, "grant", "가입 축하 지급", amount, 0, amount, amount,
+            user_id, "grant", label, amount, 0, amount, amount,
             expires_at=_free_expiry(),
         ))
     except Exception:
@@ -9128,6 +9170,13 @@ class Handler(BaseHTTPRequestHandler):
             # 비밀값이 아니다 — 화면이 '만들기' 누르기 전에 예상 비용을 보여주는 데 쓴다.
             # 로그인 여부와 무관하게 조회 가능(가격표일 뿐 실제 과금은 아니다).
             self._send_json({
+                # 가입 축하금과 배수 이벤트. 로그인 화면이 이 값으로 안내 띠를 띄우는데,
+                # 끝나는 날이 지나면 서버가 event=False를 내려주므로 띠도 저절로 사라진다
+                # — 이벤트를 내리려고 사람이 화면을 고칠 일이 없어야 한다.
+                "signupBonus": _signup_grant()[0],
+                "signupBonusBase": DEFAULT_USER_KRW,
+                "signupBonusEvent": _signup_bonus_active(),
+                "signupBonusUntil": SIGNUP_BONUS_UNTIL if _signup_bonus_active() else "",
                 "analyze": PRICE_ANALYZE_KRW,
                 # 소책자 분석(요약) — 이미 만든 상세분석을 다시 그리는 길은 0원이라
                 # 화면이 이 값을 쓰지 않는다. 지문으로 새로 만들 때만 쓰인다.

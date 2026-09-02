@@ -571,6 +571,32 @@ async function loadPricing() {
 }
 loadPricing();
 
+/* 가입 축하금 이벤트 띠. 금액도 기간도 서버가 정한다 — 화면에 숫자를 박아 두면
+   이벤트가 끝난 뒤에도 그 숫자가 남는다(가격을 하드코딩하지 않는 것과 같은 이유).
+   signupBonusEvent가 거짓이면 띠를 감춘다. 서버가 끝난 날을 알고 있으므로, 이벤트를
+   내리려고 이 파일을 고칠 일은 없다. */
+function renderSignupBonus() {
+  const el = $("signupBonusBanner");
+  if (!el) return;
+  if (!PRICING || !PRICING.signupBonusEvent || !PRICING.signupBonus) {
+    el.hidden = true;
+    return;
+  }
+  const now = Number(PRICING.signupBonus).toLocaleString();
+  const base = Number(PRICING.signupBonusBase || 0);
+  const until = String(PRICING.signupBonusUntil || "");
+  // "2026-09-30" → "9월 30일". 못 읽으면 날짜 안내를 빼고 금액만 알린다.
+  const m = until.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  const when = m ? `${Number(m[1])}월 ${Number(m[2])}일까지` : "";
+  el.innerHTML =
+    `<span class="bonus-tag">이벤트</span>` +
+    `<span>${when ? esc(when) + " " : ""}가입하시면 축하 포인트를 <b>${esc(now)}원</b> 드립니다` +
+    (base ? ` <span class="bonus-was">${base.toLocaleString()}원</span>` : "") +
+    `. 카드 등록 없이 그만큼 먼저 써 보세요.</span>`;
+  el.hidden = false;
+}
+onPricingReady(renderSignupBonus);
+
 // 지금 입력된 지문 중 실제로 과금 대상이 될 만큼 긴 것만 센다(20자 미만은 서버가
 // 애초에 거부하므로 비용 예측에서도 빼는 게 맞다).
 function billableJobCount() {
