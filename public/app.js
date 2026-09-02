@@ -7745,7 +7745,7 @@ function sampleInfographicHtml(prefix, captions) {
   const shots = captions
     .map(
       (cap, i) => `<figure class="info-shot">
-        <img class="infographic" src="/${prefix}-${i + 1}.jpg" alt="요약 인포그래픽 예시 ${i + 1}">
+        <img class="infographic" src="/${prefix}-${i + 1}.jpg?v=${window.ASSET_V || ""}" alt="요약 인포그래픽 예시 ${i + 1}">
         ${cap ? `<figcaption>${esc(cap)}</figcaption>` : ""}
       </figure>`
     )

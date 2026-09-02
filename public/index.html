@@ -219,11 +219,11 @@
           <div class="info-pair two">
             <div class="info-shots">
               <figure class="info-shot">
-                <img class="infographic" src="/sample-analyze-1.jpg" alt="요약 이미지 예시 — 한글요약" loading="lazy">
+                <img class="infographic" src="/sample-analyze-1.jpg?v=%%ASSET_V%%" alt="요약 이미지 예시 — 한글요약" loading="lazy">
                 <figcaption>한글요약</figcaption>
               </figure>
               <figure class="info-shot">
-                <img class="infographic" src="/sample-analyze-2.jpg" alt="요약 이미지 예시 — 영어요약" loading="lazy">
+                <img class="infographic" src="/sample-analyze-2.jpg?v=%%ASSET_V%%" alt="요약 이미지 예시 — 영어요약" loading="lazy">
                 <figcaption>영어요약</figcaption>
               </figure>
             </div>
@@ -1863,6 +1863,9 @@
     </div>
   </div>
 </div>
+<!-- app.js가 만드는 그림 주소(sampleInfographicHtml)에도 같은 판 번호를 붙이려면
+     그 값을 JS가 알아야 한다. %%ASSET_V%%는 index.html에서만 바뀌므로 여기서 넘긴다. -->
+<script>window.ASSET_V = "%%ASSET_V%%";</script>
 <script src="/app.js?v=%%ASSET_V%%"></script>
 </body>
 </html>
