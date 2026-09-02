@@ -3253,6 +3253,7 @@ function buildAnalysisHtml(d, job, total, idx) {
         <b><span class="dot" style="background:var(--g)"></span><span class="g">어법</span></b>
         <b><span class="dot" style="background:var(--v)"></span><span class="v">어휘</span></b>
         <b><span class="dot" style="background:var(--gv)"></span><span class="gv">어법+어휘</span></b>
+        <b><span class="dot" style="background:var(--ref)"></span><span class="ref">지칭 대상</span></b>
         <b><span class="dot" style="background:var(--conj)"></span><span class="dot" style="background:var(--conj2)"></span><span class="dot" style="background:var(--conj3)"></span><span class="conj-hl">병렬구조</span><span class="legend-note">같은 색끼리 한 묶음</span></b>
         <b><span class="dot" style="background:var(--hl)"></span><span class="hl" style="padding:0 3px;border-radius:3px">강조·연결어</span></b>
         ${grammarEl.value.trim() ? `<b><span class="dot" style="background:var(--target-hl)"></span><span class="tg" style="padding:0 3px;border-radius:3px">목표 어법</span></b>` : ""}
@@ -3527,6 +3528,7 @@ function buildBriefHtml(d, job, total, images) {
         <b><span class="dot" style="background:var(--g)"></span><span class="g">어법</span></b>
         <b><span class="dot" style="background:var(--v)"></span><span class="v">어휘</span></b>
         <b><span class="dot" style="background:var(--gv)"></span><span class="gv">어법+어휘</span></b>
+        <b><span class="dot" style="background:var(--ref)"></span><span class="ref">지칭 대상</span></b>
         <b><span class="dot" style="background:var(--conj)"></span><span class="dot" style="background:var(--conj2)"></span><span class="dot" style="background:var(--conj3)"></span><span class="conj-hl">병렬구조</span><span class="legend-note">같은 색끼리 한 묶음</span></b>
         <b><span class="dot" style="background:var(--hl)"></span><span class="hl" style="padding:0 3px;border-radius:3px">강조·연결어</span></b>
         ${hasTarget ? `<b><span class="dot" style="background:var(--target-hl)"></span><span class="tg" style="padding:0 3px;border-radius:3px">목표 어법</span></b>` : ""}
@@ -7371,8 +7373,20 @@ const HOWTO = {
    그대로 적어 두었다. */
 const SAMPLE_JOB = { name: "지문 1", named: false, text: "" };
 
+// 역할 → 루비 보조 클래스. 서버의 _ROLE_RUBY와 같은 표다(예시가 실제 산출물과
+// 같은 색으로 보여야 한다). 모르는 역할이 오면 파랑(어휘)으로 두던 것을 고쳤다 —
+// 표에 없는 역할이 조용히 다른 색으로 찍히면 예시가 범례와 어긋난다.
+const S_RUBY_CLS = {
+  g: "over-tag",
+  v: "over-tag vocab-rt",
+  gv: "over-tag theme-rt",
+  hl: "over-tag hl-rt",
+  tg: "over-tag target-rt",
+  ref: "over-tag ref-rt",
+};
+
 function sRuby(word, rt, role) {
-  const cls = role === "g" ? "over-tag" : role === "gv" ? "over-tag theme-rt" : "over-tag vocab-rt";
+  const cls = S_RUBY_CLS[role] || "over-tag vocab-rt";
   return `<ruby class="${cls} nobreak"><span class="${role}">${word}</span><rt>${rt}</rt></ruby>`;
 }
 
@@ -7391,7 +7405,7 @@ const S_EN4 =
   `they ${sRuby("take on", "떠맡다·도전하다", "v")} ${sRuby("harder", "더 어려운", "v")} tasks.`;
 const S_EN5 =
   `Effort, ${sRuby("not", "부정어", "g")} ${sRuby("innate ability", "타고난 능력", "v")}, ` +
-  `${sRuby("shapes", "형성하다", "v")} what they become.`;
+  `${sRuby("shapes", "형성하다", "v")} what ${sRuby("they", "학생들", "ref")} become.`;
 
 // 상세분석 — 문장 카드(왼쪽 청크별 직독직해, 오른쪽 해설·출제 포인트)
 const SAMPLE_ANALYZE = {

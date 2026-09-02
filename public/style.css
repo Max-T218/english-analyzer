@@ -5,6 +5,14 @@
   /* 어법(빨강) + 어휘(파랑) = 어법+어휘(보라) 로 색이 맞물려 있으므로 이 셋은 건드리지 않는다.
      병렬구조는 원래 하늘색(#1f9dd0)이라 어휘의 파랑과 구분이 잘 안 돼 초록으로 바꿨다. */
   --g:#cf2e2e; --v:#1f6fb2; --gv:#7a3fa0; --conj:#15803d; --hl:#fff1a8; --conj-bg:#a9e3bb;
+  /* 대명사 지칭 대상(진회색). 처음에 청록으로 뒀다가 바꿨다 — 병렬 표시는 규칙상
+     지문마다 잔뜩 나오는데(and/or/but은 전부 표시), 그 초록 형광 옆에 청록 글자가
+     계속 붙으니 실제 결과물에서 헷갈렸다.
+     무채색으로 간 것은 자리가 없어서가 아니라 이게 맞아서다 — 지칭은 어법·어휘 같은
+     '분류'가 아니라 읽기를 돕는 다른 종류의 정보라, 색 계열에서 빠지는 편이 뜻에 맞고
+     여섯 색 어디와도 안 싸운다. 가장 가까운 기존 색과 76~84 떨어져 있다
+     (0~441 척도. 위 병렬 색에서 27이 사실상 구분되지 않았던 것을 기준으로 삼았다). */
+  --ref:#4a5a6b;
   /* 한 문장에 등위접속사가 둘 이상일 때 묶음별로 색을 달리한다. 접속사 표시는 늘
      '배경(형광)'이 있어 어법·어휘 같은 '색 글자'와는 애초에 구분되므로, 이 색들은
      서로만 구분되면 된다. 노랑(--hl)·주황(--target-hl)과도 겹치지 않게 골랐다.
@@ -22,6 +30,7 @@
     --paper:#12161c; --card:#1a1f27; --ink:#e7ebf0; --ink-soft:#9aa6b4;
     --line:#2a323d; --line-soft:#232a33; --accent:#7fb5d8; --accent-soft:#1e2c38;
     --g:#ff6b6a; --v:#63b3e8; --gv:#c48fe0; --conj:#5fce8c; --hl:#5c5326; --conj-bg:rgba(95,206,140,.28);
+    --ref:#a9b6c4;
     --brand:#f0b429; --brand-soft:#33270f;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
   }
@@ -1473,10 +1482,14 @@ ruby rt{font-size:10px; font-weight:700; line-height:1.15; color:var(--g);}
 .g{color:var(--g); font-weight:600;}
 .v{color:var(--v); font-weight:600;}
 .gv{color:var(--gv); font-weight:600;}
+.ref{color:var(--ref); font-weight:600;}
 ruby.vocab-rt .v{color:var(--v); font-weight:600;}
 ruby.vocab-rt rt{color:var(--v);}
 ruby.theme-rt .gv{color:var(--gv); font-weight:600;}
 ruby.theme-rt rt{color:var(--gv);}
+/* 대명사 지칭 대상 — 밑줄 같은 별도 표시는 붙이지 않는다(색만으로 간다) */
+ruby.ref-rt .ref{color:var(--ref); font-weight:600;}
+ruby.ref-rt rt{color:var(--ref);}
 /* 병렬구조(초록 형광펜) — 노란 형광펜(.hl)과 같은 굵기로 맞춘다 */
 .conj-hl{background:var(--conj-bg); border-radius:3px; padding:0 3px; font-weight:600;}
 /* 짧은 주석 대상은 줄 끝에서 쪼개지지 않게 한다. ruby가 두 줄로 나뉘면 브라우저가
@@ -1586,6 +1599,7 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
     --paper:#ffffff; --card:#ffffff; --ink:#1b2430; --ink-soft:#42505f;
     --line:#c9d0d8; --line-soft:#eef1f4; --accent:#1f4e6b; --accent-soft:#eaf0f5;
     --g:#c62828; --v:#1565a8; --gv:#6d329a; --conj:#12692f; --hl:#ffec99; --conj-bg:#a9e3bb;
+    --ref:#3f4f5e;
     --conj2:#4c1d95; --conj2-bg:#b09bde; --conj3:#8f1259; --conj3-bg:#f3bcd6;
     --target-hl:#ffd8a8; --target-ink:#c2410c;
   }

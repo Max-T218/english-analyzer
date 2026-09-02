@@ -4187,6 +4187,7 @@ words. So for English your only job is: give the plain text, then list what to m
             "g"    어법(빨강)          "v"  어휘(파랑)        "gv" 어법+어휘(보라)
             "hl"   강조·연결어(노랑)    "tg" 목표 어법(주황, 목표 어법이 지정된 경우만)
             "conj" 등위·상관접속사(형광)     "num" 색 없이 병렬 번호만
+            "ref"  대명사 지칭 대상(진회색) — 아래 '대명사 지칭' 규칙을 반드시 읽어라
       · `rt`   = short Korean explanation shown above the word (for "conj"/"num" use "").
       · `num`  = 0 normally. For parallel numbering use 1,2,3… (adds a small superscript number).
       · `grp`  = 0 normally. 병렬 표시(conj/num)에만 쓰는 **묶음 번호** — 아래 설명 참고.
@@ -4238,6 +4239,40 @@ words. So for English your only job is: give the plain text, then list what to m
         RIGHT  t="you",         rt="목적격 관대 생략"
         WRONG  t="supporting",  rt="목적격 관대 생략"
     note가 "children 뒤에 생략"이라고 썼으면 표시도 그 바로 다음 낱말에 있어야 한다.
+
+### 대명사 지칭 (role "ref") — 학생이 '무엇을 가리키는지'에서 막히는 자리에만
+▸ `t` = 그 대명사(it, they, them, this, that, those, one …),
+  `rt` = 그것이 가리키는 것을 **10자 이내의 우리말**로.
+  ⚠️ 10자에 안 들어가면 **아예 달지 마라.** 영어 낱말 위에 얹히는 자리라, 길면 낱말
+  사이가 벌어져 줄이 엉킨다. 억지로 줄여 뜻이 흐려지느니 없는 편이 낫다.
+▸ 다는 자리 — 아래 셋뿐이다:
+  ① 가리키는 말이 **앞 문장 이상 떨어져** 있다.
+     They seem to have little in common… → t="They", rt="과학자들"
+  ② this/that/it이 **앞 문장 내용 전체**를 받는다. rt는 그 내용을 줄인 말로 적는다 —
+     "그것", "앞 내용"처럼 아무것도 알려 주지 않는 말은 금지.
+     This might sound exciting → t="This", rt="블랙홀·은하 연구"
+  ③ 후보가 둘 이상이라 헷갈린다(앞 문장에 사람이 둘 나오는데 he가 하나 등).
+     Schawinski met Chris Lintott… Lintott suggested that he turn to…
+       → t="he", rt="Schawinski"
+▸ 달지 않는 자리:
+  · 같은 문장 안에서 바로 앞 명사를 받는 것 — according to their shape, send them to NASA.
+  · 바로 앞 문장에서 이미 같은 대상에 ref를 달았다. **같은 것에 연달아 달지 마라.**
+  · 관계사(who, which, that) — 대명사가 아니라 "g"가 맡는 자리다.
+  · 확신이 서지 않는 자리. **틀린 표시보다 없는 표시가 낫다.**
+▸ 분량 감각: 한 문단에 서너 개면 충분하다. 모든 it·they·this에 다 달면 지면이 한글로
+  뒤덮여 정작 중요한 어법·어휘 표시가 묻힌다.
+▸ 🚨 **가리키는 대상이 아예 없는 it에는 절대 ref를 달지 마라.** 없는 대상을 지어 적으면
+  학생에게 틀린 정보를 주는 것이다. 아래 넷은 ref가 아니라 이렇게 처리한다:
+  · 가주어 (It is/was … that/to …, It takes/took … to …) → role "g", rt="가주어"
+      It took Schawinski a whole week to classify… → t="It", role="g", rt="가주어"
+  · 강조구문 (It is/was + 강조하는 말 + that/who …) → role "g", rt="강조구문"
+      It was online media that helped spread the word. → t="It", role="g", rt="강조구문"
+      Experts acknowledged that it is the members … that deserve the credit.
+        → t="it", role="g", rt="강조구문"   ← 문장 첫머리가 아니어도 마찬가지다
+  · 비인칭 it (날씨·시간·거리·명암) → role "g", rt="비인칭 주어"
+  · If it had not been for ~ / If it were not for ~ → 그 덩어리 통째로 role "gv",
+    rt="~이 없었다면"
+  가주어와 관용 표현은 서버가 기계로 대조한다 — 그 자리에 ref를 달면 되돌아온다.
 
 ### 등위·상관접속사 병렬 (MANDATORY — 가장 자주 빠뜨리는 항목, 기계 검사로 대조된다)
 DEFAULT = MARK IT. 지문에 나오는 "and / or / but / nor / yet"은 아래 '제외 목록'에 해당하지
@@ -4403,7 +4438,12 @@ Grammar만큼 어휘도 빠짐없이 스캔하라. 한 문장을 다 훑었는�
    이어 읽어 문장 전체가 자연스러운 우리말이 되는지 확인한다.
 8. 용어 일치: 같은 단어를 두고 왼쪽 rt와 오른쪽 note·examNote가 다른 문법 용어를 쓰고
    있지 않은지 대조한다. 다르면 rt 쪽을 옳은 것으로 고치고 note를 거기에 맞춘다.
-Only return JSON after all eight checks.
+9. 지칭("ref") 점검 — 두 가지만 본다:
+   (a) 모든 ref ann의 rt가 10자 이내인가. 넘으면 줄이거나 그 ann을 지운다(서버가 센다).
+   (b) `t`가 it인 ref를 하나씩 다시 읽어, **그 it이 정말 무언가를 가리키는지** 확인한다.
+       가주어·강조구문·비인칭·If it had not been for면 ref가 아니라 "g"(또는 "gv")다.
+       이 넷에 ref를 달면 학생에게 없는 대상을 있다고 가르치는 것이다.
+Only return JSON after all nine checks.
 
 ## note — per-sentence commentary
 - One or two sentences of objective, written-style Korean explaining the main grammar
@@ -4597,6 +4637,7 @@ words. So for English your only job is: give the plain text, then list what to m
             "g"    어법(빨강)          "v"  어휘(파랑)        "gv" 어법+어휘(보라)
             "hl"   강조·연결어(노랑)    "tg" 목표 어법(주황, 목표 어법이 지정된 경우만)
             "conj" 등위·상관접속사(형광)     "num" 색 없이 병렬 번호만
+            "ref"  대명사 지칭 대상(진회색) — 아래 '대명사 지칭' 규칙을 반드시 읽어라
       · `rt`   = short Korean explanation shown above the word (for "conj"/"num" use "").
       · `num`  = 0 normally. For parallel numbering use 1,2,3… (adds a small superscript number).
       · `grp`  = 0 normally. 병렬 표시(conj/num)에만 쓰는 **묶음 번호** — 아래 설명 참고.
@@ -4636,7 +4677,11 @@ words. So for English your only job is: give the plain text, then list what to m
    처음부터 다시 써라.
 8. 용어 일치: 같은 단어를 두고 왼쪽 루비(rt)와 오른쪽 examNote가 다른 문법 용어를 쓰고
    있지 않은지 대조한다. 다르면 rt 쪽을 옳은 것으로 고치고 examNote를 거기에 맞춘다.
-Only return JSON after all eight checks.
+9. 지칭("ref") 점검 — 두 가지만 본다:
+   (a) 모든 ref ann의 rt가 10자 이내인가. 넘으면 줄이거나 그 ann을 지운다(서버가 센다).
+   (b) `t`가 it인 ref를 하나씩 다시 읽어, **그 it이 정말 무언가를 가리키는지** 확인한다.
+       가주어·강조구문·비인칭·If it had not been for면 ref가 아니라 "g"(또는 "gv")다.
+Only return JSON after all nine checks.
 
 ## examNote — 출제 포인트 (오른쪽 칸에 남는 유일한 설명)
 - 상세분석의 문장별 해설은 소책자에 없다. 오른쪽 칸에는 출제 포인트만 실린다.
@@ -4658,7 +4703,8 @@ Return valid JSON only. No markdown fences, no extra prose."""
 _BRIEF_TRUNC_MSG = "지문이 너무 길어 소책자 분석을 만들다가 잘렸습니다. 지문을 나눠 시도해 주세요."
 
 
-def build_brief_user_prompt(passage, target_grammar="", complete_hint=None, english_fix=False):
+def build_brief_user_prompt(passage, target_grammar="", complete_hint=None,
+                            english_fix=False, ruby_hint=None):
     lines = ["다음 영어 지문으로 소책자용 분석을 만들어 주세요."]
     # 목표 어법은 상세분석과 같은 문구로 넘긴다 — 같은 지문에 같은 값을 주면 두 자료가
     # 같은 자리를 주황으로 짚어야 한다. 문구가 다르면 짚는 자리가 달라진다.
@@ -4677,14 +4723,22 @@ def build_brief_user_prompt(passage, target_grammar="", complete_hint=None, engl
             "⚠️ 지난번 결과에 영어 원문이 빠진 자리가 있었습니다. 각 chunk의 text에 "
             "지문의 영어 낱말을 그대로, 빠짐없이 담아 주세요."
         )
+    if ruby_hint:
+        # 상세분석과 같은 문구로 짚어 준다 — 기계 검사가 만든 문장을 그대로 싣는다
+        lines.append(
+            "⚠️ 아래 루비(rt)가 규칙을 어겼습니다. 해당 ann만 고치고 나머지는 그대로 두세요."
+        )
+        for h in ruby_hint:
+            lines.append("  · " + h)
     return "\n".join(lines) + f"\n\n{passage}"
 
 
 def call_gemini_brief(passage, api_key, model, target_grammar="",
-                      complete_hint=None, english_fix=False):
+                      complete_hint=None, english_fix=False, ruby_hint=None):
     """소책자용 분석. 상세분석과 같은 구조를 만들지만 보정 재요청 고리는 훨씬 짧다 —
     담는 것이 적어(해설·어휘 없음) 값도 싸고 시간 예산도 작기 때문이다. 다만 '영어가
-    빠지는 것'만은 상세분석과 똑같이 막는다. 그게 이 자료의 본체다."""
+    빠지는 것'과 '지칭을 엉뚱한 it에 다는 것'만은 상세분석과 똑같이 막는다. 앞은 이
+    자료의 본체이고, 뒤는 틀리면 학생에게 없는 것을 있다고 가르치는 자리다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -4695,7 +4749,7 @@ def call_gemini_brief(passage, api_key, model, target_grammar="",
     payload = {
         "systemInstruction": {"parts": [{"text": BRIEF_SYSTEM_PROMPT}]},
         "contents": [{"role": "user", "parts": [{"text": build_brief_user_prompt(
-            passage, target_grammar, complete_hint, english_fix)}]}],
+            passage, target_grammar, complete_hint, english_fix, ruby_hint)}]}],
         "generationConfig": {
             "temperature": 0.25,
             "maxOutputTokens": 65536,
@@ -4711,6 +4765,9 @@ def _finish_brief(result):
 
     상세분석의 같은 자리(sanitize_analysis)에서 하는 일과 같다. 다르게 하면 두 자료의
     표시가 어긋나므로 같은 함수들(assemble_eng·sanitize_inline·clean_korean)을 쓴다."""
+    # 루비 검사는 조립 '전'에 해야 한다 — 아래 루프가 anns를 버리기 때문.
+    # 상세분석과 같은 자리(_finish_analysis)에서 같은 함수로 검사한다.
+    result["_rubyBad"] = ruby_term_problems(result)
     for s in result.get("sentences", []):
         if not isinstance(s, dict):
             continue
@@ -4750,7 +4807,7 @@ def brief_english_incomplete(result, passage):
 
 _RT_RE = re.compile(r"<rt[^>]*>.*?</rt>", re.S)
 _RUBY_RE = re.compile(r"</?ruby[^>]*>")
-_ROLE_SPAN_RE = re.compile(r'<span class="(?:g|v|gv|hl|conj-hl)"[^>]*>(.*?)</span>', re.S)
+_ROLE_SPAN_RE = re.compile(r'<span class="(?:g|v|gv|hl|ref|conj-hl)"[^>]*>(.*?)</span>', re.S)
 
 
 def clean_korean(html):
@@ -4770,7 +4827,7 @@ def clean_korean(html):
 # 우측 해설(note)로 잘못 딸려온 루비 태그를 잡아 <code>로 바꾼다.
 # 구조: <ruby ...><span class="g">word</span><rt>설명</rt></ruby>
 _NOTE_RUBY_RE = re.compile(
-    r'<ruby[^>]*>\s*<span class="(g|v|gv|hl|conj-hl)"[^>]*>(.*?)</span>\s*'
+    r'<ruby[^>]*>\s*<span class="(g|v|gv|hl|ref|conj-hl)"[^>]*>(.*?)</span>\s*'
     r"(?:<rt[^>]*>.*?</rt>\s*)?</ruby>",
     re.S,
 )
@@ -4805,10 +4862,10 @@ def clean_note(html):
 # ── 루비 색상 정규화: 안쪽 span 역할에 맞춰 보조 클래스를 강제로 맞춘다 ──
 # (모델이 vocab-rt/theme-rt/hl-rt 를 빠뜨려도 범례 색상이 어긋나지 않도록)
 _RUBY_BLOCK_RE = re.compile(r"<ruby\b[^>]*>(.*?)</ruby>", re.S)
-_SPAN_ROLE_RE = re.compile(r'<span class="\s*(gv|hl|tg|g|v)\b[^"]*"')
+_SPAN_ROLE_RE = re.compile(r'<span class="\s*(gv|hl|tg|ref|g|v)\b[^"]*"')
 _RUBY_MOD = {"g": "over-tag", "v": "over-tag vocab-rt",
              "gv": "over-tag theme-rt", "hl": "over-tag hl-rt",
-             "tg": "over-tag target-rt"}
+             "tg": "over-tag target-rt", "ref": "over-tag ref-rt"}
 
 
 def normalize_ruby(html):
@@ -4912,6 +4969,9 @@ def _esc_html(s):
 _ROLE_RUBY = {
     "g": "over-tag", "v": "over-tag vocab-rt", "gv": "over-tag theme-rt",
     "hl": "over-tag hl-rt", "tg": "over-tag target-rt",
+    # 대명사 지칭 대상(진회색). 지칭은 어법·어휘 같은 '분류'가 아니라 읽기를 돕는
+    # 다른 종류의 정보라 무채색으로 뺐다 — 여섯 색 어디와도 안 싸운다(style.css --ref).
+    "ref": "over-tag ref-rt",
 }
 
 
@@ -5249,8 +5309,36 @@ def _slashed_forms(rt):
     return hits >= 2
 
 
+# ── 지칭(ref)을 달면 안 되는 자리 — 가리키는 대상이 아예 없는 it ──
+# 강조구문(It ~ that)은 여기 넣지 않았다. 진짜로 무언가를 가리키는 it과 겉모습이 겹쳐
+# ("it was not an aurora, but it did not resemble anything that they had seen"),
+# 기계로 가리려 들면 멀쩡한 지칭 표시까지 지우게 된다. 그쪽은 프롬프트에만 맡긴다 —
+# 검사는 '틀린 것만 확실히 잡는다'가 아니라 '맞는 것을 절대 지우지 않는다'가 먼저다.
+_NO_REF_IT_RES = (
+    (re.compile(r"\bit\s+(?:takes|took|will\s+take|would\s+take|has\s+taken|had\s+taken)\b",
+                re.I), "가주어"),
+    (re.compile(r"\bit\s+(?:had\s+not\s+been|has\s+not\s+been|were\s+not|was\s+not)\s+for\b",
+                re.I), "관용 표현"),
+    (re.compile(r"\bit\s+(?:is|was)\s+(?:worth|no\s+use|no\s+good|important|necessary|"
+                r"possible|impossible|difficult|easy|clear|obvious|natural|likely|true)\b",
+                re.I), "가주어"),
+)
+# 루비는 영어 낱말 '위'에 얹히므로, 길면 낱말 사이가 벌어져 줄이 엉킨다.
+# 프롬프트에도 적지만 확률이라, 넘긴 것은 서버가 세어 되돌려 보낸다.
+_REF_RT_MAX = 10
+
+
+def _sentence_english(s):
+    """문장의 청크 영어를 이어 붙인다 — 지칭 검사가 문장 전체를 봐야 하기 때문."""
+    parts = []
+    for c in s.get("chunks", []) or []:
+        if isinstance(c, dict):
+            parts.append(str(c.get("text") or ""))
+    return " ".join(parts)
+
+
 def ruby_term_problems(result, limit=10):
-    """루비(rt)가 규칙을 어긴 자리를 찾는다 — 지금은 보라(gv)만 본다.
+    """루비(rt)가 규칙을 어긴 자리를 찾는다 — 보라(gv)와 청록(ref)을 본다.
 
     사용자가 가장 먼저 지적한 오류가 'give up the ghost → 관용구'처럼 뜻 대신 분류를
     적는 것이었다. 프롬프트로도 막지만 규칙은 확률이라, 확실히 판정되는 두 가지
@@ -5260,6 +5348,7 @@ def ruby_term_problems(result, limit=10):
         if not isinstance(s, dict):
             continue
         no = s.get("no")
+        sent_eng = None   # 지칭 검사에만 쓴다 — ref ann이 있는 문장에서만 만든다
         for c in s.get("chunks", []) or []:
             if not isinstance(c, dict):
                 continue
@@ -5278,7 +5367,39 @@ def ruby_term_problems(result, limit=10):
                     )
                     if len(out) >= limit:
                         return out
-                if (a.get("role") or "").strip() != "gv":
+                role = (a.get("role") or "").strip()
+                if role == "ref":
+                    if sent_eng is None:
+                        sent_eng = _sentence_english(s)
+                    kind = ""
+                    for pat, label in _NO_REF_IT_RES:
+                        if t.lower() == "it" and pat.search(sent_eng):
+                            kind = label
+                            break
+                    if kind:
+                        out.append(
+                            f'{no}번 문장 "{t}" → 이 it은 {kind}라서 가리키는 대상이 '
+                            f'없는데 지칭을 "{rt}"라고 적었습니다. 이 표시를 role "g"로 '
+                            f'바꾸고 rt를 "가주어"(또는 관용 표현이면 그 덩어리를 "gv", '
+                            f'rt="~이 없었다면")로 고치세요.'
+                        )
+                    elif not rt:
+                        out.append(
+                            f'{no}번 문장 "{t}" → 지칭 표시인데 가리키는 대상이 '
+                            f"비어 있습니다. 10자 이내로 적거나, 적을 수 없으면 "
+                            f"이 표시를 지우세요."
+                        )
+                    elif len(rt) > _REF_RT_MAX:
+                        out.append(
+                            f'{no}번 문장 "{t}" → 지칭을 "{rt}"({len(rt)}자)로 '
+                            f"적었습니다. 영어 낱말 위에 얹히는 자리라 "
+                            f"{_REF_RT_MAX}자를 넘으면 줄이 엉깁니다. 줄이거나, "
+                            f"줄이면 뜻이 흐려지는 경우에는 이 표시를 지우세요."
+                        )
+                    if len(out) >= limit:
+                        return out
+                    continue
+                if role != "gv":
                     continue
                 if rt in _GV_CATEGORY_ONLY:
                     out.append(
@@ -7073,6 +7194,19 @@ CHANGELOG = [
             "이용약관이 2026년 9월 1일자로 개정되었습니다. 비밀번호 관리 책임, "
             "휴면계정(1년 미접속 시 전환, 잔액은 유지), 학생 로그인에 비밀번호가 없다는 "
             "점을 새로 담았습니다.",
+        ],
+    },
+    {
+        "version": 20,
+        "date": "2026-09-02",
+        "items": [
+            "지문 상세분석 · 소책자 분석 — 대명사가 무엇을 가리키는지 영어 낱말 위에 "
+            "회색으로 달아 드립니다. 앞 문장에 나온 것을 받는 it·they·them, 앞 내용 "
+            "전체를 받는 this·that, 그리고 앞에 사람이 둘 나와 헷갈리는 he처럼 "
+            "학생이 막히는 자리에만 붙습니다. 같은 문장 안에서 바로 앞 낱말을 받는 "
+            "것에는 붙이지 않아 지면이 지저분해지지 않습니다.",
+            "가주어 it, 강조구문 It ~ that처럼 가리키는 대상이 아예 없는 it에는 "
+            "지칭 대신 빨간 어법 표시로 '가주어'·'강조구문'이라고 적습니다.",
         ],
     },
 ]
@@ -10045,6 +10179,25 @@ class Handler(BaseHTTPRequestHandler):
                     trace.retry("영어")
                     result = call_gemini_brief(passage, api_key, MODEL, target_grammar,
                                                english_fix=True)
+                # 루비 방어 — 가주어·관용 표현의 it에 지칭을 달았거나, 지칭이 너무 길어
+                # 줄이 엉키는 자리를 고쳐 오게 한다. 소책자는 보정 고리가 짧지만 이것만은
+                # 넣는다 — 틀린 지칭은 학생에게 없는 대상을 있다고 가르치는 것이라,
+                # 상세분석에서 막고 소책자에서 안 막을 이유가 없다. 한 번만 돈다(값이 싸야
+                # 하는 자료라, 상세분석의 두 번보다 짧게 잡았다).
+                for _ in range(1):
+                    bad = result.get("_rubyBad") or []
+                    if not bad:
+                        break
+                    if trace.blocked("루비"):
+                        break
+                    trace.retry("루비")
+                    retry = call_gemini_brief(passage, api_key, MODEL, target_grammar,
+                                              ruby_hint=bad)
+                    # 고치다 영어나 문장을 잃으면 채택하지 않는다(원본이 낫다)
+                    if (len(retry.get("_rubyBad") or []) < len(bad)
+                            and len(retry.get("sentences") or []) >= len(result.get("sentences") or [])
+                            and not brief_english_incomplete(retry, passage)):
+                        result = retry
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
                 return
@@ -10059,6 +10212,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             trace.log(MODEL, passage, label="소책자")
             charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
+            result.pop("_rubyBad", None)   # 비공개 키 — 화면으로 내보내지 않는다
             self._send_json(result)
             return
 
