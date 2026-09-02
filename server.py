@@ -7635,6 +7635,10 @@ def confirm_payment_intent(user_id, payment_id):
 
     user_ref = DB.collection("users").document(user_id)
     row_ref = DB.collection(POINT_LEDGER).document()
+    # 이 충전분이 언제 소멸하는지는 여기서만 정해진다 — add_krw와 같은 규칙(5년)이다.
+    # 트랜잭션이 재시도돼도 기한이 흔들리지 않게 밖에서 한 번만 잰다.
+    expires_at = _paid_expiry()
+    bought_at = _now_iso()
 
     @firestore.transactional
     def _apply(tx):
@@ -7644,15 +7648,24 @@ def confirm_payment_intent(user_id, payment_id):
             return None  # 그 사이 다른 요청이 먼저 처리함 — 중복 지급 방지
         if not u_snap.exists:
             raise ValueError("해당 회원을 찾을 수 없습니다.")
-        _total, free, paid = _split_balance(u_snap.to_dict() or {})
+        d = u_snap.to_dict() or {}
+        _total, free, paid = _split_balance(d)
         new_free, new_paid = free, paid + amount
         tx.update(user_ref, {
             "krw_remaining": new_free + new_paid,
             "krw_free": new_free,
             "krw_paid": new_paid,
+            # 잔액(krw_paid)만 올리면 이 충전분이 언제 산 것인지 알 길이 없어져
+            # 소진기한을 영영 못 지킨다. add_krw와 똑같이 묶음을 남긴다.
+            "paid_lots": _paid_lots(d) + [{
+                "at": bought_at,
+                "expires_at": expires_at,
+                "remaining": int(amount),
+            }],
         })
         tx.set(row_ref, _ledger_row(
             user_id, "charge", "카드 결제 충전", amount, amount, 0, new_free + new_paid,
+            expires_at=expires_at,
         ))
         tx.update(intent_ref, {"status": "completed", "confirmed_at": _now_iso()})
         return new_free + new_paid
