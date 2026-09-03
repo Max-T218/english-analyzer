@@ -585,6 +585,9 @@ label.chk-lg{gap:8px; font-size:14.5px;}
   transition:color .15s, background .15s, border-color .15s;
 }
 .howto-btn:hover{color:var(--accent); border-color:var(--accent); background:var(--accent-soft);}
+/* 문의하기는 <a>라 밑줄과 링크색이 붙는다. [만드는 법] 단추와 같은 결로 맞춘다.
+   바깥으로 나가는 링크라는 것은 말풍선(💬)으로만 구분한다. */
+.ask-side{display:block; text-decoration:none; margin-top:6px;}
 /* 만드는 법 창의 '이런 자료가 나옵니다' — 결과물을 실제로 그려 넣는 자리.
    결과물은 A4 폭에 맞춰 만들어져 있어 520px 창에 넣으면 줄바꿈이 달라 실제와
    다르게 보인다. 예시가 있을 때만 창을 넓히고, 그래도 넘치면 그 안에서만 스크롤한다. */
