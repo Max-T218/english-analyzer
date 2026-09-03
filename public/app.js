@@ -543,6 +543,19 @@ async function getJson(url, fallbackMsg) {
   return data;
 }
 
+/* 화면에 보이는 모든 금액은 이 함수 하나를 거친다.
+
+   '원'이 아니라 'P'로 적는 이유: 이 값은 서비스 안에서만 쓰는 포인트다. '원'으로 적으면
+   현금이 오가는 것처럼 읽혀, 잔액이 깎일 때마다 실제 돈이 빠져나간다고 느끼게 된다.
+   1P = 1원이라 숫자는 그대로이고 표기만 바뀐다.
+
+   ⚠️ **충전 창은 예외로 '원'을 쓴다** — 거기 적힌 금액은 카드에 실제로 청구되는 돈이라
+   실제 통화로 고지해야 한다. 그 자리에서만 "10,000원 → 10,000P"처럼 둘을 같이 보여 준다.
+   약관·환불정책도 '원' 그대로 둔다(법적 문서이고 환불 단위가 원이다). */
+function pt(n) {
+  return `${Number(n || 0).toLocaleString()}P`;
+}
+
 /* ══════════ 정찰 가격표 + '만들기' 전 비용 확인 ══════════
    서버가 실제로 매기는 가격(server.py의 PRICE_* 값)을 그대로 보여줘야 하므로,
    화면에 하드코딩하지 않고 /api/pricing으로 받아 온다. 로그인 여부와 무관한
@@ -582,7 +595,7 @@ function renderSignupBonus() {
     el.hidden = true;
     return;
   }
-  const now = Number(PRICING.signupBonus).toLocaleString();
+  const now = Number(PRICING.signupBonus || 0);
   const base = Number(PRICING.signupBonusBase || 0);
   const until = String(PRICING.signupBonusUntil || "");
   // "2026-09-30" → "9월 30일". 못 읽으면 날짜 안내를 빼고 금액만 알린다.
@@ -590,8 +603,8 @@ function renderSignupBonus() {
   const when = m ? `${Number(m[1])}월 ${Number(m[2])}일까지` : "";
   el.innerHTML =
     `<span class="bonus-tag">이벤트</span>` +
-    `<span>${when ? esc(when) + " " : ""}가입하시면 축하 포인트를 <b>${esc(now)}원</b> 드립니다` +
-    (base ? ` <span class="bonus-was">${base.toLocaleString()}원</span>` : "") +
+    `<span>${when ? esc(when) + " " : ""}가입하시면 축하 포인트를 <b>${pt(now)}</b> 드립니다` +
+    (base ? ` <span class="bonus-was">${pt(base)}</span>` : "") +
     `. 카드 등록 없이 그만큼 먼저 써 보세요.</span>`;
   el.hidden = false;
 }
@@ -656,8 +669,8 @@ async function hasEnoughPoints(krw, label, jobCount, advice) {
   }
   alert(
     `포인트가 모자라 만들 수 없습니다.\n\n${label}\n\n` +
-      `필요한 값: ${krw.toLocaleString()}원\n` +
-      `지금 잔액: ${currentKrw.toLocaleString()}원 (${short.toLocaleString()}원 모자람)${fitLine}\n\n` +
+      `필요한 값: ${pt(krw)}\n` +
+      `지금 잔액: ${pt(currentKrw)} (${pt(short)} 모자람)${fitLine}\n\n` +
       (advice ? `${advice}\n` : "") +
       `충전은 화면 오른쪽 위에서 하실 수 있습니다.`
   );
@@ -672,10 +685,10 @@ async function costConfirmed(krw, label, jobCount, advice) {
       : "";
   const priced = PRICING !== null && Number.isFinite(krw) && krw > 0;
   if (!manyLine && !priced) return true;
-  const costLine = priced ? `예상 비용: ${krw.toLocaleString()}원\n` : "";
+  const costLine = priced ? `예상 비용: ${pt(krw)}\n` : "";
   const balanceLine =
     priced && Number.isFinite(currentKrw)
-      ? `지금 잔액: ${currentKrw.toLocaleString()}원 → 진행 후 약 ${(currentKrw - krw).toLocaleString()}원\n`
+      ? `지금 잔액: ${pt(currentKrw)} → 진행 후 약 ${pt((currentKrw - krw))}\n`
       : "";
   return confirm(`${label}\n\n${manyLine}${costLine}${balanceLine}\n진행하시겠습니까?`);
 }
@@ -718,7 +731,7 @@ function renderAccount(info) {
   isClassroomApproved = !!info.classroomApproved;
   studentsTabBtn.hidden = !isClassroomApproved;
   updateVocabAssignBtnVisibility();
-  const krwText = currentKrw !== null ? ` · 잔액 ${currentKrw.toLocaleString()}원` : "";
+  const krwText = currentKrw !== null ? ` · 잔액 ${pt(currentKrw)}` : "";
   accountNameEl.textContent = `${lastAccountLabel || "로그인됨"}님${krwText}`;
   // 서버가 이 계정이 아직 못 본 업데이트를 함께 내려준다(/api/me·로그인 응답 공통).
   // refreshTokenDisplay()도 같은 info 모양으로 renderAccount를 부르므로, 만들기를
@@ -3036,8 +3049,8 @@ function syncImgLangNote(prefix, perImage) {
   const total = each * picked.length * Math.max(n, 1);
   el.textContent =
     `지문 1개당 ${picked.length}장` +
-    (each ? ` · 지문당 +${(each * picked.length).toLocaleString()}원` : "") +
-    (n > 1 && each ? ` (지문 ${n}개면 그림 값만 ${total.toLocaleString()}원)` : "");
+    (each ? ` · 지문당 +${pt((each * picked.length))}` : "") +
+    (n > 1 && each ? ` (지문 ${n}개면 그림 값만 ${pt(total)})` : "");
 }
 
 // 가격표는 화면이 다 그려진 뒤에 도착하므로, 도착하면 체크박스 옆 금액을 채워 넣는다
@@ -3659,7 +3672,7 @@ function updateBriefCostHint() {
   const langs = pickedImgLangs("brief");
   const each = PRICING.brief + PRICING.infographic * langs.length;
   briefCostHintEl.innerHTML =
-    `지문 <b>${n}개</b> — <b>${(each * n).toLocaleString()}원</b>` +
+    `지문 <b>${n}개</b> — <b>${pt((each * n))}</b>` +
     (langs.length
       ? `<span class="cost-hint-note">(요약 이미지 ${langs.length}종 포함)</span>`
       : "");
@@ -4044,9 +4057,9 @@ function askBigRun(info) {
   }
   if (Number.isFinite(info.krw) && info.krw > 0) {
     facts.push(
-      `<b>예상 요금 약 ${info.krw.toLocaleString()}원</b>` +
+      `<b>예상 요금 약 ${pt(info.krw)}</b>` +
         (Number.isFinite(currentKrw)
-          ? ` — 지금 잔액 ${currentKrw.toLocaleString()}원 → 진행 후 약 ${(currentKrw - info.krw).toLocaleString()}원`
+          ? ` — 지금 잔액 ${pt(currentKrw)} → 진행 후 약 ${pt((currentKrw - info.krw))}`
           : "") +
         ` (나눠서 진행해도 총액은 같습니다)`
     );
@@ -4283,7 +4296,7 @@ function setupQuizTab({ prefix, types, footer }) {
     const parts = [`선택 <b>${items.length}유형</b> · <b>${total}문항</b>`];
     if (sets > 1) parts.push(`× 변형 ${sets}세트 = <b>${total * sets}문항</b>`);
     if (PRICING) {
-      parts.push(`— 지문 1개당 <b>${(costPerSet(items) * sets).toLocaleString()}원</b>`);
+      parts.push(`— 지문 1개당 <b>${pt((costPerSet(items) * sets))}</b>`);
     }
     costHintEl.innerHTML = parts.join(" ");
   }
@@ -5404,7 +5417,7 @@ function updateWbCostHint() {
   const parts = [`선택 <b>${n}단계</b>`];
   if (PRICING) {
     const cost = workbookCost(n);
-    parts.push(`— 지문 1개당 <b>${cost.toLocaleString()}원</b>`);
+    parts.push(`— 지문 1개당 <b>${pt(cost)}</b>`);
     // 상한에 걸렸으면 왜 단계 수 × 단가와 다른지 밝힌다
     const per = PRICING.workbookStage || 0;
     if (per && cost < per * n) parts.push(`<span class="cost-hint-note">(전체 선택 상한)</span>`);
@@ -7892,7 +7905,7 @@ let usageLoading = false;
 function usageRowHtml(row) {
   const amount = Number(row.amount) || 0;
   const sign = amount > 0 ? "+" : amount < 0 ? "−" : "";
-  const money = `${sign}${Math.abs(amount).toLocaleString()}원`;
+  const money = `${sign}${pt(Math.abs(amount))}`;
   const kind = USAGE_KIND_LABEL[row.kind] || row.kind || "";
   // 이월 줄은 금액이 0이고 잔액만 의미가 있다 — 금액칸을 비워 혼동을 막는다
   const moneyText = row.kind === "carry" ? "" : money;
@@ -7916,7 +7929,7 @@ function usageRowHtml(row) {
       </div>
       <div class="saved-list-actions" style="display:block; text-align:right;">
         <div style="font-weight:700;">${esc(moneyText)}</div>
-        <div class="saved-list-date">잔액 ${Number(row.balanceAfter || 0).toLocaleString()}원</div>
+        <div class="saved-list-date">잔액 ${pt(Number(row.balanceAfter || 0))}</div>
       </div>
     </div>`;
 }
@@ -7954,9 +7967,9 @@ function openUsageModal() {
   usageRows = [];
   // 유상/무상을 나눠 알려 준다 — 환불 대상은 유상분뿐이라 미리 구분해 두는 편이 낫다
   const parts = [];
-  if (currentKrw !== null) parts.push(`잔액 ${currentKrw.toLocaleString()}원`);
+  if (currentKrw !== null) parts.push(`잔액 ${pt(currentKrw)}`);
   if (currentKrwPaid !== null && currentKrwFree !== null) {
-    parts.push(`충전분 ${currentKrwPaid.toLocaleString()}원 · 무료 지급분 ${currentKrwFree.toLocaleString()}원`);
+    parts.push(`충전분 ${pt(currentKrwPaid)} · 무료 지급분 ${pt(currentKrwFree)}`);
   }
   usageLeadEl.textContent = parts.join(" (") + (parts.length > 1 ? ")" : "");
   if (!isLoggedIn) {
@@ -8143,7 +8156,7 @@ examClearBtn.addEventListener("click", () => {
 onPricingReady(() => {
   if (!PRICING) return;
   examCostHintEl.innerHTML = PRICING.examScan > 0
-    ? `분석 1회 <b>${PRICING.examScan.toLocaleString()}원</b> · 쪽 수와 무관합니다`
+    ? `분석 1회 <b>${pt(PRICING.examScan)}</b> · 쪽 수와 무관합니다`
     : "분석에는 <b>포인트가 들지 않습니다</b> · 문제를 만들 때만 값이 매겨집니다";
 });
 
@@ -8698,7 +8711,7 @@ function updateExamPaperCost() {
   ];
   if (PRICING) {
     const won = slots.reduce((s, sl) => s + examSlotPrice(sl), 0) * copies;
-    parts.push(`— 예상 <b>${won.toLocaleString()}원</b>`);
+    parts.push(`— 예상 <b>${pt(won)}</b>`);
   }
   // 대원칙 1이 곧 '문항 수 ≤ 지문 수'다. 지문이 모자라면 배분 자체가 성립하지 않으므로
   // 제작 버튼을 누르기 전에 먼저 알려 준다.
