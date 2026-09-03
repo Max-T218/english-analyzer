@@ -46,6 +46,35 @@
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="443">
 <meta name="twitter:card" content="summary">
+<!-- 검색엔진에 이 사이트가 무엇인지 알리는 표시.
+     ⚠️ 여기에 가격을 적지 말 것 — 가격의 유일한 출처는 server.py이고 화면은
+     /api/pricing으로 받아 쓴다(CLAUDE.md). 값이 어긋나면 검색결과에 틀린 가격이 뜬다. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "English Lab",
+  "alternateName": "영어 지문 분석·내신 변형문제 자동 제작",
+  "url": "https://englishlab.ai.kr/",
+  "applicationCategory": "EducationalApplication",
+  "operatingSystem": "웹 브라우저",
+  "inLanguage": "ko",
+  "description": "영어 지문을 넣으면 구문 분석본, 수능형 객관식·주관식 변형문제, 워크북, 단어장, 동형 모의고사 시험지를 만들어 인쇄용 PDF로 뽑는 교사용 도구입니다.",
+  "featureList": [
+    "영어 지문 구문 분석·직독직해 학습지",
+    "수능형 객관식 변형문제 23유형",
+    "서술형 주관식 변형문제 18유형",
+    "9단계 워크북",
+    "단어장·단어 시험지",
+    "동형 모의고사 시험지"
+  ],
+  "publisher": {
+    "@type": "Organization",
+    "name": "더영어연구소",
+    "url": "https://englishlab.ai.kr/"
+  }
+}
+</script>
 <link rel="stylesheet" href="/style.css?v=%%ASSET_V%%">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdn.portone.io/v2/browser-sdk.js" async defer></script>
@@ -1635,6 +1664,23 @@
 <!-- 사업자 정보·약관 바닥글. print-frame 표 밖에 둬서 인쇄물에는 안 찍히고
      .gate/#workspace 어느 쪽이 보이든(로그인 전후 공통) 항상 뜬다. -->
 <footer class="site-footer" id="siteFooter">
+  <!-- 기능 소개 페이지로 가는 길.
+       사람에게는 "무엇을 해 주는 곳인지" 더 읽을 자리이고, 검색 로봇에게는
+       그 페이지들을 찾아가는 유일한 길이다. 어디서도 연결되지 않은 페이지는
+       사이트맵에 적어 두어도 좀처럼 순위에 오르지 않는다. 지우지 말 것. -->
+  <div class="site-footer-links">
+    <a href="/analyze.html">지문 분석</a>
+    <span aria-hidden="true">·</span>
+    <a href="/quiz.html">변형문제</a>
+    <span aria-hidden="true">·</span>
+    <a href="/workbook.html">워크북</a>
+    <span aria-hidden="true">·</span>
+    <a href="/vocab.html">단어장</a>
+    <span aria-hidden="true">·</span>
+    <a href="/exam.html">동형 모의고사</a>
+    <span aria-hidden="true">·</span>
+    <a href="/faq.html">자주 묻는 질문</a>
+  </div>
   <div class="site-footer-links">
     <a href="/terms.html">이용약관</a>
     <span aria-hidden="true">·</span>

@@ -1,11 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- 색인해도 되는 주소 목록. 이 사이트는 첫 화면 하나가 전부다 —
-     탭 전환도 저장함도 전부 같은 주소 안에서 일어나는 한 쪽짜리 앱이라,
-     구글에 알릴 주소도 이 하나뿐이다. -->
+<!-- 색인해도 되는 주소 목록.
+     앱 자체는 첫 화면 하나가 전부다 — 탭 전환도 저장함도 같은 주소 안에서 일어나는
+     한 쪽짜리 앱이라 알릴 주소가 하나뿐이었다. 그런데 주소가 하나면 검색에서 잡을 수
+     있는 말도 그만큼밖에 안 된다(구글 서치콘솔이 '발견된 페이지 1'이라고 알려 준다).
+     그래서 선생님이 실제로 치는 말마다 기능 소개 페이지를 따로 두고 여기 적는다.
+     페이지를 새로 만들면 이 목록에 반드시 함께 적을 것. -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://englishlab.ai.kr/</loc>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://englishlab.ai.kr/analyze.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://englishlab.ai.kr/quiz.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://englishlab.ai.kr/workbook.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://englishlab.ai.kr/vocab.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://englishlab.ai.kr/exam.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://englishlab.ai.kr/faq.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
   </url>
 </urlset>

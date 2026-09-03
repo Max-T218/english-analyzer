@@ -173,6 +173,23 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `renderAccount`가 `classroomApproved` 값으로 `hidden`을 켜고 끕니다).
 각각 `#tab-<id>` 섹션과 `#analyzeBtn` / `#mcqBtn` / `#saqBtn` / `#wbBtn` 실행 버튼을 가집니다.
 
+### 검색으로 들어오는 문 — `public/*.html` 소개 페이지
+
+`analyze` · `quiz` · `workbook` · `vocab` · `exam` · `faq` 여섯 쪽. 앱이 아니라
+**검색 결과에서 눌러 들어오는 자리**라 `app.js`를 부르지 않고 가벼운 `page.css`
+하나만 씁니다(까닭은 그 파일 맨 위 주석).
+
+한 쪽짜리 앱이라 알릴 주소가 `/` 하나뿐이었고, 그래서 검색에서 잡을 수 있는 말도
+그만큼밖에 없었습니다(서치콘솔이 '발견된 페이지 1'이라고 알려 줍니다). 선생님이
+실제로 치는 말마다 쪽을 하나씩 두어 그 수를 늘린 것입니다.
+
+- **새 쪽을 만들면 `public/sitemap.xml`에 반드시 함께 적으세요.**
+- **어디서도 연결되지 않은 쪽은 사이트맵에 적어도 좀처럼 순위에 오르지 않습니다.**
+  `index.html` 푸터(`site-footer-links`)와 각 쪽의 `.more` 칸이 그 연결입니다.
+- `%%ASSET_V%%` 같은 치환 표시를 쓰면 안 됩니다 — `server.py`는 그 치환을
+  `index.html`에만 해 주므로 다른 쪽에서는 글자 그대로 남아 깨진 주소가 됩니다.
+- **요금 숫자를 적지 마세요.** 아래 '가격은 예외입니다' 항목과 같은 이유입니다.
+
 ### `public/student.html` + `public/student.js`
 
 학생용 화면. `index.html`/`app.js`와 완전히 분리된 로그인(코드 입력, `student_session`
@@ -191,6 +208,14 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | `QUIZ_TYPE_LABELS` | `MCQ_TYPES`, `SAQ_TYPES` |
 | `MCQ_ONLY_TYPES` | `MCQ_TRANSFORM_TYPES` |
 | `WORKBOOK_STAGE_IDS` | `WB_STAGES`의 id — 워크북 요금이 단계 수에 걸려 있다 |
+
+소개 페이지에도 같은 표가 **한 벌 더** 옮겨져 있습니다. 검색으로 들어온 분께
+화면에 없는 유형을 광고하게 되므로 함께 고치세요.
+
+| 출처 | 옮겨 적은 곳 |
+|---|---|
+| `QUIZ_TYPE_LABELS` / `MCQ_ONLY_TYPES` | `public/quiz.html`의 유형 목록(객관식 23 · 주관식 18) |
+| `WORKBOOK_STAGE_IDS` / `WB_STAGES` | `public/workbook.html`의 9단계 |
 
 **약관을 고치면 판 번호도 함께 올리세요.** `public/terms.html`의 시행일과 `server.py`의
 `TERMS_VERSION`은 같은 값이어야 합니다. 가입할 때 "이 사람이 어느 판에 동의했는지"를
