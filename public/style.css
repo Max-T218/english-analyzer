@@ -449,6 +449,36 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 }
 .copyright-note b{color:var(--ink);}
 
+/* 소개 끝의 문의 칸 — 다 읽고도 망설이는 사람이 물어볼 자리 */
+.gate-ask{
+  display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+  margin-top:18px; padding:16px 18px;
+  background:var(--card); border:1px solid var(--line); border-radius:12px;
+}
+.gate-ask-text{display:flex; flex-direction:column; gap:3px; min-width:0;}
+.gate-ask-text b{font-size:14.5px;}
+.gate-ask-text span{font-size:13px; color:var(--ink-soft); line-height:1.65;}
+.gate-ask-btn{flex:none; white-space:nowrap;}
+
+/* 떠 있는 문의 버튼.
+   ⚠️ 오른쪽이 아니라 왼쪽이다 — .float-print-group이 right:22px에 이미 있다.
+   #gate 안에 있어서 로그인하면 함께 사라진다(작업 화면을 가리지 않는다). */
+.ask-fab{
+  position:fixed; left:22px; bottom:22px; z-index:50;
+  display:inline-flex; align-items:center; gap:6px;
+  padding:10px 16px; border-radius:999px;
+  background:var(--accent); color:#fff; text-decoration:none;
+  font-size:13.5px; font-weight:600; letter-spacing:.01em;
+  box-shadow:0 4px 14px rgba(15,20,28,.22);
+  transition:transform .15s, box-shadow .15s;
+}
+.ask-fab:hover{transform:translateY(-1px); box-shadow:0 6px 18px rgba(15,20,28,.28);}
+.ask-fab:focus-visible{outline:2px solid var(--accent); outline-offset:3px;}
+@media (max-width:520px){
+  .ask-fab{left:14px; bottom:14px; padding:9px 13px; font-size:12.5px;}
+}
+@media (prefers-reduced-motion:reduce){ .ask-fab{transition:none;} }
+
 /* 가입 축하금 이벤트 띠 — 로그인 버튼 바로 위. 눈에 걸려야 하지만 첫 화면의 주인공은
    어디까지나 '무엇을 만들어 주는가'라, 강조색 테두리 한 줄까지만 쓴다. */
 .bonus-banner{
