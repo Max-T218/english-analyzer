@@ -56,14 +56,20 @@
     <div class="panel">
       <table id="userTable"
              style="width:100%; table-layout:fixed; border-collapse:collapse; font-size:13px;">
+        <!-- ⚠️ <col>은 열 개수와 **정확히 같아야** 한다. table-layout:fixed에서는
+             앞쪽 col들이 폭을 다 가져가고 빠진 열은 0폭이 되는데, 그러면 그 칸의
+             단추가 한 글자씩 세로로 쪼개지며 줄 높이가 화면 하나만큼 늘어난다
+             (실제로 그랬다 — '학생기능'을 넣으면서 col을 안 늘려 '관리'가 0폭이 됐다).
+             열을 더하거나 뺄 때는 아래 col도 함께 고치고, 합이 100%인지 확인할 것. -->
         <colgroup>
-          <col style="width:19%">
-          <col style="width:9%">
-          <col style="width:6%">
-          <col style="width:11%">
-          <col style="width:11%">
-          <col style="width:9%">
-          <col style="width:35%">
+          <col style="width:18%">   <!-- 이메일 -->
+          <col style="width:8%">    <!-- 이름 -->
+          <col style="width:5%">    <!-- 가입 -->
+          <col style="width:10%">   <!-- 가입일 -->
+          <col style="width:10%">   <!-- 최근 로그인 -->
+          <col style="width:8%">    <!-- 잔액 -->
+          <col style="width:7%">    <!-- 학생기능 -->
+          <col style="width:34%">   <!-- 관리 — 칸·고르개·단추 셋이 한 줄에 들어갈 폭 -->
         </colgroup>
         <thead>
           <tr style="text-align:left; border-bottom:1px solid var(--line);">
@@ -313,7 +319,7 @@ function renderUsers() {
         </div>
       </td>
     </tr>
-  `).join("") || `<tr><td colspan="7" style="padding:16px 6px; color:var(--ink-soft);">회원이 없습니다.</td></tr>`;
+  `).join("") || `<tr><td colspan="8" style="padding:16px 6px; color:var(--ink-soft);">회원이 없습니다.</td></tr>`;
 }
 
 /* 회원 강제 탈퇴 — 되돌릴 수 없다. 계정·저장 자료·이용 내역·잔액이 함께 사라지고,
