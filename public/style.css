@@ -1610,6 +1610,65 @@ table.flow tr:last-child td, table.vocab tr:last-child td{border-bottom:none;}
 table.vocab td:first-child{font-weight:600; color:var(--ink);}
 table.vocab td.pos{color:var(--ink-soft); font-style:italic; white-space:nowrap;}
 
+/* ── 주제 & 흐름 요약 (상세분석 전용, app.js의 buildOutlineHtml) ──
+   예전에는 이 자리가 두 칸짜리 표(table.flow) 하나였다. 그 표는 "무슨 내용인가"만
+   말해 주는데, 영어가 약한 학생에게 정작 필요한 것은 "어디가 중심 문장인가"와
+   "글이 어떤 차례로 굴러가는가"였다. 그래서 상세분석에서만 종이 한 쪽을 통째로
+   쓰는 다섯 덩어리로 늘렸다.
+   소책자는 지금도 table.flow를 쓴다 — 들고 다니는 얇은 자료에 한 쪽을 더 붙일 이유가
+   없어서다. 두 자료의 요약이 다른 것은 의도이므로 한쪽을 고칠 때 따라 고치지 말 것. */
+.ol-sub{
+  font-size:12.5px; font-weight:800; color:var(--accent); margin:18px 0 7px;
+  display:flex; align-items:center; gap:7px;
+}
+.ol-sub::after{content:""; flex:1; height:1px; background:var(--line);}
+
+.ol-box{border:1px solid var(--line); border-radius:11px; padding:11px 14px;
+  background:var(--card); box-shadow:var(--shadow); margin-bottom:8px;}
+.ol-lb{font-size:11px; font-weight:800; color:var(--accent); margin-bottom:4px;}
+.ol-en{font-size:13.5px; font-weight:600; line-height:1.6;}
+.ol-ko{font-size:13px; color:var(--ink-soft); line-height:1.6; margin-top:3px;}
+/* '한 줄로 줄이면'은 영어를 한 낱말도 안 쓴 자리다. 영어에서 막히는 학생이 여기부터
+   읽고 들어올 수 있도록, 주제 상자와 색을 달리해 눈에 먼저 들어오게 한다. */
+.ol-oneline{background:#fff8e1; border-color:#f0dfa8;}
+.ol-oneline .ol-lb{color:#8a6d1f;}
+.ol-txt{font-size:14px; font-weight:600; line-height:1.6;}
+
+.ol-key{border:1px solid var(--line); border-left:5px solid var(--accent);
+  border-radius:0 11px 11px 0; padding:11px 14px; background:var(--card);}
+.ol-hd{font-size:13.5px; font-weight:700; margin-bottom:4px;}
+.ol-how{font-size:13px; line-height:1.7; color:var(--ink-soft);}
+/* 문장 번호 — 줄글(④) 안에서도, 중심 문장 안내(②)에서도 같은 표시로 보이게 한다 */
+.ol-n{color:var(--accent); font-weight:800;}
+
+table.outline th{white-space:nowrap;}
+table.outline tr:last-child td{border-bottom:none;}
+table.outline .ol-st{font-weight:700; color:var(--accent); white-space:nowrap; width:58px;}
+table.outline .ol-nos{white-space:nowrap; width:58px; color:var(--ink-soft);}
+/* '하는 일'은 짧은 문장이 들어가는 칸이라 너무 좁으면 두 줄로 어색하게 끊긴다.
+   '단서'는 영어 낱말 하나뿐이라 좁혀도 된다. */
+table.outline .ol-role{width:156px;}
+table.outline .ol-cue{width:76px;}
+table.outline .ol-cue code{background:var(--accent-soft); color:var(--accent);
+  border-radius:4px; padding:0 4px; font-size:12px;}
+
+.ol-story{font-size:13px; line-height:1.85; border:1px solid var(--line);
+  border-radius:11px; padding:11px 14px; background:var(--card); box-shadow:var(--shadow);}
+
+.ol-keywords{display:flex; flex-wrap:wrap; gap:5px;}
+.ol-keywords span{border:1px solid var(--line); background:var(--card);
+  border-radius:7px; padding:3px 10px; font-size:12.5px;}
+.ol-keywords span b{color:var(--accent);}
+.ol-kw-note{font-size:12px; color:var(--ink-soft); margin-top:6px;}
+
+/* 인쇄에서 한 덩어리가 쪽 사이에 두 동강 나지 않게 한다.
+   표는 길어지면 갈릴 수밖에 없으므로 묶지 않는다 — 묶으면 앞 쪽에 자리가 남아도
+   통째로 다음 쪽으로 넘어가 낭비가 커진다. */
+@media print{
+  .ol-box, .ol-key, .ol-story, .ol-keywords{break-inside:avoid;}
+  .ol-sub{break-after:avoid;}
+}
+
 /* 지문 요약 인포그래픽 — 16:9 가로 그림. .table-wrap 안에 넣어 표와 테두리를 맞춘다.
    min-width가 걸린 table과 달리 그림은 폭에 맞춰 줄여야 하므로 여기서 다시 푼다. */
 .infographic{display:block; width:100%; height:auto; min-width:0;}

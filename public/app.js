@@ -3269,6 +3269,98 @@ function passageBanner(job, total, label) {
 // idx: lastAnalyzeEntries에서 이 지문이 몇 번째인지. 저장할 때 화면에서 고친 내용을
 //      어느 entry에 되돌려 넣을지 찾는 표식이다(실패 카드가 섞이면 화면 순서와
 //      entries 순서가 어긋나므로 번호를 직접 박아 둔다).
+/* ══════ 주제 & 흐름 요약 (상세분석 전용) ══════ */
+
+/* 줄글 요약 안의 문장 번호(❶❷…)를 눈에 띄게 칠한다.
+   서버는 번호를 '글자 그대로'만 보내온다 — 태그를 붙여 보내게 하면 sanitize_inline이
+   허용하지 않는 <b>가 섞여 들어와 조용히 지워지고, 무엇보다 AI가 만든 HTML을 그대로
+   넣지 않는다는 원칙(sanitize_* 우회 금지)에 어긋난다. 칠하는 일은 화면이 한다. */
+const OUTLINE_NO_RE = /[\u2776-\u277f\u24eb-\u24f4]+/g;
+function markSentenceNos(text) {
+  return esc(text).replace(OUTLINE_NO_RE, (m) => `<span class="ol-n">${m}</span>`);
+}
+
+/* d.outline을 종이 한 쪽짜리 요약으로 그린다.
+   값이 없거나(옛 자료) 알맹이가 비면 ""을 돌려주고, 부르는 쪽이 옛 표로 되돌아간다.
+   덩어리마다 따로 없어도 되게 만들었다 — AI가 한 항목을 비워 보내도 그 자리만 빠지고
+   나머지는 그대로 나온다. */
+function buildOutlineHtml(o) {
+  if (!o || typeof o !== "object") return null;
+  const stages = Array.isArray(o.stages) ? o.stages : [];
+  const keywords = Array.isArray(o.keywords) ? o.keywords : [];
+  if (!o.topicEn && !o.topicKo && !o.oneLine && !stages.length && !o.story) return null;
+
+  const sub = (t) => `<div class="ol-sub">${esc(t)}</div>`;
+  const out = [];
+
+  // ① 무엇에 대한 글인가 — 영어 주제문과, 영어를 한 낱말도 안 쓴 쉬운 우리말 한 줄
+  if (o.topicEn || o.topicKo || o.oneLine) {
+    out.push(sub("① 무엇에 대한 글인가"));
+    if (o.topicEn || o.topicKo) {
+      out.push(`<div class="ol-box">
+        <div class="ol-lb">주제</div>
+        ${o.topicEn ? `<div class="ol-en">${safeHTML(o.topicEn)}</div>` : ""}
+        ${o.topicKo ? `<div class="ol-ko">${safeHTML(o.topicKo)}</div>` : ""}
+      </div>`);
+    }
+    if (o.oneLine) {
+      out.push(`<div class="ol-box ol-oneline">
+        <div class="ol-lb">한 줄로 줄이면</div>
+        <div class="ol-txt">${safeHTML(o.oneLine)}</div>
+      </div>`);
+    }
+  }
+
+  // ② 중심 문장은 어디인가 — 없는 지문(이야기글 등)은 '없다'고 말해 주는 것이 핵심이다
+  if (o.topicWhy || Number(o.topicNo) > 0) {
+    const no = Number(o.topicNo) || 0;
+    out.push(sub("② 중심 문장은 어디인가"));
+    out.push(`<div class="ol-key">
+      <div class="ol-hd">${
+        no > 0
+          ? `이 글의 중심 문장은 <span class="ol-n">${no}번</span> 문장입니다.`
+          : "이 글에는 겉으로 드러난 주제문이 없습니다."
+      }</div>
+      ${o.topicWhy ? `<div class="ol-how">${markSentenceNos(o.topicWhy)}</div>` : ""}
+    </div>`);
+  }
+
+  // ③ 어떤 차례로 흘러가는가 — '하는 일'과 '단서'가 예전 두 칸짜리 표에 없던 것이다
+  if (stages.length) {
+    const rows = stages.map((st) => `<tr>
+      <td class="ol-st">${esc(st.name || "")}</td>
+      <td class="ol-nos">${esc(st.range || "")}</td>
+      <td class="ol-role">${safeHTML(st.role || "")}</td>
+      <td class="ol-cue">${st.cue ? `<code>${esc(st.cue)}</code>` : ""}</td>
+      <td>${safeHTML(st.content || "")}</td>
+    </tr>`).join("");
+    out.push(sub("③ 어떤 차례로 흘러가는가"));
+    out.push(`<div class="table-wrap"><table class="outline">
+      <thead><tr><th>단계</th><th>문장</th><th>이 대목이 하는 일</th><th>단서</th><th>내용</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`);
+  }
+
+  const front = out.join("");
+  out.length = 0;
+
+  // ④ 줄글 — 표는 칸칸이 끊겨 있어 앞뒤가 안 이어진다. 여기서 한 번 이어 준다.
+  if (o.story) {
+    out.push(sub("④ 이어서 읽으면 이런 이야기입니다"));
+    out.push(`<div class="ol-story">${markSentenceNos(o.story)}</div>`);
+  }
+
+  // ⑤ 되풀이되는 말 — ②에서 '이 낱말들을 모으라'고 한 것을 실제로 모아 보여 준다
+  if (keywords.length) {
+    out.push(sub("⑤ 되풀이되는 말 — 주제를 가리키는 낱말들"));
+    out.push(`<div class="ol-keywords">${
+      keywords.map((k) => `<span><b>${esc(k.en || "")}</b> ${esc(k.ko || "")}</span>`).join("")
+    }</div>`);
+    if (o.keywordNote) out.push(`<div class="ol-kw-note">${safeHTML(o.keywordNote)}</div>`);
+  }
+
+  return { front, back: out.join("") };
+}
+
 function buildAnalysisHtml(d, job, total, idx) {
   const parts = [];
   const mark = Number.isInteger(idx) ? ` data-entry="${idx}"` : "";
@@ -3333,14 +3425,30 @@ function buildAnalysisHtml(d, job, total, idx) {
     `);
   });
 
-  // 요약표
-  if (d.summary && d.summary.length) {
+  /* 주제 & 흐름 요약 — 종이 한 쪽을 쓴다.
+     제목과 내용은 한 덩어리로 묶는다 — 따로 움직이면 제목만 남은 쪽이 생긴다.
+     data-brk="page"가 기존의 '요약은 늘 새 쪽에서 시작'을 이어받는다. 다만 이제는
+     '쪽 구성'에서 끌 수 있는 기본값이고, data-brk-def가 [처음 상태로]의 되돌릴 값이다.
+
+     ⚠️ d.outline(지금 모양)과 d.summary(옛 모양)를 둘 다 그릴 줄 알아야 한다.
+     저장함에 있는 예전 분석은 summary만 갖고 있어서, outline만 그리면 불러왔을 때
+     이 자리가 통째로 비어 버린다. 소책자는 지금도 summary를 쓴다(일부러 다르다 —
+     server.py의 outline 스키마 주석 참고). */
+  const outline = buildOutlineHtml(d.outline);
+  if (outline) {
+    parts.push(`
+      <div class="pg-blk" data-brk="page" data-brk-def="page">
+      <h3 class="section"><span class="num">Ⅱ.</span> 주제 &amp; 흐름 요약</h3>
+      ${outline.front}
+      </div>
+    `);
+    // 뒤 덩어리(④⑤)는 새 쪽을 강제하지 않는다 — 앞 쪽에 자리가 남으면 이어 붙고,
+    // 모자라면 넘어간다. 덩어리가 둘이라 '쪽 구성'에서 경계를 손으로 옮길 수도 있다.
+    if (outline.back) parts.push(`<div class="pg-blk">${outline.back}</div>`);
+  } else if (d.summary && d.summary.length) {
     const rows = d.summary.map(
       (r) => `<tr><td>${esc(r.label)}</td><td>${safeHTML(r.content)}</td></tr>`
     ).join("");
-    // 제목과 표는 한 덩어리로 묶는다 — 따로 움직이면 제목만 남은 쪽이 생긴다.
-    // data-brk="page"가 기존의 '요약표는 늘 새 쪽에서 시작'을 이어받는다. 다만 이제는
-    // '쪽 구성'에서 끌 수 있는 기본값이고, data-brk-def가 [처음 상태로]의 되돌릴 값이다.
     parts.push(`
       <div class="pg-blk" data-brk="page" data-brk-def="page">
       <h3 class="section"><span class="num">Ⅱ.</span> 주제 &amp; 흐름 요약</h3>
@@ -7485,12 +7593,46 @@ const SAMPLE_ANALYZE = {
       examNote: `글 전체의 주제문이라 주제·제목·요약문 문항의 근거가 되는 문장이다.`,
     },
   ],
-  summary: [
-    { label: "주제", content: "Talent is not fixed; effort shapes ability.<br>재능은 정해져 있지 않고, 노력이 능력을 만든다." },
-    { label: "도입 ❶", content: "재능이 고정되어 있다는 통념" },
-    { label: "전개 ❷", content: "지능이 자란다고 들은 학생은 더 어려운 과제를 택한다는 연구" },
-    { label: "결론 ❸", content: "타고난 능력이 아니라 노력이 결과를 만든다" },
-  ],
+  /* 상세분석 표본. 소책자 표본(아래)은 예전 모양인 summary를 그대로 쓴다 —
+     두 자료의 요약이 다른 것은 의도다(server.py의 outline 스키마 주석 참고). */
+  outline: {
+    topicEn: "Talent is not fixed; effort shapes ability.",
+    topicKo: "재능은 정해져 있지 않고, 노력이 능력을 만든다.",
+    oneLine: "타고난 재능보다, 얼마나 노력하느냐가 그 사람을 만든다.",
+    topicNo: 3,
+    topicWhy:
+      "❸번 문장이 이 글이 하고 싶은 말입니다. ❶번은 뒤집을 통념을 꺼내 놓은 자리이고, " +
+      "❷번은 그 통념이 틀렸다는 근거입니다. 둘 다 ❸번을 세우기 위한 발판입니다.",
+    stages: [
+      {
+        name: "도입", range: "❶", role: "먼저 뒤집을 통념을 꺼낸다", cue: "but",
+        content: "재능은 정해져 있다는 믿음을 소개하고, 연구는 그렇지 않다고 곧바로 받아친다.",
+      },
+      {
+        name: "전개", range: "❷", role: "연구 결과로 근거를 댄다", cue: "When",
+        content: "지능이 자랄 수 있다고 들은 학생들은 더 어려운 과제를 스스로 택했다.",
+      },
+      {
+        name: "결론", range: "❸", role: "하고 싶은 말을 한 문장으로 못 박는다", cue: "not",
+        content: "사람을 만드는 것은 타고난 능력이 아니라 노력이다.",
+      },
+    ],
+    story:
+      "많은 사람은 재능이 태어날 때 정해진다고 믿습니다. 그러나 연구는 그렇지 않다고 " +
+      "말합니다❶. 지능이 자랄 수 있다는 이야기를 들은 학생들은 더 어려운 과제를 스스로 " +
+      "골랐습니다❷. 결국 그 사람이 어떤 사람이 되는지를 정하는 것은 타고난 능력이 아니라 " +
+      "노력이었습니다❸.",
+    keywords: [
+      { en: "fixed", ko: "정해진" },
+      { en: "research", ko: "연구" },
+      { en: "grow", ko: "자라다" },
+      { en: "harder tasks", ko: "더 어려운 과제" },
+      { en: "effort", ko: "노력" },
+      { en: "innate ability", ko: "타고난 능력" },
+    ],
+    keywordNote:
+      "‘정해져 있다’ 쪽 낱말과 ‘자란다·노력한다’ 쪽 낱말이 맞서고 있습니다. 글은 뒤쪽 편입니다.",
+  },
   vocab: [
     { word: "talent", pos: "n.", meaning: "재능", synonym: "gift", antonym: "—" },
     { word: "fixed", pos: "adj.", meaning: "고정된", synonym: "settled", antonym: "flexible" },

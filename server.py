@@ -889,17 +889,55 @@ GEMINI_SCHEMA = {
                 "propertyOrdering": ["no", "tag", "chunks", "note", "isTopic", "examTags", "examNote"],
             },
         },
-        "summary": {
-            "type": "ARRAY",
-            "items": {
-                "type": "OBJECT",
-                "properties": {
-                    "label": {"type": "STRING"},
-                    "content": {"type": "STRING"},
+        # 주제 & 흐름 요약. 상세분석은 이 한 덩어리로 종이 한 쪽을 채운다.
+        #
+        # 소책자(BRIEF_SCHEMA)는 예전 모양인 summary(label/content 2칸짜리 표)를 그대로
+        # 쓴다 — 들고 다니는 얇은 자료에까지 한 쪽을 더 붙일 이유가 없어서다. 그래서 두
+        # 자료의 요약은 이제 **일부러 다르다**. 한쪽을 고칠 때 다른 쪽을 따라 고치지 말 것.
+        "outline": {
+            "type": "OBJECT",
+            "properties": {
+                "topicEn": {"type": "STRING"},
+                "topicKo": {"type": "STRING"},
+                "oneLine": {"type": "STRING"},
+                # 주제문이 겉으로 드러나지 않는 지문(이야기글 등)이 있다. 그때 억지로
+                # 하나 고르면 학생이 잘못 배우므로, no를 0으로 두고 "없다"고 말하게 한다.
+                "topicNo": {"type": "INTEGER"},
+                "topicWhy": {"type": "STRING"},
+                "stages": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "name": {"type": "STRING"},
+                            "range": {"type": "STRING"},
+                            "role": {"type": "STRING"},
+                            "cue": {"type": "STRING"},
+                            "content": {"type": "STRING"},
+                        },
+                        "required": ["name", "range", "role", "cue", "content"],
+                        "propertyOrdering": ["name", "range", "role", "cue", "content"],
+                    },
                 },
-                "required": ["label", "content"],
-                "propertyOrdering": ["label", "content"],
+                "story": {"type": "STRING"},
+                "keywords": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "en": {"type": "STRING"},
+                            "ko": {"type": "STRING"},
+                        },
+                        "required": ["en", "ko"],
+                        "propertyOrdering": ["en", "ko"],
+                    },
+                },
+                "keywordNote": {"type": "STRING"},
             },
+            "required": ["topicEn", "topicKo", "oneLine", "topicNo", "topicWhy",
+                         "stages", "story", "keywords", "keywordNote"],
+            "propertyOrdering": ["topicEn", "topicKo", "oneLine", "topicNo", "topicWhy",
+                                 "stages", "story", "keywords", "keywordNote"],
         },
         "vocab": {
             "type": "ARRAY",
@@ -917,8 +955,8 @@ GEMINI_SCHEMA = {
             },
         },
     },
-    "required": ["englishTitle", "koreanTitle", "sentences", "summary", "vocab"],
-    "propertyOrdering": ["englishTitle", "koreanTitle", "sentences", "summary", "vocab"],
+    "required": ["englishTitle", "koreanTitle", "sentences", "outline", "vocab"],
+    "propertyOrdering": ["englishTitle", "koreanTitle", "sentences", "outline", "vocab"],
 }
 
 # ── 문제 제작(수능형 객관식 문제) 스키마 ──
@@ -4149,7 +4187,8 @@ described by the schema. Follow these rules exactly.
 - ⚠️ COMPLETENESS IS MANDATORY: the `sentences` array MUST contain ONE entry for EVERY
   sentence in the passage — from the first to the very last. Analyze the WHOLE passage,
   never stop partway. The number of `sentences` entries MUST equal the number of sentences
-  you refer to in `summary` (e.g. if summary mentions ❶~❻, there must be 6 sentence entries).
+  you refer to in `outline` (e.g. if outline.stages mention ❶~❻, there must be 6 sentence
+  entries).
   Analyzing fewer sentences than you summarize is a serious error.
 - Number sentences with the JSON `no` field: 1, 2, 3, … with NO gaps and NO duplicates.
   Every sentence of the passage appears EXACTLY ONCE, in original order.
@@ -4516,11 +4555,43 @@ Only return JSON after all nine checks.
       RIGHT  note: "<code class="g">children</code> 뒤에 목적격 관계대명사가 생략되어…"
   · 한 문장에 표시가 많으면 두세 문장으로 나눠 쓰되, 표시한 것을 빠뜨리지는 마라.
 
-## summary (주제 & 흐름 요약)
-- First item: {label:"주제", content: an English topic sentence, then <br>, then the
-  Korean topic}.
-- Following items: {label: "도입 ❶❷" style range labels using ❶❷❸..., content: Korean
-  summary of that part}. Cover the whole passage in logical stages.
+## outline (주제 & 흐름 요약)
+이 덩어리 하나가 종이 한 쪽을 채운다. 읽는 사람은 **영어 성적이 낮은 학생**이다.
+"주제를 찾아라"는 말만 듣고 찾는 방법은 배운 적이 없는 학생에게, 그 방법까지 보여 주는
+자리다. 어른에게 하는 요약이 아니라 학생에게 하는 설명으로 써라.
+
+- `topicEn` — 지문 전체를 감싸는 영어 주제문 한 문장.
+- `topicKo` — 그 우리말.
+- `oneLine` — **영어를 한 낱말도 쓰지 말고**, 아주 쉬운 우리말 한 문장으로 지문을 줄여라.
+  topicKo를 그대로 옮겨 적지 마라. topicKo가 개념을 담는다면 여기는 "무슨 일이
+  벌어지는가"를 말한다. 중학생이 읽어도 걸리지 않을 낱말만 써라.
+- `topicNo` — 주제문이 **지문 안에 문장으로 드러나 있으면** 그 문장 번호(1부터).
+  **겉으로 드러나 있지 않으면 0**. 이야기글·묘사문처럼 주장을 한 문장으로 못 박지 않는
+  글이 그렇다. 없는데 억지로 하나 고르면 학생이 잘못 배운다 — 0을 두려워하지 마라.
+- `topicWhy` — 우리말 2~3문장.
+  · topicNo가 1 이상이면: 왜 그 문장이 중심인지. 다른 문장들이 그 문장을 어떻게
+    받쳐 주는지 짚어라.
+  · topicNo가 0이면: 왜 이 글에는 주제문이 없는지, **그러면 어떻게 읽어야 하는지**를
+    알려 줘라. `keywords`에 모아 둔 되풀이되는 낱말을 가리켜라.
+- `stages` — 3~5개. 지문 전체를 빠짐없이 덮어라.
+  · `name` — "도입" "전개" "전환" "근거" "결말" "주장"처럼 짧은 우리말 이름.
+  · `range` — "❶~❸" 꼴. ❶❷❸❹❺❻❼❽❾❿ 를 쓰고, 한 문장이면 "❹" 하나만.
+  · `role` — **내용이 아니라 하는 일**을 우리말로. "장면을 연다 — 언제, 어디서, 누가",
+    "통념을 먼저 꺼낸다", "연구 결과로 앞을 뒤집는다"처럼. 25자 안쪽.
+  · `cue` — 그 대목이 시작되는 것을 알려 주는 **지문 속 영어 낱말 하나**(However,
+    For example, Therefore, But …). 뚜렷한 신호어가 없으면 그 대목의 분위기를 정하는
+    낱말 하나를 골라라. 그마저 마땅치 않으면 빈 문자열 "".
+  · `content` — 그 대목의 내용을 우리말 1~2문장으로.
+- `story` — **줄글 요약.** stages는 칸칸이 끊겨 있어 성적이 낮은 학생은 앞뒤가 안 이어진다.
+  여기서는 지문 전체를 우리말 4~7문장의 **이어지는 글 한 문단**으로 다시 들려줘라.
+  문장이 끝날 때마다 그것이 원문 몇 번째 문장인지를 ❶❷❸ 꼴로 붙여, 학생이 원문에서
+  바로 찾을 수 있게 하라(예: "…음악에 잠을 깹니다❶."). **태그를 쓰지 마라** — 번호는
+  글자 그대로 적기만 하면 화면이 알아서 눈에 띄게 칠한다.
+- `keywords` — 지문에서 **되풀이되거나 주제를 가리키는 낱말·표현 4~7개**.
+  각각 {en: 지문에 실제로 나온 영어 그대로, ko: 짧은 우리말 뜻}.
+  어려운 단어를 고르는 자리가 아니다(그건 vocab이 한다). **한 방향을 함께 가리키는**
+  낱말을 골라라.
+- `keywordNote` — 그 낱말들이 왜 한 방향인지 우리말 한 문장.
 
 ## vocab (핵심 어휘 & 표현)
 - 8~14 of the most useful words/expressions actually in the passage.
@@ -4738,8 +4809,17 @@ Only return JSON after all nine checks.
 - <code> 외의 태그는 쓰지 마라. <ruby>·<rt>는 절대 넣지 마라.
 
 """
-    + _prompt_part("## summary (주제 & 흐름 요약)", "## vocab (핵심 어휘 & 표현)")
-    + r"""Do NOT output a vocabulary list — 어휘표는 소책자에 넣지 않는다(단어장이 따로 있다).
+    # 예전에는 이 대목도 상세분석 프롬프트에서 잘라 왔다(_prompt_part). 2026-09-04에
+    # 상세분석 쪽이 종이 한 쪽을 쓰는 outline으로 바뀌면서 공유를 끊고 여기로 옮겨 적었다.
+    # 소책자는 들고 다니는 얇은 자료라 요약에 한 쪽을 더 쓰지 않는다 — 두 자료의 요약이
+    # 다른 것은 실수가 아니라 의도다. 상세분석의 outline을 고쳐도 여기는 따라 고치지 말 것.
+    + r"""## summary (주제 & 흐름 요약)
+- First item: {label:"주제", content: an English topic sentence, then <br>, then the
+  Korean topic}.
+- Following items: {label: "도입 ❶❷" style range labels using ❶❷❸..., content: Korean
+  summary of that part}. Cover the whole passage in logical stages.
+
+Do NOT output a vocabulary list — 어휘표는 소책자에 넣지 않는다(단어장이 따로 있다).
 
 Return valid JSON only. No markdown fences, no extra prose."""
 )
@@ -6376,10 +6456,29 @@ def finalize_analysis(result):
             # examNote는 원래 태그 없는 한국어라 sanitize까지 걸지 않지만,
             # 태그 도중에 끝난 조각만은 잘라 낸다(note와 같은 이유).
             s["examNote"] = _drop_dangling_tag(_fix_known_typos(s["examNote"]))
-    # 요약 content 도 정화 (표/구조 태그가 레이아웃을 깨는 것을 서버에서도 차단)
+    # 요약도 정화 (표/구조 태그가 레이아웃을 깨는 것을 서버에서도 차단).
+    # summary는 옛 모양이다 — 지금 상세분석은 outline을 쓰지만, 저장함에서 불러온
+    # 예전 자료가 이 함수를 다시 거칠 수 있으므로 둘 다 훑는다.
     for item in result.get("summary", []):
         if isinstance(item, dict) and item.get("content"):
             item["content"] = _fix_known_typos(sanitize_inline(item["content"]))
+    ol = result.get("outline")
+    if isinstance(ol, dict):
+        for k in ("topicEn", "topicKo", "oneLine", "topicWhy", "story", "keywordNote"):
+            if ol.get(k):
+                ol[k] = _fix_known_typos(sanitize_inline(str(ol[k])))
+        for st in ol.get("stages") or []:
+            if not isinstance(st, dict):
+                continue
+            for k in ("name", "range", "role", "cue", "content"):
+                if st.get(k):
+                    st[k] = _fix_known_typos(sanitize_inline(str(st[k])))
+        for kw in ol.get("keywords") or []:
+            if not isinstance(kw, dict):
+                continue
+            for k in ("en", "ko"):
+                if kw.get(k):
+                    kw[k] = _fix_known_typos(sanitize_inline(str(kw[k])))
     result["_conjMiss"] = missed
     result["_numBroken"] = broken_nums
     result["_rubyBad"] = ruby_bad
@@ -7295,6 +7394,21 @@ CHANGELOG = [
             "것에는 붙이지 않아 지면이 지저분해지지 않습니다.",
             "가주어 it, 강조구문 It ~ that처럼 가리키는 대상이 아예 없는 it에는 "
             "지칭 대신 빨간 어법 표시로 '가주어'·'강조구문'이라고 적습니다.",
+        ],
+    },
+    {
+        "version": 21,
+        "date": "2026-09-04",
+        "items": [
+            "지문 상세분석 — '주제 & 흐름 요약'이 표 한 개에서 한 쪽 분량으로 늘었습니다. "
+            "영어가 약한 학생을 위한 자리입니다. ① 영어를 한 낱말도 쓰지 않은 '한 줄 요약', "
+            "② 중심 문장이 몇 번인지(없는 지문이면 없다고 알려 주고 대신 무엇을 봐야 하는지), "
+            "③ 흐름표에 '이 대목이 하는 일'과 '단서가 되는 영어 낱말' 칸 추가, "
+            "④ 지문 전체를 우리말 줄글로 이어 준 요약(문장 번호가 붙어 원문에서 바로 찾을 수 "
+            "있습니다), ⑤ 되풀이되는 핵심 낱말 모음이 함께 나옵니다.",
+            "소책자 분석의 요약은 지금까지와 똑같습니다 — 들고 다니는 얇은 자료라 그대로 두었습니다.",
+            "지문 상세분석 — 대명사 지칭 표시를 회색에서 갈색으로 바꿨습니다. 인쇄하면 "
+            "회색이 본문 글자와 잘 구분되지 않는다는 점을 확인해 고쳤습니다.",
         ],
     },
 ]
