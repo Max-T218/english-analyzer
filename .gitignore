@@ -20,3 +20,6 @@ service-account*.json
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# 홍보 초안 (블로그 글·카드뉴스). 서비스 코드가 아니고, origin이 공개 저장소라 올리지 않는다.
+홍보/
