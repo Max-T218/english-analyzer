@@ -3754,7 +3754,46 @@ function buildBriefHtml(d, job, total, images) {
      따로 두어도 자리만 있으면 어차피 나란히 붙는다 — 각각 쪼개지지만 않으면 되고,
      그건 break-inside:avoid가 이미 한다. 따로 두면 표만 앞 쪽 빈자리에 들어가고 그림만
      넘어갈 수 있어 낭비가 준다. 새 쪽을 강제하지 않는 것은 그대로다. */
-  if (d.summary && d.summary.length) {
+  /* 소책자 축소판 — 한 줄 요약 + 흐름도.
+     상세분석(buildOutlineHtml)과 **일부러 다르게 그린다.** 저쪽은 종이 한 쪽을 쓰는
+     다섯 덩어리이고, 이쪽은 둘뿐이다. 소책자는 얇으려고 있는 물건이라 두께를 늘릴 수
+     없다 — 예전 두 칸짜리 표(125mm)와 이 축소판(124mm)이 같은 높이가 되도록 맞췄다.
+
+     상자에 문장 번호를 넣는 것도 저쪽과 다른 점이다. 상세분석에는 바로 위에 흐름표가
+     있어 뺐지만, 소책자에는 그 표가 없어 여기서 안 주면 학생이 상자와 원문을 맞춰 볼
+     길이 사라진다.
+
+     d.summary는 옛 모양이다. 저장함의 예전 소책자를 불러왔을 때 이 자리가 비지 않도록
+     그때는 예전 표로 되돌아간다. */
+  const bo = d.outline;
+  const bStages = bo && Array.isArray(bo.stages) ? bo.stages : [];
+  if (bo && (bo.oneLine || bo.topicEn || bStages.length)) {
+    const body = [];
+    if (bo.topicEn) {
+      body.push(`<div class="bf-topic">${safeHTML(bo.topicEn)}</div>`);
+    }
+    if (bo.oneLine) {
+      body.push(`<div class="bf-one"><b>한 줄로 줄이면</b><span>${safeHTML(bo.oneLine)}</span></div>`);
+    }
+    if (bStages.length) {
+      const nodes = bStages.map((st, i) => {
+        const q = String((st && st.bridge) || "").trim();
+        const box = `<div class="bf-node"><b>${esc((st && st.name) || "")}</b>` +
+          `<i>${rangeBadges((st && st.range) || "")}</i>` +
+          `<span>${safeHTML((st && st.gist) || "")}</span></div>`;
+        const arrow = i === bStages.length - 1
+          ? ""
+          : `<div class="bf-arrow">${q ? `<span>${esc(q)}</span>` : ""}</div>`;
+        return box + arrow;
+      }).join("");
+      body.push(`<div class="bf-flow">${nodes}</div>`);
+    }
+    parts.push(`
+      <div class="pg-blk brief-tail">
+      <h3 class="section"><span class="num">Ⅱ.</span> 주제 &amp; 흐름 요약</h3>
+      ${body.join("")}
+      </div>`);
+  } else if (d.summary && d.summary.length) {
     const rows = d.summary.map(
       (r) => `<tr><td>${esc(r.label)}</td><td>${safeHTML(r.content)}</td></tr>`
     ).join("");
@@ -7729,12 +7768,17 @@ const SAMPLE_BRIEF = {
       examNote: "",
     },
   ],
-  summary: [
-    { label: "주제", content: "Talent is not fixed; effort shapes ability.<br>재능은 정해져 있지 않고, 노력이 능력을 만든다." },
-    { label: "도입 ❶", content: "재능이 고정되어 있다는 통념" },
-    { label: "전개 ❷", content: "지능이 자란다고 들은 학생은 더 어려운 과제를 택한다는 연구" },
-    { label: "결론 ❸", content: "타고난 능력이 아니라 노력이 결과를 만든다" },
-  ],
+  /* 소책자 표본. 상세분석 표본(위)과 모양이 다르다 — 축소판이라 한 줄 요약과
+     흐름도 둘뿐이고, 상자가 문장 번호를 직접 들고 있다. */
+  outline: {
+    topicEn: "Talent is not fixed; effort shapes ability.",
+    oneLine: "타고난 재능보다, 얼마나 노력하느냐가 그 사람을 만든다.",
+    stages: [
+      { name: "도입", range: "1", gist: "재능은 정해져 있다는 통념", bridge: "정말 그런가?" },
+      { name: "전개", range: "2", gist: "믿음이 바뀌면 행동이 바뀐다", bridge: "그래서 사람을 만드는 것은?" },
+      { name: "결론", range: "3", gist: "사람을 만드는 것은 노력이다", bridge: "" },
+    ],
+  },
 };
 
 const SAMPLE_PASSAGE_HTML =

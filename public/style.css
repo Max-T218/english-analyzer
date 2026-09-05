@@ -831,6 +831,36 @@ table.variedkey td:nth-child(2){white-space:nowrap; color:var(--ink-soft); font-
 .brief-tail h3.section{margin-top:14px;}
 .brief-tail h3.section:first-child{margin-top:0;}
 
+/* ── 소책자 축소판 요약 (app.js의 buildBriefHtml) ──
+   상세분석의 흐름도(.ol-*)를 그대로 쓰지 않고 한 줄짜리 상자로 눌렀다. 이름·문장 번호·
+   한 줄을 같은 줄에 놓으면 높이가 절반이 된다. 소책자는 얇으려고 있는 물건이고, 이
+   꼬리는 새 쪽을 강제하지 않고 앞 쪽 남는 자리에 들어가야 하기 때문이다.
+   예전 두 칸짜리 표가 125mm였는데 이 축소판이 124mm다 — 그 값을 넘기지 말 것. */
+.bf-topic{font-size:13px; font-weight:600; line-height:1.6; margin:0 0 8px;}
+.bf-one{background:#fff8e1; border:1px solid #f0dfa8; border-radius:9px;
+  padding:7px 12px; margin:0 0 9px;}
+.bf-one b{display:block; font-size:10.5px; color:#8a6d1f; margin-bottom:2px;}
+.bf-one span{font-size:13px; font-weight:600; line-height:1.55;}
+
+.bf-node{border:1px solid var(--line); border-left:4px solid var(--accent);
+  border-radius:0 9px 9px 0; padding:5px 12px; background:var(--card);}
+.bf-node b{color:var(--accent); font-size:12px; margin-right:6px;}
+.bf-node i{font-style:normal; margin-right:8px;}
+.bf-node span{font-size:12.5px; font-weight:600;}
+
+.bf-arrow{position:relative; margin-left:22px; padding:3px 0 3px 18px;
+  min-height:20px; display:flex; align-items:center; border-left:2px solid var(--line);}
+.bf-arrow::after{content:""; position:absolute; left:-7px; bottom:-1px;
+  border-left:6px solid transparent; border-right:6px solid transparent;
+  border-top:8px solid var(--line);}
+.bf-arrow span{font-size:11.5px; font-weight:700; color:var(--accent);
+  background:var(--accent-soft); border-radius:999px; padding:1px 10px;}
+
+@media print{
+  .bf-node, .bf-one{break-inside:avoid;}
+  .bf-arrow{break-inside:avoid; break-after:avoid;}
+}
+
 /* 시험지명 — 문제 제작 탭에서 인쇄창·저장창에 적어 넣은 이름. 지면 맨 위에 한 줄로
    놓아, 여러 벌을 뽑았을 때 어느 시험지인지 바로 보이게 한다. */
 .qz-sheet-title{

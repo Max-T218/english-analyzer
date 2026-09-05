@@ -4679,21 +4679,40 @@ BRIEF_SCHEMA = {
                                      "examTags", "examNote"],
             },
         },
-        "summary": {
-            "type": "ARRAY",
-            "items": {
-                "type": "OBJECT",
-                "properties": {
-                    "label": {"type": "STRING"},
-                    "content": {"type": "STRING"},
+        # 주제 & 흐름 요약 — 소책자 축소판.
+        #
+        # 상세분석의 outline과 **이름은 같지만 모양이 다르다.** 저쪽은 종이 한 쪽을 쓰는
+        # 다섯 덩어리이고, 이쪽은 '한 줄 요약 + 흐름도' 둘뿐이다. 소책자는 들고 다니라고
+        # 얇게 만드는 물건이라 두께를 늘릴 수 없다 — 실제로 재어 보니 예전 두 칸짜리
+        # 표(125mm)와 이 축소판(124mm)이 같다. 그래서 값(200원)도 그대로 간다.
+        #
+        # ⚠️ 저쪽 outline을 고칠 때 여기를 따라 고치지 말 것. 다른 것이 의도다.
+        "outline": {
+            "type": "OBJECT",
+            "properties": {
+                "topicEn": {"type": "STRING"},
+                "oneLine": {"type": "STRING"},
+                "stages": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "name": {"type": "STRING"},
+                            "range": {"type": "STRING"},
+                            "gist": {"type": "STRING"},
+                            "bridge": {"type": "STRING"},
+                        },
+                        "required": ["name", "range", "gist", "bridge"],
+                        "propertyOrdering": ["name", "range", "gist", "bridge"],
+                    },
                 },
-                "required": ["label", "content"],
-                "propertyOrdering": ["label", "content"],
             },
+            "required": ["topicEn", "oneLine", "stages"],
+            "propertyOrdering": ["topicEn", "oneLine", "stages"],
         },
     },
-    "required": ["englishTitle", "koreanTitle", "sentences", "summary"],
-    "propertyOrdering": ["englishTitle", "koreanTitle", "sentences", "summary"],
+    "required": ["englishTitle", "koreanTitle", "sentences", "outline"],
+    "propertyOrdering": ["englishTitle", "koreanTitle", "sentences", "outline"],
 }
 
 
@@ -4833,11 +4852,29 @@ Only return JSON after all nine checks.
     # 상세분석 쪽이 종이 한 쪽을 쓰는 outline으로 바뀌면서 공유를 끊고 여기로 옮겨 적었다.
     # 소책자는 들고 다니는 얇은 자료라 요약에 한 쪽을 더 쓰지 않는다 — 두 자료의 요약이
     # 다른 것은 실수가 아니라 의도다. 상세분석의 outline을 고쳐도 여기는 따라 고치지 말 것.
-    + r"""## summary (주제 & 흐름 요약)
-- First item: {label:"주제", content: an English topic sentence, then <br>, then the
-  Korean topic}.
-- Following items: {label: "도입 ❶❷" style range labels using ❶❷❸..., content: Korean
-  summary of that part}. Cover the whole passage in logical stages.
+    + r"""## outline (주제 & 흐름 요약 — 소책자 축소판)
+이 자리는 **학생이 들고 다니는 자료**의 마지막 한 토막이다. 얇아야 하므로
+상세분석의 다섯 덩어리를 다 담지 않는다. 두 가지만 만든다.
+
+- `topicEn` — 지문 전체를 감싸는 **영어** 주제문 한 문장. (우리말 주제는 따로 만들지
+  마라 — 바로 아래 oneLine이 그 자리를 대신한다. 같은 말을 세 줄 적지 않는다.)
+- `oneLine` — **영어를 한 낱말도 쓰지 말고**, 아주 쉬운 우리말 한 문장으로 지문을
+  줄여라. topicEn을 그대로 옮긴 것이 아니라 "무슨 일이 벌어지는가"를 말한다.
+  중학생이 읽어도 걸리지 않을 낱말만 써라.
+- `stages` — 3~5개. 지문 전체를 빠짐없이 덮어라. 흐름도의 상자가 된다.
+  · `name` — "도입" "전개" "전환" "근거" "결말" "주장"처럼 짧은 우리말 이름.
+  · `range` — **보통 숫자**로 "1~3", 한 문장이면 "4" 하나만.
+    ⚠️ 동그라미 문자(❶ ⓫ ①)를 쓰지 마라. 화면이 알아서 동그라미로 그린다.
+  · `gist` — 그 대목을 **한마디로** 하면 무엇인지. 우리말 25자 안쪽 한 줄.
+    내용을 줄인 요약문이 아니라, 상자 안에 들어갈 이름표에 가깝다.
+  · `bridge` — **다음 상자로 가는 화살표에 붙는 말.** 여기가 이 요약의 핵심이다.
+    다음 대목이 **답하고 있는 질문**을 우리말 한 줄(20자 안쪽)로 적어라.
+    예: "경보가 울리면 어떻게 되나?" "왜 이런 장치가 생겼나?" "그래서 결론은?"
+    · 내용을 미리 말하지 마라 — **질문만** 적는다. 답은 다음 상자가 한다.
+    · **마지막 단계는 빈 문자열 ""** — 다음이 없으므로 화살표도 없다.
+
+⚠️ 내용을 한 번 더 들려주는 자리가 아니다. 지문 해석은 이미 앞쪽에 다 있다.
+여기서 할 일은 **글이 어떻게 움직이는가**를 보여 주는 것이다.
 
 Do NOT output a vocabulary list — 어휘표는 소책자에 넣지 않는다(단어장이 따로 있다).
 
@@ -4926,9 +4963,22 @@ def _finish_brief(result):
             s["ko"] = _fix_known_typos(sanitize_inline(clean_korean(s["ko"])))
         if s.get("examNote"):
             s["examNote"] = _fix_known_typos(sanitize_inline(clean_note(s["examNote"])))
+    # summary는 옛 모양이다 — 지금은 outline을 쓰지만, 저장함에서 불러온 예전
+    # 소책자가 이 함수를 다시 거칠 수 있으므로 둘 다 훑는다.
     for item in result.get("summary", []):
         if isinstance(item, dict) and item.get("content"):
             item["content"] = _fix_known_typos(sanitize_inline(item["content"]))
+    ol = result.get("outline")
+    if isinstance(ol, dict):
+        for k in ("topicEn", "oneLine"):
+            if ol.get(k):
+                ol[k] = _fix_known_typos(sanitize_inline(str(ol[k])))
+        for st in ol.get("stages") or []:
+            if not isinstance(st, dict):
+                continue
+            for k in ("name", "range", "gist", "bridge"):
+                if st.get(k):
+                    st[k] = _fix_known_typos(sanitize_inline(str(st[k])))
     return result
 
 
@@ -7429,9 +7479,21 @@ CHANGELOG = [
             "④ 글이 어떤 차례로 이어지는지를 보여 주는 흐름도 — 상자와 상자 사이 화살표마다 "
             "'다음 대목이 답하는 질문'이 붙어, 글쓴이가 왜 여기서 저기로 넘어가는지가 보입니다, "
             "⑤ 되풀이되는 핵심 낱말 모음이 함께 나옵니다.",
-            "소책자 분석의 요약은 지금까지와 똑같습니다 — 들고 다니는 얇은 자료라 그대로 두었습니다.",
             "지문 상세분석 — 대명사 지칭 표시를 회색에서 갈색으로 바꿨습니다. 인쇄하면 "
             "회색이 본문 글자와 잘 구분되지 않는다는 점을 확인해 고쳤습니다.",
+        ],
+    },
+    {
+        "version": 22,
+        "date": "2026-09-05",
+        "items": [
+            "소책자 분석 — '주제 & 흐름 요약'도 흐름도로 바뀌었습니다. 영어 주제문 한 줄, "
+            "영어를 쓰지 않은 한 줄 요약, 그리고 대목마다 상자 하나씩 이어지는 흐름도가 "
+            "나옵니다. 상자 사이 화살표에는 '다음 대목이 답하는 질문'이 붙어, 글이 왜 그 "
+            "차례로 가는지가 보입니다. 상자마다 몇 번 문장인지도 함께 적힙니다.",
+            "소책자는 들고 다니라고 얇게 만드는 자료라, 상세분석의 한 쪽짜리 요약을 그대로 "
+            "넣지 않고 줄인 판을 넣었습니다. 예전 요약표와 지면 높이가 같아 소책자가 "
+            "두꺼워지지 않고, 요금도 그대로입니다.",
         ],
     },
 ]
