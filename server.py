@@ -914,12 +914,18 @@ GEMINI_SCHEMA = {
                             "role": {"type": "STRING"},
                             "cue": {"type": "STRING"},
                             "content": {"type": "STRING"},
+                            # 흐름도(④)에 쓰는 두 값.
+                            # gist는 상자 안에 들어갈 아주 짧은 한 줄이고,
+                            # bridge는 다음 상자로 가는 화살표에 붙는 '질문'이다.
+                            # 마지막 단계의 bridge는 빈 문자열이다.
+                            "gist": {"type": "STRING"},
+                            "bridge": {"type": "STRING"},
                         },
-                        "required": ["name", "range", "role", "cue", "content"],
-                        "propertyOrdering": ["name", "range", "role", "cue", "content"],
+                        "required": ["name", "range", "role", "cue", "content", "gist", "bridge"],
+                        "propertyOrdering": ["name", "range", "role", "cue", "content",
+                                             "gist", "bridge"],
                     },
                 },
-                "story": {"type": "STRING"},
                 "keywords": {
                     "type": "ARRAY",
                     "items": {
@@ -935,9 +941,9 @@ GEMINI_SCHEMA = {
                 "keywordNote": {"type": "STRING"},
             },
             "required": ["topicEn", "topicKo", "oneLine", "topicNo", "topicWhy",
-                         "stages", "story", "keywords", "keywordNote"],
+                         "stages", "keywords", "keywordNote"],
             "propertyOrdering": ["topicEn", "topicKo", "oneLine", "topicNo", "topicWhy",
-                                 "stages", "story", "keywords", "keywordNote"],
+                                 "stages", "keywords", "keywordNote"],
         },
         "vocab": {
             "type": "ARRAY",
@@ -4560,6 +4566,10 @@ Only return JSON after all nine checks.
 "주제를 찾아라"는 말만 듣고 찾는 방법은 배운 적이 없는 학생에게, 그 방법까지 보여 주는
 자리다. 어른에게 하는 요약이 아니라 학생에게 하는 설명으로 써라.
 
+⚠️ **내용을 한 번 더 들려주는 자리가 아니다.** 지문 해석은 이미 앞쪽에 다 있다.
+여기서 할 일은 **글이 어떻게 움직이는가**를 보여 주는 것이다 — 어디가 중심인지,
+어떤 차례로 가는지, 그리고 **왜 여기서 저기로 넘어가는지**.
+
 - `topicEn` — 지문 전체를 감싸는 영어 주제문 한 문장.
 - `topicKo` — 그 우리말.
 - `oneLine` — **영어를 한 낱말도 쓰지 말고**, 아주 쉬운 우리말 한 문장으로 지문을 줄여라.
@@ -4578,15 +4588,23 @@ Only return JSON after all nine checks.
   · `range` — "❶~❸" 꼴. ❶❷❸❹❺❻❼❽❾❿ 를 쓰고, 한 문장이면 "❹" 하나만.
   · `role` — **내용이 아니라 하는 일**을 우리말로. "장면을 연다 — 언제, 어디서, 누가",
     "통념을 먼저 꺼낸다", "연구 결과로 앞을 뒤집는다"처럼. 25자 안쪽.
-  · `cue` — 그 대목이 시작되는 것을 알려 주는 **지문 속 영어 낱말 하나**(However,
-    For example, Therefore, But …). 뚜렷한 신호어가 없으면 그 대목의 분위기를 정하는
-    낱말 하나를 골라라. 그마저 마땅치 않으면 빈 문자열 "".
+  · `cue` — 그 대목이 **어디서 시작되는지 학생이 원문에서 짚을 수 있게** 하는 표시다.
+    ⚠️ **그 대목 첫 문장의 맨 앞에서만 가져와라.** 문장 한가운데 있는 내용어를 고르면
+    안 된다 — perspective, sense, interpersonal 같은 낱말은 신호가 아니라 그냥 단어다.
+    · 첫 문장이 연결어·전환 표현으로 시작하면 그것을 그대로: However / But / For example /
+      Therefore / Thus / When / Because / Instead / In fact / Finally / From ~ perspective …
+    · 그런 말이 없으면 **첫 두세 낱말을 원문 그대로** 적어라(예: "The alarm sounds").
+      학생이 그 자리를 손가락으로 짚을 수 있으면 된다.
+    · 어느 쪽이든 5낱말을 넘기지 마라.
   · `content` — 그 대목의 내용을 우리말 1~2문장으로.
-- `story` — **줄글 요약.** stages는 칸칸이 끊겨 있어 성적이 낮은 학생은 앞뒤가 안 이어진다.
-  여기서는 지문 전체를 우리말 4~7문장의 **이어지는 글 한 문단**으로 다시 들려줘라.
-  문장이 끝날 때마다 그것이 원문 몇 번째 문장인지를 ❶❷❸ 꼴로 붙여, 학생이 원문에서
-  바로 찾을 수 있게 하라(예: "…음악에 잠을 깹니다❶."). **태그를 쓰지 마라** — 번호는
-  글자 그대로 적기만 하면 화면이 알아서 눈에 띄게 칠한다.
+  · `gist` — 흐름도 상자에 들어갈 **아주 짧은 한 줄**(우리말 25자 안쪽). content를 줄인
+    것이 아니라, 이 대목을 한마디로 하면 무엇인지다. 예: "자존감은 관계를 지켜보는 감시 장치".
+  · `bridge` — **다음 대목으로 넘어가는 화살표에 붙는 말.** 여기가 이 요약의 핵심이다.
+    다음 대목이 **답하고 있는 질문**을 우리말 한 줄(20자 안쪽)로 적어라.
+    예: "경보가 울리면 어떻게 되나?" "왜 이런 장치가 생겼나?" "그래서 결론은?"
+    · 내용을 미리 말하지 마라 — **질문만** 적는다. 답은 다음 상자가 한다.
+    · 글쓴이가 왜 여기서 저기로 넘어가는지가 이 한 줄로 드러나야 한다.
+    · **마지막 단계는 빈 문자열 ""** — 다음이 없으므로 화살표도 없다.
 - `keywords` — 지문에서 **되풀이되거나 주제를 가리키는 낱말·표현 4~7개**.
   각각 {en: 지문에 실제로 나온 영어 그대로, ko: 짧은 우리말 뜻}.
   어려운 단어를 고르는 자리가 아니다(그건 vocab이 한다). **한 방향을 함께 가리키는**
@@ -6464,13 +6482,15 @@ def finalize_analysis(result):
             item["content"] = _fix_known_typos(sanitize_inline(item["content"]))
     ol = result.get("outline")
     if isinstance(ol, dict):
+        # story는 지금 안 만든다(줄글 대신 흐름도로 갔다). 어제 하루치 저장 자료에는
+        # 남아 있을 수 있어, 다시 정화될 때를 대비해 목록에 그대로 둔다.
         for k in ("topicEn", "topicKo", "oneLine", "topicWhy", "story", "keywordNote"):
             if ol.get(k):
                 ol[k] = _fix_known_typos(sanitize_inline(str(ol[k])))
         for st in ol.get("stages") or []:
             if not isinstance(st, dict):
                 continue
-            for k in ("name", "range", "role", "cue", "content"):
+            for k in ("name", "range", "role", "cue", "content", "gist", "bridge"):
                 if st.get(k):
                     st[k] = _fix_known_typos(sanitize_inline(str(st[k])))
         for kw in ol.get("keywords") or []:
@@ -7403,9 +7423,10 @@ CHANGELOG = [
             "지문 상세분석 — '주제 & 흐름 요약'이 표 한 개에서 한 쪽 분량으로 늘었습니다. "
             "영어가 약한 학생을 위한 자리입니다. ① 영어를 한 낱말도 쓰지 않은 '한 줄 요약', "
             "② 중심 문장이 몇 번인지(없는 지문이면 없다고 알려 주고 대신 무엇을 봐야 하는지), "
-            "③ 흐름표에 '이 대목이 하는 일'과 '단서가 되는 영어 낱말' 칸 추가, "
-            "④ 지문 전체를 우리말 줄글로 이어 준 요약(문장 번호가 붙어 원문에서 바로 찾을 수 "
-            "있습니다), ⑤ 되풀이되는 핵심 낱말 모음이 함께 나옵니다.",
+            "③ 흐름표에 '이 대목이 하는 일'과 '시작 신호'(그 대목이 원문 어디서 시작되는지) 칸 추가, "
+            "④ 글이 어떤 차례로 이어지는지를 보여 주는 흐름도 — 상자와 상자 사이 화살표마다 "
+            "'다음 대목이 답하는 질문'이 붙어, 글쓴이가 왜 여기서 저기로 넘어가는지가 보입니다, "
+            "⑤ 되풀이되는 핵심 낱말 모음이 함께 나옵니다.",
             "소책자 분석의 요약은 지금까지와 똑같습니다 — 들고 다니는 얇은 자료라 그대로 두었습니다.",
             "지문 상세분석 — 대명사 지칭 표시를 회색에서 갈색으로 바꿨습니다. 인쇄하면 "
             "회색이 본문 글자와 잘 구분되지 않는다는 점을 확인해 고쳤습니다.",

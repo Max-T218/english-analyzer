@@ -1618,7 +1618,7 @@ table.vocab td.pos{color:var(--ink-soft); font-style:italic; white-space:nowrap;
    소책자는 지금도 table.flow를 쓴다 — 들고 다니는 얇은 자료에 한 쪽을 더 붙일 이유가
    없어서다. 두 자료의 요약이 다른 것은 의도이므로 한쪽을 고칠 때 따라 고치지 말 것. */
 .ol-sub{
-  font-size:12.5px; font-weight:800; color:var(--accent); margin:18px 0 7px;
+  font-size:12.5px; font-weight:800; color:var(--accent); margin:15px 0 6px;
   display:flex; align-items:center; gap:7px;
 }
 .ol-sub::after{content:""; flex:1; height:1px; background:var(--line);}
@@ -1646,14 +1646,49 @@ table.outline tr:last-child td{border-bottom:none;}
 table.outline .ol-st{font-weight:700; color:var(--accent); white-space:nowrap; width:58px;}
 table.outline .ol-nos{white-space:nowrap; width:58px; color:var(--ink-soft);}
 /* '하는 일'은 짧은 문장이 들어가는 칸이라 너무 좁으면 두 줄로 어색하게 끊긴다.
-   '단서'는 영어 낱말 하나뿐이라 좁혀도 된다. */
-table.outline .ol-role{width:156px;}
-table.outline .ol-cue{width:76px;}
+   '시작 신호'는 예전엔 낱말 하나였지만 이제 "From an evolutionary perspective"처럼
+   구(句)가 들어오므로 넓혀 둔다 — 좁으면 모델이 짧은 낱말을 고르도록 몰아간다. */
+table.outline .ol-role{width:140px;}
+table.outline .ol-cue{width:132px;}
 table.outline .ol-cue code{background:var(--accent-soft); color:var(--accent);
   border-radius:4px; padding:0 4px; font-size:12px;}
 
 .ol-story{font-size:13px; line-height:1.85; border:1px solid var(--line);
   border-radius:11px; padding:11px 14px; background:var(--card); box-shadow:var(--shadow);}
+
+/* ── 흐름도 (④) ──
+   상자는 '무엇을 말하는가', 화살표는 '왜 여기서 저기로 넘어가는가'를 맡는다.
+   화살표에 붙는 말은 설명이 아니라 **다음 상자가 답하는 질문**이다 — 학생이 질문을
+   먼저 읽고 답을 아래에서 찾는 순서가 되도록.
+   그림 파일 없이 CSS로만 그린다. 인쇄에서도 그대로 나오고, 글자 크기를 바꿔도
+   같이 늘어난다.
+   .ol-story는 줄글이던 시절의 스타일이다 — 그때 저장한 자료가 아직 그 모양이라 남겨 둔다. */
+.ol-flow{max-width:600px; margin:0 auto;}
+.ol-node{
+  border:1px solid var(--line); border-left:5px solid var(--accent);
+  border-radius:0 11px 11px 0; padding:7px 13px; background:var(--card);
+  box-shadow:var(--shadow);
+}
+.ol-node-hd{display:flex; align-items:baseline; gap:8px; margin-bottom:2px;}
+.ol-node-hd b{color:var(--accent); font-size:13px;}
+.ol-node-hd span{color:var(--ink-soft); font-size:12.5px;}
+.ol-node-bd{font-size:13.5px; line-height:1.6; font-weight:600;}
+
+.ol-arrow{
+  position:relative; margin-left:26px; padding:5px 0 5px 20px;
+  min-height:24px; display:flex; align-items:center;
+  border-left:2px solid var(--line);
+}
+/* 선 끝의 삼각형. 선이 2px이므로 12px짜리 삼각형을 5px 왼쪽으로 밀어 가운데를 맞춘다 */
+.ol-arrow::after{
+  content:""; position:absolute; left:-7px; bottom:-1px;
+  border-left:6px solid transparent; border-right:6px solid transparent;
+  border-top:8px solid var(--line);
+}
+.ol-arrow span{
+  font-size:12.5px; font-weight:700; color:var(--accent);
+  background:var(--accent-soft); border-radius:999px; padding:2px 12px;
+}
 
 .ol-keywords{display:flex; flex-wrap:wrap; gap:5px;}
 .ol-keywords span{border:1px solid var(--line); background:var(--card);
@@ -1667,6 +1702,9 @@ table.outline .ol-cue code{background:var(--accent-soft); color:var(--accent);
 @media print{
   .ol-box, .ol-key, .ol-story, .ol-keywords{break-inside:avoid;}
   .ol-sub{break-after:avoid;}
+  /* 상자가 쪽 사이에 두 동강 나면 안 되고, 화살표만 앞 쪽에 남아도 안 된다 */
+  .ol-node{break-inside:avoid;}
+  .ol-arrow{break-inside:avoid; break-after:avoid;}
 }
 
 /* 지문 요약 인포그래픽 — 16:9 가로 그림. .table-wrap 안에 넣어 표와 테두리를 맞춘다.

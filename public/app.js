@@ -3336,15 +3336,36 @@ function buildOutlineHtml(o) {
     </tr>`).join("");
     out.push(sub("③ 어떤 차례로 흘러가는가"));
     out.push(`<div class="table-wrap"><table class="outline">
-      <thead><tr><th>단계</th><th>문장</th><th>이 대목이 하는 일</th><th>단서</th><th>내용</th></tr></thead>
+      <thead><tr><th>단계</th><th>문장</th><th>이 대목이 하는 일</th><th>시작 신호</th><th>내용</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`);
   }
 
   const front = out.join("");
   out.length = 0;
 
-  // ④ 줄글 — 표는 칸칸이 끊겨 있어 앞뒤가 안 이어진다. 여기서 한 번 이어 준다.
-  if (o.story) {
+  /* ④ 흐름도 — 이 요약의 핵심이다.
+     예전에는 줄글 요약이었다. 그런데 "문장마다 원문 번호를 붙여라"는 규칙 때문에
+     원문 문장 수만큼 문장을 쓰는 것이 가장 쉬운 답이 되어, 앞에 있는 해석을 한 번 더
+     읽는 칸이 되어 버렸다. 내용은 이미 앞에 다 있다. 그래서 이 자리는 상자가 아니라
+     **상자와 상자 사이**를 말한다 — 화살표에 붙는 질문(다음 상자가 답하는 질문)이
+     그 일을 한다.
+     o.story는 줄글 시절 값이다. 그때 저장한 자료를 불러왔을 때만 옛 모양으로 그린다. */
+  const hasBridge = stages.some((st) => st && String(st.bridge || "").trim());
+  if (stages.length && (hasBridge || !o.story)) {
+    out.push(sub("④ 글이 이렇게 이어집니다"));
+    const nodes = stages.map((st, i) => {
+      const last = i === stages.length - 1;
+      const q = String((st && st.bridge) || "").trim();
+      const box = `<div class="ol-node">
+        <div class="ol-node-hd"><b>${esc((st && st.name) || "")}</b><span>${esc((st && st.range) || "")}</span></div>
+        <div class="ol-node-bd">${safeHTML((st && (st.gist || st.content)) || "")}</div>
+      </div>`;
+      // 마지막 상자 뒤에는 화살표를 두지 않는다 — 갈 곳이 없다
+      const arrow = last ? "" : `<div class="ol-arrow">${q ? `<span>${esc(q)}</span>` : ""}</div>`;
+      return box + arrow;
+    }).join("");
+    out.push(`<div class="ol-flow">${nodes}</div>`);
+  } else if (o.story) {
     out.push(sub("④ 이어서 읽으면 이런 이야기입니다"));
     out.push(`<div class="ol-story">${markSentenceNos(o.story)}</div>`);
   }
@@ -7603,25 +7624,32 @@ const SAMPLE_ANALYZE = {
     topicWhy:
       "❸번 문장이 이 글이 하고 싶은 말입니다. ❶번은 뒤집을 통념을 꺼내 놓은 자리이고, " +
       "❷번은 그 통념이 틀렸다는 근거입니다. 둘 다 ❸번을 세우기 위한 발판입니다.",
+    /* cue는 '그 대목 첫 문장의 맨 앞'에서만 가져온다. 문장 한가운데 있는 내용어를
+       고르면 신호 구실을 못 한다(server.py의 outline 프롬프트 참고).
+       bridge는 다음 상자가 답하는 질문이다 — 마지막 단계는 비운다. */
     stages: [
       {
-        name: "도입", range: "❶", role: "먼저 뒤집을 통념을 꺼낸다", cue: "but",
+        name: "도입", range: "❶", role: "먼저 뒤집을 통념을 꺼낸다",
+        cue: "Many people believe",
         content: "재능은 정해져 있다는 믿음을 소개하고, 연구는 그렇지 않다고 곧바로 받아친다.",
+        gist: "재능은 정해져 있다는 통념",
+        bridge: "정말 그런가?",
       },
       {
-        name: "전개", range: "❷", role: "연구 결과로 근거를 댄다", cue: "When",
+        name: "전개", range: "❷", role: "연구 결과로 근거를 댄다",
+        cue: "When students are told",
         content: "지능이 자랄 수 있다고 들은 학생들은 더 어려운 과제를 스스로 택했다.",
+        gist: "믿음이 바뀌면 행동이 바뀐다",
+        bridge: "그래서 사람을 만드는 것은?",
       },
       {
-        name: "결론", range: "❸", role: "하고 싶은 말을 한 문장으로 못 박는다", cue: "not",
+        name: "결론", range: "❸", role: "하고 싶은 말을 한 문장으로 못 박는다",
+        cue: "Effort, not innate ability",
         content: "사람을 만드는 것은 타고난 능력이 아니라 노력이다.",
+        gist: "사람을 만드는 것은 노력이다",
+        bridge: "",
       },
     ],
-    story:
-      "많은 사람은 재능이 태어날 때 정해진다고 믿습니다. 그러나 연구는 그렇지 않다고 " +
-      "말합니다❶. 지능이 자랄 수 있다는 이야기를 들은 학생들은 더 어려운 과제를 스스로 " +
-      "골랐습니다❷. 결국 그 사람이 어떤 사람이 되는지를 정하는 것은 타고난 능력이 아니라 " +
-      "노력이었습니다❸.",
     keywords: [
       { en: "fixed", ko: "정해진" },
       { en: "research", ko: "연구" },
