@@ -1638,13 +1638,23 @@ table.vocab td.pos{color:var(--ink-soft); font-style:italic; white-space:nowrap;
   border-radius:0 11px 11px 0; padding:11px 14px; background:var(--card);}
 .ol-hd{font-size:13.5px; font-weight:700; margin-bottom:4px;}
 .ol-how{font-size:13px; line-height:1.7; color:var(--ink-soft);}
-/* 문장 번호 — 줄글(④) 안에서도, 중심 문장 안내(②)에서도 같은 표시로 보이게 한다 */
+/* 중심 문장 안내(②)의 "3번" 같은 맨 숫자 */
 .ol-n{color:var(--accent); font-weight:800;}
+
+/* 문장 번호 동그라미 — 유니코드 글자(❶ ⓫)를 그대로 쓰지 않고 화면이 그린다.
+   ❶~❿과 ⓫~는 블록이 달라 글꼴이 안 맞으면 크기가 어긋난다(app.js의 numBadges 주석 참고).
+   두 자리는 알약처럼 조금 넓어질 뿐 높이는 그대로다. */
+.ol-num{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:16px; height:16px; padding:0 4px; margin:0 1px;
+  border-radius:999px; background:var(--accent); color:#fff;
+  font-size:10.5px; font-weight:700; line-height:1; vertical-align:1px;
+}
 
 table.outline th{white-space:nowrap;}
 table.outline tr:last-child td{border-bottom:none;}
 table.outline .ol-st{font-weight:700; color:var(--accent); white-space:nowrap; width:58px;}
-table.outline .ol-nos{white-space:nowrap; width:58px; color:var(--ink-soft);}
+table.outline .ol-nos{white-space:nowrap; width:66px; color:var(--ink-soft);}
 /* '하는 일'은 짧은 문장이 들어가는 칸이라 너무 좁으면 두 줄로 어색하게 끊긴다.
    '시작 신호'는 예전엔 낱말 하나였지만 이제 "From an evolutionary perspective"처럼
    구(句)가 들어오므로 넓혀 둔다 — 좁으면 모델이 짧은 낱말을 고르도록 몰아간다. */
@@ -1669,9 +1679,10 @@ table.outline .ol-cue code{background:var(--accent-soft); color:var(--accent);
   border-radius:0 11px 11px 0; padding:7px 13px; background:var(--card);
   box-shadow:var(--shadow);
 }
-.ol-node-hd{display:flex; align-items:baseline; gap:8px; margin-bottom:2px;}
+/* 문장 번호는 여기 두지 않는다 — ③ 표에 이미 있고, 흐름도는 '어떻게 이어지는가'만
+   보여 주면 된다. 번호까지 얹으면 상자가 표의 되풀이처럼 읽힌다. */
+.ol-node-hd{margin-bottom:2px;}
 .ol-node-hd b{color:var(--accent); font-size:13px;}
-.ol-node-hd span{color:var(--ink-soft); font-size:12.5px;}
 .ol-node-bd{font-size:13.5px; line-height:1.6; font-weight:600;}
 
 .ol-arrow{

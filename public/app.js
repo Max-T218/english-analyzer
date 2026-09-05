@@ -3275,9 +3275,33 @@ function passageBanner(job, total, label) {
    서버는 번호를 '글자 그대로'만 보내온다 — 태그를 붙여 보내게 하면 sanitize_inline이
    허용하지 않는 <b>가 섞여 들어와 조용히 지워지고, 무엇보다 AI가 만든 HTML을 그대로
    넣지 않는다는 원칙(sanitize_* 우회 금지)에 어긋난다. 칠하는 일은 화면이 한다. */
-const OUTLINE_NO_RE = /[\u2776-\u277f\u24eb-\u24f4]+/g;
-function markSentenceNos(text) {
-  return esc(text).replace(OUTLINE_NO_RE, (m) => `<span class="ol-n">${m}</span>`);
+/* 문장 번호 동그라미(❶ ❾ ⓫ …)를 화면이 직접 그린다.
+   ❶~❿은 U+2776~277F, ⓫부터는 U+24EB~24F4로 **유니코드 블록이 아예 다르다.** 두 블록을
+   같은 글꼴이 채워 주지 않으면 크기와 굵기가 어긋난다 — 실제로 "❾~⓫"에서 ⓫만 작게
+   나왔다. 그래서 글자 모양에 기대지 않고 숫자만 뽑아 우리가 동그라미를 그린다.
+   1이든 11이든 같은 높이로 보이고, 두 자리는 알약 모양으로 조금 넓어질 뿐이다. */
+const CIRCLED_NO = new Map();
+for (let i = 0; i < 10; i++) CIRCLED_NO.set(String.fromCharCode(0x2776 + i), i + 1);   // ❶~❿ 검은 동그라미
+for (let i = 0; i < 10; i++) CIRCLED_NO.set(String.fromCharCode(0x24eb + i), i + 11);  // ⓫~⓴ 검은 동그라미
+for (let i = 0; i < 20; i++) CIRCLED_NO.set(String.fromCharCode(0x2460 + i), i + 1);   // ①~⑳ 흰 동그라미
+/* 세 계열을 다 받는 이유: 프롬프트는 한 계열만 쓰라고 하지만, 11을 넘어가면 모델이
+   제멋대로 다른 계열을 집어 온다. 어느 것이 와도 같은 동그라미로 그려 준다. */
+function numBadges(text) {
+  let out = "";
+  for (const ch of String(text || "")) {
+    const n = CIRCLED_NO.get(ch);
+    out += n ? `<span class="ol-num">${n}</span>` : esc(ch);
+  }
+  return out;
+}
+/* 문장 범위 칸(③) 전용. 여기는 "9~11"처럼 보통 숫자로 오는 것이 정상이라
+   숫자 덩어리도 동그라미로 바꾼다. 줄글에는 쓰지 말 것 — 본문에 섞인 숫자까지
+   동그라미가 되어 버린다. */
+function rangeBadges(text) {
+  return String(text || "")
+    .split(/(\d+)/)
+    .map((part, i) => (i % 2 ? `<span class="ol-num">${part}</span>` : numBadges(part)))
+    .join("");
 }
 
 /* d.outline을 종이 한 쪽짜리 요약으로 그린다.
@@ -3321,7 +3345,7 @@ function buildOutlineHtml(o) {
           ? `이 글의 중심 문장은 <span class="ol-n">${no}번</span> 문장입니다.`
           : "이 글에는 겉으로 드러난 주제문이 없습니다."
       }</div>
-      ${o.topicWhy ? `<div class="ol-how">${markSentenceNos(o.topicWhy)}</div>` : ""}
+      ${o.topicWhy ? `<div class="ol-how">${numBadges(o.topicWhy)}</div>` : ""}
     </div>`);
   }
 
@@ -3329,7 +3353,7 @@ function buildOutlineHtml(o) {
   if (stages.length) {
     const rows = stages.map((st) => `<tr>
       <td class="ol-st">${esc(st.name || "")}</td>
-      <td class="ol-nos">${esc(st.range || "")}</td>
+      <td class="ol-nos">${rangeBadges(st.range || "")}</td>
       <td class="ol-role">${safeHTML(st.role || "")}</td>
       <td class="ol-cue">${st.cue ? `<code>${esc(st.cue)}</code>` : ""}</td>
       <td>${safeHTML(st.content || "")}</td>
@@ -3357,7 +3381,7 @@ function buildOutlineHtml(o) {
       const last = i === stages.length - 1;
       const q = String((st && st.bridge) || "").trim();
       const box = `<div class="ol-node">
-        <div class="ol-node-hd"><b>${esc((st && st.name) || "")}</b><span>${esc((st && st.range) || "")}</span></div>
+        <div class="ol-node-hd"><b>${esc((st && st.name) || "")}</b></div>
         <div class="ol-node-bd">${safeHTML((st && (st.gist || st.content)) || "")}</div>
       </div>`;
       // 마지막 상자 뒤에는 화살표를 두지 않는다 — 갈 곳이 없다
@@ -3367,7 +3391,7 @@ function buildOutlineHtml(o) {
     out.push(`<div class="ol-flow">${nodes}</div>`);
   } else if (o.story) {
     out.push(sub("④ 이어서 읽으면 이런 이야기입니다"));
-    out.push(`<div class="ol-story">${markSentenceNos(o.story)}</div>`);
+    out.push(`<div class="ol-story">${numBadges(o.story)}</div>`);
   }
 
   // ⑤ 되풀이되는 말 — ②에서 '이 낱말들을 모으라'고 한 것을 실제로 모아 보여 준다
@@ -7629,21 +7653,21 @@ const SAMPLE_ANALYZE = {
        bridge는 다음 상자가 답하는 질문이다 — 마지막 단계는 비운다. */
     stages: [
       {
-        name: "도입", range: "❶", role: "먼저 뒤집을 통념을 꺼낸다",
+        name: "도입", range: "1", role: "먼저 뒤집을 통념을 꺼낸다",
         cue: "Many people believe",
         content: "재능은 정해져 있다는 믿음을 소개하고, 연구는 그렇지 않다고 곧바로 받아친다.",
         gist: "재능은 정해져 있다는 통념",
         bridge: "정말 그런가?",
       },
       {
-        name: "전개", range: "❷", role: "연구 결과로 근거를 댄다",
+        name: "전개", range: "2", role: "연구 결과로 근거를 댄다",
         cue: "When students are told",
         content: "지능이 자랄 수 있다고 들은 학생들은 더 어려운 과제를 스스로 택했다.",
         gist: "믿음이 바뀌면 행동이 바뀐다",
         bridge: "그래서 사람을 만드는 것은?",
       },
       {
-        name: "결론", range: "❸", role: "하고 싶은 말을 한 문장으로 못 박는다",
+        name: "결론", range: "3", role: "하고 싶은 말을 한 문장으로 못 박는다",
         cue: "Effort, not innate ability",
         content: "사람을 만드는 것은 타고난 능력이 아니라 노력이다.",
         gist: "사람을 만드는 것은 노력이다",
