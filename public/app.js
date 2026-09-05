@@ -3318,12 +3318,14 @@ function buildOutlineHtml(o) {
   const out = [];
 
   // ① 무엇에 대한 글인가 — 영어 주제문과, 영어를 한 낱말도 안 쓴 쉬운 우리말 한 줄
-  if (o.topicEn || o.topicKo || o.oneLine) {
+  if (o.topicEn || o.oneLine || o.topicKo) {
     out.push(sub("① 무엇에 대한 글인가"));
     if (o.topicEn || o.topicKo) {
       out.push(`<div class="ol-box">
         <div class="ol-lb">주제</div>
         ${o.topicEn ? `<div class="ol-en">${safeHTML(o.topicEn)}</div>` : ""}
+        ${/* topicKo(우리말 주제)는 더 만들지 않는다 — 바로 아래 '한 줄로 줄이면'이
+             그 자리를 대신한다. 옛 저장 자료에는 남아 있어 있으면 그려 준다. */ ""}
         ${o.topicKo ? `<div class="ol-ko">${safeHTML(o.topicKo)}</div>` : ""}
       </div>`);
     }
@@ -7695,16 +7697,14 @@ const SAMPLE_ANALYZE = {
       examNote: `글 전체의 주제문이라 주제·제목·요약문 문항의 근거가 되는 문장이다.`,
     },
   ],
-  /* 상세분석 표본. 소책자 표본(아래)도 outline을 쓰지만 모양이 조금 다르다 —
-     우리말 주제 줄(topicKo)이 없고, 흐름도 상자를 한 줄로 눌러 그린다
-     (server.py의 BRIEF_SCHEMA 주석 참고).
+  /* 상세분석 표본. 소책자 표본(아래)과 **모양이 같다** — 규칙도 한 벌
+     (_OUTLINE_RULES)을 나눠 쓰므로 같은 요약이 나온다. 다른 것은 그리는 방식뿐이다.
 
      cue는 '그 대목 첫 문장의 맨 앞'에서만 가져온다. 문장 한가운데 있는 내용어를
      고르면 신호 구실을 못 한다. bridge는 다음 상자가 답하는 질문이고, 마지막
      단계는 비운다. */
   outline: {
     topicEn: "Talent is not fixed; effort shapes ability.",
-    topicKo: "재능은 정해져 있지 않고, 노력이 능력을 만든다.",
     oneLine: "타고난 재능보다, 얼마나 노력하느냐가 그 사람을 만든다.",
     stages: [
       {
