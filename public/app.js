@@ -3335,21 +3335,7 @@ function buildOutlineHtml(o) {
     }
   }
 
-  // ② 중심 문장은 어디인가 — 없는 지문(이야기글 등)은 '없다'고 말해 주는 것이 핵심이다
-  if (o.topicWhy || Number(o.topicNo) > 0) {
-    const no = Number(o.topicNo) || 0;
-    out.push(sub("② 중심 문장은 어디인가"));
-    out.push(`<div class="ol-key">
-      <div class="ol-hd">${
-        no > 0
-          ? `이 글의 중심 문장은 <span class="ol-n">${no}번</span> 문장입니다.`
-          : "이 글에는 겉으로 드러난 주제문이 없습니다."
-      }</div>
-      ${o.topicWhy ? `<div class="ol-how">${numBadges(o.topicWhy)}</div>` : ""}
-    </div>`);
-  }
-
-  // ③ 어떤 차례로 흘러가는가 — '하는 일'과 '단서'가 예전 두 칸짜리 표에 없던 것이다
+  // ② 어떤 차례로 흘러가는가 — '하는 일'과 '단서'가 예전 두 칸짜리 표에 없던 것이다
   if (stages.length) {
     const rows = stages.map((st) => `<tr>
       <td class="ol-st">${esc(st.name || "")}</td>
@@ -3358,7 +3344,7 @@ function buildOutlineHtml(o) {
       <td class="ol-cue">${st.cue ? `<code>${esc(st.cue)}</code>` : ""}</td>
       <td>${safeHTML(st.content || "")}</td>
     </tr>`).join("");
-    out.push(sub("③ 어떤 차례로 흘러가는가"));
+    out.push(sub("② 어떤 차례로 흘러가는가"));
     out.push(`<div class="table-wrap"><table class="outline">
       <thead><tr><th>단계</th><th>문장</th><th>이 대목이 하는 일</th><th>시작 신호</th><th>내용</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`);
@@ -3376,7 +3362,7 @@ function buildOutlineHtml(o) {
      o.story는 줄글 시절 값이다. 그때 저장한 자료를 불러왔을 때만 옛 모양으로 그린다. */
   const hasBridge = stages.some((st) => st && String(st.bridge || "").trim());
   if (stages.length && (hasBridge || !o.story)) {
-    out.push(sub("④ 글이 이렇게 이어집니다"));
+    out.push(sub("③ 글이 이렇게 이어집니다"));
     const nodes = stages.map((st, i) => {
       const last = i === stages.length - 1;
       const q = String((st && st.bridge) || "").trim();
@@ -3390,13 +3376,13 @@ function buildOutlineHtml(o) {
     }).join("");
     out.push(`<div class="ol-flow">${nodes}</div>`);
   } else if (o.story) {
-    out.push(sub("④ 이어서 읽으면 이런 이야기입니다"));
+    out.push(sub("③ 이어서 읽으면 이런 이야기입니다"));
     out.push(`<div class="ol-story">${numBadges(o.story)}</div>`);
   }
 
-  // ⑤ 되풀이되는 말 — ②에서 '이 낱말들을 모으라'고 한 것을 실제로 모아 보여 준다
+  // ④ 되풀이되는 말 — ②에서 '이 낱말들을 모으라'고 한 것을 실제로 모아 보여 준다
   if (keywords.length) {
-    out.push(sub("⑤ 되풀이되는 말 — 주제를 가리키는 낱말들"));
+    out.push(sub("④ 되풀이되는 말 — 주제를 가리키는 낱말들"));
     out.push(`<div class="ol-keywords">${
       keywords.map((k) => `<span><b>${esc(k.en || "")}</b> ${esc(k.ko || "")}</span>`).join("")
     }</div>`);
@@ -3487,9 +3473,15 @@ function buildAnalysisHtml(d, job, total, idx) {
       ${outline.front}
       </div>
     `);
-    // 뒤 덩어리(④⑤)는 새 쪽을 강제하지 않는다 — 앞 쪽에 자리가 남으면 이어 붙고,
-    // 모자라면 넘어간다. 덩어리가 둘이라 '쪽 구성'에서 경계를 손으로 옮길 수도 있다.
-    if (outline.back) parts.push(`<div class="pg-blk">${outline.back}</div>`);
+    /* 뒤 덩어리(흐름도 + 되풀이되는 말)도 새 쪽에서 시작한다.
+       처음에는 강제하지 않았다 — 앞 쪽에 자리가 남으면 이어 붙게 두려던 것이다.
+       그런데 실제로 뽑아 보니 상자 하나만 앞 쪽 끝에 남고 나머지가 다음 쪽으로
+       넘어갔다. 흐름도는 상자와 화살표가 이어져야 뜻이 통하는 그림이라, 갈리는
+       순간 읽을 수 없게 된다. 빈자리를 조금 버리더라도 통째로 넘기는 편이 낫다.
+       '쪽 구성'에서 끌 수 있는 기본값이므로, 굳이 붙이고 싶으면 손으로 옮기면 된다. */
+    if (outline.back) {
+      parts.push(`<div class="pg-blk" data-brk="page" data-brk-def="page">${outline.back}</div>`);
+    }
   } else if (d.summary && d.summary.length) {
     const rows = d.summary.map(
       (r) => `<tr><td>${esc(r.label)}</td><td>${safeHTML(r.content)}</td></tr>`
@@ -3775,7 +3767,23 @@ function buildBriefHtml(d, job, total, images) {
     if (bo.oneLine) {
       body.push(`<div class="bf-one"><b>한 줄로 줄이면</b><span>${safeHTML(bo.oneLine)}</span></div>`);
     }
+    // 흐름표 — 상세분석 것과 같은 표를 쓴다(칸 이름·너비까지). 흐름도가 '어떻게
+    // 이어지는가'를 맡고, 이 표가 '무엇을 어디서'를 맡는다.
     if (bStages.length) {
+      const rows = bStages.map((st) => `<tr>
+        <td class="ol-st">${esc((st && st.name) || "")}</td>
+        <td class="ol-nos">${rangeBadges((st && st.range) || "")}</td>
+        <td class="ol-role">${safeHTML((st && st.role) || "")}</td>
+        <td class="ol-cue">${st && st.cue ? `<code>${esc(st.cue)}</code>` : ""}</td>
+        <td>${safeHTML((st && st.content) || "")}</td>
+      </tr>`).join("");
+      body.push(`<div class="bf-sub">어떤 차례로 흘러가는가</div>`);
+      body.push(`<div class="table-wrap"><table class="outline">
+        <thead><tr><th>단계</th><th>문장</th><th>이 대목이 하는 일</th><th>시작 신호</th><th>내용</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`);
+    }
+    if (bStages.length) {
+      body.push(`<div class="bf-sub">글이 이렇게 이어집니다</div>`);
       const nodes = bStages.map((st, i) => {
         const q = String((st && st.bridge) || "").trim();
         const box = `<div class="bf-node"><b>${esc((st && st.name) || "")}</b>` +
@@ -3787,6 +3795,16 @@ function buildBriefHtml(d, job, total, images) {
         return box + arrow;
       }).join("");
       body.push(`<div class="bf-flow">${nodes}</div>`);
+    }
+    // 되풀이되는 말 — 주제문 판정(②)은 소책자에 없지만, 주제를 스스로 잡아 보는
+    // 재료로는 이 낱말 모음이 그대로 쓸모가 있다.
+    const bKw = bo && Array.isArray(bo.keywords) ? bo.keywords : [];
+    if (bKw.length) {
+      body.push(`<div class="bf-sub">되풀이되는 말 — 주제를 가리키는 낱말들</div>`);
+      body.push(`<div class="ol-keywords">${
+        bKw.map((k) => `<span><b>${esc((k && k.en) || "")}</b> ${esc((k && k.ko) || "")}</span>`).join("")
+      }</div>`);
+      if (bo.keywordNote) body.push(`<div class="ol-kw-note">${safeHTML(bo.keywordNote)}</div>`);
     }
     parts.push(`
       <div class="pg-blk brief-tail">
@@ -7677,19 +7695,17 @@ const SAMPLE_ANALYZE = {
       examNote: `글 전체의 주제문이라 주제·제목·요약문 문항의 근거가 되는 문장이다.`,
     },
   ],
-  /* 상세분석 표본. 소책자 표본(아래)은 예전 모양인 summary를 그대로 쓴다 —
-     두 자료의 요약이 다른 것은 의도다(server.py의 outline 스키마 주석 참고). */
+  /* 상세분석 표본. 소책자 표본(아래)도 outline을 쓰지만 모양이 조금 다르다 —
+     우리말 주제 줄(topicKo)이 없고, 흐름도 상자를 한 줄로 눌러 그린다
+     (server.py의 BRIEF_SCHEMA 주석 참고).
+
+     cue는 '그 대목 첫 문장의 맨 앞'에서만 가져온다. 문장 한가운데 있는 내용어를
+     고르면 신호 구실을 못 한다. bridge는 다음 상자가 답하는 질문이고, 마지막
+     단계는 비운다. */
   outline: {
     topicEn: "Talent is not fixed; effort shapes ability.",
     topicKo: "재능은 정해져 있지 않고, 노력이 능력을 만든다.",
     oneLine: "타고난 재능보다, 얼마나 노력하느냐가 그 사람을 만든다.",
-    topicNo: 3,
-    topicWhy:
-      "❸번 문장이 이 글이 하고 싶은 말입니다. ❶번은 뒤집을 통념을 꺼내 놓은 자리이고, " +
-      "❷번은 그 통념이 틀렸다는 근거입니다. 둘 다 ❸번을 세우기 위한 발판입니다.",
-    /* cue는 '그 대목 첫 문장의 맨 앞'에서만 가져온다. 문장 한가운데 있는 내용어를
-       고르면 신호 구실을 못 한다(server.py의 outline 프롬프트 참고).
-       bridge는 다음 상자가 답하는 질문이다 — 마지막 단계는 비운다. */
     stages: [
       {
         name: "도입", range: "1", role: "먼저 뒤집을 통념을 꺼낸다",
@@ -7774,10 +7790,33 @@ const SAMPLE_BRIEF = {
     topicEn: "Talent is not fixed; effort shapes ability.",
     oneLine: "타고난 재능보다, 얼마나 노력하느냐가 그 사람을 만든다.",
     stages: [
-      { name: "도입", range: "1", gist: "재능은 정해져 있다는 통념", bridge: "정말 그런가?" },
-      { name: "전개", range: "2", gist: "믿음이 바뀌면 행동이 바뀐다", bridge: "그래서 사람을 만드는 것은?" },
-      { name: "결론", range: "3", gist: "사람을 만드는 것은 노력이다", bridge: "" },
+      {
+        name: "도입", range: "1", role: "먼저 뒤집을 통념을 꺼낸다",
+        cue: "Many people believe",
+        content: "재능은 정해져 있다는 믿음을 소개하고, 연구는 그렇지 않다고 곧바로 받아친다.",
+        gist: "재능은 정해져 있다는 통념", bridge: "정말 그런가?",
+      },
+      {
+        name: "전개", range: "2", role: "연구 결과로 근거를 댄다",
+        cue: "When students are told",
+        content: "지능이 자랄 수 있다고 들은 학생들은 더 어려운 과제를 스스로 택했다.",
+        gist: "믿음이 바뀌면 행동이 바뀐다", bridge: "그래서 사람을 만드는 것은?",
+      },
+      {
+        name: "결론", range: "3", role: "하고 싶은 말을 한 문장으로 못 박는다",
+        cue: "Effort, not innate ability",
+        content: "사람을 만드는 것은 타고난 능력이 아니라 노력이다.",
+        gist: "사람을 만드는 것은 노력이다", bridge: "",
+      },
     ],
+    keywords: [
+      { en: "fixed", ko: "정해진" },
+      { en: "research", ko: "연구" },
+      { en: "grow", ko: "자라다" },
+      { en: "effort", ko: "노력" },
+      { en: "innate ability", ko: "타고난 능력" },
+    ],
+    keywordNote: "‘정해져 있다’ 쪽 낱말과 ‘자란다·노력한다’ 쪽 낱말이 맞서고 있습니다.",
   },
 };
 

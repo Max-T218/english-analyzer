@@ -837,6 +837,13 @@ table.variedkey td:nth-child(2){white-space:nowrap; color:var(--ink-soft); font-
    꼬리는 새 쪽을 강제하지 않고 앞 쪽 남는 자리에 들어가야 하기 때문이다.
    예전 두 칸짜리 표가 125mm였는데 이 축소판이 124mm다 — 그 값을 넘기지 말 것. */
 .bf-topic{font-size:13px; font-weight:600; line-height:1.6; margin:0 0 8px;}
+/* 소책자 안 작은 소제목. 상세분석의 .ol-sub와 같은 모양이되 위아래를 더 눌렀다 —
+   덩어리가 다섯이라 이름표가 없으면 무엇이 무엇인지 알 수 없고, 그렇다고 상세분석만큼
+   자리를 내줄 수도 없다. 번호(①②③)는 붙이지 않는다. 소책자에는 ②가 없어 번호가
+   비어 보이고, 상세분석과 번호가 어긋나 헷갈리기 때문이다. */
+.bf-sub{font-size:11.5px; font-weight:800; color:var(--accent); margin:11px 0 5px;
+  display:flex; align-items:center; gap:7px;}
+.bf-sub::after{content:""; flex:1; height:1px; background:var(--line);}
 .bf-one{background:#fff8e1; border:1px solid #f0dfa8; border-radius:9px;
   padding:7px 12px; margin:0 0 9px;}
 .bf-one b{display:block; font-size:10.5px; color:#8a6d1f; margin-bottom:2px;}
@@ -857,7 +864,8 @@ table.variedkey td:nth-child(2){white-space:nowrap; color:var(--ink-soft); font-
   background:var(--accent-soft); border-radius:999px; padding:1px 10px;}
 
 @media print{
-  .bf-node, .bf-one{break-inside:avoid;}
+  .bf-node, .bf-one, .bf-topic{break-inside:avoid;}
+  .bf-sub{break-after:avoid;}
   .bf-arrow{break-inside:avoid; break-after:avoid;}
 }
 
@@ -1664,23 +1672,6 @@ table.vocab td.pos{color:var(--ink-soft); font-style:italic; white-space:nowrap;
 .ol-oneline .ol-lb{color:#8a6d1f;}
 .ol-txt{font-size:14px; font-weight:600; line-height:1.6;}
 
-.ol-key{border:1px solid var(--line); border-left:5px solid var(--accent);
-  border-radius:0 11px 11px 0; padding:11px 14px; background:var(--card);}
-.ol-hd{font-size:13.5px; font-weight:700; margin-bottom:4px;}
-.ol-how{font-size:13px; line-height:1.7; color:var(--ink-soft);}
-/* 중심 문장 안내(②)의 "3번" 같은 맨 숫자 */
-.ol-n{color:var(--accent); font-weight:800;}
-
-/* 문장 번호 동그라미 — 유니코드 글자(❶ ⓫)를 그대로 쓰지 않고 화면이 그린다.
-   ❶~❿과 ⓫~는 블록이 달라 글꼴이 안 맞으면 크기가 어긋난다(app.js의 numBadges 주석 참고).
-   두 자리는 알약처럼 조금 넓어질 뿐 높이는 그대로다. */
-.ol-num{
-  display:inline-flex; align-items:center; justify-content:center;
-  min-width:16px; height:16px; padding:0 4px; margin:0 1px;
-  border-radius:999px; background:var(--accent); color:#fff;
-  font-size:10.5px; font-weight:700; line-height:1; vertical-align:1px;
-}
-
 table.outline th{white-space:nowrap;}
 table.outline tr:last-child td{border-bottom:none;}
 table.outline .ol-st{font-weight:700; color:var(--accent); white-space:nowrap; width:58px;}
@@ -1743,7 +1734,10 @@ table.outline .ol-cue code{background:var(--accent-soft); color:var(--accent);
 @media print{
   .ol-box, .ol-key, .ol-story, .ol-keywords{break-inside:avoid;}
   .ol-sub{break-after:avoid;}
-  /* 상자가 쪽 사이에 두 동강 나면 안 되고, 화살표만 앞 쪽에 남아도 안 된다 */
+  /* 상자가 쪽 사이에 두 동강 나면 안 되고, 화살표만 앞 쪽에 남아도 안 된다.
+     흐름도 전체도 되도록 한 쪽에 둔다 — 한 쪽에 안 들어갈 만큼 길면 브라우저가
+     이 지시를 무시하고 나누므로, 그 경우에도 위 두 줄이 상자·화살표를 지켜 준다. */
+  .ol-flow{break-inside:avoid;}
   .ol-node{break-inside:avoid;}
   .ol-arrow{break-inside:avoid; break-after:avoid;}
 }

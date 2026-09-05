@@ -900,10 +900,6 @@ GEMINI_SCHEMA = {
                 "topicEn": {"type": "STRING"},
                 "topicKo": {"type": "STRING"},
                 "oneLine": {"type": "STRING"},
-                # 주제문이 겉으로 드러나지 않는 지문(이야기글 등)이 있다. 그때 억지로
-                # 하나 고르면 학생이 잘못 배우므로, no를 0으로 두고 "없다"고 말하게 한다.
-                "topicNo": {"type": "INTEGER"},
-                "topicWhy": {"type": "STRING"},
                 "stages": {
                     "type": "ARRAY",
                     "items": {
@@ -940,10 +936,10 @@ GEMINI_SCHEMA = {
                 },
                 "keywordNote": {"type": "STRING"},
             },
-            "required": ["topicEn", "topicKo", "oneLine", "topicNo", "topicWhy",
-                         "stages", "keywords", "keywordNote"],
-            "propertyOrdering": ["topicEn", "topicKo", "oneLine", "topicNo", "topicWhy",
-                                 "stages", "keywords", "keywordNote"],
+            "required": ["topicEn", "topicKo", "oneLine", "stages",
+                         "keywords", "keywordNote"],
+            "propertyOrdering": ["topicEn", "topicKo", "oneLine", "stages",
+                                 "keywords", "keywordNote"],
         },
         "vocab": {
             "type": "ARRAY",
@@ -4575,14 +4571,8 @@ Only return JSON after all nine checks.
 - `oneLine` — **영어를 한 낱말도 쓰지 말고**, 아주 쉬운 우리말 한 문장으로 지문을 줄여라.
   topicKo를 그대로 옮겨 적지 마라. topicKo가 개념을 담는다면 여기는 "무슨 일이
   벌어지는가"를 말한다. 중학생이 읽어도 걸리지 않을 낱말만 써라.
-- `topicNo` — 주제문이 **지문 안에 문장으로 드러나 있으면** 그 문장 번호(1부터).
-  **겉으로 드러나 있지 않으면 0**. 이야기글·묘사문처럼 주장을 한 문장으로 못 박지 않는
-  글이 그렇다. 없는데 억지로 하나 고르면 학생이 잘못 배운다 — 0을 두려워하지 마라.
-- `topicWhy` — 우리말 2~3문장.
-  · topicNo가 1 이상이면: 왜 그 문장이 중심인지. 다른 문장들이 그 문장을 어떻게
-    받쳐 주는지 짚어라.
-  · topicNo가 0이면: 왜 이 글에는 주제문이 없는지, **그러면 어떻게 읽어야 하는지**를
-    알려 줘라. `keywords`에 모아 둔 되풀이되는 낱말을 가리켜라.
+(주제문이 몇 번 문장인지는 여기서 말하지 않는다 — 문장별 분석이 이미 그 문장에
+'주제문' 표시를 달아 준다. 같은 말을 두 번 하지 않는다.)
 - `stages` — 3~5개. 지문 전체를 빠짐없이 덮어라.
   · `name` — "도입" "전개" "전환" "근거" "결말" "주장"처럼 짧은 우리말 이름.
   · `range` — **보통 숫자**로 "1~3", 한 문장이면 "4" 하나만.
@@ -4681,10 +4671,13 @@ BRIEF_SCHEMA = {
         },
         # 주제 & 흐름 요약 — 소책자 축소판.
         #
-        # 상세분석의 outline과 **이름은 같지만 모양이 다르다.** 저쪽은 종이 한 쪽을 쓰는
-        # 다섯 덩어리이고, 이쪽은 '한 줄 요약 + 흐름도' 둘뿐이다. 소책자는 들고 다니라고
-        # 얇게 만드는 물건이라 두께를 늘릴 수 없다 — 실제로 재어 보니 예전 두 칸짜리
-        # 표(125mm)와 이 축소판(124mm)이 같다. 그래서 값(200원)도 그대로 간다.
+        # 상세분석의 outline과 **이름은 같지만 모양이 다르다.**
+        # 처음에는 '한 줄 요약 + 흐름도' 둘만 두었다(그때는 예전 요약표 125mm와 같은
+        # 124mm였다). 2026-09-05에 흐름표와 되풀이되는 낱말을 더 넣기로 하면서
+        # 차이가 줄었다 — 지금 저쪽에만 있는 것은 **우리말 주제 줄과 '중심 문장은
+        # 어디인가'(topicKo·topicNo·topicWhy)** 뿐이다.
+        # 소책자 쪽 상자를 한 줄로 눌러 그리는 것과, 그 상자가 문장 번호를 직접 들고
+        # 있는 것도 그대로 다르다(저쪽은 바로 위 흐름표가 번호를 준다).
         #
         # ⚠️ 저쪽 outline을 고칠 때 여기를 따라 고치지 말 것. 다른 것이 의도다.
         "outline": {
@@ -4699,16 +4692,34 @@ BRIEF_SCHEMA = {
                         "properties": {
                             "name": {"type": "STRING"},
                             "range": {"type": "STRING"},
+                            "role": {"type": "STRING"},
+                            "cue": {"type": "STRING"},
+                            "content": {"type": "STRING"},
                             "gist": {"type": "STRING"},
                             "bridge": {"type": "STRING"},
                         },
-                        "required": ["name", "range", "gist", "bridge"],
-                        "propertyOrdering": ["name", "range", "gist", "bridge"],
+                        "required": ["name", "range", "role", "cue", "content",
+                                     "gist", "bridge"],
+                        "propertyOrdering": ["name", "range", "role", "cue", "content",
+                                             "gist", "bridge"],
                     },
                 },
+                "keywords": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "en": {"type": "STRING"},
+                            "ko": {"type": "STRING"},
+                        },
+                        "required": ["en", "ko"],
+                        "propertyOrdering": ["en", "ko"],
+                    },
+                },
+                "keywordNote": {"type": "STRING"},
             },
-            "required": ["topicEn", "oneLine", "stages"],
-            "propertyOrdering": ["topicEn", "oneLine", "stages"],
+            "required": ["topicEn", "oneLine", "stages", "keywords", "keywordNote"],
+            "propertyOrdering": ["topicEn", "oneLine", "stages", "keywords", "keywordNote"],
         },
     },
     "required": ["englishTitle", "koreanTitle", "sentences", "outline"],
@@ -4854,7 +4865,9 @@ Only return JSON after all nine checks.
     # 다른 것은 실수가 아니라 의도다. 상세분석의 outline을 고쳐도 여기는 따라 고치지 말 것.
     + r"""## outline (주제 & 흐름 요약 — 소책자 축소판)
 이 자리는 **학생이 들고 다니는 자료**의 마지막 한 토막이다. 얇아야 하므로
-상세분석의 다섯 덩어리를 다 담지 않는다. 두 가지만 만든다.
+상세분석에 있는 '중심 문장은 어디인가'(주제문 판정과 그 까닭)는 담지 않는다.
+읽는 사람은 영어 성적이 낮은 학생이다 — 어른에게 하는 요약이 아니라 학생에게
+하는 설명으로 써라.
 
 - `topicEn` — 지문 전체를 감싸는 **영어** 주제문 한 문장. (우리말 주제는 따로 만들지
   마라 — 바로 아래 oneLine이 그 자리를 대신한다. 같은 말을 세 줄 적지 않는다.)
@@ -4865,13 +4878,28 @@ Only return JSON after all nine checks.
   · `name` — "도입" "전개" "전환" "근거" "결말" "주장"처럼 짧은 우리말 이름.
   · `range` — **보통 숫자**로 "1~3", 한 문장이면 "4" 하나만.
     ⚠️ 동그라미 문자(❶ ⓫ ①)를 쓰지 마라. 화면이 알아서 동그라미로 그린다.
+  · `role` — **내용이 아니라 하는 일**을 우리말로. "통념을 먼저 꺼낸다",
+    "연구 결과로 앞을 뒤집는다"처럼. 25자 안쪽.
+  · `cue` — 그 대목이 **어디서 시작되는지 학생이 원문에서 짚을 수 있게** 하는 표시다.
+    ⚠️ **그 대목 첫 문장의 맨 앞에서만 가져와라.** 문장 한가운데 있는 내용어를 고르면
+    안 된다 — perspective, sense, interpersonal 같은 낱말은 신호가 아니라 그냥 단어다.
+    · 첫 문장이 연결어·전환 표현으로 시작하면 그것을 그대로: However / But / For example /
+      Therefore / Thus / When / Because / Instead / In fact / Finally / From ~ perspective …
+    · 그런 말이 없으면 **첫 두세 낱말을 원문 그대로** 적어라(예: "The alarm sounds").
+    · 어느 쪽이든 5낱말을 넘기지 마라.
+  · `content` — 그 대목의 내용을 우리말 1~2문장으로.
   · `gist` — 그 대목을 **한마디로** 하면 무엇인지. 우리말 25자 안쪽 한 줄.
-    내용을 줄인 요약문이 아니라, 상자 안에 들어갈 이름표에 가깝다.
+    content를 줄인 것이 아니라, 흐름도 상자에 들어갈 이름표에 가깝다.
   · `bridge` — **다음 상자로 가는 화살표에 붙는 말.** 여기가 이 요약의 핵심이다.
     다음 대목이 **답하고 있는 질문**을 우리말 한 줄(20자 안쪽)로 적어라.
     예: "경보가 울리면 어떻게 되나?" "왜 이런 장치가 생겼나?" "그래서 결론은?"
     · 내용을 미리 말하지 마라 — **질문만** 적는다. 답은 다음 상자가 한다.
     · **마지막 단계는 빈 문자열 ""** — 다음이 없으므로 화살표도 없다.
+
+- `keywords` — 지문에서 **되풀이되거나 주제를 가리키는 낱말·표현 4~7개**.
+  각각 {en: 지문에 실제로 나온 영어 그대로, ko: 짧은 우리말 뜻}.
+  어려운 단어를 고르는 자리가 아니다. **한 방향을 함께 가리키는** 낱말을 골라라.
+- `keywordNote` — 그 낱말들이 왜 한 방향인지 우리말 한 문장.
 
 ⚠️ 내용을 한 번 더 들려주는 자리가 아니다. 지문 해석은 이미 앞쪽에 다 있다.
 여기서 할 일은 **글이 어떻게 움직이는가**를 보여 주는 것이다.
@@ -4973,12 +5001,20 @@ def _finish_brief(result):
         for k in ("topicEn", "oneLine"):
             if ol.get(k):
                 ol[k] = _fix_known_typos(sanitize_inline(str(ol[k])))
+        if ol.get("keywordNote"):
+            ol["keywordNote"] = _fix_known_typos(sanitize_inline(str(ol["keywordNote"])))
         for st in ol.get("stages") or []:
             if not isinstance(st, dict):
                 continue
-            for k in ("name", "range", "gist", "bridge"):
+            for k in ("name", "range", "role", "cue", "content", "gist", "bridge"):
                 if st.get(k):
                     st[k] = _fix_known_typos(sanitize_inline(str(st[k])))
+        for kw in ol.get("keywords") or []:
+            if not isinstance(kw, dict):
+                continue
+            for k in ("en", "ko"):
+                if kw.get(k):
+                    kw[k] = _fix_known_typos(sanitize_inline(str(kw[k])))
     return result
 
 
