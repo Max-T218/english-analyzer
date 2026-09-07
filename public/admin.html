@@ -5,6 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>관리자 · English Lab</title>
 <link rel="stylesheet" href="/style.css">
+<style>
+/* 탈퇴 버튼은 잠가 둔다.
+   이 화면에서 평소에 누르는 것은 '내역'과 '충전'인데, 되돌릴 수 없는 '탈퇴'가
+   바로 옆에 붙어 있어 손이 미끄러지기 쉽다. 확인 창이 두 겹 있어 실제로 지워지지는
+   않지만, 남의 계정 이름이 적힌 경고창이 뜨는 것 자체가 사고에 가깝다.
+   그래서 기본은 화면에서 빼 두고, 위쪽 스위치를 켠 동안에만 나타나게 한다.
+   스위치는 새로고침하면 꺼지고, 한 명을 지우고 나면 저절로 다시 잠긴다. */
+#adminWorkspace:not(.danger-on) .delete-btn { display: none; }
+.danger-lock { display:flex; align-items:center; gap:5px; font-size:12px;
+               color:var(--ink-soft); cursor:pointer; user-select:none; }
+.danger-lock input { accent-color:var(--g); }
+#adminWorkspace.danger-on .danger-lock { color:var(--g); font-weight:700; }
+</style>
 </head>
 <body>
 <!-- 본문 폭을 기본(900px)보다 넓게 잡는다. 회원 목록이 이메일·이름·가입일·잔액에
@@ -36,7 +49,10 @@
   <section id="adminWorkspace" hidden>
     <div class="panel" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
       <span class="hint" id="adminSummary"></span>
-      <div style="display:flex; gap:10px;">
+      <div style="display:flex; gap:10px; align-items:center;">
+        <label class="danger-lock" title="켜는 동안에만 각 줄에 '탈퇴' 단추가 나타납니다">
+          <input type="checkbox" id="dangerLock"> 탈퇴 잠금 해제
+        </label>
         <button type="button" class="btn ghost small" id="adminRefreshBtn">↻ 새로고침</button>
         <button type="button" class="btn ghost small" id="adminLogoutBtn">로그아웃</button>
       </div>
@@ -175,6 +191,16 @@ $("adminLogoutBtn").addEventListener("click", async () => {
 });
 $("adminRefreshBtn").addEventListener("click", loadUsers);
 
+/* 탈퇴 잠금. 상태를 어디에도 저장하지 않는다 — 새로고침하면 늘 잠긴 채로 시작한다.
+   "지난번에 켜 뒀다"가 위험한 쪽으로 남으면 안 되기 때문이다. */
+function lockDanger() {
+  $("dangerLock").checked = false;
+  $("adminWorkspace").classList.remove("danger-on");
+}
+$("dangerLock").addEventListener("change", (e) => {
+  $("adminWorkspace").classList.toggle("danger-on", e.target.checked);
+});
+
 /* 이 화면으로 '돌아올 때' 다시 받아 온다.
    회원은 계속 앱을 쓰고 있어서 잔액이 실시간으로 깎이고 새로 가입도 들어오는데,
    지금까지는 처음 들어올 때와 새로고침 버튼을 누를 때만 목록을 받아 왔다.
@@ -312,10 +338,11 @@ function renderUsers() {
           </select>
           <button type="button" class="btn ghost small recharge-btn" style="padding:4px 7px;">충전</button>
           <button type="button" class="btn ghost small usage-btn" style="padding:4px 7px;">내역</button>
-          <!-- 되돌릴 수 없는 작업이라 다른 버튼과 눈에 띄게 구분해 둔다.
-               실수로 옆 버튼을 누르는 일이 없도록 간격도 벌린다. -->
+          <!-- 되돌릴 수 없는 작업이라 평소에는 위쪽 '탈퇴 잠금 해제'를 켜기 전까지
+               화면에 아예 없다(<head>의 danger-on 규칙). 나타났을 때도 옆 단추와
+               헷갈리지 않게 간격을 넉넉히 벌린다. -->
           <button type="button" class="btn ghost small danger delete-btn"
-                  style="padding:4px 7px; margin-left:6px;">탈퇴</button>
+                  style="padding:4px 7px; margin-left:16px;">탈퇴</button>
         </div>
       </td>
     </tr>
@@ -358,6 +385,7 @@ async function forceDelete(row) {
   try {
     await postJson("/api/admin/delete-user", { userId: uid, email: user.email });
     alert(`${user.email} 회원을 탈퇴 처리했습니다.`);
+    lockDanger();   // 한 명 지웠으면 볼일은 끝났다. 켜 둔 채로 두지 않는다.
     loadUsers();
   } catch (err) {
     alert(err.message || "탈퇴 처리에 실패했습니다.");
