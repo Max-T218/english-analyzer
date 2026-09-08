@@ -1147,22 +1147,23 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
   table.wb-page > tbody > tr > td{break-inside:auto; page-break-inside:auto;}
   .wb-cover{break-after:page; page-break-after:always; box-shadow:none;}
   .wb-titlebar{margin-bottom:10px;}
-  /* 정답 모음은 별지 — 새 쪽에서 시작하고 2단으로 촘촘하게 */
-  .wb-answerbook{break-before:page; page-break-before:always; margin-top:0;}
-  .wb-answerbook-head{break-after:avoid; page-break-after:avoid;}
-  /* 지문마다 정답을 새 쪽에서 시작해 그 쪽을 늘 다 채운다.
-     원래는 여러 지문 정답을 한 흐름으로 이어 붙여 종이를 아꼈는데, 그러면 정답이
-     짧은 지문 뒤에서 내용이 일찍 끝나 버려 매 쪽 바닥에 반복되는 학원 로고(.print-foot,
-     table-footer-group)가 쪽 중간에 붙는 문제가 있었다 — tfoot은 '그 쪽 내용이 끝난
-     자리'에 그려지지, 쪽 바닥에 고정되지 않는다. 종이를 조금 더 쓰더라도 로고 위치를
-     보장하는 쪽을 택해, 지문마다 쪽을 떼고 최소 높이를 한 쪽 분량(PAGE_H_MM, app.js와
-     같은 값)만큼 채운다. 정답이 그보다 긴 지문은(드묾) 여러 쪽으로 넘어가고 그 지문의
-     마지막 쪽에서는 이 문제가 다시 나타날 수 있다. */
-  .wb-ab-passage{
+  /* 정답 모음은 별지 — 새 쪽에서 시작하고, 지문 구분 없이 2단으로 이어 붙인다.
+     한때는 지문마다 쪽을 떼고 그 쪽을 한 쪽 높이만큼 채웠다. 매 쪽 바닥에 반복되는
+     학원 로고(.print-foot, table-footer-group)가 '그 쪽 내용이 끝난 자리'에 그려지지
+     쪽 바닥에 고정되지 않아서, 정답이 짧으면 로고가 쪽 중간에 붙었기 때문이다.
+     그런데 지문 하나의 정답은 대개 대여섯 줄이라 쪽마다 아래 3분의 2가 비었고,
+     지문 여덟 개짜리 워크북의 답지가 여덟 쪽이 됐다 — 로고 한 번을 지키려고 일곱 쪽을
+     버리는 셈이라 이어 붙이는 쪽으로 되돌렸다.
+     대신 min-height를 답지 전체에 한 쪽 분량(PAGE_H_MM, app.js와 같은 값)으로 걸어,
+     답지가 한 쪽에 못 미쳐도 그 쪽은 끝까지 채운다. 여러 쪽으로 넘어갈 때 마지막 쪽에서는
+     로고가 여전히 중간에 붙을 수 있지만, 그 자리는 문서 전체의 맨 끝이다. */
+  .wb-answerbook{
+    break-before:page; page-break-before:always; margin-top:0;
     column-count:2; column-gap:8mm; column-rule:1px solid var(--line-soft);
-    break-before:page; page-break-before:always; min-height:261mm;
+    min-height:261mm;
   }
-  .wb-answerbook > .wb-ab-passage:first-of-type{break-before:auto; page-break-before:auto;}
+  /* 2단 흐름 안에서도 '정답' 제목은 두 단에 걸쳐 한 줄로 */
+  .wb-answerbook-head{break-after:avoid; page-break-after:avoid; column-span:all;}
   #workbookDoc.answers-only .wb-answerbook{break-before:auto; page-break-before:auto;}
 }
 
