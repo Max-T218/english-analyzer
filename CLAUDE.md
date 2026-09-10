@@ -236,7 +236,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 ## API 엔드포인트
 
 **GET** — `/api/pricing` `/api/me` `/api/saved` `/api/saved/<id>` `/api/usage` `/api/admin/me`
-`/api/admin/users` `/api/admin/usage` `/api/_probe`(임시, 아래 참고)
+`/api/admin/users` `/api/admin/usage`
 `/api/classes` `/api/students` `/api/vocab-tests` `/api/vocab-tests/results`(선생님 쪽,
 반/학생/시험 — `classId`/`assignmentId`를 쿼리 문자열로 받습니다)
 `/api/student/me` `/api/student/tests` `/api/student/tests/detail`(학생 쪽,
@@ -338,12 +338,6 @@ curl.exe -s -o NUL -w "%{http_code}`n" http://localhost:8000/
 
 커밋 메시지가 한 줄 한글 서술문이고 무엇을 왜 고쳤는지가 들어 있어, 최근 작업 맥락을 잡는 가장
 빠른 길입니다. 새 커밋도 같은 형식으로 쓰세요.
-
-## 지금 임시로 켜둔 것
-
-`GET /api/_probe` — 배포 프록시가 '응답 없는 요청'을 몇 초에서 끊는지 재기 위한 측정용입니다.
-`PROBE_ENABLED` 환경변수가 있을 때만 존재합니다. 측정이 끝나면 그 변수를 지우고
-`_handle_get` 안의 해당 블록도 **함께 삭제**해야 합니다.
 
 ## 문서와 코드가 어긋난 곳
 
