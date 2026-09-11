@@ -3872,6 +3872,9 @@ function renderBriefEntries(entries) {
   if (done.length) {
     briefDocEl.insertAdjacentHTML("beforeend", `<footer>소책자용 분석 · 자동 생성</footer>`);
   }
+  // 표지는 이 칸의 첫 자식으로 붙는데 방금 innerHTML로 통째로 갈아엎었으므로 다시 얹는다
+  // — 안 부르면 '표지 제목'을 적어 둬도 소책자에만 표지가 안 생긴다.
+  syncDocCovers();
   const on = done.length ? "inline-flex" : "none";
   briefPrintBtn.style.display = on;
   briefPageBtn.style.display = on;
@@ -9318,6 +9321,7 @@ function renderExamPaperSets() {
     })
     .join("");
   showBtns(true);
+  syncDocCovers();   // 소책자와 같은 이유 — 다시 그렸으니 표지를 얹는다
   syncFloatPrint();
 }
 
