@@ -1191,12 +1191,18 @@
         <button class="btn" id="mcqBtn">문제 만들기</button>
         <button class="btn ghost" id="mcqPrintBtn" style="display:none"
                 title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
+        <button class="btn ghost" id="mcqAnswerPrintBtn" style="display:none"
+                title="문제지는 빼고 뒤쪽 '정답 및 해설'만 지면에 올립니다.">🔑 답지만</button>
         <button class="btn ghost" id="mcqSaveBtn" style="display:none"
                 title="로그인한 계정에 이 문제 세트와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
         <button class="btn ghost" id="mcqDocxBtn" style="display:none"
                 title="워드에서 직접 고칠 수 있는 .docx 파일로 내려받습니다. 문항은 2단, 정답과 해설은 맨 뒤 별지로 들어갑니다.">📝 워드 다운로드</button>
         <button class="btn ghost" id="mcqShuffleBtn" style="display:none"
                 title="지금 만들어진 문항의 순서만 다시 섞습니다. AI를 다시 부르지 않아 요금이 들지 않아, 같은 문제로 A형·B형 시험지를 뽑을 때 씁니다.">🔀 문제 섞기</button>
+        <label class="chk" id="mcqExpWrap" style="display:none"
+               title="끄면 답지에 번호·유형·정답만 실립니다. 해설은 이미 만들어져 있어, 껐다 켜도 요금이 들지 않습니다.">
+          <input type="checkbox" id="mcqExpChk" checked> 답지에 해설 <span class="chk-sub">(끄면 정답만)</span>
+        </label>
         <span class="hint">유형마다 <b>− +</b> 로 문항 수를 정할 수 있습니다. 순서·문장삽입이 섞이면 시간이 더 걸릴 수 있어요.</span>
       </div>
       <div class="error" id="mcqError"></div>
@@ -1207,7 +1213,7 @@
       <span id="mcqLoadingText">AI가 문제를 만들고 있습니다…</span>
     </div>
 
-    <div id="mcqResult"></div>
+    <div id="mcqResult" class="qz-result"></div>
   </section>
 
   <!-- ══════════ 탭 3: 문제 제작 (주관식) ══════════ -->
@@ -1243,6 +1249,8 @@
         <button class="btn" id="saqBtn">문제 만들기</button>
         <button class="btn ghost" id="saqPrintBtn" style="display:none"
                 title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
+        <button class="btn ghost" id="saqAnswerPrintBtn" style="display:none"
+                title="문제지는 빼고 뒤쪽 '정답'만 지면에 올립니다.">🔑 답지만</button>
         <button class="btn ghost" id="saqSaveBtn" style="display:none"
                 title="로그인한 계정에 이 문제 세트와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
         <button class="btn ghost" id="saqDocxBtn" style="display:none"
@@ -1259,7 +1267,7 @@
       <span id="saqLoadingText">AI가 문제를 만들고 있습니다…</span>
     </div>
 
-    <div id="saqResult"></div>
+    <div id="saqResult" class="qz-result"></div>
   </section>
 
   <!-- ══════════ 탭 3: 워크북 제작 ══════════ -->

@@ -4368,10 +4368,16 @@ function setupQuizTab({ prefix, types, footer }) {
   const allEl = $(prefix + "TypeAll");
   const btn = $(prefix + "Btn");
   const printBtn = $(prefix + "PrintBtn");
+  const answerPrintBtn = $(prefix + "AnswerPrintBtn");
   const saveBtn = $(prefix + "SaveBtn");
   const docxBtn = $(prefix + "DocxBtn");
   const shuffleBtn = $(prefix + "ShuffleBtn");
+  // '답지에 해설' 체크 — 객관식 탭에만 있다. 없으면(주관식) 늘 정답만 싣는다.
+  const expChk = $(prefix + "ExpChk");
+  const expWrap = $(prefix + "ExpWrap");
+  const showExp = () => (expChk ? expChk.checked : true);
   let lastEntries = []; // 저장/불러오기용 — {job, label, set, total}
+  let answerHeadLabel = "정답 및 해설"; // 답지 제목 — 해설 열이 실렸는지에 따라 바뀐다
   /* 시험지명 — 시험지 맨 위와 답지 제목에 함께 찍히고 표지에도 쓰인다. PDF 파일
      이름도 이것으로 만들어져, 같은 지문으로 여러 벌을 뽑았을 때 구분된다.
 
@@ -4698,6 +4704,8 @@ function setupQuizTab({ prefix, types, footer }) {
     loadingEl.classList.add("on");
     resultEl.innerHTML = "";
     printBtn.style.display = "none";
+    if (answerPrintBtn) answerPrintBtn.style.display = "none";
+    if (expWrap) expWrap.style.display = "none";
     saveBtn.style.display = "none";
     docxBtn.style.display = "none";
     lastEntries = [];
@@ -4711,6 +4719,7 @@ function setupQuizTab({ prefix, types, footer }) {
         resultEl.insertAdjacentHTML("beforeend", `<footer class="qz-footer">${esc(footer)} · 자동 생성</footer>`);
       }
       printBtn.style.display = "inline-flex";
+      if (expWrap) expWrap.style.display = "inline-flex";
       saveBtn.style.display = "inline-flex";
       docxBtn.style.display = "inline-flex";
       syncFloatPrint();
@@ -4731,6 +4740,7 @@ function setupQuizTab({ prefix, types, footer }) {
     let stopErr = null;
     const entries = []; // 저장 기능이 쓸 {job, label, set, total} — 성공한 세트만
     const answerParts = []; // 지문마다 흩어지지 않게 모아뒀다 문서 맨 뒤에 한 번에 붙인다
+    let expCol = false;     // 한 지문이라도 해설 열이 실렸으면 답지 제목에 '해설'을 넣는다
     // 무작위 모드에서 지문을 넘어 전부 섞기 위한 모음 — 변형 세트(label)별로 담는다
     const randomBuckets = new Map();
 
@@ -4867,9 +4877,10 @@ function setupQuizTab({ prefix, types, footer }) {
               if (shuffleInPassage()) {
                 set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
               }
-              const built = buildQuizHtml(set, job, total, prefix, label);
+              const built = buildQuizHtml(set, job, total, prefix, label, "", showExp());
               append(built.html);
               answerParts.push(built.answerHtml);
+              if (built.hasExpCol) expCol = true;
               entries.push({ job, label, set, total });
               showFooter();
             }
@@ -4897,20 +4908,23 @@ function setupQuizTab({ prefix, types, footer }) {
         variations: bucket.variations,
       };
       const job = { name: label || "", named: !!label };
-      const built = buildQuizHtml(set, job, 1, prefix, "");
+      const built = buildQuizHtml(set, job, 1, prefix, "", "", showExp());
       append(built.html);
       answerParts.push(built.answerHtml);
+      if (built.hasExpCol) expCol = true;
       entries.push({ job, label: "", set, total: 1 });
     });
 
     if (okCount) {
+      answerHeadLabel = expCol ? "정답 및 해설" : "정답";
       const body = answerParts.filter((p) => p && p.trim()).join("");
       if (body) {
         append(`
           <section class="qz-answerbook">
-            <h2 class="qz-answerbook-head">정답 및 해설</h2>
+            <h2 class="qz-answerbook-head">${answerHeadLabel}</h2>
             ${body}
           </section>`);
+        if (answerPrintBtn) answerPrintBtn.style.display = "inline-flex";
       }
       showFooter();
     }
@@ -4992,23 +5006,33 @@ function setupQuizTab({ prefix, types, footer }) {
   function renderQuizEntries(entries) {
     resultEl.innerHTML = "";
     const answerParts = [];
+    let expCol = false;
     entries.forEach(({ job, label, set, total }) => {
-      const built = buildQuizHtml(set, job, total, prefix, label);
+      const built = buildQuizHtml(set, job, total, prefix, label, "", showExp());
       resultEl.insertAdjacentHTML("beforeend", built.html);
       answerParts.push(built.answerHtml);
+      if (built.hasExpCol) expCol = true;
     });
+    // 답지 제목은 실제로 실린 것을 따른다 — 해설 열이 없는데 '정답 및 해설'이라고
+    // 적혀 있으면 빠진 것처럼 보인다(주관식이 늘 그랬다).
+    answerHeadLabel = expCol ? "정답 및 해설" : "정답";
+    let hasAnswerBook = false;
     if (entries.length) {
       const body = answerParts.filter((p) => p && p.trim()).join("");
       if (body) {
+        hasAnswerBook = true;
         resultEl.insertAdjacentHTML("beforeend", `
           <section class="qz-answerbook">
-            <h2 class="qz-answerbook-head">정답 및 해설</h2>
+            <h2 class="qz-answerbook-head">${answerHeadLabel}</h2>
             ${body}
           </section>`);
       }
       resultEl.insertAdjacentHTML("beforeend", `<footer class="qz-footer">${esc(footer)} · 자동 생성</footer>`);
     }
     printBtn.style.display = entries.length ? "inline-flex" : "none";
+    // '답지만'은 뒤쪽 답지를 지면에 올리는 기능이라, 그게 없으면 쓸 수 없다
+    if (answerPrintBtn) answerPrintBtn.style.display = hasAnswerBook ? "inline-flex" : "none";
+    if (expWrap) expWrap.style.display = entries.length ? "inline-flex" : "none";
     saveBtn.style.display = entries.length ? "inline-flex" : "none";
     docxBtn.style.display = entries.length ? "inline-flex" : "none";
     lastEntries = entries;
@@ -5086,7 +5110,7 @@ function setupQuizTab({ prefix, types, footer }) {
     }
     // 답지에도 같은 이름을 얹어, 시험지와 답지가 흩어져도 짝을 찾을 수 있게 한다
     const ab = resultEl.querySelector(".qz-answerbook-head");
-    if (ab) ab.textContent = sheetTitle ? `${sheetTitle} — 정답 및 해설` : "정답 및 해설";
+    if (ab) ab.textContent = sheetTitle ? `${sheetTitle} — ${answerHeadLabel}` : answerHeadLabel;
   }
   function setSheetTitle(v) {
     sheetTitle = (v || "").trim();
@@ -5105,6 +5129,30 @@ function setupQuizTab({ prefix, types, footer }) {
       title: { get: () => sheetTitle, set: setSheetTitle },
     })
   );
+
+  // 답지만 — 문제지를 감추고 뒤쪽 답지만 지면에 올린다(워크북 '답지만'과 같은 방식).
+  if (answerPrintBtn) {
+    answerPrintBtn.addEventListener("click", () =>
+      printDoc(
+        () => {
+          const base = sheetTitle ? `${docName}_${sanitizeFilename(sheetTitle)}` : passageBasedName(docName);
+          return `${base}_답지_${todayStr()}`;
+        },
+        {
+          title: { get: () => sheetTitle, set: setSheetTitle },
+          before: () => resultEl.classList.add("answers-only"),
+          after: () => resultEl.classList.remove("answers-only"),
+        }
+      )
+    );
+  }
+
+  // 해설 껐다 켜기 — 이미 받아 둔 값을 다시 그릴 뿐이라 AI를 부르지 않는다(요금 0원).
+  if (expChk) {
+    expChk.addEventListener("change", () => {
+      if (lastEntries.length) renderQuizEntries(lastEntries);
+    });
+  }
 
   // 주관식 해설지는 '정답'만 싣는다(buildQuizHtml이 해설 열을 빼는 것과 같은 기준)
   docxBtn.addEventListener("click", () =>
@@ -5455,7 +5503,10 @@ function markVariations(html, variations) {
 // kind: "mcq" | "saq" — 주관식 해설지에는 해설 열을 넣지 않는다(정답만).
 // sheetHead: 시험지 머리글 HTML(기출 탭 전용, 선택). 섹션 '안'에 넣는 이유 —
 //   인쇄 CSS가 .passage-block마다 쪽을 나누므로, 밖에 두면 머리글만 있는 빈 쪽이 생긴다.
-function buildQuizHtml(d, job, total, kind, label, sheetHead) {
+/* showExp — 답지에 해설 열을 실을지. 객관식 탭의 '답지에 해설' 체크가 넘겨 준다.
+   기본값 true라 이 값을 넘기지 않는 쪽(동형 모의고사·만드는 법 미리보기)은 예전 그대로다.
+   주관식은 이 값과 무관하게 늘 정답만 싣는다(아래 wantExp 참고). */
+function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true) {
   const parts = [];
   parts.push(`<section class="passage-block qz-block">`);
   if (sheetHead) parts.push(sheetHead);
@@ -5490,14 +5541,18 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead) {
   // 끼어 인쇄가 끊기던 문제를 없애기 위함). 화면 토글(.qz-reveal-btn)과는 별개로
   // 인쇄에는 이 답지만 실린다.
   let answerHtml = "";
+  let hasExpCol = false;   // 이 답지에 '해설' 열이 실렸는가 — 부르는 쪽이 제목을 정하는 데 쓴다
   if (d.questions && d.questions.length) {
     // 해설이 하나도 없으면 '해설' 열 자체를 만들지 않는다 — 머리글만 있고 내용은
     // 텅 빈 열이 지면을 먹고, 지문마다 표 모양이 달라 보이는 것을 막는다.
     // 일부만 빠진 경우에는 열을 유지하되 빈 칸을 '—'로 표시해 누락이 드러나게 한다.
     const hasExp = (q) =>
       String(q.explanation || "").replace(/<[^>]*>/g, "").trim().length > 0;
-    // 주관식 해설지는 '정답'만 싣는다 (해설 열 제외)
-    const anyExp = kind !== "saq" && d.questions.some(hasExp);
+    // 주관식 해설지는 '정답'만 싣는다 (해설 열 제외) — 해설까지 넣으면 글씨가 작아져
+    // 안 보인다는 이유로 2026-09-01에 그렇게 정했다. 객관식은 탭의 체크를 따른다.
+    const wantExp = kind !== "saq" && showExp;
+    const anyExp = wantExp && d.questions.some(hasExp);
+    hasExpCol = anyExp;
     const expHead = anyExp ? `<th>해설</th>` : "";
     const expCell = (q) =>
       anyExp ? `<td>${hasExp(q) ? safeHTML(q.explanation) : "—"}</td>` : "";
@@ -5541,7 +5596,7 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead) {
       </div>`;
   }
 
-  return { html: parts.join(""), answerHtml };
+  return { html: parts.join(""), answerHtml, hasExpCol };
 }
 
 // 정답/해설 토글 — 문제 탭·워크북 탭 어디에 렌더되든 동작하도록 document에 위임

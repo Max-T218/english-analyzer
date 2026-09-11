@@ -890,9 +890,21 @@ table.variedkey td:nth-child(2){white-space:nowrap; color:var(--ink-soft); font-
   margin:14px 0 8px; break-after:avoid; page-break-after:avoid;
 }
 .qz-ab-passage{margin-bottom:20px; break-inside:avoid; page-break-inside:avoid;}
+
+/* ── 답지만 인쇄 ──
+   문제지를 통째로 감추고 뒤쪽 답지만 남긴다. 인쇄가 끝나면 .answers-only가 떨어진다
+   (워크북 탭의 같은 기능과 같은 방식). */
+.qz-result.answers-only .qz-block,
+.qz-result.answers-only .doc-cover,
+.qz-result.answers-only .qz-sheet-title,
+.qz-result.answers-only > .qz-footer{display:none !important;}
+.qz-result.answers-only .qz-answerbook{margin-top:0;}
+
 @media print{
   .qz-answerbook{break-before:page; page-break-before:always; margin-top:0;}
   .qz-answerbook-head{break-after:avoid; page-break-after:avoid;}
+  /* 답지만 뽑을 때는 앞에 아무것도 없으므로 쪽을 떼지 않는다 — 떼면 첫 장이 빈다 */
+  .qz-result.answers-only .qz-answerbook{break-before:auto; page-break-before:auto;}
 }
 
 /* ── 지문 변형 표시 ──
