@@ -3856,20 +3856,27 @@ function renderBriefEntries(entries) {
   // 화면을 통째로 다시 그리므로 쪽 구성은 먼저 끈다 — 안 끄면 손잡이와 경계선이
   // 사라진 채로 '켜져 있다'고 남아, 단추 글씨와 화면이 어긋난다.
   if (pgHost === briefDocEl) setPagingMode(false);
+  /* 실패한 지문(error)도 성공분과 같은 목록에 섞여 들어온다. 화면을 통째로 다시
+     그리는 자리가 여기뿐이라, 실패를 따로 덧붙여 두면 다음 지문이 성공하는 순간
+     함께 지워졌다 — 지문 여섯 개 중 앞의 둘이 실패했는데 화면에는 아무 흔적도
+     없이 셋째부터 보이던 문제가 이것이다. 인쇄·저장은 성공분(done)만 쓴다. */
+  const done = entries.filter((e) => !e.error);
   briefDocEl.innerHTML = entries
-    .map(({ job, data, image, images }) =>
-      // image는 예전에 저장한 자료가 갖고 있는 한 장짜리 값이다
-      buildBriefHtml(data, job, entries.length, images || (image ? [{ src: image, name: "" }] : []))
+    .map(({ job, data, error, image, images }) =>
+      error
+        ? buildErrorHtml(job, entries.length, error)
+        // image는 예전에 저장한 자료가 갖고 있는 한 장짜리 값이다
+        : buildBriefHtml(data, job, entries.length, images || (image ? [{ src: image, name: "" }] : []))
     )
     .join("");
-  if (entries.length) {
+  if (done.length) {
     briefDocEl.insertAdjacentHTML("beforeend", `<footer>소책자용 분석 · 자동 생성</footer>`);
   }
-  const on = entries.length ? "inline-flex" : "none";
+  const on = done.length ? "inline-flex" : "none";
   briefPrintBtn.style.display = on;
   briefPageBtn.style.display = on;
   briefSaveBtn.style.display = on;
-  lastBriefEntries = entries;
+  lastBriefEntries = done;
   syncFloatPrint();
   if (entries.length) briefDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -3936,6 +3943,9 @@ briefBtn.addEventListener("click", async () => {
   briefDocEl.innerHTML = "";
   renderBriefEntries([]);
   const entries = [];
+  // 그림 한도에 걸리면 남은 지문의 그림은 건너뛴다 — 어차피 똑같이 실패하는데
+  // 시도하는 만큼 시간만 쓴다. 소책자 쪽은 이미 같은 판단으로 멈춘다.
+  let imgQuota = false;
   for (let i = 0; i < jobs.length; i++) {
     const job = jobs[i];
     briefLoadingTextEl.textContent =
@@ -3946,9 +3956,10 @@ briefBtn.addEventListener("click", async () => {
         { passage: job.text, targetGrammar: grammarEl.value },
         "소책자 분석에 실패했습니다."
       );
-      entries.push({ job, data });
+      const entry = { job, data };
+      entries.push(entry);
       renderBriefEntries(entries.slice());   // 하나씩 붙여, 도중에 멈춰도 남게 한다
-      const imgLangs = pickedImgLangs("brief");
+      const imgLangs = imgQuota ? [] : pickedImgLangs("brief");
       for (const lang of imgLangs) {
         const what = imgLangs.length > 1 ? ` [${IMG_LANG_NAME[lang]}]` : "";
         briefLoadingTextEl.textContent =
@@ -3961,9 +3972,8 @@ briefBtn.addEventListener("click", async () => {
             { passage: job.text, lang },
             "요약 이미지를 만들지 못했습니다."
           );
-          const cur = entries[entries.length - 1];
-          cur.images = cur.images || [];
-          cur.images.push({
+          entry.images = entry.images || [];
+          entry.images.push({
             src: b64ToBlobUrl(img.image, img.mime || "image/jpeg"),
             name: IMG_LANG_NAME[lang],
           });
@@ -3971,20 +3981,26 @@ briefBtn.addEventListener("click", async () => {
         } catch (imgErr) {
           // 그림 한 장이 실패해도 소책자와 나머지 장은 살린다
           briefErrorEl.textContent = `${job.name}${what} 요약 이미지: ${imgErr.message || imgErr}`;
+          if (isQuotaError(imgErr)) {
+            imgQuota = true;
+            briefErrorEl.textContent += " — 남은 지문의 요약 이미지는 건너뜁니다.";
+            break;
+          }
         }
       }
     } catch (err) {
-      briefDocEl.insertAdjacentHTML(
-        "beforeend",
-        buildErrorHtml(job, jobs.length, err.message || String(err))
-      );
+      // 실패도 같은 목록에 넣어 순서대로 그린다 — 따로 덧붙이면 다음 지문이
+      // 성공할 때 renderBriefEntries가 화면을 다시 그리면서 함께 지워진다.
+      entries.push({ job, error: err.message || String(err) });
+      renderBriefEntries(entries.slice());
       if (isQuotaError(err)) break;
     }
   }
   briefLoadingEl.classList.remove("on");
   briefBtn.disabled = false;
   refreshTokenDisplay();
-  if (entries.length) showDoneGuide(`지문 ${entries.length}개의 소책자 분석`, false);
+  const okCount = entries.filter((e) => !e.error).length;
+  if (okCount) showDoneGuide(`지문 ${okCount}개의 소책자 분석`, false);
 });
 
 /* 워드(.docx) 내보내기는 두지 않는다 — 지문 상세분석에 없는 것과 같은 이유다.
