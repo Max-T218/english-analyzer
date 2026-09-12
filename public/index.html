@@ -1006,6 +1006,8 @@
       <button type="button" class="btn ghost small" id="ocrBtn">📷 사진에서 가져오기</button>
       <button type="button" class="btn ghost small" id="pdfBtn">📄 PDF에서 가져오기</button>
       <button type="button" class="btn ghost small" id="passageSaveBtn">💾 지문 저장</button>
+      <button type="button" class="btn ghost small" id="copyPassagesBtn"
+              title="지문 전체를 텍스트로 복사합니다. 카톡·메일로 보내면 받는 분이 한 번에 넣을 수 있습니다.">📋 지문 전체 복사</button>
       <button type="button" class="btn ghost small danger" id="clearPassagesBtn">🗑️ 지문 전체 지우기</button>
       <span class="passage-max-note" id="passageMaxNote" role="status" aria-live="polite"></span>
     </div>
@@ -1038,6 +1040,10 @@
       교과서 본문·모의고사 <b>PDF</b>를 올리면 <b>문단(또는 문항)마다 지문 1개</b>로 나눠
       한 번에 채웁니다. 어느 쪽이든 옮긴 뒤에는 <b>오타가 없는지 꼭 확인하세요.</b>
       <b>지문 이름은 비워 둡니다</b> — 필요하면 직접 적어 주세요.
+      <br>
+      <b>📋 지문 전체 복사</b>를 누르면 지금 넣은 지문이 전부 <b>텍스트 한 덩어리</b>로
+      복사됩니다. 카톡·메일로 동료 선생님께 보내면, 받는 분은 지문칸에 <b>한 번
+      붙여넣기만</b> 하면 됩니다 — 지문 개수와 이름까지 그대로 나뉘어 들어갑니다.
     </div>
     <div class="ocr-status" id="ocrStatus" role="status" aria-live="polite" hidden></div>
   </section>

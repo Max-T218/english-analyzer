@@ -150,6 +150,12 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 
 `createPassageManager`(지문 입력칸 관리) · `TAB_SAVE`(탭별 저장 배선) · `runActiveTab` ·
 `runOcr`(사진) · `runPdfImport`(PDF — 공용 칸과 시험 범위 칸 양쪽을 채운다) ·
+`formatPassageBundle` / `parsePassageBundle` / `BUNDLE_LINE_RE`(지문 묶음을 텍스트로
+주고받기 — 선생님끼리 카톡·메일로 나누는 길이다. '📋 지문 전체 복사'(입력칸·지문 저장함
+양쪽에 있다)가 지문 사이에 `=== 지문 N · 이름 ===` 구분선을 끼워 넣고, 붙여넣기 처리가
+그 구분선을 알아보고 칸을 나눈다. **두 함수는 한 벌이라 구분선 모양을 고치면 반드시
+함께 고칠 것** — 옛 판으로 복사해 둔 글을 새 판이 못 읽게 된다. 지문이 하나면 구분선을
+아예 안 붙인다. `syncSplitBtn`이 묶음일 때 `✂ 나누기`를 감추는 것도 같은 사정이다) ·
 `buildAnalysisHtml` · `MCQ_TYPES` / `SAQ_TYPES` / `TYPE_MAX` ·
 `renderAccount`(잔액 표시) · `setEditMode`(결과물 직접 수정) · `printDoc` ·
 `undoOnce` / `pushUndo`(되돌리기 — 결과 화면 HTML을 통째로 찍어 쌓는다. 글자 수정과 쪽 구성이

@@ -1171,6 +1171,90 @@ const MAX_PASSAGES = 40;
 // 이 수를 넘겨 한 번에 실행하려 하면 시간이 얼마나 걸릴지 먼저 알린다.
 const MANY_PASSAGES_WARN = 10;
 
+/* ── 지문 묶음을 텍스트 한 덩어리로 주고받기 ──
+   선생님끼리 지문을 나누는 길은 사실상 카톡·메일이다. 그런데 지문 여러 개를 그냥
+   이어 붙여 보내면 받는 쪽에서 어디서 끊기는지 알 수가 없다. 칸을 하나씩 만들어
+   하나씩 붙여 넣어야 하고, 지문 이름은 아예 사라진다 — 사진·PDF로 뽑아 이름까지
+   붙여 정리해 둔 수고가 보내는 순간 없어지는 셈이다.
+
+   그래서 복사할 때 지문 사이에 구분선을 끼우고, 붙여넣을 때 그 구분선을 알아보고
+   칸을 나눈다. 구분선은 둘을 지켜야 한다.
+     ① 카톡·메일에 그대로 붙여도 안 깨질 것 — 그래서 ASCII('=')만 쓴다.
+     ② 영어 지문 안에 우연히 나올 일이 없을 것 — 그래서 '=' 세 개와 '지문'이라는
+        한글 낱말을 함께 건다. 영어 지문에 이 둘이 같이 나올 일은 없다.
+
+   지문이 하나뿐이면 구분선을 아예 붙이지 않는다. 나눌 것이 없는데 구분선만 남으면,
+   받는 분이 그걸 눈치채지 못하고 지문 첫 줄에 '=== 지문 1 ==='을 달고 분석을 돌리게
+   된다. 그 대신 지문 하나를 보낼 때는 이름이 함께 가지 않는다(받는 쪽에서 적으면 된다). */
+const BUNDLE_LINE_RE = /^\s*={3,}\s*지문\s*(\d+)\s*(?:[·:.\-]\s*(.*?))?\s*={3,}\s*$/;
+
+function formatPassageBundle(jobs) {
+  const list = jobs || [];
+  if (list.length === 1) return String(list[0].text || "").trim();
+  return list
+    .map((job, i) => {
+      // 이름에 '='가 섞이면 구분선을 되읽을 때 이름이 잘린다. 보낼 때 없앤다.
+      const name = job.named
+        ? String(job.name || "").replace(/=/g, " ").replace(/\s+/g, " ").trim()
+        : "";
+      const head = name ? `=== 지문 ${i + 1} · ${name} ===` : `=== 지문 ${i + 1} ===`;
+      return `${head}\n${String(job.text || "").trim()}`;
+    })
+    .join("\n\n");
+}
+
+/* 붙여넣은 글에서 구분선을 찾아 지문 목록으로 되돌린다.
+   지문이 둘 미만이면 빈 배열을 돌려준다 — 평범한 붙여넣기를 건드리지 않기 위해서다. */
+function parsePassageBundle(raw) {
+  const chunks = [];
+  let cur = null;
+  String(raw || "").split(/\r?\n/).forEach((line) => {
+    const m = BUNDLE_LINE_RE.exec(line);
+    if (m) {
+      cur = { name: (m[2] || "").trim(), lines: [] };
+      chunks.push(cur);
+      return;
+    }
+    // 첫 구분선 앞에 있는 글(인사말 등)은 버린다 — 지문이 아니다
+    if (cur) cur.lines.push(line);
+  });
+  const out = chunks
+    .map((c, i) => ({
+      no: i + 1,
+      text: c.lines.join("\n").trim(),
+      name: c.name || `지문 ${i + 1}`,
+      named: !!c.name,
+    }))
+    .filter((j) => j.text);
+  return out.length >= 2 ? out : [];
+}
+
+/* 클립보드에 넣는다. 브라우저가 막으면(권한·설정, https가 아닌 주소) 눈에 안 보이는
+   칸을 잠깐 만들어 옛 방식으로 한 번 더 시도한다 — '복사 실패'라고만 알리면 선생님이
+   손쓸 길이 없기 때문이다. 둘 다 안 되면 false를 돌려주고 부르는 쪽이 안내한다. */
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_) { /* 아래 옛 방식으로 넘어간다 */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (_) {
+    return false;
+  }
+}
+
 /* ── 붙여넣은 지문의 문장 번호(❶ ① ➊ …) 자동 제거 ──
    교재·기출 자료를 복사하면 문장마다 원문자 번호가 딸려 온다. 그대로 두면
    ① 분석본의 영어 줄에 번호가 섞이고,
@@ -1242,7 +1326,16 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
      그게 내가 원하는 게 아니라는 걸 바로 알 수 있다. */
   function syncSplitBtn(item) {
     const btn = item.querySelector(".passage-split");
-    const n = splitPassageText(item.querySelector(".passage-input").value).length;
+    const text = item.querySelector(".passage-input").value;
+    /* 동료가 보낸 지문 묶음이 들어 있으면 이 버튼은 감춘다. 묶음에는 구분선마다
+       빈 줄이 있어 문단으로도 나뉘는데, 그렇게 나누면 '=== 지문 1 ==='이 지문
+       첫 줄에 그대로 남는다. 같은 칸에 '✂ 3개로 나누기'와 '지문 칸 3개로 나누기'가
+       나란히 뜨면 어느 쪽이 맞는지 알 길도 없다 — 맞는 쪽만 남긴다. */
+    if (parsePassageBundle(text).length) {
+      btn.hidden = true;
+      return;
+    }
+    const n = splitPassageText(text).length;
     btn.hidden = n < 2;
     if (n >= 2) btn.textContent = `✂ ${n}개로 나누기`;
   }
@@ -1306,6 +1399,12 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
     // 안내는 두 상태를 오간다 — 지운 뒤에는 '되돌리기', 되돌린 뒤에는 '다시 지우기'.
     // undoText는 '방금 지웠다' 상태에서만 값을 갖는다(= 되돌릴 것이 있다는 뜻).
     let undoText = null;
+    /* 방금 붙여넣은 글에서 찾아낸 지문 묶음. 아래 '나누기' 버튼이 이것을 쓴다.
+       {jobs, before} — before는 붙여넣기 '전'에 이 칸에 있던 글이다. 나누고 나면
+       이 칸은 묶음을 들고 있을 이유가 없어 비우는데, 그때 통째로 비워 버리면 원래
+       쓰고 있던 지문까지 사라진다(빈 칸에 붙여넣는 것이 보통이지만, 쓰던 칸 끝에
+       붙여넣는 일도 있다). 그래서 비우는 대신 붙여넣기 전으로 되돌린다. */
+    let pendingBundle = null;
 
     function noteHtml(msg, cls, label) {
       noteEl.innerHTML = `${msg} <button type="button" class="linkish ${cls}">${label}</button>`;
@@ -1339,6 +1438,25 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
         runOcr(shots);
         return;
       }
+      /* 동료 선생님이 '📋 지문 전체 복사'로 보낸 글인지 본다. 맞아도 바로 나누지는
+         않는다 — 붙여넣기는 Ctrl+Z로 되돌아가는 일이라야 하고, 무엇보다 구분선이
+         든 글을 일부러 한 칸에 통째로 두고 싶을 수도 있다. 그래서 문장 번호 안내와
+         같은 자리에 버튼만 내놓고 고르게 한다(안 누르면 아무 일도 일어나지 않는다). */
+      const bundle = parsePassageBundle((e.clipboardData && e.clipboardData.getData("text")) || "");
+      if (bundle.length) {
+        const before = ta.value;   // 아직 붙여넣기 전이다 — 이 시점의 값이라야 한다
+        // 붙여넣기가 반영된 뒤에 안내를 띄운다 — input 이벤트가 먼저 지나가며
+        // 이 안내를 문장 번호 안내로 덮어쓰기 때문이다.
+        setTimeout(() => {
+          pendingBundle = { jobs: bundle, before };
+          noteHtml(
+            `붙여넣은 글에 지문 <b>${bundle.length}개</b>가 들어 있습니다.`,
+            "passage-bundle-split",
+            `지문 칸 ${bundle.length}개로 나누기`
+          );
+        }, 0);
+        return;
+      }
       setTimeout(doStrip, 0);
     });
 
@@ -1355,6 +1473,25 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
         updatePassageCount(ta);
         offerStrip();   // 되돌렸으니 이제 다시 지울 수 있다고 알린다
         ta.focus();
+        return;
+      }
+      /* 붙여넣은 지문 묶음을 칸마다 나눠 넣는다. 이 칸은 붙여넣기 전으로 되돌린다 —
+         비어 있던 칸이면 그대로 빈 칸이 되어 appendJobs가 알아서 치우고, 쓰던 칸이면
+         쓰던 지문이 살아남는다. */
+      if (e.target.closest(".passage-bundle-split") && pendingBundle) {
+        const { jobs, before } = pendingBundle;
+        pendingBundle = null;
+        noteEl.hidden = true;
+        ta.value = before;
+        updatePassageCount(ta);
+        const { added, full } = appendJobs(jobs);
+        const total = getJobs().length;
+        ocrStatus(
+          full
+            ? `지문 <b>${added}개</b>를 칸에 나눠 넣었습니다 (총 ${total}개). 칸이 가득 차 나머지는 넣지 못했습니다 — 필요 없는 지문을 지우고 다시 붙여넣어 주세요.`
+            : `지문 <b>${added}개</b>를 칸에 나눠 넣었습니다 (총 ${total}개). 옮긴 뒤에는 오타가 없는지 확인해 주세요.`,
+          full ? "warn" : "ok"
+        );
         return;
       }
       // 합치기·나누기 되돌리기 — 한 칸이 아니라 목록 전체가 바뀌는 일이라
@@ -1376,6 +1513,10 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
       // (붙여넣기의 input은 doStrip보다 먼저 실행되므로 지운 뒤 안내를 덮지 않는다)
       undoText = null;
       item._opUndo = null;
+      // 글을 고쳤으면 방금 읽어 둔 묶음도 더 이상 지금 내용과 맞지 않는다.
+      // (붙여넣기의 input은 묶음을 담아 두는 setTimeout보다 먼저 지나가므로,
+      //  갓 붙여넣은 것을 여기서 지워 버리지는 않는다 — 문장 번호 안내와 같은 사정이다)
+      pendingBundle = null;
       offerStrip();
       // 문단이 생기거나 사라지면 '나누기' 버튼도 그에 맞춰 나타났다 숨는다
       syncSplitBtn(item);
@@ -1643,6 +1784,36 @@ clearPassagesBtn.addEventListener("click", () => {
   if (confirm("입력한 지문을 모두 지우시겠습니까?\n되돌릴 수 없습니다.")) {
     passageMgr.clearAll();
   }
+});
+
+/* 📋 지문 전체 복사 — 지금 입력칸에 있는 지문을 전부 텍스트 한 덩어리로 만들어
+   클립보드에 넣는다. 카톡·메일로 동료 선생님께 그대로 보내면, 받는 분은 지문칸에
+   한 번 붙여넣고 뜨는 '나누기'를 누르는 것으로 끝난다.
+
+   서버를 거치지 않는다 — 받는 분이 로그인해 있지 않아도 되고, 우리 쪽에 지문이
+   한 벌 더 쌓이지도 않는다. 저작권이 있는 지문을 남에게 보내는 일이라, 누르는
+   자리에서 한 번 짚어 준다(지문칸 아래 저작권 안내와 같은 취지다). */
+const copyPassagesBtn = $("copyPassagesBtn");
+copyPassagesBtn.addEventListener("click", async () => {
+  const jobs = passageMgr.getJobs();
+  if (!jobs.length) {
+    ocrStatus("복사할 지문이 없습니다. 지문을 먼저 입력해 주세요.", "warn");
+    return;
+  }
+  if (!(await copyToClipboard(formatPassageBundle(jobs)))) {
+    ocrStatus(
+      "브라우저가 복사를 막았습니다. 지문칸 안을 눌러 <b>Ctrl+A</b> → <b>Ctrl+C</b>로 직접 복사해 주세요.",
+      "warn"
+    );
+    return;
+  }
+  ocrStatus(
+    jobs.length >= 2
+      ? `지문 <b>${jobs.length}개</b>를 복사했습니다. 카톡·메일에 붙여넣어 보내시면, 받는 분이 지문칸에 한 번 붙여넣는 것으로 ${jobs.length}개가 그대로 들어갑니다. ` +
+        "저작권이 있는 교재 지문은 보내도 되는지 먼저 확인해 주세요."
+      : "지문을 복사했습니다. 카톡·메일에 붙여넣어 보내세요. 저작권이 있는 교재 지문은 보내도 되는지 먼저 확인해 주세요.",
+    "ok"
+  );
 });
 
 /* 입력한 지문만 따로 저장한다 — 제작 결과물과는 별개의 저장 종류.
@@ -7352,6 +7523,9 @@ function savedItemRowHtml(item) {
       <div class="saved-list-actions">
         <button type="button" class="btn ghost small saved-list-load"
                 title="이 저장본을 입력칸으로 가져옵니다.">불러오기</button>
+        ${item.tab === PASSAGE_TAB ? `
+        <button type="button" class="btn ghost small saved-list-copy"
+                title="이 지문 묶음을 텍스트로 복사합니다. 카톡·메일로 보내면 받는 분이 한 번에 넣을 수 있습니다.">📋 복사</button>` : ""}
         <button type="button" class="btn ghost small danger saved-list-delete">삭제</button>
       </div>
     </div>`;
@@ -7364,7 +7538,9 @@ const LIBRARY = {
   passage: {
     title: "📄 지문 저장함",
     lead: "저장해 둔 지문입니다. [불러오기]를 누르면 입력칸으로 가져옵니다 — 이미 입력해 둔 " +
-          "지문이 있으면, 뒤에 이어 붙일지 지우고 새로 넣을지 그때 물어봅니다.",
+          "지문이 있으면, 뒤에 이어 붙일지 지우고 새로 넣을지 그때 물어봅니다. " +
+          "[📋 복사]는 그 지문 묶음을 텍스트로 복사합니다. 카톡·메일로 동료 선생님께 보내면 " +
+          "받는 분이 지문칸에 한 번 붙여넣는 것으로 끝납니다.",
     empty: "아직 저장한 지문이 없습니다. 지문을 입력한 뒤 “💾 지문 저장”을 눌러 보세요.",
     match: (item) => item.tab === PASSAGE_TAB,
   },
@@ -7576,6 +7752,35 @@ savedListBodyEl.addEventListener("click", async (e) => {
     const current = cached && cached.tab === PASSAGE_TAB ? passageMgr.getJobs().length : 0;
     if (current) openLoadModeDialog(id, current);
     else loadSavedItem(id, "replace");
+    return;
+  }
+
+  /* 저장해 둔 지문 묶음을 곧바로 텍스트로 복사한다. 불러오기를 거치지 않는 것은,
+     동료에게 보내려던 것뿐인데 지금 입력칸에 들여놓은 지문이 밀려나면 안 되기 때문이다.
+     목록에는 제목만 있고 지문은 없으므로 이때 한 번 받아 온다. */
+  if (e.target.closest(".saved-list-copy")) {
+    const btn = e.target.closest(".saved-list-copy");
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "복사 중…";
+    try {
+      const item = await getJson(`/api/saved/${encodeURIComponent(id)}`, "불러오기에 실패했습니다.");
+      const jobs = ((item.payload || {}).passages) || [];
+      if (!jobs.length) throw new Error("이 저장본에는 지문이 없습니다.");
+      if (!(await copyToClipboard(formatPassageBundle(jobs)))) {
+        throw new Error("브라우저가 복사를 막았습니다. [불러오기]로 지문칸에 가져온 뒤 “📋 지문 전체 복사”를 눌러 보세요.");
+      }
+      // 눌렸는지 알 수 없으면 몇 번씩 다시 누르게 된다 — 잠깐 글자를 바꿔 알린다
+      btn.textContent = `지문 ${jobs.length}개 복사됨`;
+      setTimeout(() => {
+        btn.textContent = label;
+        btn.disabled = false;
+      }, 1800);
+    } catch (err) {
+      alert(err.message || "복사에 실패했습니다.");
+      btn.textContent = label;
+      btn.disabled = false;
+    }
     return;
   }
 
