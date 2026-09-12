@@ -7202,6 +7202,8 @@ const saveTitleInputEl = $("saveTitleInput");
 const saveDialogErrorEl = $("saveDialogError");
 const saveDialogCancelBtn = $("saveDialogCancel");
 const saveDialogConfirmBtn = $("saveDialogConfirm");
+const saveDialogOverwriteBtn = $("saveDialogOverwrite");
+const saveDialogFromEl = $("saveDialogFrom");
 const savedListModalEl = $("savedListModal");
 const savedListBodyEl = $("savedListBody");
 const savedListTitleEl = $("savedListTitle");
@@ -7209,6 +7211,12 @@ const savedListLeadEl = $("savedListLead");
 const savedListCloseBtn = $("savedListClose");
 
 let pendingSaveTab = null;
+
+/* 탭마다 '지금 화면에 있는 것이 저장함의 어느 자료에서 온 것인가'를 기억한다.
+   저장할 때 그 자료를 덮어쓸 수 있게 하기 위한 것이다 — 서버는 처음부터 덮어쓰기를
+   할 줄 알았는데(save_item) 화면이 id를 안 보내, 고쳐 저장할 때마다 사본만 쌓였다.
+   {탭: {id, title}} */
+const LOADED_SAVED = {};
 
 // 각 탭이 등록해 둔 clearResults()를 모두 불러 화면의 제작 결과물을 비운다.
 // (지문 탭은 결과물이 따로 없으므로 등록하지 않는다)
@@ -7247,6 +7255,21 @@ function openSaveDialog(tab) {
     const suggest = SAVE_TITLE_SUGGEST[tab];
     saveTitleInputEl.value = (suggest ? suggest() : "").replace(/_/g, " ");
   }
+  /* 저장함에서 불러온 자료라면 '덮어쓰기'를 함께 내놓는다. 어느 자료를 덮는지 이름을
+     보여 주고 고르게 한다 — 되돌릴 수 없는 쪽이라 말없이 덮으면 안 된다.
+     저장 자체가 막힌 상태(비로그인·저장할 것 없음)에서는 내놓지 않는다. */
+  const from = saveDialogConfirmBtn.disabled ? null : LOADED_SAVED[tab];
+  saveDialogOverwriteBtn.hidden = !from;
+  saveDialogFromEl.hidden = !from;
+  if (from) {
+    saveDialogFromEl.textContent = `이 자료는 저장함의 "${from.title}"에서 불러온 것입니다.`;
+    saveTitleInputEl.value = from.title;
+    saveDialogConfirmBtn.textContent = "새로 저장";
+    saveDialogConfirmBtn.classList.add("ghost");
+  } else {
+    saveDialogConfirmBtn.textContent = "저장";
+    saveDialogConfirmBtn.classList.remove("ghost");
+  }
   saveDialogEl.hidden = false;
   saveTitleInputEl.focus();
 }
@@ -7259,7 +7282,9 @@ saveDialogEl.addEventListener("click", (e) => {
   if (e.target === saveDialogEl) closeSaveDialog();
 });
 
-saveDialogConfirmBtn.addEventListener("click", async () => {
+/* 저장 실행. id를 주면 그 저장본을 덮어쓰고, 안 주면 새로 만든다(서버 save_item이
+   두 가지를 다 한다 — 덮어쓸 때는 남의 자료가 아닌지 서버가 확인한다). */
+async function doSaveDialog(overwriteId) {
   const tab = pendingSaveTab;
   if (!tab || !TAB_SAVE[tab]) return;
   const title = saveTitleInputEl.value.trim() || "제목 없음";
@@ -7270,17 +7295,31 @@ saveDialogConfirmBtn.addEventListener("click", async () => {
   }
   saveDialogErrorEl.textContent = "";
   saveDialogConfirmBtn.disabled = true;
+  saveDialogOverwriteBtn.disabled = true;
   try {
     const payload = TAB_SAVE[tab].getPayload();
     // 표지 제목도 함께 담는다 — 안 담으면 불러왔을 때 앞 자료의 제목이 그대로 남는다
     if (DOC_TITLES[tab]) payload.coverTitle = DOC_TITLES[tab].get();
-    await postJson("/api/saved", { tab, title, payload }, "저장에 실패했습니다.");
+    const res = await postJson(
+      "/api/saved",
+      overwriteId ? { tab, title, payload, id: overwriteId } : { tab, title, payload },
+      "저장에 실패했습니다."
+    );
+    // 새로 저장했으면 이제부터 그 자료를 고치는 중이다 — 다음 저장에서 덮어쓸 수 있게 기억한다
+    if (res && res.id) LOADED_SAVED[tab] = { id: res.id, title };
     closeSaveDialog();
   } catch (err) {
     saveDialogErrorEl.textContent = err.message || "저장에 실패했습니다.";
   } finally {
     saveDialogConfirmBtn.disabled = false;
+    saveDialogOverwriteBtn.disabled = false;
   }
+}
+
+saveDialogConfirmBtn.addEventListener("click", () => doSaveDialog(null));
+saveDialogOverwriteBtn.addEventListener("click", () => {
+  const from = LOADED_SAVED[pendingSaveTab];
+  doSaveDialog(from ? from.id : null);
 });
 
 Object.keys(TAB_SAVE).forEach((tab) => {
@@ -7475,8 +7514,14 @@ async function loadSavedItem(id, mode) {
     if (!append) {
       clearAllTabResults();
       clearDocTitles();
+      // 다른 탭에 남아 있던 '어느 자료에서 왔는가'도 함께 잊는다 — 결과물을 다 지웠으므로
+      Object.keys(LOADED_SAVED).forEach((k) => delete LOADED_SAVED[k]);
     }
     TAB_SAVE[tab].applyPayload(item.payload || {}, append ? "append" : "replace");
+    /* 이 자료를 고치는 중이라고 기억해 둔다 — 저장할 때 '덮어쓰기'가 뜬다.
+       뒤에 붙인 경우는 두 자료가 섞인 것이라 어느 쪽도 아니므로 기억하지 않는다. */
+    if (append) delete LOADED_SAVED[tab];
+    else LOADED_SAVED[tab] = { id, title: item.title || "제목 없음" };
     /* 표지 제목을 되살린다. 제목을 담기 전에 저장한 옛 저장본은 빈칸으로 남는데,
        앞 자료의 이름이 남아 있는 것보다 낫다 — 탭 위 칸에 새로 적으면 된다. */
     if (!append && DOC_TITLES[tab]) DOC_TITLES[tab].set((item.payload || {}).coverTitle || "");
@@ -7539,6 +7584,10 @@ savedListBodyEl.addEventListener("click", async (e) => {
     try {
       await postJson("/api/saved/delete", { id }, "삭제에 실패했습니다.");
       savedItemsCache = savedItemsCache.filter((it) => it.id !== id);
+      // 지운 자료를 덮어쓰려다 "찾을 수 없습니다"를 보는 일이 없게 기억에서도 지운다
+      Object.keys(LOADED_SAVED).forEach((k) => {
+        if (LOADED_SAVED[k].id === id) delete LOADED_SAVED[k];
+      });
       renderSavedList();
     } catch (err) {
       alert(err.message || "삭제에 실패했습니다.");
