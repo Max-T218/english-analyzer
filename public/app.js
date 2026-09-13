@@ -2621,8 +2621,14 @@ let pgHost = null;   // 지금 쪽 구성 중인 결과 화면 (#result 또는 #
 let pgUI = null;     // 그 화면의 단추·안내 { btn, resetBtn, hint }
 
 const PAGING_UI = {
-  analyze: { btn: $("pageBtn"), resetBtn: $("pageResetBtn"), hint: $("pageHint") },
-  brief: { btn: $("briefPageBtn"), resetBtn: $("briefPageResetBtn"), hint: $("briefPageHint") },
+  analyze: {
+    btn: $("pageBtn"), resetBtn: $("pageResetBtn"),
+    raiseBtn: $("pageRaiseBtn"), hint: $("pageHint"),
+  },
+  brief: {
+    btn: $("briefPageBtn"), resetBtn: $("briefPageResetBtn"),
+    raiseBtn: $("briefPageRaiseBtn"), hint: $("briefPageHint"),
+  },
 };
 const pageBtn = PAGING_UI.analyze.btn;
 const pageResetBtn = PAGING_UI.analyze.resetBtn;
@@ -2677,13 +2683,15 @@ function clearPageMarks() {
   if (pgHost) pgHost.querySelectorAll(".pg-gap, .pg-edge").forEach((n) => n.remove());
 }
 
+/* 잰 결과의 쪽 수를 돌려준다 — '전체 올리기'가 몇 쪽을 줄였는지 알리는 데 쓴다.
+   평소 부르는 자리들은 반환값을 쓰지 않는다. */
 function layoutPages() {
-  if (!pagingOn()) return;
+  if (!pagingOn()) return 0;
   clearPageMarks();
   const blks = pgBlocks();
   if (!blks.length) {
     pgUI.hint.textContent = "";
-    return;
+    return 0;
   }
 
   // 측정 — 덩어리의 높이와, 덩어리 사이 여백(바깥 여백은 접히므로 좌표 차로 구한다).
@@ -2762,6 +2770,44 @@ function layoutPages() {
   pgUI.hint.textContent =
     `모두 ${pages.length}쪽 — 표·문장 카드 위의 [✂ 새 쪽 시작] · [⤴ 위로 올리기]로 옮기세요.` +
     (narrow ? " (창이 좁아 실제 인쇄와 다를 수 있습니다)" : "");
+  return pages.length;
+}
+
+/* ── ⤴ 전체 올리기 ──
+   올릴 수 있는 덩어리(= 새 쪽 시작이 걸려 있는 것)를 한 번에 모두 푼다.
+
+   손으로 하나씩 올리는 길은 그대로 두되, 이것을 따로 두는 까닭은 분량이다. 지문
+   하나에 '새 쪽 시작'이 기본으로 서너 군데 걸린다(주제&흐름 요약 · 흐름도 뒷면 ·
+   어휘표 · 요약 그림 — 저마다 data-brk-def="page"). 지문을 여럿 넣으면 100쪽이
+   넘어가고, 그때 올릴 자리는 100군데를 훌쩍 넘는다. 하나씩 누르는 것은 그 지점에서
+   사실상 불가능한 일이 된다.
+
+   '지문 시작'은 건드리지 않는다 — 지문이 앞 지문 끝에 이어 붙으면 어디부터가 새
+   지문인지 알 수 없게 된다(그래서 화면에서도 단추가 아니라 딱지로만 보인다).
+
+   올려 봐도 앞 쪽에 자리가 없으면 그 덩어리는 어차피 제자리에 남는다 — 손해가 아니라
+   '해 봤지만 자리가 없었다'일 뿐이라, 되는 것만 골라 내지 않고 전부 푼 뒤 다시 잰다.
+   [↩ 되돌리기] 한 번으로 통째로 무를 수 있고 [처음 상태로]도 그대로 쓴다. */
+function raiseAllPages() {
+  if (!pagingOn()) return;
+  const before = layoutPages();
+  const targets = pgBlocks().filter((b) => !isPassageHead(b) && b.dataset.brk === "page");
+  if (!targets.length) {
+    pgUI.hint.textContent = "올릴 수 있는 자리가 없습니다 — 지금 쪽 나눔은 전부 자리가 모자라 넘어간 것입니다.";
+    return;
+  }
+  pgUndo(flushUndo);
+  targets.forEach((b) => { b.dataset.brk = "auto"; });
+  const after = layoutPages();
+  pgUndo(pushUndo);   // 되돌리기 한 단계 — 100번 누른 것이 아니라 한 번으로 무른다
+  const saved = before - after;
+  // 되돌리기는 지문 상세분석에만 있다(pgUndo 참고). 소책자에서 없는 단추를 가리키지 않는다.
+  const howToUndo = pgHost === resultEl ? "[↩ 되돌리기]" : "[↩ 처음 상태로]";
+  pgUI.hint.textContent =
+    (saved > 0
+      ? `${targets.length}군데를 올려 ${before}쪽 → ${after}쪽으로 줄였습니다 (${saved}쪽 절약).`
+      : `${targets.length}군데를 올렸지만 앞 쪽에 자리가 없어 ${after}쪽 그대로입니다.`) +
+    ` 되돌리려면 ${howToUndo}를 누르세요.`;
 }
 
 /* 되돌리기는 지문 상세분석에만 있다(결과 화면을 통째로 찍어 쌓는 방식이라 #result에
@@ -2783,6 +2829,7 @@ function setPagingMode(on, host, ui) {
   const io = pgUI || PAGING_UI.analyze;
   io.btn.textContent = on ? "✅ 쪽 구성 끝내기" : "📄 쪽 구성";
   io.resetBtn.style.display = on ? "inline-flex" : "none";
+  if (io.raiseBtn) io.raiseBtn.style.display = on ? "inline-flex" : "none";
   if (on) {
     ensureHandles();
     layoutPages();
@@ -2805,6 +2852,14 @@ Object.entries(PAGING_UI).forEach(([key, ui]) => {
     if (pgHost && pgHost !== host) setPagingMode(false);
     setPagingMode(pgHost !== host, host, ui);
   });
+  if (ui.raiseBtn) {
+    ui.raiseBtn.addEventListener("click", () => {
+      // 다른 화면이 켜져 있을 때 이 화면의 단추가 눌릴 일은 없지만(켜진 화면에만 보인다),
+      // 대상이 어긋난 채로 덩어리를 만지는 일이 없도록 한 번 더 확인한다
+      if (pgHost !== host) return;
+      raiseAllPages();
+    });
+  }
   ui.resetBtn.addEventListener("click", () => {
     pgUndo(flushUndo);
     pgBlocks().forEach((b) => {

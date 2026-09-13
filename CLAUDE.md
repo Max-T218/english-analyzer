@@ -160,8 +160,12 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `renderAccount`(잔액 표시) · `setEditMode`(결과물 직접 수정) · `printDoc` ·
 `undoOnce` / `pushUndo`(되돌리기 — 결과 화면 HTML을 통째로 찍어 쌓는다. 글자 수정과 쪽 구성이
 같은 스택을 쓴다) ·
-`setPagingMode` / `layoutPages`(지문 분석 '쪽 구성' — 덩어리 `.pg-blk` 단위로 쪽 경계를 옮긴다.
-인쇄에 남는 건 `data-brk`뿐이고, 쪽 높이는 `PAGE_H_MM`이 `@page`·`.print-foot` 값을 그대로 따른다) ·
+`setPagingMode` / `layoutPages` / `raiseAllPages`(지문 분석 '쪽 구성' — 덩어리 `.pg-blk`
+단위로 쪽 경계를 옮긴다. 인쇄에 남는 건 `data-brk`뿐이고, 쪽 높이는 `PAGE_H_MM`이
+`@page`·`.print-foot` 값을 그대로 따른다. `raiseAllPages`는 '⤴ 전체 올리기' — `data-brk="page"`를
+한 번에 모두 풀어 빈자리를 채운다. 지문 하나에 기본 강제 쪽 나눔이 서너 군데(`data-brk-def="page"`)라
+지문을 여럿 넣으면 올릴 자리가 100군데를 넘어, 하나씩 누르는 길만으로는 감당이 안 된다.
+`pg-head`(지문 시작)는 건드리지 않는다) ·
 `getVocabSets` / `replaceAnalyzeVocabSets` / `appendVocabSet`(단어장 저장소 — 지문 분석·직접
 입력·사진·PDF 네 출처가 같은 `vocabSets`를 쓴다. `src` 태그로 구분해, 재분석은 `src:"analyze"`
 세트만 갈아 끼우고 나머지는 남긴다) ·
