@@ -1138,7 +1138,8 @@ const PASSAGE_DANGER = 2500;
 
 // 단어 수 — 공백으로 끊어 센다(영어 지문 기준).
 // 글자 수만으로는 지문 하나가 얼마나 무거운지 감이 잘 안 와서, 합칠지 나눌지 정할 때
-// 보라고 함께 띄운다. 길이 경고(1,200·1,500자)의 기준은 지금까지대로 글자 수다.
+// 보라고 함께 띄운다. 길이 안내(PASSAGE_WARN·PASSAGE_DANGER)의 기준은 지금까지대로
+// 글자 수다 — 숫자를 여기 적어 두면 값을 바꿀 때 어긋나므로 이름으로만 가리킨다.
 function countWords(text) {
   const t = String(text || "").trim();
   return t ? t.split(/\s+/).length : 0;
@@ -1153,13 +1154,18 @@ function updatePassageCount(ta) {
     el.textContent = "0자";
     return;
   }
+  /* 문구는 '못 한다'가 아니라 '오래 걸린다'로 적는다. 여기는 막는 자리가 아니고,
+     넘겨서 넣어도 실행은 그대로 된다 — 실제로 3,000자도 문장 누락 없이 나온다.
+     예전 문구가 "나눠 넣으세요"였는데, 빨간 글씨와 겹쳐 금지로 읽혔다. 그래서
+     "1,500자가 넘으면 안 되나요"라는 문의가 실제로 들어왔다(2026-09-14).
+     겪은 실패가 있어서가 아니라 겁이 나서 아예 안 해 본 것이다. */
   let msg = `${n.toLocaleString()}자 · ${countWords(text).toLocaleString()}단어`;
   if (n > PASSAGE_DANGER) {
     el.classList.add("danger");
-    msg += " · 나눠 넣으세요";
+    msg += " · 길어서 오래 걸립니다";
   } else if (n > PASSAGE_WARN) {
     el.classList.add("warn");
-    msg += ` · ${PASSAGE_DANGER.toLocaleString()}자까지 권장`;
+    msg += ` · ${PASSAGE_DANGER.toLocaleString()}자가 넘으면 느려집니다`;
   }
   el.textContent = msg;
 }
