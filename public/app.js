@@ -6375,52 +6375,147 @@ function renderChoices(text, seed) {
   return { html, answers };
 }
 
+/* 배열 문제에서 문장 첫 낱말의 대문자를 내린다.
+   대문자로 남아 있으면 "이게 첫 조각"이라고 알려 주는 꼴이라 문제가 헐거워진다.
+   다만 고유명사는 원래 대문자라 내리면 틀린 영어가 된다. 구별하는 길:
+     · 'I'·"I'm", 약어(NASA)는 그대로 둔다.
+     · 같은 낱말이 지문 안 어딘가에서 **문장 첫 자리가 아닌 곳**에도 대문자로 나오면
+       고유명사로 보고 그대로 둔다(Julia, Korea …). 문장 맨 앞에만 나오는 낱말은
+       판단할 근거가 없으니 일반 낱말로 보고 내린다.
+   passage에는 지문 전체를 주는 게 가장 정확하고, 없으면 그 문장만 줘도 된다. */
+function lowerFirstWord(word, passage) {
+  const w = String(word || "");
+  const core = w.replace(/^[^A-Za-z]+/, "").replace(/[^A-Za-z'’]+$/, "");
+  if (!core || !/^[A-Z]/.test(core)) return w;
+  if (core === "I" || /^I['’]/.test(core)) return w;   // I, I'm, I've
+  if (/^[A-Z]+$/.test(core)) return w;                 // NASA 같은 약어
+  const text = String(passage || "");
+  const rx = new RegExp(`\\b${core.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g");
+  let m;
+  while ((m = rx.exec(text))) {
+    const before = text.slice(0, m.index).replace(/[\s"'“”‘’([]+$/, "");
+    // 앞에 글자가 있고 그게 문장 끝(. ! ?)이 아니면 → 문장 중간의 대문자 = 고유명사
+    if (before && !/[.!?]$/.test(before)) return w;
+  }
+  return w.replace(core, core[0].toLowerCase() + core.slice(1));
+}
+
 // 영어 문장을 낱말 단위로 섞어 배열 문제로 만든다 (문제 제작 탭의 서술형 배열도 이걸 쓴다).
-// 참고 자료처럼 ① 끝 마침표는 떼고 ② 첫 단어는 소문자로 바꿔
+// 참고 자료처럼 ① 끝 문장부호는 떼고 ② 첫 단어는 소문자로 바꿔
 // 문장의 시작·끝이 드러나지 않게 한다(고유명사처럼 보이는 말은 그대로 둔다).
 function scrambleSentence(en, seed) {
   let text = String(en || "").trim();
   if (!text) return "";
-  text = text.replace(/\s*\.\s*$/, ""); // 끝 마침표 제거 (?, ! 는 단서라 유지)
+  // 끝 문장부호(. ? !) 제거 — 어느 낱말이 끝자리인지 알려 주는 단서다.
+  // 의문문이라는 것은 함께 보여 주는 우리말 해석이 이미 알려 준다.
+  text = text.replace(/\s*[.?!]+\s*$/, "");
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length < 2) return esc(text);
-  // 첫 단어가 'Parents' 처럼 일반 단어면 소문자로 (ARA, I 같은 건 유지)
-  const first = words[0];
-  if (/^[A-Z][a-z]+$/.test(first)) words[0] = first[0].toLowerCase() + first.slice(1);
+  words[0] = lowerFirstWord(words[0], en);
   const shuffled = seededShuffle(words, seed);
   return esc(shuffled.join(" / "));
 }
 
-// 워크북8 — 구(청크) 단위로 섞는다.
-// AI가 준 chunks에서 '='로 시작하는 것은 고정(제자리에 그대로 인쇄)이고,
-// 고정 청크 사이에 낀 나머지 묶음마다 따로 섞어 ( a / b / c ) 로 낸다.
-// 참고 자료의 "To (growing / fix / problem / this), I (…)" 모양이 이렇게 나온다.
-function renderChunkOrder(chunks, en, seed) {
-  let list = (chunks || []).map((c) => String(c == null ? "" : c)).filter((c) => c.trim());
-  // 청크가 없거나 너무 적으면 낱말 단위로 쪼개 대신 쓴다 (참고 자료의 보조 형태)
-  if (list.length < 3) {
-    const words = String(en || "").trim().split(/\s+/).filter(Boolean);
-    if (words.length < 3) return "";
-    list = words;
-  }
-  const out = [];
-  let run = [];
-  const flush = () => {
-    if (!run.length) return;
-    const mixed = run.length > 1 ? seededShuffle(run, seed * 31 + out.length) : run;
-    out.push(`<b class="wb-scramble-grp">(${esc(mixed.join(" / "))})</b>`);
-    run = [];
-  };
-  list.forEach((c) => {
-    if (c.startsWith("=")) {
-      flush();
-      out.push(esc(c.slice(1).trim()));
+/* 워크북8 — 순서 배열에 쓸 조각을 문장에서 직접 만든다.
+
+   예전에는 AI가 `chunks`로 끊어 준 것을 그대로 썼는데, 같은 규칙을 줘도 문장마다
+   판단이 달라 어떤 문장은 낱말 단위로, 어떤 문장은 구 단위로 나와 난이도가 들쭉날쭉했다.
+   규칙이 이 정도로 단순하면 화면에서 정하는 편이 고르고, 기준을 바꿀 때 다시 제작하지
+   않아도 저장해 둔 워크북까지 함께 바뀐다(2026-09-13. 서버 스키마에서 `chunks`를 뺐다).
+
+   규칙
+     ① 낱말 하나가 한 조각.
+     ② 관사·소유격만 바로 뒤 낱말에 붙인다 — 안 붙이면 괄호 안에 'a / the / a'가
+        떠다녀 어순이 아니라 관사 자리 맞추기 문제가 된다.
+     ③ 조각 끝의 부호와 첫 낱말의 대문자는 뗀다 — 어디가 처음이고 끝인지 알려 주는
+        단서라서다(scrambleSentence와 같은 기준).
+     ④ 조각이 12개를 넘으면 절이 시작되는 자리에서 묶음을 나눠 한 묶음이 5~12조각이
+        되게 한다. 40낱말 문장을 괄호 하나에 몰아넣으면 풀 수 있는 문제가 아니다.
+   '고정'(제자리에 그대로 찍는 낱말)은 두지 않는다 — 그만큼 답을 알려 주는 셈이라,
+   묶음만 나누고 낱말은 전부 괄호 안에 둔다. */
+const CHUNK_GLUE = new Set(
+  ["a", "an", "the", "my", "your", "his", "her", "its", "our", "their"]
+);
+// 새 묶음을 여는 자리 — 절·구가 시작되는 낱말. 'that'·'as'처럼 품사가 갈리는 말도
+// 넣어 둔다. 잘못 짚어도 묶음 경계가 조금 달라질 뿐 답이 새지는 않는다.
+const CHUNK_BREAK = new Set([
+  "and", "but", "or", "so", "yet", "nor",
+  "because", "although", "though", "while", "when", "whenever", "if", "unless",
+  "since", "before", "after", "until", "as", "whereas",
+  "that", "which", "who", "whom", "whose", "where", "why", "how", "whether",
+]);
+const CHUNK_GROUP_MIN = 5;   // 이만큼 쌓이기 전에는 묶음을 끊지 않는다
+const CHUNK_GROUP_MAX = 12;  // 이만큼 쌓이면 끊을 자리가 없어도 끊는다
+
+function autoChunkGroups(en, passage) {
+  const words = String(en || "").trim().split(/\s+/).filter(Boolean);
+  if (words.length < 3) return [];
+
+  // ① · ② 낱말 하나씩, 관사·소유격만 뒤 낱말과 한 덩어리로
+  const list = [];
+  for (let i = 0; i < words.length; i++) {
+    const head = words[i].replace(/[^A-Za-z'’]/g, "").toLowerCase();
+    if (CHUNK_GLUE.has(head) && i + 1 < words.length) {
+      list.push({ w: words[i] + " " + words[i + 1], head });
+      i++;
     } else {
-      run.push(c.trim());
+      list.push({ w: words[i], head });
     }
+  }
+
+  // ③ 첫 낱말 대문자 내리기 → 조각 끝 부호 떼기
+  const first = list[0].w.split(/(\s+)/);
+  first[0] = lowerFirstWord(first[0], passage || en);
+  list[0].w = first.join("");
+  const chunks = list
+    .map((c) => {
+      // 'U.S.'처럼 가운뎃점이 있는 말은 마침표를 떼면 말이 안 되므로 그대로 둔다
+      const keepDot = /[A-Za-z]\.[A-Za-z]/.test(c.w);
+      const w = c.w.replace(keepDot ? /\s*[,;:?!]+$/ : /\s*[,;:.?!]+$/, "").trim();
+      return { w, head: c.head };
+    })
+    .filter((c) => c.w);
+  if (!chunks.length) return [];
+
+  // ④ 묶음 나누기 — 짧은 문장은 통째로 하나
+  if (chunks.length <= CHUNK_GROUP_MAX) return [chunks.map((c) => c.w)];
+  const groups = [];
+  let cur = [];
+  chunks.forEach((c, i) => {
+    const left = chunks.length - i;           // 남은 조각 수
+    const openClause = CHUNK_BREAK.has(c.head) && cur.length >= CHUNK_GROUP_MIN;
+    // 끊고 나서 뒤가 너무 짧아질 자리는 피한다
+    if ((openClause && left >= 4) || cur.length >= CHUNK_GROUP_MAX) {
+      groups.push(cur);
+      cur = [];
+    }
+    cur.push(c);
   });
-  flush();
-  return out.join(" ");
+  if (cur.length) groups.push(cur);
+  /* 마지막 묶음이 너무 작으면(끊을 자리가 문장 끝 가까이에 있었을 때) 앞 묶음에서
+     조각을 하나씩 넘겨받아 키운다. 통째로 합치면 앞 묶음이 상한을 넘어 버린다 —
+     실제로 14조각이 (14) 한 덩어리로 나오던 것을 이렇게 (10)(4)로 고쳤다.
+     넘기는 것은 앞 묶음의 '맨 뒤' 조각이라 글의 순서는 그대로다. */
+  while (groups.length > 1) {
+    const last = groups[groups.length - 1];
+    const prev = groups[groups.length - 2];
+    if (last.length >= 4 || prev.length <= CHUNK_GROUP_MIN) break;
+    last.unshift(prev.pop());
+  }
+  return groups.map((g) => g.map((c) => c.w));
+}
+
+// 묶음마다 따로 섞어 ( a / b / c ) ( d / e / f ) 로 낸다.
+// 괄호가 나뉜 것 자체가 "이 묶음이 먼저"라는 정보라, 낱말을 흘리지 않고도 풀 수 있게 된다.
+function renderChunkOrder(en, seed, passage) {
+  const groups = autoChunkGroups(en, passage);
+  if (!groups.length) return "";
+  return groups
+    .map((g, i) => {
+      const mixed = g.length > 1 ? seededShuffle(g, seed * 31 + i) : g;
+      return `<b class="wb-scramble-grp">(${esc(mixed.join(" / "))})</b>`;
+    })
+    .join(" ");
 }
 
 // 워크북10 — {{쓸 부분}}의 단어 수만큼 밑줄을 깔아 준다 (참고 자료와 같은 모양)
@@ -6566,8 +6661,11 @@ function buildStage(stageId, d, sentences) {
 
   const html = [];
   const answers = [];
+  // 고유명사 판별(lowerFirstWord)은 지문 전체를 봐야 '문장 앞에만 나오는 낱말'과
+  // 'Julia'처럼 문장 중간에도 대문자로 나오는 낱말을 가릴 수 있다.
+  const passage = sentences.map((x) => x.en || "").join(" ");
   sentences.forEach((s) => {
-    const one = renderStageSentence(stageId, s);
+    const one = renderStageSentence(stageId, s, passage);
     if (!one) return;
     html.push(one.html);
     if (one.answer) answers.push({ no: s.no, text: one.answer });
@@ -6575,7 +6673,7 @@ function buildStage(stageId, d, sentences) {
   return { html: html.join(""), answers };
 }
 
-function renderStageSentence(stageId, s) {
+function renderStageSentence(stageId, s, passage) {
   const noBadge = `<span class="wb-no">${esc(s.no)}</span>`;
   const head = wbHeading(s.heading);
   let body = "";
@@ -6625,7 +6723,7 @@ function renderStageSentence(stageId, s) {
     answer = answers.join(" / ");
   } else if (stageId === 8) {
     // 순서 배열하기 — 구(청크) 단위
-    const scr = renderChunkOrder(s.chunks, s.en, s.no || 1);
+    const scr = renderChunkOrder(s.en, s.no || 1, passage);
     if (!scr) return null;
     body = `
       <div class="wb-ko">${esc(s.ko || "")}</div>

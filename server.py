@@ -3939,15 +3939,14 @@ WORKBOOK_SCHEMA = {
                     "enBlank": {"type": "STRING"},
                     "verbForm": {"type": "STRING"},
                     "grammarChoice": {"type": "STRING"},
-                    "chunks": {"type": "ARRAY", "items": {"type": "STRING"}},
                     "writeKeys": {"type": "ARRAY", "items": {"type": "STRING"}},
                     "writeMask": {"type": "STRING"},
                 },
                 "required": ["no", "heading", "en", "ko", "enBlank",
-                             "verbForm", "grammarChoice", "chunks",
+                             "verbForm", "grammarChoice",
                              "writeKeys", "writeMask"],
                 "propertyOrdering": ["no", "heading", "en", "ko", "enBlank",
-                                     "verbForm", "grammarChoice", "chunks",
+                                     "verbForm", "grammarChoice",
                                      "writeKeys", "writeMask"],
             },
         },
@@ -4010,7 +4009,7 @@ The stages the app builds from your data:
   5 동사형 연습하기      괄호 안 동사 고쳐 쓰기      ← verbForm
   6 어법·어휘 고르기     [A / B] 중 옳은 것 고르기   ← grammarChoice
   7 어색한 곳 찾기       어법 오류 3개 찾아 고치기    ← grammarFix
-  8 순서 배열하기        주어진 말 배열해 문장 완성   ← chunks
+  8 순서 배열하기        주어진 말 배열해 문장 완성   ← en (화면이 직접 만든다)
   9 문단 배열하기        문단 (A)(B)(C) 순서 정하기  ← paraOrder
  10 영작 연습하기        키워드로 문장 영작하기       ← writeKeys, writeMask
 
@@ -4059,19 +4058,11 @@ Example: "People have [been dumping|been dumped] their waste in areas of our nei
 RULES: no nested brackets; both sides are short (1~3 words); everything outside [ ] is
 identical to `en`.
 
-### `chunks` — 워크북8 재료 (순서 배열)
-Break `en` into 5~10 meaning units (구·절 단위: 주어부, 동사구, 전치사구, 관계절, 부사절).
-Joining the chunks in order with single spaces must reproduce `en` exactly (punctuation
-included; keep a comma at the end of the chunk it follows).
-- The app SHUFFLES the chunks and prints them as ( a / b / c … ).
-- Prefix a chunk with `=` to PIN it — pinned chunks are printed in place, unshuffled, and the
-  runs of unpinned chunks around them become separate shuffled groups. Pin the parts that
-  would give the answer away or that must anchor the sentence: 인사말·맺음말, 문두 연결어,
-  "To", "recently", and short fixed tails.
-Example for "To fix this growing problem, I urge the city to strengthen management ... in the
-community.":
-  ["=To", "fix", "this growing problem,", "=I", "urge", "the city", "to strengthen",
-   "management and supervision", "of illegal dumping", "=in the community."]
+### 워크북8 (순서 배열) — 보낼 데이터 없음
+학생이 배열할 조각은 **화면이 `en`에서 직접 만든다**(public/app.js의 `autoChunkGroups`).
+낱말 하나가 한 조각이고, 관사·소유격만 뒤 낱말에 붙이며, 긴 문장은 절 경계에서
+묶음을 나눈다 — 규칙이 단순해 사람이 정하는 편이 문장마다 들쭉날쭉하지 않다.
+그러니 `chunks` 같은 필드를 따로 만들어 보내지 마라. 필요한 것은 `en` 뿐이다.
 
 ### `writeKeys` / `writeMask` — 워크북10 재료 (영작)
 - `writeKeys`: 3~7 short English keywords shown to the student, IN THE ORDER they appear in the
@@ -7552,6 +7543,19 @@ CHANGELOG = [
             "일입니다. 누르면 '몇 쪽에서 몇 쪽으로 줄었는지' 알려 드립니다.",
             "마음에 들지 않으면 '↩ 되돌리기'(소책자는 '↩ 처음 상태로') 한 번으로 통째로 "
             "돌아갑니다 — 올린 자리 수만큼 여러 번 누를 필요가 없습니다.",
+        ],
+    },
+    {
+        "version": 28,
+        "date": "2026-09-13",
+        "items": [
+            "워크북 '순서 배열하기'가 더 잘게 나뉩니다. 전에는 '주어진 말'이 구 단위로 "
+            "묶여 나와 답이 거의 보이는 경우가 있었는데, 이제 낱말 하나씩 흩뜨립니다"
+            "(관사·소유격만 뒤 낱말에 붙입니다). 문장이 길면 괄호를 여러 개로 나눠 "
+            "풀 수 있게 합니다.",
+            "문장 끝의 마침표·쉼표와 첫 글자 대문자도 지웁니다 — 어디가 처음이고 끝인지 "
+            "미리 알려 주던 단서였습니다. 저장해 두신 워크북도 다시 열면 새 방식으로 "
+            "나옵니다.",
         ],
     },
 ]
