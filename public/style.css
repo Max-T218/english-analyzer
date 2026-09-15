@@ -1201,6 +1201,7 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 .passage-del,
 .passage-merge-up,
 .passage-merge-down,
+.passage-add-here,
 .passage-split{padding:4px 10px; font-size:12px; line-height:1; white-space:nowrap;}
 /* 남는 자리는 이름칸이 먹는다 — 버튼과 글자 수는 줄어들지 않게 못 박는다 */
 .passage-item-head > .btn,
@@ -1209,9 +1210,11 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
    삭제(✕)와 나란히 있어도 실수로 먼저 눌리지 않도록 */
 .passage-merge-up,
 .passage-merge-down,
+.passage-add-here,
 .passage-split{color:var(--ink-soft);}
 .passage-merge-up:hover,
 .passage-merge-down:hover,
+.passage-add-here:hover,
 .passage-split:hover{color:var(--ink);}
 /* 붙여넣기 정리 안내 — 무엇을 지웠는지 알리고 되돌릴 수 있게 한다 */
 .passage-note{
@@ -1225,17 +1228,16 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
   background:none; border:0; padding:0; cursor:pointer;
   font:inherit; color:var(--accent); font-weight:700; text-decoration:underline;
 }
+/* 높이는 JS(autoFitPassage)가 내용 길이에 맞춰 정한다. 손잡이로 끄는 크기 조절은
+   뺐다 — 글자를 한 자만 더 쳐도 자동으로 다시 맞춰져 손으로 맞춘 크기가 곧바로
+   사라지므로, 둘이 같이 있으면 고장난 것처럼 보인다.
+   70vh를 넘는 아주 긴 지문은 JS가 그 높이에서 멈추므로 여기서 세로 스크롤이 생긴다. */
 .passage-input{
-  width:100%; min-height:130px; resize:vertical; font:inherit; line-height:1.55;
+  width:100%; min-height:130px; resize:none; overflow-y:auto; font:inherit; line-height:1.55;
   color:var(--ink); background:var(--card); border:1px solid var(--line);
   border-radius:8px; padding:10px 12px;
 }
 .passage-input:focus{outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent);}
-/* '크게 보기' — resize:vertical 손잡이를 수동으로 끄는 동작과 트랜지션이 섞이면
-   드래그가 뒤늦게 쫓아오는 느낌을 주므로 애니메이션 없이 즉시 크기를 바꾼다.
-   80vh를 넘는 아주 긴 지문은 JS가 그 높이에서 멈추므로 여기서 세로 스크롤이 생긴다. */
-.passage-item.expanded .passage-input{overflow-y:auto;}
-.passage-expand.active{border-color:var(--accent); color:var(--accent);}
 .passage-add-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px;}
 .passage-max-note{font-size:12px; font-weight:600; color:#b8760a;}
 .passage-max-note:empty{display:none;}

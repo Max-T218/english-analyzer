@@ -1145,7 +1145,27 @@ function countWords(text) {
   return t ? t.split(/\s+/).length : 0;
 }
 
+/* 지문 칸을 넣은 글 길이에 맞춰 늘린다 — 넣은 지문이 늘 통째로 보이게.
+   예전에는 '🔍 크게 보기' 버튼을 눌러야 펼쳐졌는데, 그럴 거면 처음부터 펼쳐 두는 게
+   맞다고 보아 버튼을 없앴다(머리줄 자리도 '＋ 아래에 추가'에 내줬다).
+   화면 높이의 70%에서 멈춘다 — 아주 긴 지문 하나가 화면을 통째로 먹으면 위아래
+   지문이 안 보여 오히려 다루기 어렵다. 그 위로는 칸 안에서 스크롤된다.
+   숨은 칸(다른 탭)은 높이를 잴 수 없어 건너뛴다 — 탭을 열 때 refitPassages가 맡는다. */
+function autoFitPassage(ta) {
+  if (!ta.clientWidth) return;
+  ta.style.height = "auto";
+  const max = Math.round(window.innerHeight * 0.7);
+  ta.style.height = Math.min(ta.scrollHeight + 2, max) + "px";
+}
+
+// 지금 화면에 보이는 지문 칸을 모두 다시 맞춘다 (탭 전환·창 크기 변경 뒤)
+function refitPassages() {
+  document.querySelectorAll(".passage-input").forEach(autoFitPassage);
+}
+window.addEventListener("resize", refitPassages);
+
 function updatePassageCount(ta) {
+  autoFitPassage(ta);   // 글자 수를 새로 세는 자리 = 내용이 바뀐 자리
   const el = ta.closest(".passage-item").querySelector(".passage-count");
   const text = ta.value.trim();
   const n = text.length;
@@ -1372,6 +1392,15 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
       syncSplitBtn(it);
     });
     const full = items.length >= limit;
+    // 칸이 꽉 차면 '＋ 아래에 추가'도 함께 잠근다 — 맨 아래 '지문 추가'만 잠그면
+    // 눌러도 아무 일이 안 일어나는 버튼이 칸마다 남는다
+    items.forEach((it) => {
+      const add = it.querySelector(".passage-add-here");
+      add.disabled = full;
+      add.title = full
+        ? `한 번에 넣을 수 있는 지문은 ${limit}개입니다.`
+        : "이 지문 바로 아래에 새 지문 칸 넣기";
+    });
     if (countEl) {
       countEl.textContent = full
         ? `· 총 ${items.length}개 (최대)`
@@ -1400,7 +1429,7 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
         <button type="button" class="btn ghost small passage-merge-up" title="바로 위 지문과 하나로 합치기">↑ 위와 합치기</button>
         <button type="button" class="btn ghost small passage-merge-down" title="바로 아래 지문과 하나로 합치기">↓ 아래와 합치기</button>
         <button type="button" class="btn ghost small passage-split" title="문단마다 지문 칸을 나누기" hidden>✂ 나누기</button>
-        <button type="button" class="btn ghost small passage-expand" title="지문 전체를 한눈에 보기">🔍 크게 보기</button>
+        <button type="button" class="btn ghost small passage-add-here" title="이 지문 바로 아래에 새 지문 칸 넣기">＋ 아래에 추가</button>
         <button type="button" class="btn ghost small passage-del" title="이 지문 삭제">✕ 삭제</button>
       </div>
       <textarea class="passage-input" placeholder="분석할 영어 지문을 여기에 붙여넣으세요."></textarea>
@@ -1537,7 +1566,6 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
       offerStrip();
       // 문단이 생기거나 사라지면 '나누기' 버튼도 그에 맞춰 나타났다 숨는다
       syncSplitBtn(item);
-      if (item.classList.contains("expanded")) fitExpanded(); // 넓힌 채로 계속 늘려 준다
     });
     updatePassageCount(ta);
 
@@ -1545,24 +1573,12 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
     item.querySelector(".passage-merge-down").addEventListener("click", () => mergeRows(item, 1));
     splitBtn.addEventListener("click", () => splitRow(item));
 
-    /* ── '크게 보기' — 지문 전체를 스크롤 없이 한눈에 보이게 칸을 늘린다 ──
-       resize:vertical 손잡이를 매번 끌어 늘리는 게 긴 지문에서는 번거로워서,
-       버튼 하나로 실제 내용 길이만큼 즉시 펼친다. 화면 높이의 80%를 넘는 아주 긴
-       지문은 그 위에서 안쪽 스크롤로 바뀐다(칸 자체가 화면보다 커지지 않도록). */
-    const expandBtn = item.querySelector(".passage-expand");
-    function fitExpanded() {
-      ta.style.height = "auto";
-      const max = Math.round(window.innerHeight * 0.8);
-      ta.style.height = Math.min(ta.scrollHeight + 2, max) + "px";
-    }
-    expandBtn.addEventListener("click", () => {
-      const on = !item.classList.contains("expanded");
-      item.classList.toggle("expanded", on);
-      expandBtn.textContent = on ? "🔽 접기" : "🔍 크게 보기";
-      expandBtn.classList.toggle("active", on);
-      if (on) fitExpanded();
-      else ta.style.height = ""; // 원래 min-height·수동 크기 조절로 되돌림
-    });
+    /* 지문을 '중간에' 넣는 길. 목록 맨 아래에 붙는 '지문 추가'와 달리, 이 칸 바로
+       뒤에 새 칸을 끼운다 — 순서를 나중에 바꾸는 기능이 없어서, 3번과 4번 사이에
+       지문을 넣고 싶으면 이 길밖에 없다. 번호는 renumber가 화면 순서대로 다시
+       매기므로 뒷 지문들이 알아서 한 칸씩 밀린다.
+       (나누기가 쓰던 addRow의 '이 칸 뒤에' 인자를 그대로 쓴다) */
+    item.querySelector(".passage-add-here").addEventListener("click", () => addRow(true, item));
 
     item.querySelector(".passage-del").addEventListener("click", () => {
       item.remove();
@@ -2564,6 +2580,9 @@ tabBtns.forEach((btn) => {
     // '끝내기'로 남아, 다른 탭에서 눌렀을 때 엉뚱한 화면을 건드린다.
     if (pgHost && !pgHost.closest(`#tab-${btn.dataset.tab}`)) setPagingMode(false);
     if (btn.dataset.tab === "brief") updateBriefCostHint();
+    // 숨어 있는 동안 채워진 지문 칸(PDF 가져오기는 시험 범위 칸도 함께 채운다)은
+    // 높이를 잴 수 없어 기본 높이로 남아 있다 — 보이게 된 지금 다시 맞춘다
+    refitPassages();
     syncFloatPrint();
   });
 });
