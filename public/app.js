@@ -5209,7 +5209,7 @@ function setupQuizTab({ prefix, types, footer }) {
         // 변형 세트가 여럿이면 원래 순서(원문 → 변형)를 지킨다
         g.rank = Math.min(g.rank, q.__labelIdx != null ? q.__labelIdx : 0);
         g.questions.push(q);
-        // 변형 내역표에 같은 낱말이 지문 수만큼 반복되지 않게 걸러 담는다
+        // 형광 표시에 같은 낱말이 지문 수만큼 겹쳐 담기지 않게 걸러 담는다
         (q.__variations || set.variations || []).forEach((v) => {
           if (!v || !v.from || !v.to) return;
           const k = `${v.from} ${v.to}`;
@@ -5779,7 +5779,7 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true) {
   parts.push(`</div>`); // .qz-cards
   parts.push(`</section>`);
 
-  // 정답 및 해설(+지문 변형 내역)은 여기서 지면에 바로 넣지 않는다 — 지문이 여럿이면
+  // 정답 및 해설은 여기서 지면에 바로 넣지 않는다 — 지문이 여럿이면
   // 호출한 쪽이 이 값들을 모아서 문서 맨 뒤에 한 번에 붙인다(지문마다 답지가 중간에
   // 끼어 인쇄가 끊기던 문제를 없애기 위함). 화면 토글(.qz-reveal-btn)과는 별개로
   // 인쇄에는 이 답지만 실린다.
@@ -5811,19 +5811,9 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true) {
       )
       .join("");
 
-    // 지문 변형 내역 — 어떤 낱말을 무엇으로 바꿨는지. 문제지의 형광 표시는 인쇄되지
-    // 않지만 이 표는 인쇄된다. 선생님이 답지를 들고 확인하는 자료이기 때문이다.
-    const varied = (d.variations || []).filter((v) => v && v.from && v.to);
-    const variedHtml = varied.length
-      ? `
-      <h3 class="section"><span class="num">✏️</span> 지문 변형 내역 <span class="qz-varied-count">${varied.length}곳</span></h3>
-      <div class="table-wrap"><table class="answerkey variedkey">
-        <thead><tr><th>번호</th><th>원문</th><th>변형</th></tr></thead>
-        <tbody>${varied
-          .map((v, i) => `<tr><td>${i + 1}</td><td>${esc(v.from)}</td><td>${esc(v.to)}</td></tr>`)
-          .join("")}</tbody>
-      </table></div>`
-      : "";
+    /* 답지에 '지문 변형 내역' 표를 붙이던 자리다. 2026-09-15에 뺐다 — 어차피 보지
+       않는데 답지만 길어진다는 판단이다. 변형된 낱말은 화면의 형광 표시(markVariations)로
+       그대로 남는다. 되살리려면 d.variations를 표로 그리면 된다(서버는 지금도 보낸다). */
 
     // 지문이 여럿일 때만 어느 지문의 답인지 이름표를 단다(하나뿐이면 군더더기).
     const abLabel = banner ? `<div class="qz-ab-label">${esc(job.name)}${label ? ` <span class="passage-banner-tag">${esc(label)}</span>` : ""}</div>` : "";
@@ -5835,7 +5825,6 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true) {
           <thead><tr><th>번호</th><th>유형</th><th>정답</th>${expHead}</tr></thead>
           <tbody>${rows}</tbody>
         </table></div>
-        ${variedHtml}
       </div>`;
   }
 

@@ -783,12 +783,6 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .qz-answer-box.show{display:block;}
 .qz-answer-box b{color:var(--accent);}
 table.answerkey td:nth-child(1),table.answerkey td:nth-child(3){font-weight:700; color:var(--accent); white-space:nowrap;}
-/* 변형 내역표는 '원문' 열도 낱말이라 가운데 열까지 줄바꿈을 막는다 */
-table.variedkey td:nth-child(2){white-space:nowrap; color:var(--ink-soft); font-weight:600;}
-.qz-varied-count{
-  font-size:12px; font-weight:600; color:var(--ink-soft);
-  margin-left:6px; vertical-align:middle;
-}
 
 /* ── 소책자 분석 ──
    상세분석의 문장 카드(.sent)를 그대로 쓴다 — 색·루비까지 같은 규칙이다. 다른 것은
