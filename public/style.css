@@ -782,7 +782,13 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 }
 .qz-answer-box.show{display:block;}
 .qz-answer-box b{color:var(--accent);}
-table.answerkey td:nth-child(1),table.answerkey td:nth-child(3){font-weight:700; color:var(--accent); white-space:nowrap;}
+/* 번호·정답 두 열 (3열째는 해설) */
+table.answerkey td:nth-child(1),table.answerkey td:nth-child(2){font-weight:700; color:var(--accent); white-space:nowrap;}
+/* 시험지 배분표도 같은 class를 쓰는데 열 구성이 다르다(문항·유형·구분·쓴 지문).
+   정답표에 맞춰 잡은 굵은 글씨가 엉뚱한 열에 걸리므로 여기서 제자리로 돌린다.
+   (인쇄에는 안 실리는 화면용 제작 기록이라 폭 규칙은 손댈 것이 없다) */
+.exam-plan table.answerkey td:nth-child(2){font-weight:400; color:inherit; white-space:normal;}
+.exam-plan table.answerkey td:nth-child(3){font-weight:700; color:var(--accent); white-space:nowrap;}
 
 /* ── 소책자 분석 ──
    상세분석의 문장 카드(.sent)를 그대로 쓴다 — 색·루비까지 같은 규칙이다. 다른 것은
@@ -1827,6 +1833,18 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   .passage-block{break-before:page; page-break-before:always;}
   .passage-block:first-child,
   .qz-sheet-title + .passage-block{break-before:auto; page-break-before:auto;}
+  /* 문제지(.qz-block)만 예외 — 지문이 바뀌어도 쪽을 떼지 않고 이어 붙인다.
+     쪽을 떼면 한 지문의 마지막 문항이 왼쪽 단에서 끝났을 때 오른쪽 단이 통째로
+     빈 채 쪽이 넘어간다(문항 하나 때문에 지면 절반이 날아간다). 이어 붙이면 다음
+     지문의 첫 문항이 그 빈 오른쪽 단부터 들어찬다 — 실제 수능·모의고사 시험지가
+     지문 경계에서 쪽을 떼지 않는 것과 같다.
+     분석본·소책자·워크북은 지금처럼 지문마다 새 쪽에서 시작한다. 그쪽은 한 지문이
+     쪽을 여러 장 쓰는 긴 자료라, 경계에서 떼는 편이 오히려 찾아보기 쉽다. */
+  .qz-block{break-before:auto; page-break-before:auto;}
+  /* 지문이 바뀌는 자리를 눈으로 알아볼 만큼은 띄운다 */
+  .qz-block + .qz-block{margin-top:7mm;}
+  /* 지문 이름표만 쪽 맨 아래에 남고 문항은 다음 쪽으로 넘어가는 것을 막는다 */
+  .qz-block .passage-banner{break-after:avoid; page-break-after:avoid;}
   /* 표지는 한 장을 차지한다.
      아래 예외는 크로미움에서는 없어도 된다 — 표지의 break-after:page와 다음 지문의
      break-before:page를 하나로 합쳐 주어 빈 쪽이 생기지 않는다(예외를 끄고 인쇄해
@@ -1893,19 +1911,23 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   /* 긴 낱말·주소가 단 하나를 밀어 넓히지 못하게 */
   .qz-card{ overflow-wrap:break-word; }
 
-  /* 답지·배분표 — 열 폭을 못 박는다.
-     네 열 모두 폭을 적는다. 두 열만 적고 나머지를 브라우저에 맡기면 남는 폭을 반씩
-     나눠 주지 않고 내용 길이대로 갈라, 정답 열이 31px까지 쪼그라드는 일이 실제로 있었다.
-     주관식 답지에는 '해설' 열이 없는데, 그때는 합이 100%에 못 미치므로 브라우저가
-     남는 폭을 비례로 늘려 준다 — 정답 열이 가장 넓어져 오히려 알맞다. */
+  /* 답지 — 열 폭을 못 박는다(번호 · 정답 · 해설).
+     모든 열에 폭을 적고 합을 100%로 맞춘다. 일부만 적고 나머지를 브라우저에 맡기면
+     남는 폭을 고르게 나눠 주지 않고 적어 둔 폭에 비례해 갈라, 번호 열이 지면의
+     4할을 먹는 꼴이 된다(예전에 정답 열이 31px까지 쪼그라든 것과 같은 사정이다).
+     그래서 해설 열이 있는 객관식(.with-exp)과 없는 주관식을 따로 적는다.
+
+     객관식 정답은 ①②③④⑤ 한 글자라 8%면 넉넉하다. 남는 자리는 전부 해설에 준다 —
+     해설은 좁은 칸에 접히면 세로로 길어져 그대로 답지 쪽수가 된다.
+     주관식은 해설 열이 없고(2026-09-01 결정) 정답이 영어 문장 통째라 폭이 필요하다. */
   table.answerkey{ table-layout:fixed; }
-  table.answerkey th:nth-child(1), table.answerkey td:nth-child(1){ width:7%; }
-  table.answerkey th:nth-child(2), table.answerkey td:nth-child(2){ width:19%; }
-  table.answerkey th:nth-child(3), table.answerkey td:nth-child(3){ width:36%; }
-  table.answerkey th:nth-child(4), table.answerkey td:nth-child(4){ width:38%; }
+  table.answerkey th:nth-child(1), table.answerkey td:nth-child(1){ width:8%; }
+  table.answerkey th:nth-child(2), table.answerkey td:nth-child(2){ width:92%; }
+  table.answerkey.with-exp th:nth-child(2), table.answerkey.with-exp td:nth-child(2){ width:8%; }
+  table.answerkey.with-exp th:nth-child(3), table.answerkey.with-exp td:nth-child(3){ width:84%; }
   /* 화면에서는 '②'가 두 줄로 쪼개지지 않게 줄바꿈을 막아 두었는데, 서술형·요약문의
      정답은 문장 통째라 그 금지가 표를 지면 밖으로 밀어낸다. 인쇄에서는 접는다. */
-  table.answerkey td:nth-child(3){ white-space:normal; overflow-wrap:anywhere; }
+  table.answerkey td:nth-child(2){ white-space:normal; overflow-wrap:anywhere; }
 
   /* 표현 찾아 쓰기 — 우리말 190px + 답란 240px이 고정이라 2단 조판(단 폭 약 88mm)에서
      한 줄이 단을 넘긴다. 고정 폭을 비율로 바꿔 단 안에 들어오게 한다.

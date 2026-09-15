@@ -5819,12 +5819,17 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true) {
     const expCell = (q) =>
       anyExp ? `<td>${hasExp(q) ? safeHTML(q.explanation) : "—"}</td>` : "";
 
+    /* 답지 열은 번호·정답·해설 셋뿐이다. '유형' 열은 2026-09-15에 뺐다 — 유형은
+       시험지의 문항 머리(.qz-type)에 이미 찍혀 있어 답지에서 또 적을 까닭이 없는데,
+       19%를 차지해 정작 넓어야 할 해설 칸을 좁히고 있었다. 좁은 칸에 접힌 해설이
+       세로로 길어져 답지 쪽수를 늘리던 것이 실제 이유다.
+       with-exp는 아래 인쇄 CSS가 열 폭을 나누는 데 쓴다(해설이 있으면 정답 칸을
+       ①②③ 폭으로 좁히고, 해설이 없는 주관식이면 정답 칸이 지면을 다 쓴다). */
     const rows = d.questions
       .map(
         (q, i) => `
       <tr>
         <td>${i + 1}</td>
-        <td>${esc(q.type)}</td>
         <td>${quizAnswerLabel(q)}</td>${expCell(q)}
       </tr>`
       )
@@ -5840,8 +5845,8 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true) {
       <div class="qz-ab-passage">
         ${abLabel}
         <h3 class="section"><span class="num">📌</span> ${anyExp ? "정답 및 해설" : "정답"}</h3>
-        <div class="table-wrap"><table class="answerkey">
-          <thead><tr><th>번호</th><th>유형</th><th>정답</th>${expHead}</tr></thead>
+        <div class="table-wrap"><table class="answerkey${anyExp ? " with-exp" : ""}">
+          <thead><tr><th>번호</th><th>정답</th>${expHead}</tr></thead>
           <tbody>${rows}</tbody>
         </table></div>
       </div>`;
