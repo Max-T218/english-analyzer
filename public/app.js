@@ -5777,20 +5777,10 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true) {
   // 문항 카드는 별도 래퍼에 담는다 — 인쇄할 때 이 래퍼에만 2단 조판을 적용하고
   // '정답 및 해설' 표는 단 나눔 없이 전체 폭을 쓰게 하기 위해서다.
   parts.push(`<div class="qz-cards">`);
-  /* 지문 이름표를 이 래퍼 '안'에 넣는다(바깥에 두면 안 된다).
-     바깥에 두면 이름표와 문항이 서로 다른 덩어리가 되어, 2단 조판 덩어리가 통째로
-     다음 쪽으로 밀릴 때 이름표만 앞 쪽에 남는다 — '21번'만 덩그러니 남고 문제는
-     다음 쪽에서 시작하는 일이 실제로 있었다(2026-09-18).
-     CSS의 break-after:avoid로는 막지 못한다. 크로미움이 break-before/after의 avoid를
-     구현하지 않아 그냥 무시하기 때문이다(break-inside의 avoid만 듣는다).
-     한 덩어리에 넣으면 밀릴 때 이름표도 같이 밀려 절대 떨어지지 않는다.
-     화면에서는 .qz-cards에 아무 규칙이 없어 보이는 모양이 달라지지 않는다. */
-  if (banner) parts.push(banner);
-
   // 번호는 AI가 준 q.no 대신 '실제 출제(출력) 순서'로 다시 매긴다.
   // 문항이 유형별로 묶여 나오므로, 지면에 찍히는 순서와 번호가 어긋나지 않게 한다.
-  (d.questions || []).forEach((q, i) => {
-    parts.push(`
+  const cards = (d.questions || []).map(
+    (q, i) => `
       <div class="qz-card">
         <div class="qz-head"><span class="qz-no">${i + 1}</span><span class="qz-type">${esc(q.type)}</span></div>
         <div class="qz-instruction">${safeHTML(q.instruction)}</div>
@@ -5800,8 +5790,27 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true) {
           <b>정답 ${quizAnswerLabel(q)}</b><br>${safeHTML(q.explanation)}
         </div>
       </div>
-    `);
-  });
+    `
+  );
+
+  /* 지문 이름표는 첫 문항과 **한 상자(.qz-lead)에 묶어** 내보낸다.
+     쪽을 떼지 않고 이어 붙이게 바꾼 뒤로 이름표만 앞 쪽에 남는 일이 있었다 —
+     '21번'만 덩그러니 찍힌 쪽이 나오고 문제는 다음 쪽에서 시작했다.
+     두 번을 헛짚었으니 까닭을 적어 둔다.
+       ① break-after:avoid로 막으려 했다 → 크로미움이 break-before/after의 avoid를
+          구현하지 않아 무시한다. 듣는 것은 break-inside의 avoid뿐이다.
+       ② 이름표를 2단 조판 래퍼(.qz-cards) 안으로 옮겼다 → 래퍼가 쪽 경계에서 갈라질
+          때 이름표만 앞 조각에 남아 그대로였다. 같은 래퍼에 있다고 붙어 다니지 않는다.
+     첫 문항 카드는 break-inside:avoid라 통째로 움직인다. 이름표를 그 카드와 한 상자에
+     넣고 상자에도 같은 규칙을 주면, 카드가 다음 쪽으로 밀릴 때 이름표도 딸려 간다.
+     화면에서는 .qz-lead에 아무 규칙이 없어 보이는 모양이 달라지지 않는다. */
+  if (banner && cards.length) {
+    parts.push(`<div class="qz-lead">${banner}${cards[0]}</div>`);
+    parts.push(cards.slice(1).join(""));
+  } else {
+    if (banner) parts.push(banner);
+    parts.push(cards.join(""));
+  }
 
   parts.push(`</div>`); // .qz-cards
   parts.push(`</section>`);
