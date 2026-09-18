@@ -852,6 +852,8 @@ GEMINI_SCHEMA = {
                 "type": "OBJECT",
                 "properties": {
                     "no": {"type": "INTEGER"},
+                    # 대화문 지문에서 이 문장을 말한 사람. 설명문이면 빈 문자열이다.
+                    "speaker": {"type": "STRING"},
                     "tag": {"type": "STRING"},
                     "chunks": {
                         "type": "ARRAY",
@@ -885,8 +887,10 @@ GEMINI_SCHEMA = {
                     "examTags": {"type": "ARRAY", "items": {"type": "STRING"}},
                     "examNote": {"type": "STRING"},
                 },
-                "required": ["no", "tag", "chunks", "note", "isTopic", "examTags", "examNote"],
-                "propertyOrdering": ["no", "tag", "chunks", "note", "isTopic", "examTags", "examNote"],
+                "required": ["no", "speaker", "tag", "chunks", "note", "isTopic",
+                             "examTags", "examNote"],
+                "propertyOrdering": ["no", "speaker", "tag", "chunks", "note", "isTopic",
+                                     "examTags", "examNote"],
             },
         },
         # 주제 & 흐름 요약. 상세분석은 이 한 덩어리로 종이 한 쪽을 채운다.
@@ -2245,16 +2249,24 @@ def diff_variations(original, reworded):
 OCR_SCHEMA = {
     "type": "OBJECT",
     "properties": {
+        # "passage"(줄글) 또는 "dialogue"(대화문). 이 값에 따라 _join_ocr_lines가
+        # 항목을 공백으로 잇느냐(줄글) 줄바꿈으로 세우느냐(대화문)를 가른다.
+        "kind": {"type": "STRING"},
         "lines": {"type": "ARRAY", "items": {"type": "STRING"}},
         "note": {"type": "STRING"},
     },
-    "required": ["lines", "note"],
-    "propertyOrdering": ["lines", "note"],
+    "required": ["kind", "lines", "note"],
+    "propertyOrdering": ["kind", "lines", "note"],
 }
 
 OCR_SYSTEM_PROMPT = r"""You transcribe the English reading passage from ONE photo of Korean
 school/exam material (교과서·모의고사·문제집). Return ONLY the structured JSON in the schema —
 no markdown, no commentary.
+
+## kind — 이 사진이 줄글인가 대화문인가
+- "dialogue" — 화자 표시(M W G B A / Boy Girl Man Woman / Tom, Ms. Seo)로 시작하는
+  말차례가 여러 줄 이어지는 사진. 교과서의 Listen & Speak·Conversation 쪽이 그렇다.
+- "passage" — 그 밖의 모든 것(보통의 읽기 지문).
 
 ## Output shape — one SENTENCE per array item
 `lines` is an array. Put ONE sentence of the passage in each item, in order.
@@ -2279,7 +2291,11 @@ Report any problem you hit in `note`.
 - Korean translations, Korean explanations, vocabulary glosses, footnotes
 - Page numbers, headers, footers, source tags ("[2024학년도 수능]", "고3 3월 학평")
 - Handwriting and highlighter marks — transcribe the printed word underneath
-- Sentence markers at the start of sentences (❶ ① ➊ …) — drop the marker, keep the sentence
+- Sentence markers (❶ ① ➊ ❷ …) ANYWHERE in the text — at the start of a sentence, and
+  also in the middle of one (교과서는 문법 포인트에도 이 표시를 붙인다). Drop the marker,
+  keep every English word around it.
+- ⚠️ Speaker labels in a dialogue (M, W, G, B, Ms. Seo …) are NOT question numbers.
+  NEVER remove them — see the dialogue section below.
 
 ## Keep and repair
 - Keep the passage's own sentence order. Mark paragraph breaks with an empty item.
@@ -2289,6 +2305,17 @@ Report any problem you hit in `note`.
 - If the page has TWO COLUMNS, read the left column fully, then the right column.
 - Blanks printed in the passage (______ or (A)) stay as they are; mention them in `note`
   so the teacher knows this is a question version, not the original text.
+
+## Dialogue — when kind is "dialogue"
+- Put ONE SPEAKER TURN in each item, not one sentence. If a person says three sentences
+  in a row, they all go in the SAME item, in order.
+- Start every item with the speaker label exactly as printed, then one space:
+  "M We've waited for more than one hour, and we're still waiting."
+- Keep the turns in the order they appear. Never merge two people into one item.
+- A textbook page often holds SEVERAL SEPARATE mini-dialogues, numbered (1) (2) (3).
+  Drop those numbers, and put an empty item "" BETWEEN the mini-dialogues so the
+  teacher can tell where one conversation ends and the next begins.
+- Everything in "Transcribe EXACTLY" still holds — do not fix, translate or shorten.
 
 ## note (Korean, short)
 - "" when the photo was clean and fully readable.
@@ -2301,20 +2328,26 @@ Return valid JSON only."""
 _OCR_TRUNC_MSG = "사진의 글자가 너무 많아 옮기다가 잘렸습니다. 나눠 찍어 올려 주세요."
 
 
-def _join_ocr_lines(lines):
-    """문장별 배열을 다시 하나의 지문으로 잇는다.
-    빈 항목은 문단 경계이므로 빈 줄로 바꾸고, 나머지는 공백으로 잇는다."""
+def _join_ocr_lines(lines, kind=""):
+    """옮겨 적은 배열을 다시 하나의 지문으로 잇는다.
+    빈 항목은 어느 쪽이든 문단 경계라 빈 줄이 된다.
+
+    kind가 "dialogue"면 항목을 줄바꿈으로 세운다. 대화문은 한 항목이 한 사람의
+    말차례라, 줄글처럼 공백으로 이어 붙이면 누가 어디서부터 말하는지가 사라진다
+    (실제로 대화가 한 문단으로 뭉개져 들어왔다 — 2026-09-18).
+    그 밖에는 지금까지처럼 공백으로 이어 한 문단을 만든다."""
+    sep = chr(10) if str(kind or "").strip().lower() == "dialogue" else " "
     paras, cur = [], []
     for raw in lines or []:
         line = _TAG_STRIP_RE.sub("", str(raw or "")).strip()
         if not line:
             if cur:
-                paras.append(" ".join(cur))
+                paras.append(sep.join(cur))
                 cur = []
             continue
         cur.append(line)
     if cur:
-        paras.append(" ".join(cur))
+        paras.append(sep.join(cur))
     return "\n\n".join(paras).strip()
 
 
@@ -2376,7 +2409,7 @@ def call_gemini_ocr(file, api_key, model, partial=False):
     result = _gemini_json(payload, api_key, model, _OCR_TRUNC_MSG)
 
     # 문장별 배열을 다시 잇는다 (태그가 섞여 오면 걷어낸다)
-    text = _join_ocr_lines(result.get("lines"))
+    text = _join_ocr_lines(result.get("lines"), result.get("kind"))
     note = str(result.get("note") or "").strip()
     if not text:
         raise RuntimeError(
@@ -4215,6 +4248,23 @@ _OUTLINE_RULES = r"""## outline (주제 & 흐름 요약)
   어려운 단어를 고르는 자리가 아니다. **한 방향을 함께 가리키는** 낱말을 골라라.
 - `keywordNote` — 그 낱말들이 왜 한 방향인지 우리말 한 문장.
 
+### 지문이 대화문일 때
+위 규칙을 그대로 두되, 읽는 대상이 '글'이 아니라 '대화'임을 잊지 마라.
+대화문에 설명문의 틀(통념 → 반박 → 결론)을 씌워 맞추지 마라.
+- `topicEn` — 주제문이 아니라 **상황과 용건**을 적는다.
+  예: "A student asks a librarian to recommend a novel for his book report."
+- `oneLine` — **누가 누구와 무엇을 하려는 대화인지**를 쉬운 우리말로.
+  예: "독후감을 써야 하는 학생이 사서 선생님께 소설을 추천받는 대화다."
+- `stages` — 글의 전개가 아니라 **대화가 옮겨 가는 마디**로 끊는다.
+  · `name` — "인사" "용건" "추천" "확인" "마무리"처럼.
+  · `role` — **누가 무엇을 하는가**로. "학생이 찾아온 까닭을 밝힌다",
+    "선생님이 책을 짚어 주며 있는 곳을 일러 준다"처럼.
+  · `cue` — 그 대목 **첫 대사의 첫 두세 낱말**을 원문 그대로(화자 표시는 빼고).
+  · `bridge` — 다음 말차례가 답하는 질문. 예: "어떤 책을 추천할까?",
+    "그 책은 어디 있나?", "빌려 갈 수 있나?"
+- `keywords` — 상황을 가리키는 표현을 고른다(book report, recommend,
+  check it out처럼). 말차례를 여는 표현(How about ~?, Can you ~?)도 좋다.
+
 """
 
 
@@ -4272,6 +4322,28 @@ described by the schema. Follow these rules exactly.
   결과를 지시어 'this'로 받아 순서·문장삽입 단서가 뚜렷하다", "핵심 개념이 추상적으로
   제시돼 빈칸으로 만들기 좋다". If the sentence has NO isTopic and NO examTags, set examNote
   to an empty string "".
+
+## 대화문(dialogue) 지문 — speaker
+교과서의 Listen & Speak / Conversation 쪽도 그대로 들어온다. 한 줄이 화자 표시로
+시작하는 글이 여러 줄 이어지면 대화문으로 본다. 화자 표시는 한두 글자(B, G, W, M,
+A, S)이거나 Boy / Girl / Man / Woman / Tom / Ms. Seo 같은 이름이고, 뒤에 공백·콜론·
+점이 붙기도 한다.
+
+- `speaker` — 그 문장을 **말한 사람**을 원문 표기 그대로 적는다("B", "W", "Ms. Seo").
+  설명문·이야기처럼 화자 표시가 없는 지문은 **모든 문장이 빈 문자열 ""**이다.
+  한 지문 안에서 같은 사람은 늘 같은 표기를 쓴다.
+- 화자 표시 글자는 **청크에서 반드시 빼라.** "B Hello, Ms. Seo."는 speaker="B",
+  청크는 "Hello, Ms. Seo."다. 표시 글자를 영어 본문으로 취급해 해석하지 마라.
+- 한 사람의 말차례가 두 문장 이상이면 **문장마다 카드를 따로** 만들고, 그 카드들은
+  같은 speaker를 갖는다. 문장 번호는 대화 전체를 통해 1부터 이어서 매긴다
+  (사람이 바뀐다고 1로 돌아가지 않는다).
+- 대화문의 `tag`는 글의 역할이 아니라 **말의 기능**을 적는다 — "인사", "용건 꺼내기",
+  "추천 요청", "제안", "수락", "되묻기", "감탄", "약속", "마무리"처럼. 10자 안쪽.
+- 대화문은 주제문이 없는 것이 보통이다. 대화의 **용건이 가장 뚜렷한 한 문장**이
+  있을 때만 isTopic을 주고, 없으면 전부 false로 둔다.
+- 대화문의 examTags는 대부분 빈 배열이다. 내신에서 실제로 나오는 것은 "빈칸"(대답으로
+  알맞은 말 고르기)과 "순서"(대화 순서 배열) 정도다 — 말차례를 가르는 단서(지시어·
+  되묻기·대답)가 뚜렷한 문장에만 달아라.
 
 ## chunks — 청크(의미 단위) 배열: 각 청크마다 {text, kor, anns}
 IMPORTANT: You do NOT write ANY HTML for the English. The server paints the colors from your
@@ -7594,6 +7666,21 @@ CHANGELOG = [
             "붙였습니다. 전에는 한 지문의 마지막 문항이 왼쪽 단에서 끝나면 오른쪽 단을 "
             "통째로 비운 채 쪽이 넘어갔는데, 이제 다음 지문의 문항이 그 자리부터 "
             "들어찹니다. 지문이 바뀌는 자리는 '지문 5' 이름표로 구분됩니다.",
+        ],
+    },
+    {
+        "version": 32,
+        "date": "2026-09-18",
+        "items": [
+            "교과서 대화문(Listen & Speak·Conversation)을 지문 상세분석에 넣을 수 "
+            "있습니다. 문장 카드 번호 옆에 말한 사람(G·B·Ms. Seo)이 함께 뜨고, "
+            "문장 역할도 '도입·근거·결론'이 아니라 '의견 제시·반박·제안·수락'처럼 "
+            "말의 기능으로 붙습니다. 주제 & 흐름 요약도 '누가 누구와 무엇을 하려는 "
+            "대화인지'로 시작해, 대화가 옮겨 가는 마디를 따라 이어집니다.",
+            "사진으로 대화문을 가져오면 말한 사람과 줄이 그대로 살아서 들어옵니다. "
+            "한 쪽에 짧은 대화가 (1)(2)(3)처럼 여럿 있으면 번호는 떼고 사이를 빈 줄로 "
+            "나눠 주므로, '나누기'로 대화마다 칸을 가를 수 있습니다. 교과서의 "
+            "문법 포인트 표시(❶❷)는 문장 한가운데 있는 것까지 지워집니다.",
         ],
     },
 ]

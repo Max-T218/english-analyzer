@@ -1559,6 +1559,15 @@ u{
   min-width:24px; height:24px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center;
 }
 @media (prefers-color-scheme:dark) and (min-width:999999px){.sent-no{color:#0f141a;}}
+/* 대화문에서 이 말을 한 사람(B·W·Ms. Seo …). 설명문 지문에는 아예 그려지지 않는다.
+   번호와 같은 크기·모양으로 두되 속을 비워, 번호(찬 네모)와 화자(빈 네모)가 한눈에
+   구별되게 한다. 이름이 길 수도 있어(Ms. Seo) 폭은 내용에 맡긴다. */
+.sent-speaker{
+  border:1.5px solid var(--accent); color:var(--accent);
+  font-weight:700; font-size:12px; height:24px; padding:0 8px;
+  border-radius:7px; display:inline-flex; align-items:center; justify-content:center;
+  white-space:nowrap;
+}
 .sent-head{flex-wrap:wrap;}
 .sent-head .tag{font-size:11px; color:var(--ink-soft); letter-spacing:.03em;}
 /* 문제 유형 배지 */

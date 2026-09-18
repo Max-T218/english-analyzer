@@ -3701,6 +3701,12 @@ function buildAnalysisHtml(d, job, total, idx) {
       )
       .join("");
     const topic = s.isTopic ? " is-topic" : "";
+    /* 대화문 지문에서 이 말을 한 사람(B·W·Ms. Seo …). 설명문이면 빈 값이라 아무것도
+       그리지 않는다 — 지금까지의 카드 모양이 그대로 유지된다.
+       번호 바로 옆에 두는 까닭: 대화는 '누가 말했나'가 문장의 역할보다 먼저 읽혀야
+       한다(같은 문장도 묻는 쪽이 말했는지 답하는 쪽이 말했는지에 따라 뜻이 달라진다). */
+    const speaker = String(s.speaker || "").trim();
+    const speakerTag = speaker ? `<span class="sent-speaker">${esc(speaker)}</span>` : "";
     const topicBadge = s.isTopic ? `<span class="exam-tag et-topic">주제문</span>` : "";
     const examBadges = (s.examTags || [])
       .map((t) => `<span class="exam-tag et-${examCls(t)}">${esc(t)}</span>`)
@@ -3708,7 +3714,7 @@ function buildAnalysisHtml(d, job, total, idx) {
     parts.push(`
       <div class="pg-blk">
       <div class="sent${topic}">
-        <div class="sent-head"><span class="sent-no">${esc(s.no)}</span><span class="tag">${esc(s.tag)}</span><span class="exam-tags">${topicBadge}${examBadges}</span></div>
+        <div class="sent-head"><span class="sent-no">${esc(s.no)}</span>${speakerTag}<span class="tag">${esc(s.tag)}</span><span class="exam-tags">${topicBadge}${examBadges}</span></div>
         <div class="chunks">${chunksHtml}</div>
         <div class="note"><span class="note-title">${esc(s.no)}번 해설</span>${safeHTML(s.note)}${
           s.examNote
