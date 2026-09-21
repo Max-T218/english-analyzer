@@ -3232,6 +3232,45 @@ function revokeInfographics() {
    쓰므로 글자 크기가 유지된다. 두 장이면 각각 높이를 조금 낮춰 한 쪽에 맞춘다.
 
    data-brk="page" — 가로로 꽉 차는 그림이라 앞 내용에 이어 붙이면 반쪽이 잘린다. */
+
+/* 요약 이미지 요청 — 끊기면 같은 번호로 다시 묻는다.
+
+   2026-09-21에 지문 22개를 연달아 돌리다 한 장이 'Failed to fetch'로 죽었다.
+   서버는 그림을 다 만들고 500원까지 깎은 뒤였고 끊긴 것은 답장이 오는 길뿐이었다 —
+   돈은 나갔는데 그림은 못 받았다. 28분짜리 작업이라 중간에 한 번쯤 끊기는 것을
+   막을 도리가 없으니, 끊긴 뒤에 공짜로 다시 받아 오는 길을 낸다.
+
+   지문·언어 한 벌마다 요청번호를 하나 붙여 두고 그 번호로 다시 묻는다. 서버가
+   그 번호로 그림을 잠깐 들고 있다가 그대로 돌려준다(server.py의 _IMG_HOLD).
+   새로 만들지 않으므로 Gemini 요금도 회원 차감도 다시 일어나지 않는다.
+
+   ⚠️ 서버가 제대로 답한 오류는 다시 묻지 않는다. 한도 소진이나 생성 실패는 다시
+   물어도 같은 답이고, 그때는 서버가 들고 있는 그림도 없어서 진짜로 새로 만들게 된다
+   — 즉 값이 또 나간다. status가 붙어 있으면 '서버가 답을 했다'는 뜻이라 그것으로
+   가른다(status 없는 것 = 연결이 끊겼거나 중간 프록시가 가로챈 것). */
+const IMG_RETRY = 2;   // 처음 한 번 + 끊겼을 때 두 번까지
+
+function newImgReqId() {
+  return "ig" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+async function postInfographic(passage, lang, onRetry) {
+  const reqId = newImgReqId();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await postJson(
+        "/api/infographic",
+        { passage, lang, reqId },
+        "요약 이미지를 만들지 못했습니다."
+      );
+    } catch (err) {
+      if (err.status || attempt >= IMG_RETRY) throw err;
+      if (onRetry) onRetry(attempt + 1);
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    }
+  }
+}
+
 function infographicHost(idx) {
   const sec = resultEl.querySelector(`section.passage-block[data-entry="${idx}"]`);
   if (!sec) return null;
@@ -3358,11 +3397,10 @@ async function makeInfographics(todo) {
           ? `${job.name}${what} 요약 이미지 만드는 중… (${done}/${total})`
           : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
       try {
-        const data = await postJson(
-          "/api/infographic",
-          { passage: job.text, lang },
-          "요약 이미지를 만들지 못했습니다."
-        );
+        const data = await postInfographic(job.text, lang, (n) => {
+          loadingTextEl.textContent =
+            `${job.name}${what} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${n}/${IMG_RETRY})`;
+        });
         const src = b64ToBlobUrl(data.image, data.mime || "image/jpeg");
         // 두 종 이상 만들면 어느 판인지 적어 준다 — 안 적으면 인쇄한 뒤 구별이 안 된다
         if (addInfographic(idx, src, langs.length > 1 ? IMG_LANG_NAME[lang] : "")) okCount++;
@@ -4238,11 +4276,10 @@ briefBtn.addEventListener("click", async () => {
             ? `${job.name}${what} 요약 이미지 그리는 중… (${i + 1}/${jobs.length})`
             : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
         try {
-          const img = await postJson(
-            "/api/infographic",
-            { passage: job.text, lang },
-            "요약 이미지를 만들지 못했습니다."
-          );
+          const img = await postInfographic(job.text, lang, (n) => {
+            briefLoadingTextEl.textContent =
+              `${job.name}${what} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${n}/${IMG_RETRY})`;
+          });
           entry.images = entry.images || [];
           entry.images.push({
             src: b64ToBlobUrl(img.image, img.mime || "image/jpeg"),

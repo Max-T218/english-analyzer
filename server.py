@@ -27,6 +27,7 @@ import smtplib
 import socket
 import ssl
 import sys
+import threading
 import time
 import traceback
 import urllib.request
@@ -90,13 +91,21 @@ MODEL_PRO = _env("GEMINI_MODEL_PRO", "gemini-3.1-pro-preview")
 # 찍는 작업이라, 값이 아니라 '지시를 그대로 지키는가'로 고른다.
 #
 # ⚠️ 2026-08-29에 나노바나나 2(gemini-3.1-flash-image) · 1K로 옮겼다가 되돌렸다.
-#    원가가 절반(188원 → 94원)이고 한글 획도 안 깨져서 옮겼는데, 여섯 장을 뽑아 보니
-#    여섯 장 모두 사고가 났다:
+#    원가가 절반(188원 → 94원)이 될 줄 알고 한글 획도 안 깨져서 옮겼는데, 여섯 장을
+#    뽑아 보니 여섯 장 모두 사고가 났다:
 #      · 본문 한 덩어리를 그림 안에 두 번 그림 (네 줄 전부 반복한 적도 있다)
 #      · 지시문의 «» 구분 기호를 글자로 그림
 #      · 칸 번호 'part 1~4'를 그림 (예전에 'Heading:'이 찍히던 문제의 재발)
 #      · 글자를 흘림 (치료했했다 / oil-cenguin)
 #    프로 · 2K로는 같은 지시문으로 이런 적이 없다.
+#
+#    ⚠️ 그리고 **절반이 된다는 계산 자체가 틀렸다.** 2026-09-21에 청구서로 실측하니
+#    나노바나나 2는 장당 150원이었다 — 프로 2K(189원) 대비 20%, 장당 39원밖에
+#    안 싸다. 토큰 단가는 확실히 싼데(87,104원 대 168,691원/100만) 장당 토큰을
+#    1.5배 쓰기 때문이다(1,680 대 1,120). 그 여섯 장이 10,080 토큰 · 902원으로
+#    딱 떨어져 나와 계산이 확실하다.
+#    그래서 갈아탈 이유가 거의 없다 — 39원 아끼자고 그림을 다시 뽑게 되면
+#    오히려 값이 두 번 나간다. 2026-09-21에 프로 · 2K 유지로 정했다.
 #
 #    ⚠️ 다만 **모델과 화질을 한꺼번에 바꿨기 때문에 어느 쪽 탓인지 못 가렸다.**
 #    난 사고들이 '흐리게 그렸다'가 아니라 '시킨 걸 안 지켰다'라서 모델 쪽으로
@@ -228,6 +237,16 @@ PRICE_ANALYZE_KRW = int(os.environ.get("PRICE_ANALYZE_KRW", "300"))        # 지
 # 전부 가입 축하금(무상)으로만 쓰고 있어, 알려도 와닿지 않는 이야기이기 때문이다.
 # ⚠️ 유료 이용자가 생긴 뒤에 값을 또 바꾼다면 그때는 반드시 미리 알려야 한다.
 PRICE_INFOGRAPHIC_KRW = int(os.environ.get("PRICE_INFOGRAPHIC_KRW", "500"))
+# 만든 그림을 잠깐 들고 있는 시간(초)과 개수.
+# ⚠️ 왜 필요한가 — 2026-09-21에 지문 22개를 연달아 돌리다 한 장에서 'Failed to fetch'가
+#    났다. 서버는 그림을 다 만들고 500원까지 깎은 뒤였고, 끊긴 것은 '돌려보내는 길'뿐이다.
+#    즉 돈은 나갔는데 그림은 못 받았다. 다시 누르면 값이 또 나간다.
+#    그래서 만든 그림을 (회원, 요청번호)로 잠깐 들고 있다가, 같은 요청번호로 다시 물으면
+#    새로 만들지도 않고 차감도 하지 않고 그대로 돌려준다.
+# 개수를 작게 잡는 이유는 메모리다 — JPEG 2K 한 장이 base64로 1MB 남짓이라
+#    8장이면 10MB쯤 문다. 끊긴 직후 다시 묻는 용도라 오래 들고 있을 이유가 없다.
+INFOGRAPHIC_HOLD_SECONDS = int(os.environ.get("INFOGRAPHIC_HOLD_SECONDS", "600"))
+INFOGRAPHIC_HOLD_MAX = int(os.environ.get("INFOGRAPHIC_HOLD_MAX", "8"))
 # 소책자 분석, 지문 1개당. 상세분석(300원)보다 싸게 잡는다 — 문장을 청크로 쪼개고
 # 색·루비를 다는 일은 똑같이 하지만, 문장별 해설·출제 포인트·어휘표가 빠져 그만큼
 # 출력 토큰이 적다. 그 셋이 상세분석 출력의 대부분이다.
@@ -642,6 +661,55 @@ def login_with_password(email, password):
     if not _verify_password_hash(password, d["password_salt"], d["password_hash"]):
         raise ValueError("이메일 또는 비밀번호가 올바르지 않습니다.")
     return _user_doc_id(email), d
+
+# === 만든 그림을 잠깐 들고 있는 자리 ======================================
+# 위 INFOGRAPHIC_HOLD_SECONDS 주석 참고. 서버가 여러 갈래로 도니까(ThreadingHTTPServer)
+# 자물쇠를 건다. 회원 아이디를 열쇠에 함께 넣는 것이 중요하다 — 안 넣으면 남의
+# 요청번호를 찍어 맞히는 것만으로 남의 그림을 가져갈 수 있다.
+#
+# 서버가 다시 뜨면 비는데, 그래도 된다. 끊긴 그 자리에서 바로 다시 묻는 용도라
+# 재시작까지 버텨야 할 물건이 아니다(그 경우는 예전처럼 새로 만들고 값을 낸다).
+_IMG_HOLD = {}
+_IMG_HOLD_LOCK = threading.Lock()
+
+
+def _img_hold_key(user_id, req_id):
+    """요청번호는 화면이 만들어 보낸다. 길이·글자를 제한해 두는 것은 그것이 그대로
+    사전의 열쇠가 되기 때문이다 — 긴 문자열을 잔뜩 보내 메모리를 물게 할 수 없도록."""
+    rid = (req_id or "").strip()
+    if not rid or len(rid) > 64 or not re.fullmatch(r"[A-Za-z0-9_-]+", rid):
+        return None
+    return (user_id or "", rid)
+
+
+def _img_hold_get(user_id, req_id):
+    key = _img_hold_key(user_id, req_id)
+    if not key:
+        return None
+    now = time.time()
+    with _IMG_HOLD_LOCK:
+        row = _IMG_HOLD.get(key)
+        if not row:
+            return None
+        if now - row["at"] > INFOGRAPHIC_HOLD_SECONDS:
+            _IMG_HOLD.pop(key, None)
+            return None
+        return row["result"]
+
+
+def _img_hold_put(user_id, req_id, result):
+    key = _img_hold_key(user_id, req_id)
+    if not key:
+        return
+    now = time.time()
+    with _IMG_HOLD_LOCK:
+        _IMG_HOLD[key] = {"at": now, "result": result}
+        # 기한 지난 것부터 버리고, 그래도 넘치면 오래된 것부터 버린다.
+        for k in [k for k, v in _IMG_HOLD.items() if now - v["at"] > INFOGRAPHIC_HOLD_SECONDS]:
+            _IMG_HOLD.pop(k, None)
+        while len(_IMG_HOLD) > INFOGRAPHIC_HOLD_MAX:
+            _IMG_HOLD.pop(min(_IMG_HOLD, key=lambda k: _IMG_HOLD[k]["at"]), None)
+
 
 GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000"
 
@@ -10761,6 +10829,14 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(passage, str) or not passage.strip():
                 self._send_json({"error": "요약할 지문을 넣어 주세요."}, 400)
                 return
+            # 끊겼던 요청을 다시 묻는 것이라면, 만들어 둔 그림을 그대로 돌려준다.
+            # 새로 만들지 않으므로 Gemini 요금도, 회원 차감도 다시 일어나지 않는다.
+            # (잔액 확인은 이 위쪽 공통 처리에서 이미 지나왔지만, 여기서 돌려보내면
+            #  charge_krw를 부르지 않으니 실제로 깎이지 않는다.)
+            held = _img_hold_get(self._auth_user_id, req.get("reqId"))
+            if held is not None:
+                self._send_json(dict(held, reused=True))
+                return
             try:
                 # 말은 화면이 고른다(뜻만 달라질 뿐 호출 수도 원가도 같다).
                 # 크기·비율과 달리 값에 영향이 없으므로 화면이 정해도 안전하다.
@@ -10769,6 +10845,9 @@ class Handler(BaseHTTPRequestHandler):
                     lang = "mix"
                 result = call_gemini_infographic(passage, req.get("apiKey") or "", lang=lang)
                 charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
+                # 차감까지 끝낸 뒤에 넣는다. 여기서부터 답장이 끊기더라도, 화면이 같은
+                # 요청번호로 다시 물으면 값을 또 내지 않고 이 그림을 받아 간다.
+                _img_hold_put(self._auth_user_id, req.get("reqId"), result)
                 self._send_json(result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
