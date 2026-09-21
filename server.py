@@ -237,16 +237,20 @@ PRICE_ANALYZE_KRW = int(os.environ.get("PRICE_ANALYZE_KRW", "300"))        # 지
 # 전부 가입 축하금(무상)으로만 쓰고 있어, 알려도 와닿지 않는 이야기이기 때문이다.
 # ⚠️ 유료 이용자가 생긴 뒤에 값을 또 바꾼다면 그때는 반드시 미리 알려야 한다.
 PRICE_INFOGRAPHIC_KRW = int(os.environ.get("PRICE_INFOGRAPHIC_KRW", "500"))
-# 만든 그림을 잠깐 들고 있는 시간(초)과 개수.
+# 만들어 낸 결과물을 잠깐 들고 있는 시간(초)과 개수.
 # ⚠️ 왜 필요한가 — 2026-09-21에 지문 22개를 연달아 돌리다 한 장에서 'Failed to fetch'가
 #    났다. 서버는 그림을 다 만들고 500원까지 깎은 뒤였고, 끊긴 것은 '돌려보내는 길'뿐이다.
 #    즉 돈은 나갔는데 그림은 못 받았다. 다시 누르면 값이 또 나간다.
-#    그래서 만든 그림을 (회원, 요청번호)로 잠깐 들고 있다가, 같은 요청번호로 다시 물으면
-#    새로 만들지도 않고 차감도 하지 않고 그대로 돌려준다.
-# 개수를 작게 잡는 이유는 메모리다 — JPEG 2K 한 장이 base64로 1MB 남짓이라
-#    8장이면 10MB쯤 문다. 끊긴 직후 다시 묻는 용도라 오래 들고 있을 이유가 없다.
-INFOGRAPHIC_HOLD_SECONDS = int(os.environ.get("INFOGRAPHIC_HOLD_SECONDS", "600"))
+#    그래서 만든 것을 (회원, 기능, 요청번호)로 잠깐 들고 있다가, 같은 요청번호로 다시
+#    물으면 새로 만들지도 않고 차감도 하지 않고 그대로 돌려준다.
+#
+# 개수를 나눠 잡는 이유는 메모리다. 그림은 JPEG 2K 한 장이 base64로 1MB 남짓이라
+#    8장이면 10MB쯤 무는 반면, 문제·분석본은 글자라 한 벌에 수십 KB다. 한 그릇에 담으면
+#    문제를 몇 벌 만드는 사이에 그림이 밀려 나가므로 그릇을 둘로 나눈다.
+# 끊긴 직후 다시 묻는 용도라 오래 들고 있을 이유가 없다.
+RESULT_HOLD_SECONDS = int(os.environ.get("RESULT_HOLD_SECONDS", "600"))
 INFOGRAPHIC_HOLD_MAX = int(os.environ.get("INFOGRAPHIC_HOLD_MAX", "8"))
+RESULT_HOLD_MAX = int(os.environ.get("RESULT_HOLD_MAX", "40"))
 # 소책자 분석, 지문 1개당. 상세분석(300원)보다 싸게 잡는다 — 문장을 청크로 쪼개고
 # 색·루비를 다는 일은 똑같이 하지만, 문장별 해설·출제 포인트·어휘표가 빠져 그만큼
 # 출력 토큰이 적다. 그 셋이 상세분석 출력의 대부분이다.
@@ -662,53 +666,66 @@ def login_with_password(email, password):
         raise ValueError("이메일 또는 비밀번호가 올바르지 않습니다.")
     return _user_doc_id(email), d
 
-# === 만든 그림을 잠깐 들고 있는 자리 ======================================
-# 위 INFOGRAPHIC_HOLD_SECONDS 주석 참고. 서버가 여러 갈래로 도니까(ThreadingHTTPServer)
+# === 만들어 낸 것을 잠깐 들고 있는 자리 ====================================
+# 위 RESULT_HOLD_SECONDS 주석 참고. 서버가 여러 갈래로 도니까(ThreadingHTTPServer)
 # 자물쇠를 건다. 회원 아이디를 열쇠에 함께 넣는 것이 중요하다 — 안 넣으면 남의
-# 요청번호를 찍어 맞히는 것만으로 남의 그림을 가져갈 수 있다.
+# 요청번호를 찍어 맞히는 것만으로 남이 만든 것을 가져갈 수 있다.
 #
 # 서버가 다시 뜨면 비는데, 그래도 된다. 끊긴 그 자리에서 바로 다시 묻는 용도라
 # 재시작까지 버텨야 할 물건이 아니다(그 경우는 예전처럼 새로 만들고 값을 낸다).
-_IMG_HOLD = {}
-_IMG_HOLD_LOCK = threading.Lock()
+#
+# 그릇이 둘이다 — 그림은 무겁고 글자는 가벼워 상한을 따로 둔다.
+_HOLD = {"image": {}, "text": {}}
+_HOLD_MAX = {"image": INFOGRAPHIC_HOLD_MAX, "text": RESULT_HOLD_MAX}
+_HOLD_LOCK = threading.Lock()
 
 
-def _img_hold_key(user_id, req_id):
+def _hold_bin(path):
+    return "image" if path == "/api/infographic" else "text"
+
+
+def _hold_key(user_id, path, req_id):
     """요청번호는 화면이 만들어 보낸다. 길이·글자를 제한해 두는 것은 그것이 그대로
-    사전의 열쇠가 되기 때문이다 — 긴 문자열을 잔뜩 보내 메모리를 물게 할 수 없도록."""
+    사전의 열쇠가 되기 때문이다 — 긴 문자열을 잔뜩 보내 메모리를 물게 할 수 없도록.
+
+    기능(path)까지 열쇠에 넣는다. 화면이 요청번호를 기능마다 새로 만들지만, 혹시
+    같은 번호가 겹치더라도 분석본을 달라는데 문제지가 나가는 일은 없어야 한다."""
     rid = (req_id or "").strip()
     if not rid or len(rid) > 64 or not re.fullmatch(r"[A-Za-z0-9_-]+", rid):
         return None
-    return (user_id or "", rid)
+    return (user_id or "", path or "", rid)
 
 
-def _img_hold_get(user_id, req_id):
-    key = _img_hold_key(user_id, req_id)
+def _hold_get(user_id, path, req_id):
+    key = _hold_key(user_id, path, req_id)
     if not key:
         return None
+    bin_ = _HOLD[_hold_bin(path)]
     now = time.time()
-    with _IMG_HOLD_LOCK:
-        row = _IMG_HOLD.get(key)
+    with _HOLD_LOCK:
+        row = bin_.get(key)
         if not row:
             return None
-        if now - row["at"] > INFOGRAPHIC_HOLD_SECONDS:
-            _IMG_HOLD.pop(key, None)
+        if now - row["at"] > RESULT_HOLD_SECONDS:
+            bin_.pop(key, None)
             return None
         return row["result"]
 
 
-def _img_hold_put(user_id, req_id, result):
-    key = _img_hold_key(user_id, req_id)
+def _hold_put(user_id, path, req_id, result):
+    key = _hold_key(user_id, path, req_id)
     if not key:
         return
+    bin_ = _HOLD[_hold_bin(path)]
+    cap = _HOLD_MAX[_hold_bin(path)]
     now = time.time()
-    with _IMG_HOLD_LOCK:
-        _IMG_HOLD[key] = {"at": now, "result": result}
+    with _HOLD_LOCK:
+        bin_[key] = {"at": now, "result": result}
         # 기한 지난 것부터 버리고, 그래도 넘치면 오래된 것부터 버린다.
-        for k in [k for k, v in _IMG_HOLD.items() if now - v["at"] > INFOGRAPHIC_HOLD_SECONDS]:
-            _IMG_HOLD.pop(k, None)
-        while len(_IMG_HOLD) > INFOGRAPHIC_HOLD_MAX:
-            _IMG_HOLD.pop(min(_IMG_HOLD, key=lambda k: _IMG_HOLD[k]["at"]), None)
+        for k in [k for k, v in bin_.items() if now - v["at"] > RESULT_HOLD_SECONDS]:
+            bin_.pop(k, None)
+        while len(bin_) > cap:
+            bin_.pop(min(bin_, key=lambda k: bin_[k]["at"]), None)
 
 
 GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000"
@@ -9584,6 +9601,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _charge_and_send(self, path, req, result):
+        """만들기가 성공했을 때 지나는 문 — 차감하고, 잠깐 들고, 돌려보낸다.
+
+        생성 계열 응답은 전부 여기를 지난다. 한 자리에 모아 둔 것은 순서가 중요해서다:
+        차감을 먼저 하고 그다음에 들고 있어야, 여기서부터 답장이 끊기더라도 화면이 같은
+        요청번호로 다시 물어 값을 두 번 내지 않고 받아 갈 수 있다(_hold_get 참고)."""
+        charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
+        _hold_put(self._auth_user_id, path, (req or {}).get("reqId"), result)
+        self._send_json(result)
+
     def _session_cookie(self, token):
         """Max-Age를 일부러 붙이지 않는다 — 브라우저를 닫으면 함께 사라지는 쿠키가 된다.
 
@@ -10049,6 +10076,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "로그인이 필요한 서비스입니다."}, 401)
                 return
             self._auth_user_id = user_id
+            # 끊겼던 요청을 다시 묻는 것이라면, 만들어 둔 것을 그대로 돌려준다.
+            # 새로 만들지 않으므로 Gemini 요금도 회원 차감도 다시 일어나지 않는다.
+            # 잔액 확인보다 앞에 두는 것이 중요하다 — 이미 값을 낸 결과를 받아 가는
+            # 길이라, 그 차감으로 잔액이 바닥났다고 해서 막히면 안 된다.
+            if path in GENERATE_PATHS:
+                held = _hold_get(user_id, path, req.get("reqId"))
+                if held is not None:
+                    self._send_json(dict(held, reused=True))
+                    return
             if path in GENERATE_PATHS:
                 # 이용 내역에 남길 항목 이름도 여기서 정한다 — 가격을 계산하는 자리가
                 # 무엇을 몇 개 만드는지 아는 유일한 자리다. 지문 원문은 넣지 않는다.
@@ -10658,8 +10694,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
-            charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
-            self._send_json(result)
+            self._charge_and_send(path, req, result)
             return
 
         # 지문 변형본을 먼저 확정하는 단계. 유형을 나눠 여러 번 문제를 만들어도
@@ -10677,8 +10712,7 @@ class Handler(BaseHTTPRequestHandler):
             partial = bool(req.get("partial"))
             try:
                 ocr_result = call_gemini_ocr(file, api_key, model, partial)
-                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
-                self._send_json(ocr_result)
+                self._charge_and_send(path, req, ocr_result)
             except Recitation as e:
                 # 화면이 '사진을 조각내어 다시 시도'로 넘어갈 수 있게 식별자를 붙인다
                 self._send_json({"error": str(e), "code": "recitation"}, 502)
@@ -10702,8 +10736,7 @@ class Handler(BaseHTTPRequestHandler):
             model = MODEL  # 항상 Flash — 사용자가 모델을 고르지 않는다
             try:
                 result = call_gemini_vocab_ocr(file, api_key, model)
-                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
-                self._send_json(result)
+                self._charge_and_send(path, req, result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
             except ProUnavailable as e:
@@ -10767,8 +10800,7 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:
                     self._send_json({"error": str(e)}, 502)
                     return
-                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
-                self._send_json({"mode": "ai", "items": found["items"], "note": found["note"]})
+                self._charge_and_send(path, req, {"mode": "ai", "items": found["items"], "note": found["note"]})
                 return
             items = parse_vocab_lines_rule(pages)
             self._send_json({
@@ -10829,14 +10861,6 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(passage, str) or not passage.strip():
                 self._send_json({"error": "요약할 지문을 넣어 주세요."}, 400)
                 return
-            # 끊겼던 요청을 다시 묻는 것이라면, 만들어 둔 그림을 그대로 돌려준다.
-            # 새로 만들지 않으므로 Gemini 요금도, 회원 차감도 다시 일어나지 않는다.
-            # (잔액 확인은 이 위쪽 공통 처리에서 이미 지나왔지만, 여기서 돌려보내면
-            #  charge_krw를 부르지 않으니 실제로 깎이지 않는다.)
-            held = _img_hold_get(self._auth_user_id, req.get("reqId"))
-            if held is not None:
-                self._send_json(dict(held, reused=True))
-                return
             try:
                 # 말은 화면이 고른다(뜻만 달라질 뿐 호출 수도 원가도 같다).
                 # 크기·비율과 달리 값에 영향이 없으므로 화면이 정해도 안전하다.
@@ -10844,11 +10868,7 @@ class Handler(BaseHTTPRequestHandler):
                 if lang not in INFOGRAPHIC_LANGS:
                     lang = "mix"
                 result = call_gemini_infographic(passage, req.get("apiKey") or "", lang=lang)
-                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
-                # 차감까지 끝낸 뒤에 넣는다. 여기서부터 답장이 끊기더라도, 화면이 같은
-                # 요청번호로 다시 물으면 값을 또 내지 않고 이 그림을 받아 간다.
-                _img_hold_put(self._auth_user_id, req.get("reqId"), result)
-                self._send_json(result)
+                self._charge_and_send(path, req, result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
             except ProUnavailable as e:
@@ -10914,8 +10934,7 @@ class Handler(BaseHTTPRequestHandler):
                         "error": found["note"] or "이 PDF에서 영어 지문을 찾지 못했습니다."
                     }, 422)
                     return
-                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
-                self._send_json({"mode": "ai", "passages": found["passages"],
+                self._charge_and_send(path, req, {"mode": "ai", "passages": found["passages"],
                                  "note": found["note"]})
                 return
             split = split_pdf_passages(pages)
@@ -10954,8 +10973,7 @@ class Handler(BaseHTTPRequestHandler):
                 page_from = page_total = 0
             try:
                 scan = call_gemini_exam_scan(files, api_key, model, page_from, page_total)
-                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
-                self._send_json(scan)
+                self._charge_and_send(path, req, scan)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
             except ProUnavailable as e:
@@ -10977,10 +10995,9 @@ class Handler(BaseHTTPRequestHandler):
             model = MODEL_PRO if variation == "heavy" else MODEL
             try:
                 reworded = call_gemini_reword(passage, variation, api_key, model)
-                charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
                 # 바뀐 낱말 목록을 함께 돌려준다 — 화면이 지문에서 그 낱말을 표시하고
                 # 해설지에 '원문 → 변형' 표를 싣는 데 쓴다.
-                self._send_json({
+                self._charge_and_send(path, req, {
                     "passage": reworded,
                     "variations": diff_variations(passage, reworded),
                 })
@@ -11084,8 +11101,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
                 return
-            charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
-            self._send_json(result)
+            self._charge_and_send(path, req, result)
             return
 
         # 소책자 분석(요약). 상세분석과 달리 보정 재요청 고리가 없다 — 담는 것이
@@ -11156,9 +11172,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 502)
                 return
             trace.log(MODEL, passage, label="소책자")
-            charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
             result.pop("_rubyBad", None)   # 비공개 키 — 화면으로 내보내지 않는다
-            self._send_json(result)
+            self._charge_and_send(path, req, result)
             return
 
         passage = (req.get("passage") or "").strip()
@@ -11320,8 +11335,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)}, 502)
             return
         trace.log(model, passage)
-        charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
-        self._send_json(result)
+        self._charge_and_send(path, req, result)
 
 
 def main():

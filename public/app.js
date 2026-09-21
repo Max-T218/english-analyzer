@@ -331,6 +331,43 @@ async function postJson(url, payload, fallbackMsg) {
   return data;
 }
 
+/* 값이 나가는 요청 — 끊기면 같은 번호로 다시 묻는다.
+
+   2026-09-21에 지문 22개를 연달아 돌리다 요약 이미지 한 장이 'Failed to fetch'로
+   죽었다. 서버는 그림을 다 만들고 500원까지 깎은 뒤였고 끊긴 것은 답장이 오는
+   길뿐이었다 — 돈은 나갔는데 결과물은 못 받았다. 28분짜리 작업이라 중간에 한 번쯤
+   끊기는 것을 막을 도리가 없으니, 끊긴 뒤에 공짜로 다시 받아 오는 길을 낸다.
+
+   요청마다 번호를 하나 붙여 보내고, 끊기면 같은 번호로 다시 묻는다. 서버가 그
+   번호로 만든 것을 10분간 들고 있다가 그대로 돌려준다(server.py의 _hold_get).
+   새로 만들지 않으므로 Gemini 요금도 회원 차감도 다시 일어나지 않는다.
+
+   ⚠️ 값이 나가는 요청에만 쓴다. 로그인·저장·삭제처럼 공짜인 것에 붙이면 끊겼을 때
+   같은 일이 두 번 일어날 수 있다(서버가 들고 있는 것이 없으니 그냥 다시 실행된다).
+
+   ⚠️ 서버가 제대로 답한 오류는 다시 묻지 않는다. 한도 소진이나 생성 실패는 다시
+   물어도 같은 답이고, 그때는 서버가 들고 있는 것도 없어서 진짜로 새로 만들게 된다
+   — 즉 값이 또 나간다. status가 붙어 있으면 '서버가 답을 했다'는 뜻이라 그것으로
+   가른다(status 없는 것 = 연결이 끊겼거나 중간 프록시가 가로챈 것). */
+const GEN_RETRY = 2;   // 처음 한 번 + 끊겼을 때 두 번까지
+
+function newReqId() {
+  return "r" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+async function postGenerate(url, payload, fallbackMsg, onRetry) {
+  const reqId = newReqId();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await postJson(url, Object.assign({}, payload, { reqId }), fallbackMsg);
+    } catch (err) {
+      if (err.status || attempt >= GEN_RETRY) throw err;
+      if (onRetry) onRetry(attempt + 1);
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    }
+  }
+}
+
 // 할당량 소진인가? — 서버가 code를 붙여 주면 그것으로 판정하고,
 // 예전 응답이나 예외 상황을 대비해 메시지 문구로도 한 번 더 확인한다.
 // 이 키로 Pro를 쓸 수 없는 경우 — 모델만 바꾸면 되므로 한도 소진과 구분해 안내한다
@@ -2011,7 +2048,7 @@ async function ocrBySlices(file, who, onProgress) {
       for (let i = 0; i < slices.length; i++) {
         onProgress(`나눠 읽는 중… (${i + 1}/${slices.length})`);
         const part = slices[i];
-        const data = await postJson(
+        const data = await postGenerate(
           "/api/ocr",
           { file: part, partial: true },
           "조각을 옮기지 못했습니다."
@@ -2070,7 +2107,7 @@ async function runOcr(fileList) {
       }
       let data;
       try {
-        data = await postJson(
+        data = await postGenerate(
           "/api/ocr",
           { file: part },
           "사진에서 지문을 옮기지 못했습니다."
@@ -2310,7 +2347,7 @@ async function runPdfImport(fileList, mgr, status) {
         continue;
       }
       const payload = { file: { mime: "application/pdf", data } };
-      let res = await postJson("/api/pdfsplit", payload, "PDF에서 지문을 꺼내지 못했습니다.");
+      let res = await postGenerate("/api/pdfsplit", payload, "PDF에서 지문을 꺼내지 못했습니다.");
       if (!res.passages.length && res.canAi) {
         // 규칙으로는 못 나눴다. AI에게 경계만 물어본다 — 값이 매겨져 있으면 먼저 확인한다.
         if (!(await costConfirmed(PRICING ? PRICING.pdfSplit : 0,
@@ -2319,7 +2356,7 @@ async function runPdfImport(fileList, mgr, status) {
           continue;
         }
         status(`<span class="spinner"></span> ${esc(who)} AI가 지문 경계를 찾는 중…`);
-        res = await postJson("/api/pdfsplit", Object.assign({ ai: true }, payload),
+        res = await postGenerate("/api/pdfsplit", Object.assign({ ai: true }, payload),
                              "PDF에서 지문을 꺼내지 못했습니다.");
         notes.push(`${who}: 규칙으로 나누지 못해 AI가 경계를 찾았습니다. 지문이 어디서 끊겼는지 특히 잘 확인하세요.`);
       }
@@ -3127,7 +3164,7 @@ async function analyze() {
     }
 
     try {
-      const data = await postJson(
+      const data = await postGenerate(
         "/api/analyze",
         {
           passage: job.text,
@@ -3232,44 +3269,6 @@ function revokeInfographics() {
    쓰므로 글자 크기가 유지된다. 두 장이면 각각 높이를 조금 낮춰 한 쪽에 맞춘다.
 
    data-brk="page" — 가로로 꽉 차는 그림이라 앞 내용에 이어 붙이면 반쪽이 잘린다. */
-
-/* 요약 이미지 요청 — 끊기면 같은 번호로 다시 묻는다.
-
-   2026-09-21에 지문 22개를 연달아 돌리다 한 장이 'Failed to fetch'로 죽었다.
-   서버는 그림을 다 만들고 500원까지 깎은 뒤였고 끊긴 것은 답장이 오는 길뿐이었다 —
-   돈은 나갔는데 그림은 못 받았다. 28분짜리 작업이라 중간에 한 번쯤 끊기는 것을
-   막을 도리가 없으니, 끊긴 뒤에 공짜로 다시 받아 오는 길을 낸다.
-
-   지문·언어 한 벌마다 요청번호를 하나 붙여 두고 그 번호로 다시 묻는다. 서버가
-   그 번호로 그림을 잠깐 들고 있다가 그대로 돌려준다(server.py의 _IMG_HOLD).
-   새로 만들지 않으므로 Gemini 요금도 회원 차감도 다시 일어나지 않는다.
-
-   ⚠️ 서버가 제대로 답한 오류는 다시 묻지 않는다. 한도 소진이나 생성 실패는 다시
-   물어도 같은 답이고, 그때는 서버가 들고 있는 그림도 없어서 진짜로 새로 만들게 된다
-   — 즉 값이 또 나간다. status가 붙어 있으면 '서버가 답을 했다'는 뜻이라 그것으로
-   가른다(status 없는 것 = 연결이 끊겼거나 중간 프록시가 가로챈 것). */
-const IMG_RETRY = 2;   // 처음 한 번 + 끊겼을 때 두 번까지
-
-function newImgReqId() {
-  return "ig" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
-}
-
-async function postInfographic(passage, lang, onRetry) {
-  const reqId = newImgReqId();
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await postJson(
-        "/api/infographic",
-        { passage, lang, reqId },
-        "요약 이미지를 만들지 못했습니다."
-      );
-    } catch (err) {
-      if (err.status || attempt >= IMG_RETRY) throw err;
-      if (onRetry) onRetry(attempt + 1);
-      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
-    }
-  }
-}
 
 function infographicHost(idx) {
   const sec = resultEl.querySelector(`section.passage-block[data-entry="${idx}"]`);
@@ -3397,10 +3396,15 @@ async function makeInfographics(todo) {
           ? `${job.name}${what} 요약 이미지 만드는 중… (${done}/${total})`
           : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
       try {
-        const data = await postInfographic(job.text, lang, (n) => {
-          loadingTextEl.textContent =
-            `${job.name}${what} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${n}/${IMG_RETRY})`;
-        });
+        const data = await postGenerate(
+          "/api/infographic",
+          { passage: job.text, lang },
+          "요약 이미지를 만들지 못했습니다.",
+          (n) => {
+            loadingTextEl.textContent =
+              `${job.name}${what} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${n}/${GEN_RETRY})`;
+          }
+        );
         const src = b64ToBlobUrl(data.image, data.mime || "image/jpeg");
         // 두 종 이상 만들면 어느 판인지 적어 준다 — 안 적으면 인쇄한 뒤 구별이 안 된다
         if (addInfographic(idx, src, langs.length > 1 ? IMG_LANG_NAME[lang] : "")) okCount++;
@@ -4260,7 +4264,7 @@ briefBtn.addEventListener("click", async () => {
     briefLoadingTextEl.textContent =
       jobs.length > 1 ? `${job.name} 분석하는 중… (${i + 1}/${jobs.length})` : "AI가 소책자 분석을 만들고 있습니다…";
     try {
-      const data = await postJson(
+      const data = await postGenerate(
         "/api/brief",
         { passage: job.text, targetGrammar: grammarEl.value },
         "소책자 분석에 실패했습니다."
@@ -4276,10 +4280,15 @@ briefBtn.addEventListener("click", async () => {
             ? `${job.name}${what} 요약 이미지 그리는 중… (${i + 1}/${jobs.length})`
             : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
         try {
-          const img = await postInfographic(job.text, lang, (n) => {
-            briefLoadingTextEl.textContent =
-              `${job.name}${what} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${n}/${IMG_RETRY})`;
-          });
+          const img = await postGenerate(
+            "/api/infographic",
+            { passage: job.text, lang },
+            "요약 이미지를 만들지 못했습니다.",
+            (n) => {
+              briefLoadingTextEl.textContent =
+                `${job.name}${what} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${n}/${GEN_RETRY})`;
+            }
+          );
           entry.images = entry.images || [];
           entry.images.push({
             src: b64ToBlobUrl(img.image, img.mime || "image/jpeg"),
@@ -5099,7 +5108,7 @@ function setupQuizTab({ prefix, types, footer }) {
             loadingTextEl.textContent = `${tag} 지문 변형본 만드는 중…`;
             const rwStart = Date.now();
             try {
-              const r = await postJson(
+              const r = await postGenerate(
                 "/api/reword",
                 { passage: job.text, variation },
                 "지문 변형에 실패했습니다."
@@ -5132,7 +5141,7 @@ function setupQuizTab({ prefix, types, footer }) {
                 : "AI가 문제를 만들고 있습니다…";
             const qzStart = Date.now();
             try {
-              const data = await postJson(
+              const data = await postGenerate(
                 "/api/quiz",
                 {
                   passage: source,
@@ -6287,7 +6296,7 @@ async function generateWorkbook() {
     }
 
     try {
-      const data = await postJson(
+      const data = await postGenerate(
         "/api/workbook",
         // stages는 요금 계산에 쓰인다 — 서버가 단계 수로 값을 매기므로 반드시 보낸다.
         // (만들어지는 내용은 8단계분이 통째로 오고, 고른 것만 화면이 그린다.)
@@ -7399,7 +7408,7 @@ async function runVocabOcr(fileList) {
         fails.push(`${who} — 사진이 너무 큽니다. 더 작게 찍어 올려 주세요.`);
         continue;
       }
-      const data = await postJson(
+      const data = await postGenerate(
         "/api/vocabocr",
         { file: part },
         "사진에서 단어 목록을 읽지 못했습니다."
@@ -7463,7 +7472,7 @@ async function runVocabPdf(fileList) {
         continue;
       }
       const payload = { file: { mime: "application/pdf", data } };
-      let res = await postJson("/api/vocabpdf", payload, "PDF에서 단어 목록을 꺼내지 못했습니다.");
+      let res = await postGenerate("/api/vocabpdf", payload, "PDF에서 단어 목록을 꺼내지 못했습니다.");
       if (!res.items.length && res.canAi) {
         if (!(await costConfirmed(PRICING ? PRICING.vocabPdf : 0,
                            `${who}\n\n표 모양을 규칙으로 읽지 못했습니다. AI로 다시 찾아볼까요?`))) {
@@ -7471,7 +7480,7 @@ async function runVocabPdf(fileList) {
           continue;
         }
         vocabBuildStatus(`<span class="spinner"></span> ${esc(who)} AI가 단어 목록을 정리하는 중…`);
-        res = await postJson("/api/vocabpdf", Object.assign({ ai: true }, payload),
+        res = await postGenerate("/api/vocabpdf", Object.assign({ ai: true }, payload),
                              "PDF에서 단어 목록을 꺼내지 못했습니다.");
         notes.push(`${who}: 규칙으로 못 읽어 AI가 정리했습니다. 짝이 맞는지 특히 잘 확인하세요.`);
       }
@@ -9149,7 +9158,7 @@ async function runExamScan() {
         ? `AI가 시험지를 읽고 있습니다… (${b + 1}/${batches.length}) — ${from}~${to}쪽`
         : `AI가 시험지 ${examPages.length}쪽을 읽고 있습니다… (1~3분 걸립니다)`;
     try {
-      const scan = await postJson(
+      const scan = await postGenerate(
         "/api/examscan",
         { files, pageFrom: from, pageTotal: examPages.length },
         "시험지 분석에 실패했습니다."
@@ -9758,7 +9767,7 @@ async function runExamPaper() {
       const job = jobOf(r.passageNo);
       if (!job) continue;
       try {
-        const data = await postJson(
+        const data = await postGenerate(
           "/api/quiz",
           {
             passage: job.text,
