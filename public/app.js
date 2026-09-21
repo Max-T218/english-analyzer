@@ -4813,8 +4813,10 @@ function setupQuizTab({ prefix, types, footer }) {
           "지문을 외워서 푸는 것을 막습니다. 번호는 섞인 순서대로 1번부터 이어지고, " +
           "<b>모든 지문이 끝난 뒤 한 번에</b> 화면에 나타납니다."
         : shuffleInPassage()
-        ? "<b>지문 묶음은 그대로 두고</b>, 그 안에서 유형 순서만 섞습니다. 지문마다 1번부터 번호가 다시 매겨집니다."
-        : "위 <b>유형 칸에 놓인 순서대로</b> 출제됩니다. 문제지도 이 순서대로 만들어집니다.";
+        ? "<b>지문 묶음은 그대로 두고</b>, 그 안에서 유형 순서만 섞습니다. " +
+          "번호는 시험지 전체에 1번부터 이어지고, 지문이 바뀌는 자리는 <b>지문 이름표</b>로 구분됩니다."
+        : "위 <b>유형 칸에 놓인 순서대로</b> 출제됩니다. 문제지도 이 순서대로 만들어집니다. " +
+          "번호는 시험지 전체에 1번부터 이어지고, 지문이 바뀌는 자리는 <b>지문 이름표</b>로 구분됩니다.";
   }
 
   // 이 창에서 고른 값을 탭을 오갈 때만 기억한다 — 창을 새로 열면 파일 맨 위의
@@ -5009,6 +5011,7 @@ function setupQuizTab({ prefix, types, footer }) {
     const entries = []; // 저장 기능이 쓸 {job, label, set, total} — 성공한 세트만
     const answerParts = []; // 지문마다 흩어지지 않게 모아뒀다 문서 맨 뒤에 한 번에 붙인다
     let expCol = false;     // 한 지문이라도 해설 열이 실렸으면 답지 제목에 '해설'을 넣는다
+    let noSoFar = 0;        // 지금까지 찍은 문항 수 — 지문이 바뀌어도 번호를 이어 붙인다
     // 무작위 모드에서 지문을 넘어 전부 섞기 위한 모음 — 변형 세트(label)별로 담는다
     const randomBuckets = new Map();
 
@@ -5145,7 +5148,8 @@ function setupQuizTab({ prefix, types, footer }) {
               if (shuffleInPassage()) {
                 set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
               }
-              const built = buildQuizHtml(set, job, total, prefix, label, "", showExp());
+              const built = buildQuizHtml(set, job, total, prefix, label, "", showExp(), noSoFar);
+              noSoFar += (set.questions || []).length;
               append(built.html);
               answerParts.push(built.answerHtml);
               if (built.hasExpCol) expCol = true;
@@ -5176,12 +5180,16 @@ function setupQuizTab({ prefix, types, footer }) {
         variations: bucket.variations,
       };
       const job = { name: label || "", named: !!label };
-      const built = buildQuizHtml(set, job, 1, prefix, "", "", showExp());
+      const built = buildQuizHtml(set, job, 1, prefix, "", "", showExp(), noSoFar);
+      noSoFar += (set.questions || []).length;
       append(built.html);
       answerParts.push(built.answerHtml);
       if (built.hasExpCol) expCol = true;
       entries.push({ job, label: "", set, total: 1 });
     });
+
+    // 답지를 붙이기 전에 합친다 — 답지(.qz-answerbook)는 .qz-block이 아니라 건드리지 않는다
+    mergeQuizColumns(resultEl);
 
     if (okCount) {
       answerHeadLabel = expCol ? "정답 및 해설" : "정답";
@@ -5275,12 +5283,15 @@ function setupQuizTab({ prefix, types, footer }) {
     resultEl.innerHTML = "";
     const answerParts = [];
     let expCol = false;
+    let noSoFar = 0;
     entries.forEach(({ job, label, set, total }) => {
-      const built = buildQuizHtml(set, job, total, prefix, label, "", showExp());
+      const built = buildQuizHtml(set, job, total, prefix, label, "", showExp(), noSoFar);
+      noSoFar += (set.questions || []).length;
       resultEl.insertAdjacentHTML("beforeend", built.html);
       answerParts.push(built.answerHtml);
       if (built.hasExpCol) expCol = true;
     });
+    mergeQuizColumns(resultEl);
     // 답지 제목은 실제로 실린 것을 따른다 — 해설 열이 없는데 '정답 및 해설'이라고
     // 적혀 있으면 빠진 것처럼 보인다(주관식이 늘 그랬다).
     answerHeadLabel = expCol ? "정답 및 해설" : "정답";
@@ -5767,6 +5778,30 @@ function markVariations(html, variations) {
   return box.innerHTML;
 }
 
+/* 지문마다 따로 만들어진 2단 상자(.qz-cards)를 하나로 합친다.
+
+   왜 필요한가 — 다단 상자는 쪽을 넘어갈 때 마지막 조각이 그 쪽의 남은 높이를 통째로
+   차지한다. 그래서 지문이 바뀔 때마다 오른쪽 단이 빈 채로 쪽이 넘어가, 문항 하나 때문에
+   지면 절반이 날아갔다(주관식 5지문×3문항을 실제로 재어 보니 10쪽, 합치니 8쪽).
+
+   .qz-block에 break-before:auto를 준 것만으로는 안 됐다 — 쪽을 미는 것은 쪽 나눔 규칙이
+   아니라 다단 상자 자체였다. 단 나눔을 꺼 보면 지문이 그대로 이어붙는 것으로 확인했다.
+   상자를 합치는 길 말고는 없다. column-fill·break-inside를 바꿔 봐도 10쪽 그대로였다.
+
+   화면에서는 .qz-cards가 다단이 아니라(인쇄에서만 단을 나눈다) 보이는 모양이 달라지지
+   않는다. 지문 이름표는 첫 문항과 .qz-lead로 묶여 있어 합쳐도 제 문항을 따라간다. */
+function mergeQuizColumns(root) {
+  const blocks = [...root.querySelectorAll("section.qz-block")];
+  if (blocks.length < 2) return;
+  const first = blocks[0].querySelector(".qz-cards");
+  if (!first) return;
+  blocks.slice(1).forEach((sec) => {
+    const cards = sec.querySelector(".qz-cards");
+    if (cards) while (cards.firstChild) first.appendChild(cards.firstChild);
+    sec.remove();
+  });
+}
+
 // 문제 카드 + 정답/해설(화면: 토글, 인쇄: 항상 별도 섹션) HTML 생성
 // kind: "mcq" | "saq" — 주관식 해설지에는 해설 열을 넣지 않는다(정답만).
 // sheetHead: 시험지 머리글 HTML(기출 탭 전용, 선택). 섹션 '안'에 넣는 이유 —
@@ -5774,7 +5809,13 @@ function markVariations(html, variations) {
 /* showExp — 답지에 해설 열을 실을지. 객관식 탭의 '답지에 해설' 체크가 넘겨 준다.
    기본값 true라 이 값을 넘기지 않는 쪽(동형 모의고사·만드는 법 미리보기)은 예전 그대로다.
    주관식은 이 값과 무관하게 늘 정답만 싣는다(아래 wantExp 참고). */
-function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true) {
+/* startNo — 이 지문의 첫 문항이 시험지에서 몇 번째인지(0부터). 지문마다 1번으로
+   되돌아가지 않고 시험지 전체에 번호를 이어 붙이기 위해 부르는 쪽이 넘겨 준다.
+   실제 수능·모의고사가 그렇고, 채점할 때 '3번'이 여러 지문에 나오지 않는다.
+   단을 합친 뒤로는 더 필요해졌다 — 왼쪽 단 마지막 문항 바로 옆 오른쪽 단에 다음
+   지문의 첫 문항이 오므로, 번호가 되돌아가면 한 화면에 '3번' 옆에 '1번'이 놓인다.
+   시험지와 답지가 같은 값을 쓰므로 둘이 어긋날 일은 없다. */
+function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true, startNo = 0) {
   const parts = [];
   parts.push(`<section class="passage-block qz-block">`);
   if (sheetHead) parts.push(sheetHead);
@@ -5788,7 +5829,7 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true) {
   const cards = (d.questions || []).map(
     (q, i) => `
       <div class="qz-card">
-        <div class="qz-head"><span class="qz-no">${i + 1}</span><span class="qz-type">${esc(q.type)}</span></div>
+        <div class="qz-head"><span class="qz-no">${startNo + i + 1}</span><span class="qz-type">${esc(q.type)}</span></div>
         <div class="qz-instruction">${safeHTML(q.instruction)}</div>
         ${markVariations(quizBodyHtml(q), q.__variations || d.variations)}
         <button type="button" class="qz-reveal-btn">정답·해설 보기</button>
@@ -5852,7 +5893,7 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true) {
       .map(
         (q, i) => `
       <tr>
-        <td>${i + 1}</td>
+        <td>${startNo + i + 1}</td>
         <td>${quizAnswerLabel(q)}</td>${expCell(q)}
       </tr>`
       )
