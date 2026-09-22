@@ -346,6 +346,9 @@ PRICE_OCR_KRW = int(os.environ.get("PRICE_OCR_KRW", "0"))                  # 사
 # 정하기 전에 먼저 돈을 내는 셈이 된다.
 # OCR·지문 변형과 같은 자리다 — 결과물이 아니라 '만들기 전 단계'는 받지 않는다.
 PRICE_EXAMSCAN_KRW = int(os.environ.get("PRICE_EXAMSCAN_KRW", "0"))
+# 시험지에서 지문 꺼내기 — 유형 분석과 달리 지문 전문을 옮겨 적으므로 출력이 길고,
+# 쪽마다 그림을 한 장씩 읽는다. 그래서 1벌당이 아니라 '쪽당'으로 매긴다.
+PRICE_EXAM_OCR_KRW = int(os.environ.get("PRICE_EXAM_OCR_KRW", "0"))
 # PDF에서 지문 꺼내기 — 규칙으로 나누는 길은 Gemini를 부르지 않으므로 값이 붙지
 # 않는다(아래 잔액 확인에서도 0원으로 지나간다). 규칙이 실패해 사용자가 'AI로 다시
 # 시도'를 누른 경우에만 이 값을 매긴다. 그때도 AI는 '지문이 몇째 줄부터 몇째 줄까지인지'
@@ -3962,6 +3965,182 @@ def call_gemini_exam_scan(files, api_key, model, page_from=0, page_total=0):
         )
         scan["note"] = f"{scan['note']} / {cut}" if scan["note"] else cut
     return scan
+
+
+# ── 시험지에서 지문 꺼내기 ──────────────────────────────────────────────────
+# 유형 분석(위)은 발문만 읽고 지문은 일부러 건너뛴다("Do NOT copy the English reading
+# passages"). 그래서 시험지를 분석해 놓고도 정작 그 시험지의 지문은 따로 넣어야 했다.
+# 여기가 그 구멍을 메운다. 글자가 든 PDF는 /api/pdfsplit이 Gemini 없이 공짜로 나누므로
+# 그대로 두고, 이 길은 스캔본(그림만 든 PDF·사진)일 때만 쓴다.
+EXAM_OCR_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "passages": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    # 어느 문항의 지문인지 — "15번", "1-2번". 모르면 "".
+                    # 지문 이름칸에는 쓰지 않고 화면 안내에만 쓴다(fillText 주석 참고).
+                    "label": {"type": "STRING"},
+                    "lines": {"type": "ARRAY", "items": {"type": "STRING"}},
+                },
+                "required": ["label", "lines"],
+                "propertyOrdering": ["label", "lines"],
+            },
+        },
+        "note": {"type": "STRING"},
+    },
+    "required": ["passages", "note"],
+    "propertyOrdering": ["passages", "note"],
+}
+
+EXAM_OCR_SYSTEM_PROMPT = r"""You transcribe the ENGLISH READING PASSAGES from photos of a
+Korean high-school English exam paper. Return ONLY the structured JSON in the schema —
+no markdown, no commentary.
+
+## Your job is TRANSCRIPTION, not classification
+Copy the English passages exactly as printed. Do not summarise, correct, translate or
+rewrite anything. Never invent a word that is not on the page.
+
+Punctuation is part of the text. Keep an em dash as an em dash, an en dash as an en dash
+and a hyphen as a hyphen; keep curly quotes curly. Do not normalise them to plain ASCII —
+the teacher prints this straight onto the worksheet.
+
+## Reading these scans
+- Pages may be ROTATED or UPSIDE DOWN, and different pages may face different directions.
+  Read them anyway; never skip a page because of its orientation.
+- Handwriting is a student's marking, NOT part of the exam: circled numbers, X marks,
+  underlines, pen notes in Korean or English. IGNORE all of it and transcribe the PRINTED
+  text only. Where a word is covered by pen marks, read the print underneath.
+- Work through the pages in the order given, and cover EVERY passage. Do not stop early.
+
+## What counts as a passage - and what does NOT
+Include: the English reading text that the questions are about, printed in its own box or
+block, usually introduced by 다음 글을 읽고 물음에 답하시오.
+
+EXCLUDE all of the following, even though they sit on the same page:
+- the Korean question sentence (발문) and its number
+- the answer choices and any <보기> box
+- footnote glosses at the bottom of a box (*buggy: 마차)
+- the page header and footer (고사 이름, page numbers like 3/7)
+- cover-page instructions and the 배점표
+
+## Blanks, underlines and circled letters inside the passage
+Exam passages are printed with the question marks already in them. Keep the English words
+and drop the marks:
+- A blank stays as a blank: write exactly five underscores _____ .
+- Circled letters or numbers that tag a word are markers, NOT part of the sentence - drop
+  the marker and keep the word it tags.
+- A word printed in bold or underlined is still just that word - keep the word, drop the
+  styling.
+- Where the exam prints a base form in brackets for the student to change - soldiers
+  ___(march)___ - keep the bracketed form (march) so the teacher can see it.
+
+## One entry per passage
+Each item of `passages` is ONE reading passage.
+- `label`: the question number(s) the passage serves, as printed - 15번, 1-2번. Use ""
+  when you cannot tell.
+- `lines`: ONE SENTENCE per array item, in order. Split at sentence ends (. ? !); never
+  split mid-sentence. Use "" (an empty item) to mark a paragraph break.
+- A passage that continues from the previous page is the SAME passage - append its
+  sentences to that entry instead of starting a new one.
+- Two questions sharing one passage is ONE entry, not two.
+
+## note
+Korean, one short sentence, ONLY when something needs saying - a page you could not read,
+a passage that looked cut off, print too faint to be sure of. Otherwise "".
+"""
+
+
+def call_gemini_exam_ocr(files, api_key, model, page_from=0, page_total=0):
+    """시험지 쪽 그림 여러 장에서 영어 지문만 옮겨 적어 돌려준다.
+    files: [{"mime": ..., "data": "<base64>"}] — 화면이 PDF에서 꺼내 축소해 보낸다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+
+    parts = []
+    for i, f in enumerate(files or (), 1):
+        if not isinstance(f, dict):
+            continue
+        mime = (f.get("mime") or "").lower().split(";")[0].strip()
+        data = f.get("data") or ""
+        if mime not in EXAM_MIMES:
+            raise RuntimeError(
+                f"{i}번째 파일의 형식을 지원하지 않습니다({mime or '알 수 없음'}). "
+                "PDF나 JPG·PNG 사진만 올릴 수 있습니다."
+            )
+        if not data:
+            raise RuntimeError(f"{i}번째 파일의 내용이 비어 있습니다.")
+        if len(data) > MAX_FILE_BYTES:
+            raise RuntimeError(
+                f"{i}번째 쪽이 너무 큽니다 (최대 {MAX_FILE_BYTES // 1048576}MB)."
+            )
+        parts.append({"inlineData": {"mimeType": mime, "data": data}})
+
+    if not parts:
+        raise RuntimeError("지문을 꺼낼 시험지를 올려 주세요.")
+
+    where = ""
+    if page_total and page_from:
+        where = (f" 이 묶음은 전체 {page_total}쪽 중 {page_from}쪽부터입니다 — 앞 묶음에서 "
+                 f"이어지는 지문이 첫 쪽 위에 걸쳐 있을 수 있습니다.")
+    parts.append({"text": f"이 {len(parts)}쪽에서 영어 지문을 모두 찾아 그대로 옮겨 적으세요.{where}"})
+    payload = {
+        "systemInstruction": {"parts": [{"text": EXAM_OCR_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": parts}],
+        "generationConfig": {
+            # 옮겨 적기는 창작이 아니라 낮은 온도가 맞지만 0으로 두지 않는다 —
+            # 결정적 디코딩이 RECITATION 차단을 부른다(call_gemini_ocr과 같은 사정).
+            "temperature": 0.15,
+            # 지문 전문을 통째로 싣는 호출이라 분류(EXAM_SCAN)보다 출력이 길다.
+            "maxOutputTokens": 65536,
+            "responseMimeType": "application/json",
+            "responseSchema": EXAM_OCR_SCHEMA,
+        },
+    }
+    # salvage=True — 잘려도 읽어 낸 지문까지는 살린다. 다섯 개 중 넷이라도 들어가는
+    # 편이, 아무것도 없이 "쪽을 나눠 올리세요"보다 낫다.
+    result = _gemini_json(
+        payload, api_key, model,
+        "시험지의 지문이 너무 많아 옮기다가 잘렸습니다. 쪽을 나눠 올려 주세요.",
+        salvage=True,
+    )
+    out = normalize_exam_ocr(result)
+    if result.get("_truncated"):
+        cut = (f"시험지가 길어 옮기다가 끊겼습니다 — 지문 {len(out['passages'])}개까지 "
+               f"읽었습니다. 뒤쪽까지 넣으려면 쪽을 나눠 올려 주세요.")
+        out["note"] = f"{out['note']} / {cut}" if out["note"] else cut
+    return out
+
+
+# 지문 하나로 인정하는 최소 길이. 이보다 짧은 것은 <보기> 상자나 각주를 지문으로 잘못
+# 잡은 것이라 버린다 — 입력칸에 부스러기가 쌓이면 선생님이 하나씩 지워야 한다.
+EXAM_OCR_MIN_CHARS = 120
+
+
+def normalize_exam_ocr(result):
+    """모델 응답을 화면이 믿고 쓸 수 있는 모양으로 정리한다."""
+    seen = set()
+    out = []
+    for p in (result.get("passages") or ()):
+        if not isinstance(p, dict):
+            continue
+        text = _join_ocr_lines(p.get("lines"), "passage")
+        if len(text) < EXAM_OCR_MIN_CHARS:
+            continue
+        # 쪽을 나눠 부르면 경계에 걸친 지문이 두 묶음에서 겹쳐 온다 — 앞머리로 가려낸다
+        key = re.sub(r"\W+", "", text[:80]).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"label": str(p.get("label") or "").strip()[:20], "text": text})
+    return {"passages": out, "note": str(result.get("note") or "").strip()}
 
 
 _EXAM_FITS = ("같음", "비슷함", "없음")
@@ -7789,6 +7968,11 @@ CHANGELOG = [
             "동형 모의고사 제작 — 이제 관리자 승인을 받은 선생님에게만 탭이 보입니다. "
             "학교 기출 시험지를 올려 읽는 기능이라, 학생 관리 탭과 같은 방식으로 "
             "신청을 받아 열어 드립니다. 탭이 보이지 않으면 문의해 주세요.",
+            "동형 모의고사 제작 — 올린 시험지에서 영어 지문까지 그대로 옮겨 오는 "
+            "'📄 지문도 가져오기'가 생겼습니다. 전에는 유형만 분석하고 지문은 따로 "
+            "사진 찍어 넣어야 했는데, 이제 복사기로 긁은 시험지 한 부만 올리면 "
+            "지문이 입력칸에 바로 들어갑니다. 옮겨 적은 것이라 시험지와 대조해 "
+            "오타를 확인한 뒤 실행하세요.",
         ],
     },
 ]
@@ -9721,6 +9905,8 @@ class Handler(BaseHTTPRequestHandler):
                 "ocr": PRICE_OCR_KRW,
                 # 기출 유형 분석 — 기본 0원. 값이 붙어도 시험지 1벌당이지 쪽 수에 곱하지 않는다
                 "examScan": PRICE_EXAMSCAN_KRW,
+                # 시험지에서 지문 꺼내기 — 이것만 쪽당이다(화면이 쪽 수를 곱해 보여 준다)
+                "examOcrPage": PRICE_EXAM_OCR_KRW,
                 # PDF에서 지문 꺼내기 — 규칙으로 나눌 때는 언제나 0원이고,
                 # 'AI로 다시 시도'를 눌렀을 때만 이 값이 매겨진다
                 "pdfSplit": PRICE_PDFSPLIT_KRW,
@@ -10020,7 +10206,8 @@ class Handler(BaseHTTPRequestHandler):
 
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/brief", "/api/models", "/api/quiz", "/api/workbook",
-                        "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit",
+                        "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
+                        "/api/pdfsplit",
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
@@ -10094,7 +10281,8 @@ class Handler(BaseHTTPRequestHandler):
         # 그중 실제로 콘텐츠를 생성하는 여섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/quiz", "/api/workbook",
-                           "/api/reword", "/api/ocr", "/api/examscan", "/api/pdfsplit",
+                           "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
+                           "/api/pdfsplit",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf")
         # /api/docx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
         # 않는다(그래서 GENERATE_PATHS가 아니라 여기 따로 붙는다).
@@ -10150,6 +10338,11 @@ class Handler(BaseHTTPRequestHandler):
                     cost = PRICE_EXAMSCAN_KRW
                     pages = len(req.get("files") or ())
                     self._pending_label = f"기출 유형 분석 · {pages}쪽"
+                elif path == "/api/examocr":
+                    # 쪽마다 그림을 한 장씩 읽으므로 쪽 수에 곱한다(examscan과 다른 점).
+                    pages = len(req.get("files") or ())
+                    cost = PRICE_EXAM_OCR_KRW * pages
+                    self._pending_label = f"시험지에서 지문 꺼내기 · {pages}쪽"
                 elif path == "/api/pdfsplit":
                     # 규칙으로 나누는 길은 Gemini를 부르지 않으므로 언제나 0원이다.
                     # 'AI로 다시 시도'(ai=true)일 때만 값을 매긴다.
@@ -11030,6 +11223,45 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 scan = call_gemini_exam_scan(files, api_key, model, page_from, page_total)
                 self._charge_and_send(path, req, scan)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        if path == "/api/examocr":
+            # 동형 모의고사 제작에 딸린 기능이라 /api/examscan과 같은 승인을 요구한다.
+            if not _exam_approved(self._auth_user_id):
+                self._send_json(
+                    {"error": "동형 모의고사 제작은 관리자 승인이 필요합니다.",
+                     "code": "exam_not_approved"}, 403)
+                return
+            files = req.get("files")
+            if not isinstance(files, list) or not files:
+                self._send_json({"error": "지문을 꺼낼 시험지를 올려 주세요."}, 400)
+                return
+            if len(files) > EXAM_MAX_PAGES:
+                self._send_json({
+                    "error": f"한 번에 {EXAM_MAX_PAGES}쪽까지 읽을 수 있습니다 "
+                             f"(올린 쪽 수 {len(files)}쪽). 나눠서 올려 주세요."
+                }, 400)
+                return
+            api_key = req.get("apiKey") or ""
+            # 지문 옮겨 적기도 항상 Pro — 스캔본이라 글자가 흐리고 쪽마다 방향이 다른데다,
+            # 여기서 한 번 잘못 읽으면 이후 만드는 문제가 통째로 어긋난다(examscan과 같은 사정).
+            model = MODEL_PRO
+            try:
+                page_from = max(0, int(req.get("pageFrom") or 0))
+                page_total = max(0, int(req.get("pageTotal") or 0))
+            except (TypeError, ValueError):
+                page_from = page_total = 0
+            try:
+                found = call_gemini_exam_ocr(files, api_key, model, page_from, page_total)
+                self._charge_and_send(path, req, found)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
             except ProUnavailable as e:

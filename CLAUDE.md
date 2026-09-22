@@ -140,6 +140,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | 가입 동의(약관·개인정보·만14세) | `TERMS_VERSION`, `_consent_record`(화면을 거치지 않는 요청도 여기서 막는다), `upsert_user`(구글은 **계정을 새로 만들 때만** 동의를 따진다 — 로그인 창의 구글 버튼으로도 새 계정이 만들어지므로 화면이 아니라 서버에서 막아야 빠짐없다). 화면은 `public/app.js`의 `AGREE_BOXES`/`syncAgree`/`resetAgree` |
 | Gemini 호출 공통(재시도·시간 예산) | `RETRY_MIN_WAIT`, `MAX_RETRY_TOTAL`, `_over_budget`, `RefineTrace`, `_parse_retry_delay` |
 | 기능별 프롬프트·스키마·호출 | `*_SCHEMA` / `*_SYSTEM_PROMPT` / `call_gemini_*` 3종 세트 — quiz, reword, ocr, workbook, vocab(`VOCAB_ITEMS_SCHEMA` 하나를 `call_gemini_vocab_ocr`/`call_gemini_vocab_pdf` 둘이 같이 씁니다). 지문 분석만 이름에 접두어가 없어 `GEMINI_SCHEMA` / `SYSTEM_PROMPT`입니다 |
+| 시험지(스캔본)에서 읽기 — 쪽 그림을 Gemini에 직접 보낸다 | `call_gemini_exam_scan`/`EXAM_SCAN_SYSTEM_PROMPT`(발문만 읽어 유형표를 만든다 — **지문은 일부러 안 옮긴다**), `call_gemini_exam_ocr`/`EXAM_OCR_SYSTEM_PROMPT`/`normalize_exam_ocr`(그 구멍을 메우는 쪽. 지문만 옮겨 적고 발문·보기·각주·손글씨는 버린다), `EXAM_MAX_PAGES`. 둘 다 **Pro 고정**이고 `_exam_approved`로 막혀 있다. 화면은 `public/app.js`의 `extractJpegs`(PDF 안의 JPEG를 그대로 꺼낸다 — 외부 라이브러리 없음)/`runExamScan`(유형 분석 — 3쪽씩)/`runExamOcr`(지문 옮겨 적기 — **2쪽씩 한 쪽 겹쳐**. 3쪽을 한 번에 보내면 글자를 빠뜨리는 것을 실측했다. 까닭은 그 함수 위 주석에 있다)/`passageKey`(같은 지문 가리기 — 앞머리와 꼬리 두 열쇠를 쓴다) |
 | PDF에서 지문 꺼내기 | `read_pdf_pages`(글자층+좌표 읽기), `_pdf_columns`(단 나누기), `split_pdf_passages`(문항형/문단형 판정), `_pdf_clean_passage`(번호·보기·정답교정 정리). 여기까지는 Gemini를 부르지 않습니다 — 규칙이 실패했을 때만 `call_gemini_pdf_split`이 '경계 줄 번호'만 물어봅니다 |
 | 단어장 — 사진·PDF에서 단어 목록 가져오기 | `call_gemini_vocab_ocr`(사진), `parse_vocab_lines_rule`(PDF, 규칙만으로 "단어 — 뜻" 줄을 골라냄 · 0원), `call_gemini_vocab_pdf`(규칙이 못 뽑을 때만, `read_pdf_pages`가 이미 뽑아 둔 글자를 다시 보냄) |
 | 출력 HTML 정리 | `sanitize_inline`, `sanitize_quiz_html`, `clean_korean`, `clean_note`, `normalize_ruby`, `fix_underline_bounds` |
@@ -258,6 +259,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `student_session` 쿠키로 인증)
 
 **POST** — `/api/analyze` `/api/quiz` `/api/workbook` `/api/reword` `/api/ocr` `/api/pdfsplit`
+`/api/examscan`(기출 시험지 → 문항 유형표) `/api/examocr`(같은 쪽 그림 → 영어 지문. 둘 다 관리자 승인 필요)
 `/api/vocabocr` `/api/vocabpdf` `/api/models`
 `/api/auth/google` `/api/auth/signup` `/api/auth/verify` `/api/auth/login` `/api/auth/delete`
 `/api/logout` `/api/account/recharge` `/api/account/recharge/confirm` `/api/account/ack-update`
@@ -295,7 +297,9 @@ localStorage를 통째로 비우기 때문입니다).
 - **모델을 사용자가 고르게 만들지 마세요.** 기능마다 서버가 고정합니다 —
   `/api/quiz`는 고른 유형에 `QUIZ_PLAIN_PASSAGE_TYPES` 밖의 것이 **하나라도 섞이면**
   그 호출 전체가 `GEMINI_MODEL_PRO`(Pro)로 갑니다(객관식·주관식 구분 없음).
-  지문변형 heavy도 Pro이고, 나머지는 전부 `GEMINI_MODEL`(Flash)입니다.
+  지문변형 heavy도 Pro이고, 시험지 스캔을 읽는 `/api/examscan`·`/api/examocr`도 Pro입니다
+  (글자가 흐리고 쪽마다 방향이 달라 여기서 잘못 읽으면 이후가 통째로 어긋납니다).
+  나머지는 전부 `GEMINI_MODEL`(Flash)입니다.
   정찰 가격과 실제 원가가 어긋나지 않게 하기 위한 설계입니다.
 - **`sanitize_*` / `clean_*`를 우회하지 마세요.** AI가 만든 HTML을 브라우저에 그대로
   넣는 구조라 이 함수들이 유일한 방어선입니다.

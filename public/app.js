@@ -8931,13 +8931,19 @@ const examLoadingEl = $("examLoading");
 const examLoadingTextEl = $("examLoadingText");
 const examResultEl = $("examResult");
 const examCostHintEl = $("examCostHint");
+const examOcrBtn = $("examOcrBtn");
 
 const EXAM_MAX_PAGES = 16;      // server.py의 EXAM_MAX_PAGES와 같은 값
-const EXAM_MIN_JPEG = 20000;    // 이보다 작은 조각은 쪽 그림이 아니라 아이콘·썸네일이다
-let examPages = [];             // [{mime, data}] — 서버에 보낼 쪽 그림
-let examBusy = false;
-let examAutoTimer = null;
-let examAutoDone = false;       // 지금 올려 둔 시험지로 자동 분석을 이미 걸었는가
+
+/* 시험지 쪽 그림은 교재 사진과 같은 축소를 그대로 탄다(photoToPart, 긴 변 1600px).
+   한때 2600px로 올려 보냈다가 되돌렸다. 실측 결과:
+   - Gemini가 그림에 매기는 토큰이 해상도와 무관하게 장당 1,092로 고정이다
+     (400px도 4000px도 같다. generationConfig의 mediaResolution을 HIGH로 줘도 같다).
+   - 같은 3쪽을 800px와 2600px로 읽혀 견줬더니 지문 8개 중 7개가 글자까지 똑같았고,
+     하나는 오히려 2600px 쪽이 문단 표시 (A)를 지우지 않아 지시를 덜 지켰다.
+   즉 해상도를 올려도 모델이 받는 것은 그대로이고, 올리는 용량만 6배가 된다
+   (3쪽 440KB → 2,583KB). 학교 인터넷에서는 그 시간이 그대로 기다림이 된다.
+   올리고 싶어지면 이 주석을 먼저 읽고, 올린 것과 내린 것의 결과를 실제로 견줘 볼 것. */
 
 function examStatus(msg, kind) {
   examStatusEl.hidden = !msg;
@@ -9006,6 +9012,7 @@ async function examAddFiles(fileList) {
 function examSyncStatus() {
   const n = examPages.length;
   examBtn.disabled = !n;
+  examOcrBtn.disabled = !n;
   examClearBtn.style.display = n ? "inline-flex" : "none";
   if (!n) {
     examStatus("");
@@ -9142,6 +9149,143 @@ function renderExamScan(scan) {
    중간에서 끊기지 않고, 한 묶음이 실패해도 나머지는 살아남는다. */
 const EXAM_SCAN_BATCH = 3;
 
+/* 올려 둔 시험지 쪽에서 영어 지문만 옮겨 적어 '시험 범위 지문' 칸에 채운다.
+   유형 분석(runExamScan)과 같은 쪽 그림을 쓰지만 부르는 곳이 다르다 — 분석은 발문만
+   읽고 지문은 일부러 건너뛰기 때문이다(EXAM_SCAN_SYSTEM_PROMPT 참고).
+   한 번에 몇 쪽을 보내느냐가 읽기 정확성을 가른다. 같은 3쪽을 세 가지로 읽혀 글자
+   단위로 견준 결과(실측):
+     · 3쪽 한 번에 — 한 지문에서 53자를 통째로 빠뜨렸고, 빈칸의 첫 글자 힌트를 잃었다
+                     ("(A) v_____" → "(A) _____"). 유형 분석은 이 크기로 잘 돌지만,
+                     옮겨 적기는 쪽마다 글자를 하나하나 봐야 해서 부담이 다르다.
+     · 1쪽씩       — 본문은 온전했지만 원문의 줄표(—)를 하이픈(-)으로 바꿔 놓았고,
+                     쪽을 넘어가는 지문을 영영 이을 수 없다.
+     · 2쪽 겹쳐    — 본문도 온전하고 줄표도 그대로였다. 이 방식을 쓴다.
+   그래서 유형 분석(EXAM_SCAN_BATCH=3쪽)과 달리 여기는 2쪽씩, 한 쪽을 겹쳐 묶는다
+   (1-2, 2-3, 3-4 …). 겹치는 이유가 하나 더 있다 — 지문이 쪽 경계를 넘어 이어질 때,
+   겹치지 않으면 앞 묶음이 앞동강을 뒤 묶음이 뒷동강을 내놓아 반 토막 지문 두 개가
+   입력칸에 들어간다. 겹쳐 두면 그 지문이 어느 한 묶음 안에는 온전히 들어오고, 겹쳐 온
+   같은 지문은 아래에서 '긴 쪽을 남기는' 방식으로 정리된다.
+   모델이 '이 지문은 잘렸다'고 스스로 신고하게 하는 길도 있었지만, 신고가 틀리면 그대로
+   어긋나므로 값을 더 쓰더라도 확실한 쪽을 골랐다. 쪽을 겹친 만큼 읽는 쪽 수가 늘어나니,
+   값을 물을 때 올린 쪽 수가 아니라 '실제로 읽는 쪽 수'를 적어 보여 준다. */
+const EXAM_OCR_BATCH = 2;   // 지문 옮겨 적기 전용 — 유형 분석의 EXAM_SCAN_BATCH(3)와 다르다
+/* 같은 지문인지 가리는 열쇠. 앞에 붙는 문단 표시("[A] ", "(1) ")는 묶음마다 달리
+   읽히므로 떼고 잰다. tail=true면 꼬리 80자로 잡는다. */
+function passageKey(text, tail) {
+  const body = String(text || "")
+    .replace(/^\s*[[(]?[A-Za-z0-9]{1,3}[\])]\s*/, "")
+    .replace(/\W+/g, "")
+    .toLowerCase();
+  if (body.length < 40) return "";
+  return tail ? body.slice(-80) : body.slice(0, 80);
+}
+
+async function runExamOcr() {
+  if (!examPages.length || examBusy) return;
+  examErrorEl.textContent = "";
+  const batches = [];
+  for (let i = 0; i < examPages.length; ) {
+    batches.push({ from: i + 1, files: examPages.slice(i, i + EXAM_OCR_BATCH) });
+    if (i + EXAM_OCR_BATCH >= examPages.length) break;   // 마지막 쪽까지 담았다
+    i += EXAM_OCR_BATCH - 1;                             // 한 쪽을 다음 묶음과 겹친다
+  }
+  const reads = batches.reduce((s, b) => s + b.files.length, 0);
+  const per = PRICING ? PRICING.examOcrPage || 0 : 0;
+  if (per > 0) {
+    const extra = reads > examPages.length
+      ? ` 쪽 경계에서 지문이 끊기지 않도록 한 쪽씩 겹쳐 읽어, 읽는 쪽 수는 ${reads}쪽입니다.`
+      : "";
+    if (!(await costConfirmed(per * reads,
+        `시험지 ${examPages.length}쪽에서 영어 지문을 옮겨 적습니다.${extra}`,
+        reads, "올리는 쪽 수를 줄이면 값이 내려갑니다."))) return;
+  }
+  examBusy = true;
+  examBtn.disabled = true;
+  examOcrBtn.disabled = true;
+  examLoadingEl.classList.add("on");
+
+  const found = [];
+  /* 같은 지문인지 가리는 열쇠를 앞머리와 꼬리 둘 다로 잡는다.
+     앞머리만 보면 놓치는 경우를 실측으로 만났다 — 한 묶음은 4-5번 지문을
+     "[A] In soccer…"로, 다른 묶음은 "In soccer…"로 읽어 와 같은 지문이 두 번 들어갔다.
+     꼬리는 앞에 붙는 문단 표시에 흔들리지 않고, 앞머리는 쪽 경계에서 뒤가 잘린
+     지문을 잡아 준다. 둘 중 하나만 맞아도 같은 지문으로 본다. */
+  const heads = new Map();
+  const tails = new Map();
+  const notes = [];
+  const failed = [];
+
+  for (let b = 0; b < batches.length; b++) {
+    const { from, files } = batches[b];
+    const to = from + files.length - 1;
+    examLoadingTextEl.textContent =
+      batches.length > 1
+        ? `AI가 지문을 옮겨 적고 있습니다… (${b + 1}/${batches.length}) — ${from}~${to}쪽`
+        : `AI가 시험지 ${examPages.length}쪽에서 지문을 옮겨 적고 있습니다…`;
+    try {
+      const res = await postGenerate(
+        "/api/examocr",
+        { files, pageFrom: from, pageTotal: examPages.length },
+        "시험지에서 지문을 꺼내지 못했습니다."
+      );
+      if (res.note) notes.push(res.note);
+      for (const p of res.passages || []) {
+        // 겹쳐 읽은 쪽 때문에 같은 지문이 두 묶음에서 온다. 같은 지문이면 반드시
+        // '긴 쪽'으로 갈아 끼운다 — 앞 묶음에서는 쪽 경계에 잘린 동강만 왔을 수 있다.
+        const hk = passageKey(p.text, false);
+        const tk = passageKey(p.text, true);
+        if (!hk) continue;
+        let at = heads.get(hk);
+        if (at === undefined) at = tails.get(tk);
+        if (at === undefined) {
+          at = found.length;
+          found.push(p);
+        } else if ((p.text || "").length > (found[at].text || "").length) {
+          found[at] = p;
+        } else {
+          continue;   // 이미 가진 것이 더 길다
+        }
+        heads.set(passageKey(found[at].text, false), at);
+        tails.set(passageKey(found[at].text, true), at);
+      }
+    } catch (err) {
+      failed.push(`${from}~${to}쪽: ${err.message || String(err)}`);
+      // 한도 소진은 기다려도 안 풀린다 — 남은 묶음을 시도하지 않는다
+      if (isQuotaError(err)) break;
+    }
+  }
+
+  examLoadingEl.classList.remove("on");
+  examBusy = false;
+  examBtn.disabled = !examPages.length;
+  examOcrBtn.disabled = !examPages.length;
+  refreshTokenDisplay();
+
+  // 시험지 제작 칸이 아직 안 열렸으면(분석 전이면) 공용 지문칸에 담는다 —
+  // 그래야 다른 탭에서도 바로 쓸 수 있고, 분석을 나중에 해도 그대로 남는다.
+  const mgr = examPaperPanelEl.hidden ? passageMgr : examPaperMgr;
+  let added = 0;
+  let full = false;
+  for (const p of found) {
+    if (mgr.fillText(p.text)) added++;
+    else { full = true; break; }
+  }
+  refitPassages();
+
+  const parts = [];
+  if (added) {
+    parts.push(`지문 ${added}개를 ${examPaperPanelEl.hidden ? "지문 입력칸" : "시험 범위 지문 칸"}에 옮겼습니다. ` +
+               `시험지와 대조해 오타가 없는지 확인한 뒤 실행하세요.`);
+  }
+  if (full) parts.push("지문 칸이 가득 차 나머지는 넣지 못했습니다.");
+  notes.forEach((x) => parts.push(`⚠️ ${x}`));
+  failed.forEach((x) => parts.push(`❌ ${x}`));
+  if (!parts.length) parts.push("옮길 영어 지문을 찾지 못했습니다.");
+  examStatus(parts.join(" / "), added ? (full || failed.length ? "warn" : "ok") : "warn");
+}
+
+examOcrBtn.addEventListener("click", runExamOcr);
+
 async function runExamScan() {
   if (!examPages.length || examBusy) return;
   examErrorEl.textContent = "";
@@ -9157,6 +9301,7 @@ async function runExamScan() {
   }
   examBusy = true;
   examBtn.disabled = true;
+  examOcrBtn.disabled = true;
   examLoadingEl.classList.add("on");
   examResultEl.innerHTML = "";
 
@@ -9206,6 +9351,7 @@ async function runExamScan() {
   examLoadingEl.classList.remove("on");
   examBusy = false;
   examBtn.disabled = !examPages.length;
+  examOcrBtn.disabled = !examPages.length;
 }
 
 examBtn.addEventListener("click", runExamScan);

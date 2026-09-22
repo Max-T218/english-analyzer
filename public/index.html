@@ -1466,6 +1466,9 @@
 
       <div class="actions">
         <button class="btn" id="examBtn" disabled>유형 분석하기</button>
+        <!-- 유형 분석은 발문만 읽고 지문은 건너뛴다. 그 시험지의 지문까지 쓰려면
+             이 단추로 따로 읽어야 한다 — 쪽마다 값이 나가므로 자동으로 돌리지 않는다. -->
+        <button class="btn ghost" id="examOcrBtn" disabled>📄 지문도 가져오기</button>
         <button class="btn ghost" id="examClearBtn" style="display:none">🗑️ 올린 시험지 지우기</button>
         <span class="hint cost-hint" id="examCostHint" role="status" aria-live="polite"></span>
       </div>
