@@ -746,6 +746,7 @@ let currentKrwPaid = null; // 유상 포인트(환불 대상)
 let currentAccountEmail = ""; // 결제창(포트원)이 구매자 이메일·이름을 요구해서 따로 들고 있는다
 let currentAccountName = "";
 let isClassroomApproved = false; // 관리자가 반/학생 등록 기능을 켜 준 선생님인지
+let isExamApproved = false;      // 관리자가 동형 모의고사 제작을 켜 준 선생님인지
 
 function renderAccount(info) {
   isLoggedIn = !!(info && info.loggedIn);
@@ -754,6 +755,8 @@ function renderAccount(info) {
     currentKrwFree = currentKrwPaid = null;
     isClassroomApproved = false;
     studentsTabBtn.hidden = true;
+    isExamApproved = false;
+    hideExamTab();
     return;
   }
   const krw = Number(info.krwRemaining);
@@ -767,6 +770,9 @@ function renderAccount(info) {
   if (info.name) currentAccountName = info.name;
   isClassroomApproved = !!info.classroomApproved;
   studentsTabBtn.hidden = !isClassroomApproved;
+  isExamApproved = !!info.examApproved;
+  if (isExamApproved) examTabBtn.hidden = false;
+  else hideExamTab();
   updateVocabAssignBtnVisibility();
   const krwText = currentKrw !== null ? ` · 잔액 ${pt(currentKrw)}` : "";
   accountNameEl.textContent = `${lastAccountLabel || "로그인됨"}님${krwText}`;
@@ -2505,6 +2511,7 @@ wirePassageDrop(passagePanelEl, passageMgr, ocrStatus, { ocr: true });
 
 // ── 탭 전환 ──
 const studentsTabBtn = $("studentsTabBtn");
+const examTabBtn = $("examTabBtn");
 const tabBtns = [...document.querySelectorAll(".tab-btn")];
 const tabPages = [...document.querySelectorAll(".tab-page")];
 function syncFloatPrint() {
@@ -2606,6 +2613,15 @@ function syncTabChrome(tab) {
   // 기출 탭에서는 분석이 끝나 시험지 칸이 열렸을 때만 마크 칸을 보여 준다
   moveBrandPanel(onExam && !examPaperPanelEl.hidden);
   if (brandPanelEl) brandPanelEl.hidden = onExam && examPaperPanelEl.hidden;
+}
+
+function hideExamTab() {
+  examTabBtn.hidden = true;
+  // 승인이 꺼졌는데 마침 그 탭을 보고 있었다면 첫 탭으로 물러난다 — 단추만 감추면
+  // 화면이 그대로 남아 계속 쓸 수 있는 것처럼 보인다.
+  if (examTabBtn.classList.contains("active")) {
+    document.querySelector('.tab-btn[data-tab="analyze"]').click();
+  }
 }
 
 tabBtns.forEach((btn) => {

@@ -134,6 +134,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | 결제(포트원) — 결제창 열기 전 요청 생성 → 결제 후 서버가 직접 확인하고서만 충전 | `PORTONE_STORE_ID`/`PORTONE_CHANNEL_KEY_CARD`/`PORTONE_API_SECRET`, `create_payment_intent`, `confirm_payment_intent`(`payment_intents` 컬렉션, 브라우저가 보고하는 성공 여부를 그대로 믿지 않는다). **포트원 V2 응답의 필드 이름을 손볼 때는 스키마를 먼저 확인하세요** — `channel`을 `selectedChannel`로, 통화를 `amount` 안으로 잘못 읽어 실결제가 돈만 빠져나가고 충전이 안 되던 사고가 있었습니다 |
 | 결제 취소 → 포인트 자동 회수(웹훅) | `PORTONE_WEBHOOK_SECRET`, `_verify_portone_webhook`(Standard Webhooks 규격 — 서명 대상은 `{id}.{시각}.{본문}`이라 **받은 그대로의 바이트**가 필요하다. 그래서 라우팅이 `_handle_post` 앞쪽, `raw`가 살아 있는 자리에 있다), `apply_payment_cancellation`(알림 금액을 믿지 않고 포트원에 다시 물어본다. 이미 쓴 포인트는 빼지 않고 남은 유상분에서만 회수하며, 누적 취소액 기준이라 같은 알림이 두 번 와도 한 번만 반영된다). 실패하면 일부러 200이 아닌 응답을 보내 포트원이 재전송하게 한다 |
 | 반 · 학생 · 단어시험(AI 안 씀) | `_classroom_approved`/`set_classroom_approved`(관리자 승인 게이트), `create_class`/`regenerate_class_code`(반 하나당 코드 하나, `classes`/`class_codes` 컬렉션)/`create_student`/`delete_student`(`students` 컬렉션, 개별 코드 없음. `create_student`가 이름을 앱 전체에서 유일하도록 등록 시점에 동명이인을 거부한다), `login_student`(이름만 받아 로그인 — 반 코드 없음, `students` 전체를 이름으로 검색)/`create_student_session`/`_student_session_user`(학생 세션, `admin_sessions`와 같은 모양), `create_test_assignment`(`student_id`를 주면 그 학생 한 명에게만, 안 주면 반 전체에)/`_assignment_targets_student`(반 전체/개별 배정 판정, 조회·응시·제출 세 곳이 공유)/`_build_student_questions`(객관식 오답을 같은 단어장의 다른 뜻/단어에서 결정적으로 뽑음)/`grade_and_submit_attempt`(`test_assignments`/`test_attempts` 컬렉션, 문서 ID를 `{assignment_id}_{student_id}_{round}`로 고정해 그 회차의 중복 제출을 막음 — 재시험 기준은 아래 참고)/`_get_student_attempts`/`_attempt_progress`(합격 여부·합격 회차·다음 회차 계산)/`delete_assignment`(시험과 딸린 답안까지 삭제) |
+| 동형 모의고사 제작 승인 게이트 | `_exam_approved`/`set_exam_approved`(회원 문서의 `exam_approved`, 기본 꺼짐), `/api/admin/approve-exam`, `/api/examscan`이 호출 앞에서 확인한다. 반/학생 승인(`classroom_approved`)과 같은 모양이지만 **별개의 플래그**다 — 한쪽만 켜 줄 수 있어야 한다 |
 | Firestore 연결 | `_load_firestore` |
 | 회원가입·인증코드·비밀번호 | `start_signup`, `complete_signup`, `login_with_password`, `_hash_password` |
 | 가입 동의(약관·개인정보·만14세) | `TERMS_VERSION`, `_consent_record`(화면을 거치지 않는 요청도 여기서 막는다), `upsert_user`(구글은 **계정을 새로 만들 때만** 동의를 따진다 — 로그인 창의 구글 버튼으로도 새 계정이 만들어지므로 화면이 아니라 서버에서 막아야 빠짐없다). 화면은 `public/app.js`의 `AGREE_BOXES`/`syncAgree`/`resetAgree` |
@@ -178,9 +179,13 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 
 ### `public/index.html`
 
-탭 6개 — `analyze`, `mcq`, `saq`, `workbook`, `vocab`, `exam`. 그 뒤에 관리자가 승인한
-선생님에게만 보이는 `students`(반/학생 관리) 탭이 하나 더 있습니다(`studentsTabBtn`,
-`renderAccount`가 `classroomApproved` 값으로 `hidden`을 켜고 끕니다).
+탭 6개 — `analyze`, `mcq`, `saq`, `workbook`, `vocab`, `exam`.
+
+그중 **둘은 관리자가 승인한 선생님에게만 보입니다** — `exam`(동형 모의고사 제작,
+`examTabBtn`)과 그 뒤에 붙는 `students`(반/학생 관리, `studentsTabBtn`)입니다.
+`renderAccount`가 각각 `examApproved`·`classroomApproved` 값으로 `hidden`을 켜고 끕니다.
+승인이 꺼졌는데 마침 그 탭을 보고 있었다면 `hideExamTab`이 첫 탭으로 물러나게 합니다 —
+단추만 감추면 화면이 남아 계속 쓸 수 있는 것처럼 보이기 때문입니다.
 각각 `#tab-<id>` 섹션과 `#analyzeBtn` / `#mcqBtn` / `#saqBtn` / `#wbBtn` 실행 버튼을 가집니다.
 
 ### 검색으로 들어오는 문 — `public/*.html` 소개 페이지

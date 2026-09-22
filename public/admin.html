@@ -96,6 +96,7 @@
             <th style="padding:8px 6px;" title="마지막으로 로그인한 날(KST). 1년 넘게 비면 이용약관 14조 6항에 따라 휴면으로 전환된다 — 전환 30일 전에 메일로 알린다">최근 로그인</th>
             <th style="padding:8px 6px; text-align:right;">잔액(원)</th>
             <th style="padding:8px 6px;" title="반/학생 등록 기능 사용 허가 — 미성년자 데이터가 걸려 있어 기본은 꺼짐">학생기능</th>
+            <th style="padding:8px 6px;" title="동형 모의고사 제작 사용 허가 — 남의 학교 기출 시험지를 올려 읽는 기능이라 기본은 꺼짐">모의고사</th>
             <th style="padding:8px 6px;">관리</th>
           </tr>
         </thead>
@@ -323,6 +324,13 @@ function renderUsers() {
         </button>
       </td>
       <td style="padding:8px 6px;">
+        <button type="button" class="btn ${u.examApproved ? "" : "ghost"} small exam-btn"
+                style="padding:4px 7px; font-size:11.5px;"
+                title="동형 모의고사 제작을 이 선생님에게 허용할지">
+          ${u.examApproved ? "허용됨" : "미허용"}
+        </button>
+      </td>
+      <td style="padding:8px 6px;">
         <!-- flex-wrap: 창이 좁아지면 넘치는 대신 아래로 접히게 한다. 넘치면 오른쪽 끝의
              '탈퇴'가 화면 밖으로 밀려 아예 보이지 않는다. -->
         <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
@@ -346,7 +354,7 @@ function renderUsers() {
         </div>
       </td>
     </tr>
-  `).join("") || `<tr><td colspan="8" style="padding:16px 6px; color:var(--ink-soft);">회원이 없습니다.</td></tr>`;
+  `).join("") || `<tr><td colspan="9" style="padding:16px 6px; color:var(--ink-soft);">회원이 없습니다.</td></tr>`;
 }
 
 /* 회원 강제 탈퇴 — 되돌릴 수 없다. 계정·저장 자료·이용 내역·잔액이 함께 사라지고,
@@ -406,7 +414,7 @@ async function toggleUsage(row, uid) {
   }
   const tr = document.createElement("tr");
   tr.className = "usage-row";
-  tr.innerHTML = `<td colspan="7" style="padding:8px 12px; background:var(--bg-soft, #fafafa); font-size:12.5px;">불러오는 중…</td>`;
+  tr.innerHTML = `<td colspan="9" style="padding:8px 12px; background:var(--bg-soft, #fafafa); font-size:12.5px;">불러오는 중…</td>`;
   row.after(tr);
   try {
     const data = await getJson("/api/admin/usage?userId=" + encodeURIComponent(uid));
@@ -454,6 +462,36 @@ $("userTableBody").addEventListener("click", async (e) => {
       alert(err.message || "처리에 실패했습니다.");
     } finally {
       classroomBtn.disabled = false;
+    }
+    return;
+  }
+  const examBtn = e.target.closest(".exam-btn");
+  if (examBtn) {
+    const row = examBtn.closest("tr");
+    const uid = row.dataset.uid;
+    const u = currentUsers.find((x) => x.id === uid);
+    if (!u) return;
+    const next = !u.examApproved;
+    if (next && !confirm(
+        `${u.email} 선생님에게 동형 모의고사 제작을 허용합니다.
+
+` +
+        `학교 기출 시험지를 올려 읽는 기능입니다. 올린 시험지를 어떻게 쓰는지에 ` +
+        `저작권 문제가 따를 수 있으니, 이 선생님에게 허용해도 되는지 확인한 뒤에 켜세요.
+
+` +
+        `계속할까요?`)) {
+      return;
+    }
+    examBtn.disabled = true;
+    try {
+      await postJson("/api/admin/approve-exam", { userId: uid, approved: next });
+      u.examApproved = next;
+      renderUsers();
+    } catch (err) {
+      alert(err.message || "처리에 실패했습니다.");
+    } finally {
+      examBtn.disabled = false;
     }
     return;
   }

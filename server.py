@@ -7782,6 +7782,15 @@ CHANGELOG = [
             "이름표로 그대로 구분됩니다. 저장해 두신 문제도 다시 열면 새 번호로 나옵니다.",
         ],
     },
+    {
+        "version": 34,
+        "date": "2026-09-22",
+        "items": [
+            "동형 모의고사 제작 — 이제 관리자 승인을 받은 선생님에게만 탭이 보입니다. "
+            "학교 기출 시험지를 올려 읽는 기능이라, 학생 관리 탭과 같은 방식으로 "
+            "신청을 받아 열어 드립니다. 탭이 보이지 않으면 문의해 주세요.",
+        ],
+    },
 ]
 
 
@@ -7832,6 +7841,9 @@ def _account_payload(user_id):
         "krwPaid": paid,
         # 반/학생 관리 탭을 보여줄지 — 관리자가 켜 준 선생님만 True
         "classroomApproved": bool(info.get("classroom_approved")),
+        # 동형 모의고사 제작 탭을 보여줄지 — 위와 같은 모양이지만 별개의 승인이다
+        # (기출 시험지를 올려 분석하는 기능이라 남의 학교 시험지가 들어온다)
+        "examApproved": bool(info.get("exam_approved")),
         # 로그인마다 함께 내려준다 — 비어 있으면 화면이 아무것도 띄우지 않는다
         "updates": _unseen_updates(info.get("last_seen_changelog")),
     }
@@ -8705,6 +8717,7 @@ def list_all_users():
             "krwRemaining": krw,
             "createdAt": d.get("created_at", ""),
             "classroomApproved": bool(d.get("classroom_approved")),
+            "examApproved": bool(d.get("exam_approved")),
             "lastLogin": _kst_date(d.get("last_login")) or "",
             "dormant": bool(d.get("dormant")),
             # 휴면 예정 통지를 보낸 계정은 예정일까지 함께 보여 준다
@@ -8911,6 +8924,25 @@ def set_classroom_approved(user_id, approved):
     if not ref.get().exists:
         raise ValueError("회원을 찾을 수 없습니다.")
     ref.update({"classroom_approved": bool(approved)})
+
+
+# 동형 모의고사 제작(기출 시험지 분석 → 같은 구성의 시험지 제작). 위 반/학생 승인과
+# 똑같은 모양이지만 켜고 끄는 대상이 다르므로 플래그를 따로 둔다 — 한 선생님이 학생
+# 기능만, 또는 시험지 기능만 쓸 수 있어야 한다.
+def _exam_approved(user_id):
+    """관리자가 이 선생님에게 동형 모의고사 제작을 켜 줬는지. 남의 학교 기출 시험지를
+    올려 읽는 기능이라 가입만으로는 못 쓰게 막아 둔다 — admin.html에서 관리자가 켠다."""
+    _require_db()
+    snap = DB.collection("users").document(user_id).get()
+    return bool((snap.to_dict() or {}).get("exam_approved")) if snap.exists else False
+
+
+def set_exam_approved(user_id, approved):
+    _require_db()
+    ref = DB.collection("users").document(user_id)
+    if not ref.get().exists:
+        raise ValueError("회원을 찾을 수 없습니다.")
+    ref.update({"exam_approved": bool(approved)})
 
 
 # --- 반 · 학생 ---------------------------------------------------------------
@@ -9997,6 +10029,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/saved", "/api/saved/delete",
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
+                        "/api/admin/approve-exam",
                         "/api/classes", "/api/classes/regenerate-code", "/api/students",
                         "/api/students/delete", "/api/vocab-tests", "/api/vocab-tests/delete",
                         "/api/vocab-tests/update",
@@ -10437,6 +10470,22 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 set_classroom_approved(user_id, bool(req.get("approved")))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+                return
+            self._send_json({"ok": True})
+            return
+
+        if path == "/api/admin/approve-exam":
+            if not _admin_session_valid(self):
+                self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
+                return
+            user_id = (req.get("userId") or "").strip()
+            if not user_id:
+                self._send_json({"error": "회원을 지정하세요."}, 400)
+                return
+            try:
+                set_exam_approved(user_id, bool(req.get("approved")))
             except ValueError as e:
                 self._send_json({"error": str(e)}, 404)
                 return
@@ -10948,6 +10997,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/examscan":
+            # 동형 모의고사 제작은 관리자가 켜 준 선생님만 쓴다. 화면에서도 탭을 감추지만
+            # 화면을 거치지 않은 요청이 그대로 통과하면 안 되므로 여기서 다시 막는다.
+            if not _exam_approved(self._auth_user_id):
+                self._send_json(
+                    {"error": "동형 모의고사 제작은 관리자 승인이 필요합니다.",
+                     "code": "exam_not_approved"}, 403)
+                return
             files = req.get("files")
             if not isinstance(files, list) or not files:
                 self._send_json({"error": "분석할 시험지를 올려 주세요."}, 400)
