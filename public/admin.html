@@ -77,15 +77,18 @@
              단추가 한 글자씩 세로로 쪼개지며 줄 높이가 화면 하나만큼 늘어난다
              (실제로 그랬다 — '학생기능'을 넣으면서 col을 안 늘려 '관리'가 0폭이 됐다).
              열을 더하거나 뺄 때는 아래 col도 함께 고치고, 합이 100%인지 확인할 것. -->
+        <!-- 칸을 늘리면 아래 col도 반드시 함께 늘리고 합이 100%가 되게 할 것 —
+             빠뜨리면 마지막 칸(관리)이 폭을 못 받아 세로로 찌그러진다. -->
         <colgroup>
-          <col style="width:18%">   <!-- 이메일 -->
-          <col style="width:8%">    <!-- 이름 -->
+          <col style="width:17%">   <!-- 이메일 -->
+          <col style="width:7%">    <!-- 이름 -->
           <col style="width:5%">    <!-- 가입 -->
-          <col style="width:10%">   <!-- 가입일 -->
-          <col style="width:10%">   <!-- 최근 로그인 -->
-          <col style="width:8%">    <!-- 잔액 -->
+          <col style="width:9%">    <!-- 가입일 -->
+          <col style="width:9%">    <!-- 최근 로그인 -->
+          <col style="width:7%">    <!-- 잔액 -->
           <col style="width:7%">    <!-- 학생기능 -->
-          <col style="width:34%">   <!-- 관리 — 칸·고르개·단추 셋이 한 줄에 들어갈 폭 -->
+          <col style="width:7%">    <!-- 모의고사 -->
+          <col style="width:32%">   <!-- 관리 — 칸·고르개·단추 셋이 한 줄에 들어갈 폭 -->
         </colgroup>
         <thead>
           <tr style="text-align:left; border-bottom:1px solid var(--line);">
