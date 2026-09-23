@@ -1469,6 +1469,10 @@
         <!-- 유형 분석은 발문만 읽고 지문은 건너뛴다. 그 시험지의 지문까지 쓰려면
              이 단추로 따로 읽어야 한다 — 쪽마다 값이 나가므로 자동으로 돌리지 않는다. -->
         <button class="btn ghost" id="examOcrBtn" disabled>📄 지문도 가져오기</button>
+        <!-- 기출을 다시 올리지 않고 저장해 둔 구성에서 바로 잇는 길. 시험지를 올리는
+             자리 바로 옆에 두어야 '새로 분석 / 저장한 것 불러오기' 갈림길이 한눈에
+             보인다 — 저장함 단추가 화면 위쪽 계정 줄에만 있으면 여기서는 안 보인다. -->
+        <button class="btn ghost" id="examLoadSpecBtn">📂 저장한 구성 불러오기</button>
         <button class="btn ghost" id="examClearBtn" style="display:none">🗑️ 올린 시험지 지우기</button>
         <span class="hint cost-hint" id="examCostHint" role="status" aria-live="polite"></span>
       </div>
