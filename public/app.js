@@ -7958,11 +7958,22 @@ function renderSavedList() {
     items.length === all.length ? `${all.length}개` : `${all.length}개 중 ${items.length}개`;
 }
 
-async function openSavedList(kind) {
+/* 지문 저장본을 어느 칸으로 불러올지. 기본은 공용 지문칸(null)이고, 시험지 탭의
+   '📄 저장함에서 가져오기'로 열었을 때만 그 탭의 시험 범위 칸이 들어온다.
+   저장함 자체는 한 벌만 두고 목적지만 바꾸는 편이, 저장함을 둘로 늘리는 것보다
+   낫다 — 저장은 어차피 한 곳에 쌓이므로 목록이 갈리면 선생님이 어디에 넣었는지를
+   또 기억해야 한다. */
+let passageLoadTo = null;   // null이면 공용 지문칸, 아니면 {mgr, label, after}
+
+async function openSavedList(kind, target) {
   openLibrary = LIBRARY[kind] ? kind : "passage";
+  passageLoadTo = target || null;
   const lib = LIBRARY[openLibrary];
   savedListTitleEl.textContent = lib.title;
-  savedListLeadEl.textContent = lib.lead;
+  savedListLeadEl.textContent = passageLoadTo
+    ? `저장해 둔 지문입니다. [불러오기]를 누르면 ${passageLoadTo.label}에 들어갑니다 — ` +
+      "이미 넣어 둔 지문이 있으면, 뒤에 이어 붙일지 지우고 새로 넣을지 그때 물어봅니다."
+    : lib.lead;
   savedKindFilter = "";
   savedSearchText = "";
   if (savedSearchEl) savedSearchEl.value = "";
@@ -7989,6 +8000,28 @@ async function loadSavedItem(id, mode) {
     if (!TAB_SAVE[tab]) return;
     const append = mode === "append";
     savedListModalEl.hidden = true;
+    /* 목적지가 따로 정해져 있으면(시험지 탭의 시험 범위 칸) 그 칸에만 넣고 끝낸다.
+       아래 본줄기를 타면 안 된다 — 통째로 바꿀 때 clearAllTabResults()가 화면의
+       제작 결과를 모두 지우는데, 이 길로 들어온 선생님은 방금 읽어 낸 기출 유형표를
+       보면서 지문을 채우는 중이라 그 표가 사라지면 하던 일이 통째로 날아간다. */
+    if (passageLoadTo && tab === PASSAGE_TAB) {
+      const mgr = passageLoadTo.mgr;
+      const list = (item.payload || {}).passages || [];
+      let msg;
+      if (append) {
+        const { added, full } = mgr.appendJobs(list);
+        msg = full
+          ? `지문 ${added}개를 뒤에 붙였습니다 (총 ${mgr.getJobs().length}개). 칸이 가득 차 나머지는 넣지 못했습니다.`
+          : `지문 ${added}개를 뒤에 붙였습니다 (총 ${mgr.getJobs().length}개).`;
+      } else {
+        mgr.setJobs(list);
+        msg = `지문 ${mgr.getJobs().length}개를 넣었습니다.`;
+      }
+      if (passageLoadTo.after) passageLoadTo.after(msg);
+      refitPassages();
+      passageLoadTo = null;
+      return;
+    }
     const tabBtn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
     if (tabBtn) tabBtn.click();
     /* 통째로 불러오면 지문이 다 바뀌므로 화면에 남아 있던 이전 제작 결과물을 모두
@@ -8029,8 +8062,10 @@ function closeLoadModeDialog() {
 }
 function openLoadModeDialog(id, currentCount) {
   pendingLoadId = id;
+  // 어느 칸 얘기인지 밝힌다 — 시험지 탭에서 부르면 공용 입력칸이 아니라 시험 범위 칸이다
+  const where = passageLoadTo ? passageLoadTo.label : "입력칸";
   loadModeLeadEl.textContent =
-    `지금 입력칸에 지문 ${currentCount}개가 들어 있습니다. ` +
+    `지금 ${where}에 지문 ${currentCount}개가 들어 있습니다. ` +
     `불러올 지문을 그 뒤에 이어 붙일까요, 아니면 지금 것을 지우고 새로 넣을까요?`;
   loadModeDialogEl.hidden = false;
 }
@@ -8058,7 +8093,8 @@ savedListBodyEl.addEventListener("click", async (e) => {
     // 지문 저장본이고 입력칸이 이미 차 있을 때만 갈림길을 묻는다.
     // 제작 자료는 지문·설정·결과가 한 벌이라 이어 붙일 수가 없어 늘 통째로 바꾼다.
     const cached = savedItemsCache.find((it) => it.id === id);
-    const current = cached && cached.tab === PASSAGE_TAB ? passageMgr.getJobs().length : 0;
+    const target = passageLoadTo ? passageLoadTo.mgr : passageMgr;
+    const current = cached && cached.tab === PASSAGE_TAB ? target.getJobs().length : 0;
     if (current) openLoadModeDialog(id, current);
     else loadSavedItem(id, "replace");
     return;
@@ -8122,9 +8158,13 @@ savedKindsEl.addEventListener("click", (e) => {
 
 passageLibraryBtn.addEventListener("click", () => openSavedList("passage"));
 materialLibraryBtn.addEventListener("click", () => openSavedList("material"));
-savedListCloseBtn.addEventListener("click", () => { savedListModalEl.hidden = true; });
+function closeSavedList() {
+  savedListModalEl.hidden = true;
+  passageLoadTo = null;   // 목적지를 남겨 두면 다음에 부른 지문이 엉뚱한 칸으로 간다
+}
+savedListCloseBtn.addEventListener("click", closeSavedList);
 savedListModalEl.addEventListener("click", (e) => {
-  if (e.target === savedListModalEl) savedListModalEl.hidden = true;
+  if (e.target === savedListModalEl) closeSavedList();
 });
 /* ══════════════════════════ 만드는 법 안내 ══════════════════════════
    탭마다 만드는 순서가 다르고, 처음 온 선생님에게는 어느 칸부터 채워야 하는지가
@@ -8906,7 +8946,7 @@ document.addEventListener("keydown", (e) => {
   // 불러오기 방식 창은 저장함 위에 겹쳐 있다 — 겹쳤을 때는 위엣것만 닫는다
   if (!loadModeDialogEl.hidden) { closeLoadModeDialog(); return; }
   if (!saveDialogEl.hidden) closeSaveDialog();
-  if (!savedListModalEl.hidden) savedListModalEl.hidden = true;
+  if (!savedListModalEl.hidden) closeSavedList();   // 목적지(passageLoadTo)도 함께 잊는다
   if (!usageModalEl.hidden) usageModalEl.hidden = true;
   if (!doneGuideEl.hidden) closeDoneGuide();
 });
@@ -9739,6 +9779,19 @@ examPaperMgr.addRow(false);
 // 공용 지문칸과 똑같이 PDF를 끌어다 놓을 수 있게 한다.
 // 대상은 패널 전체다 — 지문칸만 받으면 칸이 하나뿐일 때 놓을 자리가 너무 좁다.
 wirePassageDrop(examPaperPanelEl, examPaperMgr, examPassageStatus);
+
+/* 저장함을 열되 불러온 지문은 시험 범위 칸으로 보낸다 — 목적지만 바꾸고 저장함은
+   공용 것을 그대로 쓴다(passageLoadTo 참고). */
+$("examSavedBtn").addEventListener("click", () => {
+  openSavedList("passage", {
+    mgr: examPaperMgr,
+    label: "시험 범위 지문 칸",
+    after: (msg) => {
+      examPassageStatus(msg, "ok");
+      examInputChanged();
+    },
+  });
+});
 
 $("examClearPassagesBtn").addEventListener("click", () => {
   if (confirm("입력한 시험 범위 지문을 모두 지우시겠습니까?\n되돌릴 수 없습니다.")) {

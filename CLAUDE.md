@@ -171,6 +171,10 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `getVocabSets` / `replaceAnalyzeVocabSets` / `appendVocabSet`(단어장 저장소 — 지문 분석·직접
 입력·사진·PDF 네 출처가 같은 `vocabSets`를 쓴다. `src` 태그로 구분해, 재분석은 `src:"analyze"`
 세트만 갈아 끼우고 나머지는 남긴다) ·
+`openSavedList` / `loadSavedItem` / `passageLoadTo`(저장함은 한 벌인데 불러온 지문이
+들어갈 칸만 바꾼다 — 기본은 공용 지문칸이고, 시험지 탭의 '📄 저장함에서 가져오기'로
+열었을 때만 시험 범위 칸으로 간다. 이 길은 `clearAllTabResults`를 타지 않는다 —
+기출 유형표를 보면서 지문을 채우는 중이라 그 표가 지워지면 안 된다) ·
 `vocabEditorOpen` / `runVocabOcr` / `runVocabPdf`(단어장 직접 입력·사진·PDF — 인식 결과는
 바로 저장되지 않고 편집 표를 거쳐 "이 단어장에 추가"를 눌러야 확정된다)
 
