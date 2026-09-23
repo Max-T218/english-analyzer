@@ -932,17 +932,12 @@ v{
 
   .qz-cards{
     column-count:2; column-gap:7mm;
-    /* column-fill: 쪽을 끝까지 채우려면 auto라야 한다.
-       balance로 두었더니 쪽마다 두 단 높이를 맞추려고 일찍 끊어, 모든 쪽이 덜 찼다
-       (실측 — 내용 영역이 790pt까지인데 2쪽은 왼단 506pt에서 끝나고 오른단이 아예
-       비었고, 3쪽 637/558, 4쪽 512/409로 쪽마다 150~335pt가 남았다).
-
-       예전에 auto에서 빈 쪽이 쏟아진 적이 있다(지문 7개 × 10문항이 41쪽 중 12쪽이
-       빈 쪽). 그때는 지문마다 2단 상자가 따로 있어 상자 하나하나가 쪽을 밀던 때다.
-       그 뒤 상자를 하나로 합쳤으므로(mergeQuizColumns) 같은 일이 되풀이되지 않는다.
-       혹시 빈 쪽이 다시 보이면 이 값을 balance로 되돌리면 된다 — 그때는 쪽이 덜
-       차는 쪽을 택하는 것이고, 까닭이 여기 적혀 있다. */
-    column-fill:auto;
+    /* column-fill은 balance라야 한다. auto로 두면 마지막 문항 뒤로 빈 쪽이 붙는다
+       (실측 — 예전 41쪽 중 12쪽, 2026-09-23에 다시 시험했을 때도 21쪽 중 뒤 2쪽).
+       auto로 바꿔도 쪽이 더 차지는 않았다. 카드 하나가 400~620pt라 740pt짜리 단에
+       어차피 하나밖에 안 들어가기 때문이다 — 덜 차 보이는 것은 채우기 방식이 아니라
+       카드 크기 탓이다. 그러니 auto로 얻을 것이 없고 빈 쪽만 생긴다. */
+    column-fill:balance;
     /* 두 단 사이 세로 구분선 — 시험지 느낌 */
     column-rule:1px solid var(--line-soft);
   }
@@ -2124,7 +2119,19 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
      학생에게 나가는 시험지에 찍힐 것이 아니다 — 게다가 머리글 바로 위에 온다. */
   #examPaperResult > .hint { display: none !important; }
   /* 머리글은 그 부(部)의 첫 쪽에만 나온다 — 시험지 표지 자리다 */
-  .exam-sheet-head { margin-bottom: 6mm; border-color: #000; }
+  /* 머리글을 조인다 — 첫 쪽에서 이만큼이 그대로 단 높이에서 깎이기 때문이다.
+     실측: 머리글이 40~154pt를 먹어 단이 626pt로 줄었고, 그 다음 문항 카드가
+     약 602pt라 아슬아슬하게 못 들어가 오른단이 통째로 비었다. 40pt쯤 줄이면
+     그 카드가 들어간다. 학교 시험지 머리글로서 필요한 것(고사명·학교·과목·
+     문항 수·기입란)은 그대로 두고 여백과 글자만 줄인다. */
+  .exam-sheet-head { margin-bottom: 3mm; border-color: #000; }
+  .exam-sheet-id { padding: 7px 12px; gap: 3px; }
+  .exam-sheet-exam { font-size: .88rem; }
+  .exam-sheet-school { font-size: 1.1rem; }
+  .exam-sheet-subject { padding: 6px 14px; min-width: 108px; gap: 2px; }
+  .exam-sheet-subject-name { font-size: 1.3rem; }
+  .exam-sheet-form { font-size: .82rem; }
+  .exam-sheet-bar { padding: 4px 12px; font-size: .8rem; }
   .exam-sheet-bar { border-top-color: #000; }
   .exam-sheet-subject { border-left-color: #000; }
   .exam-sheet-fill u { border-bottom-color: #000; }
