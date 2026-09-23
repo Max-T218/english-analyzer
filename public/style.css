@@ -941,6 +941,13 @@ v{
     /* 두 단 사이 세로 구분선 — 시험지 느낌 */
     column-rule:1px solid var(--line-soft);
   }
+  /* 유형 이름표('빈칸'·'내용불일치')는 학생에게 나가는 시험지에서 감춘다 — 무엇을
+     묻는지 미리 알려 주는 꼴이라 실제 시험지에는 없는 것이다. 화면에는 그대로 두어
+     선생님이 무엇이 만들어졌는지 확인할 수 있게 한다.
+     주관식(.qz-kind-saq)은 그대로 둔다 — 2026-09-23에 객관식·동형 모의고사만 빼기로
+     했다. 함께 빼려면 이 선택자에서 .qz-kind-mcq를 떼면 된다. */
+  .qz-cards.qz-kind-mcq .qz-type{ display:none !important; }
+
   .qz-card{
     box-shadow:none; border-radius:7px;
     padding:9px 11px; margin:0 0 7px;
