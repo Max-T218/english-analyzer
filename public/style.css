@@ -926,6 +926,10 @@ v{
      문항마다 지문이 통째로 들어가 한 문항이 한 쪽을 다 먹던 것을 두 단으로 흘려
      지면 소모를 줄인다. 단 나눔은 문항 카드에만 적용하고, '정답 및 해설' 표는
      .qz-cards 바깥이라 전체 폭을 그대로 쓴다. */
+  /* 시험지 머리글 — 두 단에 걸친다(위 buildQuizHtml 주석 참고). 걸치지 않으면
+     첫 쪽 다단 조각의 높이가 머리글만큼 깎여 오른쪽 단이 빈 채로 넘어간다. */
+  .qz-cards .exam-sheet-head{ column-span:all; break-after:avoid; }
+
   .qz-cards{
     column-count:2; column-gap:7mm;
     /* column-fill은 balance라야 한다. auto로 두면 문항 카드가 한 단 높이보다 클 때

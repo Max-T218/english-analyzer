@@ -5885,12 +5885,17 @@ function mergeQuizColumns(root) {
 function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true, startNo = 0) {
   const parts = [];
   parts.push(`<section class="passage-block qz-block">`);
-  if (sheetHead) parts.push(sheetHead);
   const banner = passageBanner(job, total, label);
 
   // 문항 카드는 별도 래퍼에 담는다 — 인쇄할 때 이 래퍼에만 2단 조판을 적용하고
   // '정답 및 해설' 표는 단 나눔 없이 전체 폭을 쓰게 하기 위해서다.
   parts.push(`<div class="qz-cards">`);
+  /* 시험지 머리글은 2단 상자 '안'에 두고 인쇄 CSS가 두 단에 걸치게 한다
+     (column-span:all). 바깥(상자 앞)에 두었더니 첫 쪽에서 다단 조각의 높이가
+     머리글만큼 깎여, 그 조각에 안 들어가는 카드가 통째로 다음 쪽으로 밀리고
+     오른쪽 단이 빈 채 넘어갔다 — 실제로 첫 쪽에 1번 문항 하나만 찍혔다.
+     상자 안에 넣고 두 단에 걸치면 그 아래 카드들이 온전한 쪽 높이를 쓴다. */
+  if (sheetHead) parts.push(sheetHead);
   // 번호는 AI가 준 q.no 대신 '실제 출제(출력) 순서'로 다시 매긴다.
   // 문항이 유형별로 묶여 나오므로, 지면에 찍히는 순서와 번호가 어긋나지 않게 한다.
   const cards = (d.questions || []).map(
@@ -10437,12 +10442,20 @@ function renderExamPaperSets() {
   };
   if (!examPaperSets.length) {
     examPaperResultEl.innerHTML = "";
+    $("examPaperAnswerPrintBtn").style.display = "none";
     showBtns(false);
     syncFloatPrint();
     return;
   }
   const jobs = examPlanNow ? examPlanNow.jobs : examPaperMgr.getJobs();
-  examPaperResultEl.innerHTML = examPaperSets
+  /* 답지는 시험지 뒤에 바로 붙이지 않고 문서 맨 뒤에 한 덩어리로 모은다 — 문제 탭과
+     같은 방식이다(.qz-answerbook). A형·B형을 함께 만들면 전에는 'A형 시험지 → A형
+     답지 → B형 시험지 → B형 답지' 순으로 나와, 시험지만 뽑아 나눠 주려면 가운데
+     답지를 빼고 인쇄해야 했다. 그리고 이 상자가 있어야 '답지만 인쇄'가 동작한다
+     (.qz-result.answers-only가 .qz-block을 감추고 이 상자만 남긴다). */
+  const answerParts = [];
+  let anyExpCol = false;
+  const sheets = examPaperSets
     .map((set) => {
       // 머리글이 붙으면 그 안에 이미 학교·형(A/B)이 들어 있으므로 이름표는 빼서
       // 같은 말이 두 번 찍히지 않게 한다.
@@ -10453,14 +10466,23 @@ function renderExamPaperSets() {
           esc(set.failed.map((f) => `${f.type}`).join(", ")) + `</p>`
         : "";
       const built = buildQuizHtml({ questions: set.questions, variations: [] }, head, 1, "mcq", "", sheetHead);
+      if (built.answerHtml) answerParts.push(built.answerHtml);
+      if (built.hasExpCol) anyExpCol = true;
       return (
         fails +
         built.html +
-        built.answerHtml +
         examPlanTableHtml(set.plan, jobs, `출제 지문${set.label ? " — " + set.label : ""}`)
       );
     })
     .join("");
+  const answerBody = answerParts.filter((p) => p && p.trim()).join("");
+  examPaperResultEl.innerHTML = sheets + (answerBody
+    ? `<section class="qz-answerbook">
+         <h2 class="qz-answerbook-head">${anyExpCol ? "정답 및 해설" : "정답"}</h2>
+         ${answerBody}
+       </section>`
+    : "");
+  $("examPaperAnswerPrintBtn").style.display = answerBody ? "inline-flex" : "none";
   showBtns(true);
   syncDocCovers();   // 소책자와 같은 이유 — 다시 그렸으니 표지를 얹는다
   syncFloatPrint();
@@ -10476,6 +10498,15 @@ Object.values(examHeadEls).forEach((el) => {
 $("examPlanBtn").addEventListener("click", runExamPaperFlow);
 $("examPaperPrintBtn").addEventListener("click", () =>
   printDoc(() => ["시험지", todayStr()].filter(Boolean).join("_"))
+);
+
+/* 답지만 인쇄 — 문제 탭과 같은 길이다. 결과 상자에 answers-only를 잠깐 걸면
+   인쇄 CSS가 시험지(.qz-block)를 감추고 뒤쪽 답지 상자만 남긴다. */
+$("examPaperAnswerPrintBtn").addEventListener("click", () =>
+  printDoc(() => ["시험지", "답지", todayStr()].filter(Boolean).join("_"), {
+    before: () => examPaperResultEl.classList.add("answers-only"),
+    after: () => examPaperResultEl.classList.remove("answers-only"),
+  })
 );
 
 /* 시험지 워드 내보내기. 시험지 본문은 문제 탭과 같은 buildQuizHtml이 그리므로 변환도
