@@ -1942,6 +1942,15 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   table.answerkey th:nth-child(2), table.answerkey td:nth-child(2){ width:92%; }
   table.answerkey.with-exp th:nth-child(2), table.answerkey.with-exp td:nth-child(2){ width:8%; }
   table.answerkey.with-exp th:nth-child(3), table.answerkey.with-exp td:nth-child(3){ width:84%; }
+  /* 정답이 긴 문장인 문항이 섞인 표 — 위 8%는 ①②③만 들어갈 폭이라, 영어 한 문장이
+     오면 글자 단위로 접혀 세로로 늘어진다(답 하나가 한 쪽을 통째로 먹은 적이 있다).
+     객관식과 서술형이 한 표에 섞이는 동형 모의고사에서 반드시 필요하다. */
+  table.answerkey.with-exp.long-ans th:nth-child(2),
+  table.answerkey.with-exp.long-ans td:nth-child(2){ width:34%; }
+  table.answerkey.with-exp.long-ans th:nth-child(3),
+  table.answerkey.with-exp.long-ans td:nth-child(3){ width:58%; }
+  /* 긴 정답은 낱말 단위로 접는다 — anywhere는 낱말 한가운데를 잘라 읽기 어렵다 */
+  table.answerkey.long-ans td:nth-child(2){ overflow-wrap:break-word; word-break:normal; }
   /* 화면에서는 '②'가 두 줄로 쪼개지지 않게 줄바꿈을 막아 두었는데, 서술형·요약문의
      정답은 문장 통째라 그 금지가 표를 지면 밖으로 밀어낸다. 인쇄에서는 접는다. */
   table.answerkey td:nth-child(2){ white-space:normal; overflow-wrap:anywhere; }

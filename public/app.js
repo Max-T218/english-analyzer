@@ -5530,6 +5530,11 @@ const QUIZ_TABS = {
 
 // 한 문항의 '정답' 표기를 형식에 맞게 만든다
 // (객관식=①, 서술형=문장, OX=O/X 나열, 선택형=고른 낱말, 오류찾기=틀린말→바른말)
+/* 정답을 '긴 문장'으로 볼 기준 글자 수. ①②③은 1자, "(1) O (2) X (3) O"처럼
+   O/X를 늘어놓는 답도 스무 자 안쪽이라 좁은 칸에 들어간다. 그보다 길면 영어
+   문장이라고 보고 칸을 넓힌다. */
+const ANSWERKEY_LONG_CHARS = 24;
+
 function quizAnswerLabel(q) {
   const fmt = q.format || "mc";
   // 조건 영작·문장 전환·질문에 답하기도 정답이 문장 하나다
@@ -5951,6 +5956,14 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true, st
        세로로 길어져 답지 쪽수를 늘리던 것이 실제 이유다.
        with-exp는 아래 인쇄 CSS가 열 폭을 나누는 데 쓴다(해설이 있으면 정답 칸을
        ①②③ 폭으로 좁히고, 해설이 없는 주관식이면 정답 칸이 지면을 다 쓴다). */
+    /* 정답이 긴 문장인 문항(조건 영작·요약문·문장 전환 등)이 하나라도 섞였는지.
+       섞였으면 정답 칸을 넓혀야 한다 — with-exp의 기본 폭은 ①②③만 들어갈 8%라,
+       영어 한 문장이 들어오면 글자 단위로 접혀 세로로 늘어진다. 동형 모의고사처럼
+       객관식과 서술형이 한 표에 섞이는 자리에서 실제로 답 하나가 한 쪽을 통째로
+       먹었다. 지면을 아끼려고 좁힌 칸이 거꾸로 지면을 잡아먹은 셈이다. */
+    const ansPlain = (q) => String(quizAnswerLabel(q)).replace(/<[^>]*>/g, "");
+    const longAns = d.questions.some((q) => ansPlain(q).trim().length > ANSWERKEY_LONG_CHARS);
+
     const rows = d.questions
       .map(
         (q, i) => `
@@ -5971,7 +5984,7 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true, st
       <div class="qz-ab-passage">
         ${abLabel}
         <h3 class="section"><span class="num">📌</span> ${anyExp ? "정답 및 해설" : "정답"}</h3>
-        <div class="table-wrap"><table class="answerkey${anyExp ? " with-exp" : ""}">
+        <div class="table-wrap"><table class="answerkey${anyExp ? " with-exp" : ""}${longAns ? " long-ans" : ""}">
           <thead><tr><th>번호</th><th>정답</th>${expHead}</tr></thead>
           <tbody>${rows}</tbody>
         </table></div>
