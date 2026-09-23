@@ -8945,6 +8945,12 @@ const EXAM_MAX_PAGES = 16;      // server.py의 EXAM_MAX_PAGES와 같은 값
    (3쪽 440KB → 2,583KB). 학교 인터넷에서는 그 시간이 그대로 기다림이 된다.
    올리고 싶어지면 이 주석을 먼저 읽고, 올린 것과 내린 것의 결과를 실제로 견줘 볼 것. */
 
+const EXAM_MIN_JPEG = 20000;    // 이보다 작은 조각은 쪽 그림이 아니라 아이콘·썸네일이다
+let examPages = [];             // [{mime, data}] — 서버에 보낼 쪽 그림
+let examBusy = false;
+let examAutoTimer = null;
+let examAutoDone = false;       // 지금 올려 둔 시험지로 자동 분석을 이미 걸었는가
+
 function examStatus(msg, kind) {
   examStatusEl.hidden = !msg;
   examStatusEl.textContent = msg || "";
