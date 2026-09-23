@@ -9280,6 +9280,19 @@ function buildExamMergeRows(questions, docs) {
   const rows = [...map.values()];
   if (!rows.length) return rows;
 
+  /* 부가 하나뿐이면 그 기출의 개수를 그대로 쓴다. 합칠 것이 없으니 아래 '최소 1문항 +
+     비례 배분'을 태우면 원래 구성과 어긋난다 — 내용불일치 6문항짜리 기출이 4문항으로
+     내려앉는 식이다. 한 부일 때 이 표의 뜻은 '기출 그대로, 고치고 싶으면 고치세요'다. */
+  const usedDocs = rows.reduce((set, r) => {
+    r.per.forEach((v, i) => { if (v > 0) set.add(i); });
+    return set;
+  }, new Set());
+  if (usedDocs.size <= 1) {
+    rows.forEach((r) => { r.want = r.per.reduce((a, b) => a + b, 0); });
+    rows.sort((a, b) => b.want - a.want || a.kind.localeCompare(b.kind));
+    return rows;
+  }
+
   /* 총 문항 수는 '기출 한 부의 평균 크기'로 잡는다 — 합치는 목적이 더 긴 시험지가
      아니라 '한 부짜리 대비 시험지'이기 때문이다. 다만 유형 가짓수가 그보다 많으면
      가짓수까지 올린다. 하나도 빠뜨리지 않는 것이 먼저다. */
@@ -9341,7 +9354,7 @@ function syncExamMergeTotal() {
   }
 }
 
-function renderExamMerge(questions, note) {
+function renderExamMerge(questions, note, detailHtml) {
   const docs = examDocNames.length;
   examMergeRows = buildExamMergeRows(questions, docs);
   if (!examMergeRows.length) {
@@ -9391,7 +9404,7 @@ function renderExamMerge(questions, note) {
         <button type="button" class="btn" id="examMergeGoBtn">이 구성으로 시험지 만들기</button>
       </div>
       <p class="hint" id="examMergeWarn" hidden></p>
-    </section>`;
+    </section>` + (detailHtml || "");
 
   const body = $("examMergeBody");
   body.addEventListener("click", (e) => {
@@ -9406,19 +9419,28 @@ function renderExamMerge(questions, note) {
     tr.classList.toggle("is-zero", row.want === 0);
     syncExamMergeTotal();
   });
-  $("examMergeGoBtn").addEventListener("click", () => {
+  const applyMerge = (scroll) => {
     const merged = examMergeToQuestions(examMergeRows);
     if (!merged.length) return;
-    openExamPaperPanel({ title: `기출 ${docs}부 합친 구성`, note: "", questions: merged });
-    examPaperPanelEl.scrollIntoView({ behavior: "smooth", block: "start" });
-  });
+    openExamPaperPanel({
+      title: docs > 1 ? `기출 ${docs}부 합친 구성` : (examScanTitle || "기출 시험지"),
+      note: "", questions: merged,
+    });
+    if (scroll) examPaperPanelEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  $("examMergeGoBtn").addEventListener("click", () => applyMerge(true));
   syncExamMergeTotal();
+  /* 표를 그리자마자 제작 칸도 열어 둔다 — 숫자를 안 고칠 사람이 더 많고, 한 부만
+     올렸을 때 지금까지 그렇게 동작해 왔다. 숫자를 고쳤을 때만 위 단추를 누르면 된다. */
+  applyMerge(false);
 }
 
 // 한 유형에 너무 많이 몰면 지문이 모자라 배분이 깨진다 — 화면에서 먼저 막는다
 const EXAM_MERGE_MAX_PER_KIND = 20;
 
-function renderExamScan(scan) {
+/* 문항별 표(번호·발문·판정)를 글자로 만든다. 화면에 넣는 것과 가른 이유는, 구성 표
+   아래에 이 표를 '근거'로 덧붙여야 하기 때문이다(examShowScanResult 참고). */
+function examScanTableHtml(scan) {
   const qs = scan.questions || [];
   const count = (f) => qs.filter((q) => q.fit === f).length;
   const rows = qs
@@ -9436,7 +9458,7 @@ function renderExamScan(scan) {
     })
     .join("");
 
-  examResultEl.innerHTML = `
+  return `
     <section class="panel exam-report">
       <h3 class="exam-title">${esc(scan.title || "기출 시험지")}</h3>
       <p class="exam-summary">
@@ -9459,12 +9481,15 @@ function renderExamScan(scan) {
       </div>
 
     </section>`;
+}
 
-  // 분석 결과가 곧 시험지의 사양이다 — 분석이 끝나야 아래 시험지 제작 칸이 열린다.
-  // 예전에는 여기에 [객관식/주관식/워크북 탭 채우기] 세 버튼을 두어 유형만 옮겨 담고
-  // 사용자가 다른 탭으로 건너가 지문을 넣게 했다. 만드는 길이 둘로 갈려 어느 쪽으로
-  // 가야 하는지 화면만 봐서는 알 수 없었고, 그 길은 지문마다 유형을 전부 만들어
-  // '기출과 같은 구성 한 부'와도 어긋났다. 지금은 이 탭에서 곧장 끝낸다.
+/* 분석 결과가 곧 시험지의 사양이다 — 분석이 끝나야 아래 시험지 제작 칸이 열린다.
+   예전에는 여기에 [객관식/주관식/워크북 탭 채우기] 세 버튼을 두어 유형만 옮겨 담고
+   사용자가 다른 탭으로 건너가 지문을 넣게 했다. 만드는 길이 둘로 갈려 어느 쪽으로
+   가야 하는지 화면만 봐서는 알 수 없었고, 그 길은 지문마다 유형을 전부 만들어
+   '기출과 같은 구성 한 부'와도 어긋났다. 지금은 이 탭에서 곧장 끝낸다. */
+function renderExamScan(scan) {
+  examResultEl.innerHTML = examScanTableHtml(scan);
   openExamPaperPanel(scan);
 }
 
@@ -9627,8 +9652,15 @@ function examShowScanResult(notes) {
     return;
   }
   const note = (notes || []).join(" / ");
-  if (examDocScans.size > 1) renderExamMerge(all, note);
-  else renderExamScan({ title: examScanTitle || "기출 시험지", questions: all, note });
+  /* 부가 하나여도 구성 표를 보여 준다. 유형마다 몇 문항 낼지 고치고 싶은 것은 부의
+     개수와 상관이 없다 — 한 부일 때는 기출의 개수가 그대로 기본값으로 들어간다.
+     그 아래에 문항별 표를 근거로 붙인다(어떤 발문이었고 무엇을 못 만드는지).
+     부가 여럿이면 문항별 표는 붙이지 않는다 — 두 기출의 문항이 뒤섞인 긴 목록이
+     되는데, 부별 개수가 이미 표 안에 있어 근거 노릇을 대신한다. */
+  const detail = examDocScans.size > 1
+    ? ""
+    : examScanTableHtml({ title: examScanTitle || "기출 시험지", questions: all, note });
+  renderExamMerge(all, note, detail);
 }
 
 async function runExamScan() {
