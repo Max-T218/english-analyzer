@@ -9293,35 +9293,68 @@ function buildExamMergeRows(questions, docs) {
     return rows;
   }
 
-  /* 총 문항 수는 '기출 한 부의 평균 크기'로 잡는다 — 합치는 목적이 더 긴 시험지가
-     아니라 '한 부짜리 대비 시험지'이기 때문이다. 다만 유형 가짓수가 그보다 많으면
-     가짓수까지 올린다. 하나도 빠뜨리지 않는 것이 먼저다. */
-  const perDocTotal = new Array(docs).fill(0);
-  rows.forEach((r) => r.per.forEach((v, i) => { perDocTotal[i] += v; }));
-  const used = perDocTotal.filter((v) => v > 0);
-  const avg = used.length ? Math.round(used.reduce((a, b) => a + b, 0) / used.length) : rows.length;
-  const target = Math.max(rows.length, avg);
-
-  // ① 모두 1문항씩 깔고 ② 남는 자리를 평균 빈도에 비례해 나눈다(큰 나머지 순)
-  rows.forEach((r) => { r.want = 1; });
-  let left = target - rows.length;
-  if (left > 0) {
-    const mean = rows.map((r) => r.per.reduce((a, b) => a + b, 0) / (used.length || 1));
-    const sum = mean.reduce((a, b) => a + b, 0) || 1;
-    const share = mean.map((m) => (m / sum) * left);
-    const base = share.map((v) => Math.floor(v));
-    base.forEach((v, i) => { rows[i].want += v; });
-    left -= base.reduce((a, b) => a + b, 0);
-    share
-      .map((v, i) => ({ i, frac: v - Math.floor(v) }))
-      .sort((a, b) => b.frac - a.frac)
-      .slice(0, left)
-      .forEach((x) => { rows[x.i].want += 1; });
-  }
   // 자주 나온 것부터 위로 — 무엇이 주된 유형인지 한눈에 보여야 한다
   rows.sort((a, b) =>
     b.per.reduce((x, y) => x + y, 0) - a.per.reduce((x, y) => x + y, 0) ||
     a.kind.localeCompare(b.kind));
+  allocateExamMerge(rows, examMergeDefaultTotal(rows));
+  return rows;
+}
+
+/* 총 문항 수의 기본값 — '기출 한 부의 평균 크기'다. 합치는 목적이 더 긴 시험지가
+   아니라 '한 부짜리 대비 시험지'이기 때문이다(2부 48문항을 넣으면 24문항이 나온다).
+   다만 유형 가짓수가 그보다 많으면 가짓수까지 올린다 — 기본값에서는 하나도
+   빠뜨리지 않는 것이 먼저다. 선생님이 칸에 직접 적으면 그 값이 이긴다. */
+function examMergeDefaultTotal(rows) {
+  const docs = examMergeDocsUsed(rows);
+  const perDoc = [];
+  rows.forEach((r) => r.per.forEach((v, i) => { perDoc[i] = (perDoc[i] || 0) + v; }));
+  const used = perDoc.filter((v) => v > 0);
+  const avg = used.length ? Math.round(used.reduce((a, b) => a + b, 0) / used.length) : rows.length;
+  return Math.max(rows.length, avg);
+}
+
+// 실제로 문항이 들어 있는 부의 수 — 평균을 낼 때 나누는 값이다
+function examMergeDocsUsed(rows) {
+  const set = new Set();
+  rows.forEach((r) => r.per.forEach((v, i) => { if (v > 0) set.add(i); }));
+  return set.size || 1;
+}
+
+/* 총 문항 수를 유형마다 나눈다.
+   ① 자주 나온 유형부터 1문항씩 깐다 — 자리가 모자라면 드물게 나온 유형이 0으로
+      남는다. 총 수를 유형 가짓수보다 적게 잡으면 무엇이든 빠질 수밖에 없는데,
+      그때 빠질 것은 '한 번밖에 안 나온 유형'이어야 한다.
+   ② 남는 자리를 평균 빈도에 비례해 나눈다(큰 나머지 순).
+   같은 빈도끼리는 앞선 것이 먼저 받는다 — 자리가 하나뿐이면 어느 쪽을 줄지
+   기계가 정할 도리가 없다. 선생님이 ±로 고치는 칸을 둔 까닭이다. */
+function allocateExamMerge(rows, total) {
+  const docs = examMergeDocsUsed(rows);
+  const mean = rows.map((r) => r.per.reduce((a, b) => a + b, 0) / docs);
+  const order = rows.map((_r, i) => i).sort((a, b) => mean[b] - mean[a] || a - b);
+
+  rows.forEach((r) => { r.want = 0; });
+  let left = Math.max(0, Math.round(total) || 0);
+  for (const i of order) {
+    if (left <= 0) break;
+    rows[i].want = 1;
+    left -= 1;
+  }
+  if (left > 0) {
+    const live = order.filter((i) => rows[i].want > 0);
+    const sum = live.reduce((a, i) => a + mean[i], 0) || 1;
+    const share = live.map((i) => (mean[i] / sum) * left);
+    const base = share.map((v) => Math.floor(v));
+    base.forEach((v, k) => { rows[live[k]].want += v; });
+    left -= base.reduce((a, b) => a + b, 0);
+    share
+      .map((v, k) => ({ k, frac: v - Math.floor(v) }))
+      .sort((a, b) => b.frac - a.frac)
+      .slice(0, left)
+      .forEach((x) => { rows[live[x.k]].want += 1; });
+  }
+  // 한 유형에 몰리지 않게 상한을 지킨다(지문이 모자라 배분이 깨진다)
+  rows.forEach((r) => { r.want = Math.min(r.want, EXAM_MERGE_MAX_PER_KIND); });
   return rows;
 }
 
@@ -9391,6 +9424,17 @@ function renderExamMerge(questions, note, detailHtml) {
         ${dropped ? `이 앱으로 못 만드는 문항 ${dropped}개는 빼고 셌습니다.` : ""}
       </p>
       ${note ? `<p class="hint">${esc(note)}</p>` : ""}
+      <div class="exam-merge-target">
+        <label for="examMergeTarget"><b>총 문항 수</b></label>
+        <input type="number" id="examMergeTarget" min="1" max="${EXAM_MERGE_MAX_TOTAL}"
+               value="${examMergeDefaultTotal(examMergeRows)}" inputmode="numeric">
+        <span class="hint">
+          기본값은 <b>기출 한 부의 평균 크기</b>입니다${docs > 1
+            ? ` — 올린 ${docs}부의 문항 수를 평균 낸 값이지 더한 값이 아닙니다`
+            : ""}.
+          실제 시험에 맞춰 바꾸면 유형마다 다시 나눠 드립니다.
+        </span>
+      </div>
       <div class="exam-table-wrap">
         <table class="exam-table exam-merge-table">
           <thead><tr>
@@ -9418,7 +9462,36 @@ function renderExamMerge(questions, note, detailHtml) {
     tr.querySelector(".merge-val").textContent = row.want;
     tr.classList.toggle("is-zero", row.want === 0);
     syncExamMergeTotal();
+    // 손으로 고친 값이 총 문항 수 칸과 어긋나 보이지 않게 함께 맞춘다
+    const t = $("examMergeTarget");
+    if (t) t.value = examMergeRows.reduce((a, r) => a + r.want, 0);
   });
+  /* 표를 통째로 다시 그리지 않고 숫자 칸만 고쳐 칠한다 — 다시 그리면 총 문항 수
+     칸에서 입력 초점이 빠져 숫자를 이어 칠 수 없다. */
+  const repaintWants = () => {
+    [...body.querySelectorAll("tr")].forEach((tr) => {
+      const row = examMergeRows[Number(tr.dataset.row)];
+      if (!row) return;
+      tr.querySelector(".merge-val").textContent = row.want;
+      tr.classList.toggle("is-zero", row.want === 0);
+    });
+    syncExamMergeTotal();
+  };
+  const targetEl = $("examMergeTarget");
+  const applyTarget = () => {
+    let v = Math.round(Number(targetEl.value));
+    if (!Number.isFinite(v) || v < 1) v = 1;
+    if (v > EXAM_MERGE_MAX_TOTAL) v = EXAM_MERGE_MAX_TOTAL;
+    targetEl.value = v;
+    allocateExamMerge(examMergeRows, v);
+    repaintWants();
+  };
+  targetEl.addEventListener("change", applyTarget);
+  // 엔터로도 반영한다 — 숫자를 치고 바로 결과를 보고 싶은 자리다
+  targetEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); applyTarget(); }
+  });
+
   const applyMerge = (scroll) => {
     const merged = examMergeToQuestions(examMergeRows);
     if (!merged.length) return;
@@ -9437,6 +9510,8 @@ function renderExamMerge(questions, note, detailHtml) {
 
 // 한 유형에 너무 많이 몰면 지문이 모자라 배분이 깨진다 — 화면에서 먼저 막는다
 const EXAM_MERGE_MAX_PER_KIND = 20;
+// 시험지 한 부의 총 문항 수 상한. 실제 내신이 30문항 안쪽이라 넉넉히 잡은 값이다
+const EXAM_MERGE_MAX_TOTAL = 60;
 
 /* 문항별 표(번호·발문·판정)를 글자로 만든다. 화면에 넣는 것과 가른 이유는, 구성 표
    아래에 이 표를 '근거'로 덧붙여야 하기 때문이다(examShowScanResult 참고). */
