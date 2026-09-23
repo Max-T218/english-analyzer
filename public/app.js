@@ -9764,6 +9764,11 @@ async function runExamScan() {
   examBusy = false;
   examBtn.disabled = !examPages.length;
   examOcrBtn.disabled = !examPages.length;
+  /* 상태줄을 다시 그린다. 여기서 안 그리면 올릴 때 적힌 문구가 그대로 남아,
+     2부를 다 읽고도 "(1부 분석 완료) · 곧 새로 올린 1부를 이어서 분석합니다"가
+     붙어 있다 — 분석이 안 된 줄 안다. examScheduleAuto가 딸려 오지만 방금
+     분석을 돌린 참이라 examAutoDone이 켜져 있어 다시 걸리지 않는다. */
+  examSyncStatus();
 }
 
 examBtn.addEventListener("click", runExamScan);
