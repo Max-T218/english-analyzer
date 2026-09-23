@@ -171,10 +171,13 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `getVocabSets` / `replaceAnalyzeVocabSets` / `appendVocabSet`(단어장 저장소 — 지문 분석·직접
 입력·사진·PDF 네 출처가 같은 `vocabSets`를 쓴다. `src` 태그로 구분해, 재분석은 `src:"analyze"`
 세트만 갈아 끼우고 나머지는 남긴다) ·
-`LIBRARY`(저장함을 보는 창 셋 — `passage`(지문) · `exam`(기출 구성만) · `material`(그 밖의
-제작 자료). 저장본은 `saved_items` 한 곳에 쌓이고 **보는 창만 다르다** — 저장할 때
-어디에 넣을지 고르게 하지 않는다. `exam` 창은 시험지 탭의 '📂 저장한 구성 불러오기'
-전용이고, `material` 창에도 같은 저장본이 그대로 보인다) ·
+`LIBRARY`(저장함을 보는 창 셋 — `passage`(지문) · `tab`(한 탭 것만, 어느 탭인지는
+`savedOnlyTab`이 정한다) · `material`(제작 자료 전부). 저장본은 `saved_items` 한 곳에
+쌓이고 **보는 창만 다르다** — 저장할 때 어디에 넣을지 고르게 하지 않는다.
+`tab` 창은 탭마다 있는 '📂 불러오기'(`<탭>LoadBtn`)와 시험지 탭의
+'📂 저장한 구성 불러오기'(`examLoadSpecBtn`)가 연다. 창 문구는 글자일 수도 함수일
+수도 있어 `libWord`로 꺼내고, 기본 문구와 달라야 하는 탭만 `TAB_LIBRARY_WORDS`에
+적는다) ·
 `openSavedList` / `loadSavedItem` / `passageLoadTo`(저장함은 한 벌인데 불러온 지문이
 들어갈 칸만 바꾼다 — 기본은 공용 지문칸이고, 시험지 탭의 '📄 저장함에서 가져오기'로
 열었을 때만 시험 범위 칸으로 간다. 이 길은 `clearAllTabResults`를 타지 않는다 —

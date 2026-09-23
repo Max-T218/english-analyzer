@@ -7840,6 +7840,23 @@ function savedItemRowHtml(item) {
     </div>`;
 }
 
+// 탭 이름에서 앞머리 그림글자를 뗀다 — 문장 안에 넣을 때는 글자만 있는 편이 읽힌다
+const tabPlainLabel = (tab) => (TAB_LABELS[tab] || "").replace(/^\S+\s*/, "");
+
+/* 탭 저장함의 말이 기본형과 달라야 하는 곳만 적는다. 시험지 탭은 저장하는 것이
+   '만든 시험지'만이 아니라 '기출 구성'일 때도 있어서, 기본 문구로는 무엇이 들어
+   있는지 알 수 없다. */
+const TAB_LIBRARY_WORDS = {
+  exam: {
+    title: "🧾 기출 구성 저장함",
+    lead: "저장해 둔 기출 구성입니다. [불러오기]를 누르면 기출 시험지를 다시 올리지 않고 " +
+          "그 구성 그대로 시험지를 이어서 만들 수 있습니다. 시험지를 이미 만들어 둔 " +
+          "저장본이라면 만든 문항과 시험 범위 지문까지 함께 되돌아옵니다.",
+    empty: "아직 저장한 기출 구성이 없습니다. 기출을 분석한 뒤 “💾 이 기출 구성 저장”을 " +
+           "누르거나, 시험지를 만든 뒤 “💾 사이트 저장”을 눌러 보세요.",
+  },
+};
+
 /* 저장함은 "지문"과 "제작 자료" 둘로 나눠 연다 — 저장은 한 컬렉션에 들어가지만,
    찾을 때는 무엇을 찾는지가 이미 정해져 있어서(지문을 다시 쓰려는 것 / 만든 자료를
    다시 뽑으려는 것) 섞어 보여 주는 것보다 따로 여는 편이 헤매지 않는다. */
@@ -7853,19 +7870,22 @@ const LIBRARY = {
     empty: "아직 저장한 지문이 없습니다. 지문을 입력한 뒤 “💾 지문 저장”을 눌러 보세요.",
     match: (item) => item.tab === PASSAGE_TAB,
   },
-  /* 기출 구성만 모아 보는 저장함. '제작 자료 저장함'에도 같은 저장본이 들어 있지만
-     거기서는 분석본·문제·워크북·단어장 사이에 끼어 있어, 기출을 이어서 만들려는
-     선생님이 목록을 훑어야 한다. 시험지 탭에서 부를 때는 이 한 종류만 보여 준다.
-     저장본은 한 곳에 쌓이고 보는 창만 다르다 — 저장할 때 어디에 넣을지 고르게
-     하지 않는다. */
-  exam: {
-    title: "🧾 기출 구성 저장함",
-    lead: "저장해 둔 기출 구성입니다. [불러오기]를 누르면 기출 시험지를 다시 올리지 않고 " +
-          "그 구성 그대로 시험지를 이어서 만들 수 있습니다. 시험지를 이미 만들어 둔 " +
-          "저장본이라면 만든 문항과 시험 범위 지문까지 함께 되돌아옵니다.",
-    empty: "아직 저장한 기출 구성이 없습니다. 기출을 분석한 뒤 “💾 이 기출 구성 저장”을 " +
-           "누르거나, 시험지를 만든 뒤 “💾 사이트 저장”을 눌러 보세요.",
-    match: (item) => item.tab === "exam",
+  /* 탭 하나의 저장본만 모아 보는 창. 어느 탭인지는 savedOnlyTab이 정한다.
+     '제작 자료 저장함'에도 같은 저장본이 그대로 들어 있지만, 거기서는 분석본·문제·
+     워크북·단어장·시험지가 뒤섞여 있어 "지금 이 탭에서 하던 것"을 이어 하려는
+     선생님이 목록을 훑어야 한다. 탭에서 부를 때는 그 탭 것만 보여 준다.
+     저장본은 saved_items 한 곳에 쌓이고 보는 창만 다르다 — 저장할 때 어디에
+     넣을지 고르게 하지 않는다. */
+  tab: {
+    title: () => (TAB_LIBRARY_WORDS[savedOnlyTab] || {}).title ||
+      `${TAB_LABELS[savedOnlyTab] || ""} 저장함`.trim(),
+    lead: () => (TAB_LIBRARY_WORDS[savedOnlyTab] || {}).lead ||
+      `“${tabPlainLabel(savedOnlyTab)}”에서 저장한 자료입니다. 불러오면 지문·설정과 ` +
+      "만든 결과가 함께 되돌아와 다시 인쇄하거나 고칠 수 있습니다.",
+    empty: () => (TAB_LIBRARY_WORDS[savedOnlyTab] || {}).empty ||
+      `아직 “${tabPlainLabel(savedOnlyTab)}”에서 저장한 자료가 없습니다. ` +
+      "자료를 만든 뒤 “💾 사이트 저장”을 눌러 보세요.",
+    match: (item) => item.tab === savedOnlyTab,
   },
   material: {
     title: "📦 제작 자료 저장함",
@@ -7941,7 +7961,7 @@ function renderSavedList() {
   if (!items.length) {
     savedListBodyEl.classList.remove("is-grouped");
     savedListBodyEl.innerHTML = `<p class="saved-list-empty">${esc(
-      all.length ? "조건에 맞는 저장본이 없습니다. 검색어를 지우거나 다른 종류를 눌러 보세요." : lib.empty
+      all.length ? "조건에 맞는 저장본이 없습니다. 검색어를 지우거나 다른 종류를 눌러 보세요." : libWord(lib.empty)
     )}</p>`;
     savedListCountEl.textContent = "";
     return;
@@ -7978,16 +7998,21 @@ function renderSavedList() {
    낫다 — 저장은 어차피 한 곳에 쌓이므로 목록이 갈리면 선생님이 어디에 넣었는지를
    또 기억해야 한다. */
 let passageLoadTo = null;   // null이면 공용 지문칸, 아니면 {mgr, label, after}
+let savedOnlyTab = "";      // "tab" 창일 때 어느 탭의 저장본만 볼지
 
-async function openSavedList(kind, target) {
+// 창 문구는 글자이거나(고정) 함수다(탭마다 달라지는 것)
+const libWord = (v) => (typeof v === "function" ? v() : v);
+
+async function openSavedList(kind, target, onlyTab) {
   openLibrary = LIBRARY[kind] ? kind : "passage";
   passageLoadTo = target || null;
+  savedOnlyTab = onlyTab || "";
   const lib = LIBRARY[openLibrary];
-  savedListTitleEl.textContent = lib.title;
+  savedListTitleEl.textContent = libWord(lib.title);
   savedListLeadEl.textContent = passageLoadTo
     ? `저장해 둔 지문입니다. [불러오기]를 누르면 ${passageLoadTo.label}에 들어갑니다 — ` +
       "이미 넣어 둔 지문이 있으면, 뒤에 이어 붙일지 지우고 새로 넣을지 그때 물어봅니다."
-    : lib.lead;
+    : libWord(lib.lead);
   savedKindFilter = "";
   savedSearchText = "";
   if (savedSearchEl) savedSearchEl.value = "";
@@ -8171,10 +8196,17 @@ savedKindsEl.addEventListener("click", (e) => {
 });
 
 passageLibraryBtn.addEventListener("click", () => openSavedList("passage"));
+/* 탭마다 '📂 불러오기' — 그 탭에서 저장한 것만 보여 준다. 시험지 탭의 단추는
+   자기 자리(examLoadSpecBtn)에 따로 있다. */
+["analyze", "brief", "mcq", "saq", "workbook", "vocab"].forEach((tab) => {
+  const btn = $(`${tab}LoadBtn`);
+  if (btn) btn.addEventListener("click", () => openSavedList("tab", null, tab));
+});
 materialLibraryBtn.addEventListener("click", () => openSavedList("material"));
 function closeSavedList() {
   savedListModalEl.hidden = true;
   passageLoadTo = null;   // 목적지를 남겨 두면 다음에 부른 지문이 엉뚱한 칸으로 간다
+  savedOnlyTab = "";      // 어느 탭 것만 보던 중이었는지도 잊는다
 }
 savedListCloseBtn.addEventListener("click", closeSavedList);
 savedListModalEl.addEventListener("click", (e) => {
@@ -10325,7 +10357,7 @@ $("examPaperSaveBtn").addEventListener("click", () => openSaveDialog("exam"));
 // saveLead가, 목록에서 어떻게 보일지는 SAVE_TITLE_SUGGEST가 경우에 맞춰 바꾼다.
 $("examSpecSaveBtn").addEventListener("click", () => openSaveDialog("exam"));
 // 저장해 둔 기출 구성만 모아 연다 — 기출을 다시 올리지 않고 그 구성에서 이어 만든다
-$("examLoadSpecBtn").addEventListener("click", () => openSavedList("exam"));
+$("examLoadSpecBtn").addEventListener("click", () => openSavedList("tab", null, "exam"));
 
 /* ══════ 반 · 학생 · 단어시험 배정 (관리자가 허가한 선생님에게만 탭이 보인다) ══════
    AI를 부르지 않는다 — 서버가 같은 단어장 안의 다른 뜻/단어로 오답을 만들고,
