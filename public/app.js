@@ -51,7 +51,9 @@ function sanitizeFilename(s) {
 }
 // 첫 지문에 사용자가 직접 이름을 지었으면 그 이름을, 아니면 유형명만 파일명에 쓴다
 function passageBasedName(prefix) {
-  const jobs = passageMgr.getJobs();
+  // 지문 저장이 시험 범위 칸을 담는 중이면 그 칸의 첫 지문 이름을 쓴다
+  // (passageSaveFrom — 공용 칸일 때는 null이라 지금까지와 같다)
+  const jobs = (typeof passageSaveMgr === "function" ? passageSaveMgr() : passageMgr).getJobs();
   const first = jobs[0];
   const label = first && first.named ? sanitizeFilename(first.name) : "";
   return [prefix, label, todayStr()].filter(Boolean).join("_");
@@ -1896,11 +1898,23 @@ copyPassagesBtn.addEventListener("click", async () => {
    아직 아무것도 만들지 않았어도(분석·문제 실행 전에도) 타이핑한 지문을 넣어 둘 수 있게
    해서, 다음에 와서 불러온 뒤 원하는 탭을 돌리면 되도록 한다. 다른 탭 저장과 같은
    TAB_SAVE 레지스트리에 얹으므로 저장 모달·목록·삭제 배선은 그대로 재사용된다. */
+/* 지문 저장이 어느 칸을 담을지. 기본은 공용 지문칸(null)이고, 시험지 탭의
+   '💾 지문 저장'으로 열었을 때만 그 탭의 시험 범위 칸이 들어온다.
+   저장 종류는 그대로 "지문"이다 — 시험 범위 전용 종류를 따로 만들면 저장함이
+   둘로 갈려, 같은 지문을 어디에 넣었는지 또 기억해야 한다. 불러오는 쪽
+   (passageLoadTo)과 짝을 이룬다. */
+let passageSaveFrom = null;   // null이면 공용 지문칸, 아니면 {mgr, grammarEl, label}
+const passageSaveMgr = () => (passageSaveFrom ? passageSaveFrom.mgr : passageMgr);
+const passageSaveGrammarEl = () => (passageSaveFrom ? passageSaveFrom.grammarEl : grammarEl);
+
 TAB_SAVE.passage = {
   saveBtn: $("passageSaveBtn"),
-  canSave: () => (passageMgr.getJobs().length ? "" : "저장할 지문이 없습니다. 지문을 먼저 입력해 주세요."),
+  canSave: () => (passageSaveMgr().getJobs().length ? "" : "저장할 지문이 없습니다. 지문을 먼저 입력해 주세요."),
   // 목표 어법도 함께 담는다 — 이제 이 패널에 같이 있고, 지문과 한 벌로 쓰이는 설정이다
-  getPayload: () => ({ passages: passageMgr.getJobs(), targetGrammar: grammarEl.value }),
+  getPayload: () => ({
+    passages: passageSaveMgr().getJobs(),
+    targetGrammar: (passageSaveGrammarEl() || {}).value || "",
+  }),
   /* mode "append"면 지금 입력칸을 비우지 않고 뒤에 이어 붙인다 (저장함의 [뒤에 붙이기]).
      목표 어법은 그때 덮어쓰지 않는다 — 이어 붙이는 저장본의 값으로 지금 것을 바꾸면,
      앞서 불러온 지문에 맞춰 적어 둔 어법이 조용히 사라진다. 비어 있을 때만 채운다. */
@@ -7733,7 +7747,8 @@ function openSaveDialog(tab) {
   // 그때그때 다른 경우가 있다(기출 탭: 시험지까지인지, 구성표뿐인지).
   const customLead = TAB_SAVE[tab] && TAB_SAVE[tab].saveLead ? TAB_SAVE[tab].saveLead() : "";
   saveDialogLeadEl.textContent = customLead || (tab === PASSAGE_TAB
-    ? "지금 입력칸에 있는 지문만 저장합니다. 나중에 \"📄 지문 저장함\"에서 그대로 되불러올 수 있습니다."
+    ? `지금 ${passageSaveFrom ? passageSaveFrom.label : "입력칸"}에 있는 지문만 저장합니다. ` +
+      "나중에 \"📄 지문 저장함\"에서 그대로 되불러올 수 있습니다."
     : "지문과 만든 결과를 함께 저장합니다. 나중에 \"📦 제작 자료 저장함\"에서 이 제목으로 다시 찾을 수 있습니다.");
   // 지문 분석에 요약 이미지가 붙어 있으면, 저장해도 그림은 빠진다는 것을 여기서 알린다.
   // 저장하고 나서야 알면 그림을 다시 만들어야 하고 그때 요금이 또 나간다.
@@ -7772,6 +7787,7 @@ function openSaveDialog(tab) {
   saveTitleInputEl.focus();
 }
 function closeSaveDialog() {
+  passageSaveFrom = null;   // 남겨 두면 다음 '지문 저장'이 엉뚱한 칸을 담는다
   saveDialogEl.hidden = true;
   pendingSaveTab = null;
 }
@@ -8064,6 +8080,13 @@ async function loadSavedItem(id, mode) {
     if (passageLoadTo && tab === PASSAGE_TAB) {
       const mgr = passageLoadTo.mgr;
       const list = (item.payload || {}).passages || [];
+      /* 목표 어법도 지문과 한 벌이라 함께 되살린다. 뒤에 이어 붙일 때는 덮어쓰지
+         않는다 — 앞서 불러온 지문에 맞춰 적어 둔 어법이 조용히 사라진다
+         (공용 지문칸의 applyPayload와 같은 규칙). */
+      const gEl = passageLoadTo.grammarEl;
+      if (gEl && (!append || !gEl.value.trim())) {
+        gEl.value = (item.payload || {}).targetGrammar || "";
+      }
       let msg;
       if (append) {
         const { added, full } = mgr.appendJobs(list);
@@ -8076,6 +8099,10 @@ async function loadSavedItem(id, mode) {
       }
       if (passageLoadTo.after) passageLoadTo.after(msg);
       refitPassages();
+      /* 이 저장본을 고치는 중이라고 기억해 둔다 — 다음 '지문 저장'에서 덮어쓰기가
+         뜬다. 뒤에 이어 붙인 경우는 두 자료가 섞인 것이라 어느 쪽도 아니다. */
+      if (append) delete LOADED_SAVED[PASSAGE_TAB];
+      else LOADED_SAVED[PASSAGE_TAB] = { id, title: item.title || "제목 없음" };
       passageLoadTo = null;
       return;
     }
@@ -10226,11 +10253,20 @@ examPaperMgr.addRow(false);
 // 대상은 패널 전체다 — 지문칸만 받으면 칸이 하나뿐일 때 놓을 자리가 너무 좁다.
 wirePassageDrop(examPaperPanelEl, examPaperMgr, examPassageStatus);
 
+/* 시험 범위 칸의 지문을 "지문 저장본"으로 저장한다. 담을 칸만 바꾸고 저장 창·
+   저장함·덮어쓰기 배선은 공용 것을 그대로 탄다(passageSaveFrom 참고).
+   시험 범위는 학기 내내 같은 지문이라 한 번 저장해 두고 되부르는 쓰임이 잦다. */
+$("examPassageSaveBtn").addEventListener("click", () => {
+  passageSaveFrom = { mgr: examPaperMgr, grammarEl: examGrammarEl, label: "시험 범위 지문 칸" };
+  openSaveDialog(PASSAGE_TAB);
+});
+
 /* 저장함을 열되 불러온 지문은 시험 범위 칸으로 보낸다 — 목적지만 바꾸고 저장함은
    공용 것을 그대로 쓴다(passageLoadTo 참고). */
 $("examSavedBtn").addEventListener("click", () => {
   openSavedList("passage", {
     mgr: examPaperMgr,
+    grammarEl: examGrammarEl,
     label: "시험 범위 지문 칸",
     after: (msg) => {
       examPassageStatus(msg, "ok");

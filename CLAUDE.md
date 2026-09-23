@@ -179,7 +179,8 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 '📂 저장한 구성 불러오기'(`examLoadSpecBtn`)가 연다. 창 문구는 글자일 수도 함수일
 수도 있어 `libWord`로 꺼내고, 기본 문구와 달라야 하는 탭만 `TAB_LIBRARY_WORDS`에
 적는다) ·
-`openSavedList` / `loadSavedItem` / `passageLoadTo`(저장함은 한 벌인데 불러온 지문이
+`openSavedList` / `loadSavedItem` / `passageLoadTo` / `passageSaveFrom`(저장함도 저장
+종류도 한 벌인데 **담고 꺼내는 칸만 바꾼다**. 불러온 지문이
 들어갈 칸만 바꾼다 — 기본은 공용 지문칸이고, 시험지 탭의 '📄 저장함에서 가져오기'로
 열었을 때만 시험 범위 칸으로 간다. 이 길은 `clearAllTabResults`를 타지 않는다 —
 기출 유형표를 보면서 지문을 채우는 중이라 그 표가 지워지면 안 된다) ·

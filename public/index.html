@@ -1546,6 +1546,9 @@
         <!-- 공용 지문칸의 '📄 지문 저장함'과 같은 저장함을 열되, 불러온 지문은 이 칸에
              들어간다(passageLoadTo 참고). 시험 범위는 학기 내내 같은 지문을 쓰므로
              한 번 저장해 두고 되부르는 쓰임이 가장 잦다. -->
+        <!-- 저장은 공용 지문칸과 같은 "지문 저장본"으로 들어간다(passageSaveFrom 참고) —
+             그래야 바로 옆 '저장함에서 가져오기'로 되불러오고, 다른 탭에서도 쓸 수 있다. -->
+        <button type="button" class="btn ghost small" id="examPassageSaveBtn">💾 지문 저장</button>
         <button type="button" class="btn ghost small" id="examSavedBtn">📄 저장함에서 가져오기</button>
         <button type="button" class="btn ghost small" id="examPdfBtn">📄 PDF에서 가져오기</button>
         <button type="button" class="btn ghost small danger" id="examClearPassagesBtn">🗑️ 지문 전체 지우기</button>
