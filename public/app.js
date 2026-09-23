@@ -9105,6 +9105,9 @@ async function examAddFiles(fileList) {
       const isPdf = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name || "");
       if (isPdf) {
         examDocNames.push(file.name || `기출 ${examDocNames.length + 1}`);
+        // 새 기출이 들어왔다 — 첫 부와 똑같이 자동으로 분석을 건다.
+        // 이미 읽어 둔 부는 runExamScan이 건너뛰므로 값이 두 번 나가지 않는다.
+        examAutoDone = false;
         examStatus(`${file.name} 에서 쪽을 꺼내는 중…`);
         const buf = new Uint8Array(await file.arrayBuffer());
         const blobs = extractJpegs(buf);
@@ -9129,6 +9132,7 @@ async function examAddFiles(fileList) {
         if (photoDoc < 0) {
           examDocNames.push("사진");
           photoDoc = examDocNames.length - 1;
+          examAutoDone = false;   // 새 부가 생겼다 — 위 PDF 쪽과 같은 이유
         }
         examPages.push({ ...(await photoToPart(file)), doc: photoDoc });
       }
@@ -9156,11 +9160,15 @@ function examSyncStatus() {
   const docs = examDocNames.length;
   const done = examDocScans.size;
   const left = docs - done;
-  let next = examAutoDone ? "" : " · 곧 분석을 시작합니다";
-  if (done && left > 0) {
+  let next = "";
+  if (!left) {
+    next = done ? " · 모두 분석했습니다" : "";
+  } else if (!examAutoDone) {
+    // 자동 분석이 걸려 있다. 첫 부인지 이어 붙이는 부인지에 따라 말을 바꾼다.
+    next = done ? ` · 곧 새로 올린 ${left}부를 이어서 분석합니다` : " · 곧 분석을 시작합니다";
+  } else {
+    // 자동 분석을 이미 걸었는데 아직 안 읽힌 부가 남았다(값 확인창을 취소했거나 실패)
     next = ` · “유형 분석하기”를 누르면 새로 올린 ${left}부만 읽습니다`;
-  } else if (done && !left) {
-    next = " · 모두 분석했습니다";
   }
   const where = docs > 1 ? `기출 ${docs}부 · ${n}쪽` : `시험지 ${n}쪽`;
   const doneTxt = done && docs > 1 ? ` (${done}부 분석 완료)` : "";
@@ -9656,7 +9664,10 @@ async function runExamScan() {
   examBtn.disabled = true;
   examOcrBtn.disabled = true;
   examLoadingEl.classList.add("on");
-  examResultEl.innerHTML = "";
+  /* 앞서 읽어 둔 부가 있으면 화면을 비우지 않는다 — 두 번째 기출을 올려 분석하는
+     동안 첫 부의 표가 사라지면, 선생님은 하던 것이 날아간 줄 안다. 새로 읽은 부는
+     끝난 뒤 examShowScanResult가 합쳐 다시 그린다. */
+  if (!examDocScans.size) examResultEl.innerHTML = "";
 
   const questions = [];
   /* 쪽 경계에 걸친 문항이 두 묶음에서 겹쳐 오는 것을 막는다. 부마다 따로 센다 —
