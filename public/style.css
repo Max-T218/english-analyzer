@@ -2113,6 +2113,18 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
 }
 
 .exam-engine { white-space: nowrap; font-weight: 600; }
+
+/* 기출 여러 부 합치기 표 — 부별 개수와 '넣을 개수' 조절칸 */
+.exam-merge-table .exam-merge-doc { text-align: center; }
+.exam-merge-n { text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.exam-merge-n.zero { color: var(--ink-soft, #94a3b8); }
+.exam-merge-want { white-space: nowrap; text-align: center; }
+.exam-merge-want .btn { padding: 2px 8px; line-height: 1.2; }
+.exam-merge-want .merge-val {
+  display: inline-block; min-width: 2.2em; text-align: center;
+  font-variant-numeric: tabular-nums; font-size: 1.02rem;
+}
+.exam-merge-table tr.is-zero { opacity: .5; }
 .qz-findline { display: flex; align-items: baseline; gap: 8px; margin: 6px 0; }
 .qz-findko { min-width: 190px; }
 .qz-findarrow { color: var(--muted, #64748b); }

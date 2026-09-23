@@ -9019,7 +9019,8 @@ const examResultEl = $("examResult");
 const examCostHintEl = $("examCostHint");
 const examOcrBtn = $("examOcrBtn");
 
-const EXAM_MAX_PAGES = 16;      // server.py의 EXAM_MAX_PAGES와 같은 값
+const EXAM_MAX_PAGES = 40;      // server.py의 EXAM_MAX_PAGES와 같은 값
+                                // 기출을 여러 부 쌓으므로 한 부(7쪽쯤)의 서너 배가 든다
 
 /* 시험지 쪽 그림은 교재 사진과 같은 축소를 그대로 탄다(photoToPart, 긴 변 1600px).
    한때 2600px로 올려 보냈다가 되돌렸다. 실측 결과:
@@ -9032,7 +9033,18 @@ const EXAM_MAX_PAGES = 16;      // server.py의 EXAM_MAX_PAGES와 같은 값
    올리고 싶어지면 이 주석을 먼저 읽고, 올린 것과 내린 것의 결과를 실제로 견줘 볼 것. */
 
 const EXAM_MIN_JPEG = 20000;    // 이보다 작은 조각은 쪽 그림이 아니라 아이콘·썸네일이다
-let examPages = [];             // [{mime, data}] — 서버에 보낼 쪽 그림
+/* 쪽 그림에는 '몇째 부'인지(doc)가 붙는다. 기출을 여러 부 올려 한 시험지로 합치는
+   길이 여기서 갈린다 — 부를 안 가리면 두 가지가 한꺼번에 어긋난다.
+     (1) 문항 번호 중복 판정이 부를 넘나든다. 어느 시험지든 1·2·3번을 갖고 있어
+         둘째 부의 문항이 통째로 '이미 본 번호'로 버려진다(실제로 그랬다).
+     (2) 한 요청에 두 부의 쪽이 섞여 들어가 AI가 한 시험지로 읽는다.
+   그래서 묶음은 부 경계를 넘지 않고, 번호 중복도 부마다 따로 센다. */
+let examPages = [];             // [{mime, data, doc}] — 서버에 보낼 쪽 그림
+let examDocNames = [];          // 부 이름(올린 파일 이름). 길이가 곧 부의 개수다
+/* 이미 분석을 마친 부의 결과. 기출을 한 부씩 올려 쌓는 길에서 이것이 핵심이다 —
+   새 기출을 올렸을 때 앞서 분석한 부까지 다시 읽으면 그 값을 또 내야 하고 시간도
+   부마다 곱해진다. 여기에 있는 부는 건너뛴다. */
+let examDocScans = new Map();   // doc → [문항…]
 let examBusy = false;
 let examAutoTimer = null;
 let examAutoDone = false;       // 지금 올려 둔 시험지로 자동 분석을 이미 걸었는가
@@ -9067,17 +9079,22 @@ async function examAddFiles(fileList) {
   examBusy = true;
   examErrorEl.textContent = "";
   try {
+    /* PDF 한 파일 = 기출 한 부. 낱장 사진은 한 부로 묶는다 — 사진은 보통 한 시험지를
+       나눠 찍은 것이라 파일마다 부를 나누면 부가 쪽 수만큼 늘어난다. */
+    let photoDoc = -1;
     for (const file of [...fileList]) {
       if (examPages.length >= EXAM_MAX_PAGES) break;
       const isPdf = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name || "");
       if (isPdf) {
+        examDocNames.push(file.name || `기출 ${examDocNames.length + 1}`);
         examStatus(`${file.name} 에서 쪽을 꺼내는 중…`);
         const buf = new Uint8Array(await file.arrayBuffer());
         const blobs = extractJpegs(buf);
         if (blobs.length) {
           for (const b of blobs) {
             if (examPages.length >= EXAM_MAX_PAGES) break;
-            examPages.push(await photoToPart(b));   // 사진 업로드와 같은 축소를 탄다
+            // 사진 업로드와 같은 축소를 탄다
+            examPages.push({ ...(await photoToPart(b)), doc: examDocNames.length - 1 });
           }
         } else {
           // 꺼낼 그림이 없는 PDF — 원본을 그대로 넘긴다. 이런 PDF는 대개 작다.
@@ -9088,10 +9105,14 @@ async function examAddFiles(fileList) {
               `쪽을 사진으로 찍거나 캡처해서 올려 주세요.`;
             continue;
           }
-          examPages.push({ mime: "application/pdf", data });
+          examPages.push({ mime: "application/pdf", data, doc: examDocNames.length - 1 });
         }
       } else if (isPhoto(file)) {
-        examPages.push(await photoToPart(file));
+        if (photoDoc < 0) {
+          examDocNames.push("사진");
+          photoDoc = examDocNames.length - 1;
+        }
+        examPages.push({ ...(await photoToPart(file)), doc: photoDoc });
       }
     }
   } catch (err) {
@@ -9112,8 +9133,20 @@ function examSyncStatus() {
   }
   const mb = examPages.reduce((s, p) => s + p.data.length, 0) / 1048576;
   const full = n >= EXAM_MAX_PAGES ? ` (최대 ${EXAM_MAX_PAGES}쪽까지)` : "";
-  const next = examAutoDone ? "" : " · 곧 분석을 시작합니다";
-  examStatus(`시험지 ${n}쪽 준비됨 · 약 ${mb.toFixed(1)}MB${full}${next}`, "ok");
+  /* 기출을 여러 부 쌓는 길에서는 '몇 쪽'보다 '몇 부, 그중 몇 부가 이미 읽혔는지'가
+     선생님이 알아야 할 것이다. 아직 안 읽은 부가 있을 때만 그것을 앞세운다. */
+  const docs = examDocNames.length;
+  const done = examDocScans.size;
+  const left = docs - done;
+  let next = examAutoDone ? "" : " · 곧 분석을 시작합니다";
+  if (done && left > 0) {
+    next = ` · “유형 분석하기”를 누르면 새로 올린 ${left}부만 읽습니다`;
+  } else if (done && !left) {
+    next = " · 모두 분석했습니다";
+  }
+  const where = docs > 1 ? `기출 ${docs}부 · ${n}쪽` : `시험지 ${n}쪽`;
+  const doneTxt = done && docs > 1 ? ` (${done}부 분석 완료)` : "";
+  examStatus(`${where} 준비됨${doneTxt} · 약 ${mb.toFixed(1)}MB${full}${next}`, "ok");
   examScheduleAuto();
 }
 
@@ -9160,6 +9193,8 @@ examDropEl.addEventListener("drop", (e) => {
 examClearBtn.addEventListener("click", () => {
   clearTimeout(examAutoTimer);
   examPages = [];
+  examDocNames = [];
+  examDocScans.clear();
   examAutoDone = false;   // 새 시험지를 올리면 다시 자동으로 분석한다
   examResultEl.innerHTML = "";
   examErrorEl.textContent = "";
@@ -9183,6 +9218,179 @@ const EXAM_FIT_INFO = {
   "비슷함": { cls: "warn", label: "비슷한 걸로 대체" },
   "없음": { cls: "no", label: "못 만듦" },
 };
+
+/* ══════════ 기출 여러 부를 한 구성으로 합치기 ══════════
+   "해마다 나온 유형을 빠짐없이 한 시험지에 담는다"가 이 기능의 목적이다. 그래서
+   기본값은 '평균'이 아니라 **한 번이라도 나온 유형은 반드시 1문항**이다 — 3개년 중
+   한 번만 나온 유형은 평균을 내면 0.33이라 반올림에서 사라지는데, 정작 대비해야 할
+   것이 그 유형이다. 최소 1문항을 깔고 남는 자리만 빈도에 비례해 나눠 준다.
+
+   그리고 합친 결과를 그대로 쓰지 않고 표로 보여 준 뒤 고치게 한다. 어느 유형을 몇
+   문항 낼지는 결국 가르치는 사람이 아는 것이고, 기계가 낸 숫자를 못 바꾸면 그 판단을
+   넣을 자리가 없다. */
+let examMergeRows = [];     // [{kind, engine, format, fit, per:[부별 개수], want}]
+
+// 유형을 가리는 열쇠 — 같은 이름이라도 객관식/주관식/워크북은 다른 문항이다
+const examMergeKey = (q) => `${q.engine || ""}|${q.format || ""}|${q.kind || ""}`;
+
+function buildExamMergeRows(questions, docs) {
+  const map = new Map();
+  (questions || []).forEach((q) => {
+    // 만들 수 없는 문항은 합칠 대상이 아니다 — 슬롯이 되지 않는다(examPaperSlots)
+    if (!q.kind || q.fit === "없음") return;
+    const key = examMergeKey(q);
+    let row = map.get(key);
+    if (!row) {
+      row = { kind: q.kind, engine: q.engine || "", format: q.format || "",
+              fit: q.fit, per: new Array(docs).fill(0), want: 0 };
+      map.set(key, row);
+    }
+    // 한 부에서라도 '같음'이면 같음으로 본다 — 비슷함만 모인 유형은 비슷함으로 남아
+    // 화면의 '비슷한 것도 포함' 체크가 그대로 뜻을 갖는다
+    if (q.fit === "같음") row.fit = "같음";
+    row.per[q.doc || 0] += 1;
+  });
+
+  const rows = [...map.values()];
+  if (!rows.length) return rows;
+
+  /* 총 문항 수는 '기출 한 부의 평균 크기'로 잡는다 — 합치는 목적이 더 긴 시험지가
+     아니라 '한 부짜리 대비 시험지'이기 때문이다. 다만 유형 가짓수가 그보다 많으면
+     가짓수까지 올린다. 하나도 빠뜨리지 않는 것이 먼저다. */
+  const perDocTotal = new Array(docs).fill(0);
+  rows.forEach((r) => r.per.forEach((v, i) => { perDocTotal[i] += v; }));
+  const used = perDocTotal.filter((v) => v > 0);
+  const avg = used.length ? Math.round(used.reduce((a, b) => a + b, 0) / used.length) : rows.length;
+  const target = Math.max(rows.length, avg);
+
+  // ① 모두 1문항씩 깔고 ② 남는 자리를 평균 빈도에 비례해 나눈다(큰 나머지 순)
+  rows.forEach((r) => { r.want = 1; });
+  let left = target - rows.length;
+  if (left > 0) {
+    const mean = rows.map((r) => r.per.reduce((a, b) => a + b, 0) / (used.length || 1));
+    const sum = mean.reduce((a, b) => a + b, 0) || 1;
+    const share = mean.map((m) => (m / sum) * left);
+    const base = share.map((v) => Math.floor(v));
+    base.forEach((v, i) => { rows[i].want += v; });
+    left -= base.reduce((a, b) => a + b, 0);
+    share
+      .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+      .sort((a, b) => b.frac - a.frac)
+      .slice(0, left)
+      .forEach((x) => { rows[x.i].want += 1; });
+  }
+  // 자주 나온 것부터 위로 — 무엇이 주된 유형인지 한눈에 보여야 한다
+  rows.sort((a, b) =>
+    b.per.reduce((x, y) => x + y, 0) - a.per.reduce((x, y) => x + y, 0) ||
+    a.kind.localeCompare(b.kind));
+  return rows;
+}
+
+// 표의 [넣을 개수]를 문항 목록으로 편다 — 이 목록이 곧 기출 구성(examScanNow)이 된다
+function examMergeToQuestions(rows) {
+  const out = [];
+  rows.forEach((r) => {
+    for (let i = 0; i < r.want; i++) {
+      out.push({ no: "", group: "", prompt: "", note: "",
+                 format: r.format, fit: r.fit, kind: r.kind, engine: r.engine });
+    }
+  });
+  return out;
+}
+
+function syncExamMergeTotal() {
+  const total = examMergeRows.reduce((a, r) => a + r.want, 0);
+  const kinds = examMergeRows.filter((r) => r.want > 0).length;
+  const el = $("examMergeTotal");
+  if (el) el.innerHTML = `넣을 문항 <b>${total}개</b> · 유형 <b>${kinds}가지</b>`;
+  const btn = $("examMergeGoBtn");
+  if (btn) btn.disabled = !total;
+  const zero = examMergeRows.filter((r) => r.want === 0).length;
+  const warn = $("examMergeWarn");
+  if (warn) {
+    warn.hidden = !zero;
+    warn.textContent = zero
+      ? `0으로 둔 유형이 ${zero}가지 있습니다 — 그 유형은 시험지에 안 나옵니다.`
+      : "";
+  }
+}
+
+function renderExamMerge(questions, note) {
+  const docs = examDocNames.length;
+  examMergeRows = buildExamMergeRows(questions, docs);
+  if (!examMergeRows.length) {
+    examErrorEl.textContent = "올린 기출에서 이 앱으로 만들 수 있는 유형을 찾지 못했습니다.";
+    return;
+  }
+  const dropped = (questions || []).filter((q) => !q.kind || q.fit === "없음").length;
+  const heads = examDocNames
+    .map((nm, i) => `<th class="exam-merge-doc" title="${esc(nm)}">${esc(String(i + 1))}부</th>`)
+    .join("");
+  const rows = examMergeRows
+    .map((r, i) => `
+      <tr data-row="${i}">
+        <td class="exam-kind">${esc(r.kind)}</td>
+        <td class="exam-engine">${esc(r.engine || "—")}</td>
+        ${r.per.map((v) => `<td class="exam-merge-n${v ? "" : " zero"}">${v || "·"}</td>`).join("")}
+        <td class="exam-merge-want">
+          <button type="button" class="btn ghost small merge-dec" aria-label="줄이기">−</button>
+          <b class="merge-val">${r.want}</b>
+          <button type="button" class="btn ghost small merge-inc" aria-label="늘리기">＋</button>
+        </td>
+      </tr>`)
+    .join("");
+
+  examResultEl.innerHTML = `
+    <section class="panel exam-report">
+      <h3 class="exam-title">기출 ${docs}부를 한 구성으로 합칩니다</h3>
+      <p class="exam-summary">
+        올린 기출: ${examDocNames.map((nm, i) => `<b>${i + 1}부</b> ${esc(nm)}`).join(" · ")}
+      </p>
+      <p class="hint">
+        <b>한 번이라도 나온 유형은 1문항씩 깔고</b>, 남는 자리를 자주 나온 유형에 더 줬습니다.
+        숫자는 바꿔도 됩니다 — 안 낼 유형은 0으로 두세요.
+        ${dropped ? `이 앱으로 못 만드는 문항 ${dropped}개는 빼고 셌습니다.` : ""}
+      </p>
+      ${note ? `<p class="hint">${esc(note)}</p>` : ""}
+      <div class="exam-table-wrap">
+        <table class="exam-table exam-merge-table">
+          <thead><tr>
+            <th>유형</th><th>어느 탭</th>${heads}<th>넣을 개수</th>
+          </tr></thead>
+          <tbody id="examMergeBody">${rows}</tbody>
+        </table>
+      </div>
+      <div class="actions" style="margin-top:12px">
+        <span class="hint" id="examMergeTotal"></span>
+        <button type="button" class="btn" id="examMergeGoBtn">이 구성으로 시험지 만들기</button>
+      </div>
+      <p class="hint" id="examMergeWarn" hidden></p>
+    </section>`;
+
+  const body = $("examMergeBody");
+  body.addEventListener("click", (e) => {
+    const inc = e.target.closest(".merge-inc");
+    const dec = e.target.closest(".merge-dec");
+    if (!inc && !dec) return;
+    const tr = e.target.closest("tr");
+    const row = examMergeRows[Number(tr.dataset.row)];
+    if (!row) return;
+    row.want = Math.max(0, Math.min(EXAM_MERGE_MAX_PER_KIND, row.want + (inc ? 1 : -1)));
+    tr.querySelector(".merge-val").textContent = row.want;
+    tr.classList.toggle("is-zero", row.want === 0);
+    syncExamMergeTotal();
+  });
+  $("examMergeGoBtn").addEventListener("click", () => {
+    const merged = examMergeToQuestions(examMergeRows);
+    if (!merged.length) return;
+    openExamPaperPanel({ title: `기출 ${docs}부 합친 구성`, note: "", questions: merged });
+    examPaperPanelEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  syncExamMergeTotal();
+}
+
+// 한 유형에 너무 많이 몰면 지문이 모자라 배분이 깨진다 — 화면에서 먼저 막는다
+const EXAM_MERGE_MAX_PER_KIND = 20;
 
 function renderExamScan(scan) {
   const qs = scan.questions || [];
@@ -9378,12 +9586,47 @@ async function runExamOcr() {
 
 examOcrBtn.addEventListener("click", runExamOcr);
 
+let examScanTitle = "";   // 처음 읽은 기출의 고사 이름(한 부일 때 표 제목으로 쓴다)
+
+/* 지금까지 읽어 둔 부를 모두 모아 화면을 그린다. 부가 하나면 지금까지와 똑같은
+   문항 표, 둘 이상이면 합치기 표로 간다. 기출을 한 부씩 올려 쌓는 길과 한 번에
+   여러 부를 올리는 길이 여기서 하나로 만난다. */
+function examShowScanResult(notes) {
+  const all = [];
+  examDocNames.forEach((_nm, i) => {
+    (examDocScans.get(i) || []).forEach((q) => all.push({ ...q, doc: i }));
+  });
+  if (!all.length) {
+    examErrorEl.textContent = "시험지에서 문항을 찾지 못했습니다.";
+    return;
+  }
+  const note = (notes || []).join(" / ");
+  if (examDocScans.size > 1) renderExamMerge(all, note);
+  else renderExamScan({ title: examScanTitle || "기출 시험지", questions: all, note });
+}
+
 async function runExamScan() {
   if (!examPages.length || examBusy) return;
   examErrorEl.textContent = "";
+  /* 묶음은 부 경계를 넘지 않는다 — 한 요청에 두 부의 쪽이 섞이면 AI가 한 시험지로
+     읽어 문항 번호가 뒤엉킨다. from은 그 부 안에서 몇 쪽째인지다. */
   const batches = [];
-  for (let i = 0; i < examPages.length; i += EXAM_SCAN_BATCH) {
-    batches.push({ from: i + 1, files: examPages.slice(i, i + EXAM_SCAN_BATCH) });
+  for (let i = 0; i < examPages.length; ) {
+    const doc = examPages[i].doc || 0;
+    const docStart = examPages.findIndex((p) => (p.doc || 0) === doc);
+    let j = i;
+    while (j < examPages.length && (examPages[j].doc || 0) === doc &&
+           j - i < EXAM_SCAN_BATCH) j++;
+    // 이미 분석해 둔 부는 건너뛴다 — 다시 읽으면 그 값을 또 낸다
+    if (!examDocScans.has(doc)) {
+      batches.push({ from: i - docStart + 1, files: examPages.slice(i, j), doc });
+    }
+    i = j;
+  }
+  if (!batches.length) {
+    // 새로 올린 기출이 없다 — 이미 읽어 둔 것으로 표만 다시 그린다
+    examShowScanResult([]);
+    return;
   }
   if (PRICING && PRICING.examScan > 0) {
     // 나눠 부르면 호출 수만큼 값이 매겨진다 — 확인 문구에 실제 총액을 적는다
@@ -9398,17 +9641,21 @@ async function runExamScan() {
   examResultEl.innerHTML = "";
 
   const questions = [];
-  const seenNo = new Set();   // 쪽 경계에 걸친 문항이 두 묶음에서 겹쳐 오는 것을 막는다
+  /* 쪽 경계에 걸친 문항이 두 묶음에서 겹쳐 오는 것을 막는다. 부마다 따로 센다 —
+     어느 시험지든 1·2·3번을 갖고 있어, 한 집합으로 세면 둘째 부가 통째로 버려진다. */
+  const seenByDoc = new Map();
   const notes = [];
   const failed = [];
   let title = "";
 
   for (let b = 0; b < batches.length; b++) {
-    const { from, files } = batches[b];
+    const { from, files, doc } = batches[b];
     const to = from + files.length - 1;
+    const which = examDocNames.length > 1
+      ? `${examDocNames[doc] || `기출 ${doc + 1}`} — ` : "";
     examLoadingTextEl.textContent =
       batches.length > 1
-        ? `AI가 시험지를 읽고 있습니다… (${b + 1}/${batches.length}) — ${from}~${to}쪽`
+        ? `AI가 시험지를 읽고 있습니다… (${b + 1}/${batches.length}) — ${which}${from}~${to}쪽`
         : `AI가 시험지 ${examPages.length}쪽을 읽고 있습니다… (1~3분 걸립니다)`;
     try {
       const scan = await postGenerate(
@@ -9418,11 +9665,13 @@ async function runExamScan() {
       );
       if (!title && scan.title) title = scan.title;
       if (scan.note) notes.push(scan.note);
+      let seen = seenByDoc.get(doc);
+      if (!seen) { seen = new Set(); seenByDoc.set(doc, seen); }
       for (const q of scan.questions || []) {
         const key = String(q.no || "").trim();
-        if (key && seenNo.has(key)) continue;   // 같은 번호가 또 오면 먼저 읽은 것을 남긴다
-        if (key) seenNo.add(key);
-        questions.push(q);
+        if (key && seen.has(key)) continue;   // 같은 번호가 또 오면 먼저 읽은 것을 남긴다
+        if (key) seen.add(key);
+        questions.push({ ...q, doc });
       }
     } catch (err) {
       failed.push(`${from}~${to}쪽: ${err.message || String(err)}`);
@@ -9431,11 +9680,21 @@ async function runExamScan() {
     }
   }
 
-  if (questions.length) {
+  // 이번에 읽은 것을 부마다 갈라 쌓아 둔다 — 다음에 기출을 더 올려도 다시 안 읽는다
+  batches.forEach(({ doc }) => {
+    if (!examDocScans.has(doc)) examDocScans.set(doc, []);
+  });
+  questions.forEach((q) => {
+    const arr = examDocScans.get(q.doc);
+    if (arr) arr.push(q);
+  });
+  if (title) examScanTitle = examScanTitle || title;
+
+  if (questions.length || examDocScans.size) {
     if (failed.length) {
       notes.push(`읽지 못한 쪽이 있습니다 — ${failed.join(" / ")}. 그 쪽의 문항은 빠져 있습니다.`);
     }
-    renderExamScan({ title, questions, note: notes.join(" / ") });
+    examShowScanResult(notes);
     refreshTokenDisplay();  // 분석에 요금이 나갔으므로 잔액 표시만 갱신(화면은 그대로)
   } else {
     examErrorEl.textContent = failed.join(" / ") || "시험지에서 문항을 찾지 못했습니다.";

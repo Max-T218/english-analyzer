@@ -141,6 +141,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | Gemini 호출 공통(재시도·시간 예산) | `RETRY_MIN_WAIT`, `MAX_RETRY_TOTAL`, `_over_budget`, `RefineTrace`, `_parse_retry_delay` |
 | 기능별 프롬프트·스키마·호출 | `*_SCHEMA` / `*_SYSTEM_PROMPT` / `call_gemini_*` 3종 세트 — quiz, reword, ocr, workbook, vocab(`VOCAB_ITEMS_SCHEMA` 하나를 `call_gemini_vocab_ocr`/`call_gemini_vocab_pdf` 둘이 같이 씁니다). 지문 분석만 이름에 접두어가 없어 `GEMINI_SCHEMA` / `SYSTEM_PROMPT`입니다 |
 | 시험지(스캔본)에서 읽기 — 쪽 그림을 Gemini에 직접 보낸다 | `call_gemini_exam_scan`/`EXAM_SCAN_SYSTEM_PROMPT`(발문만 읽어 유형표를 만든다 — **지문은 일부러 안 옮긴다**), `call_gemini_exam_ocr`/`EXAM_OCR_SYSTEM_PROMPT`/`normalize_exam_ocr`(그 구멍을 메우는 쪽. 지문만 옮겨 적고 발문·보기·각주·손글씨는 버린다), `EXAM_MAX_PAGES`. 둘 다 **Pro 고정**이고 `_exam_approved`로 막혀 있다. 화면은 `public/app.js`의 `extractJpegs`(PDF 안의 JPEG를 그대로 꺼낸다 — 외부 라이브러리 없음)/`runExamScan`(유형 분석 — 3쪽씩)/`runExamOcr`(지문 옮겨 적기 — **2쪽씩 한 쪽 겹쳐**. 3쪽을 한 번에 보내면 글자를 빠뜨리는 것을 실측했다. 까닭은 그 함수 위 주석에 있다)/`passageKey`(같은 지문 가리기 — 앞머리와 꼬리 두 열쇠를 쓴다) |
+| 기출 **여러 부**를 한 구성으로 합치기 | 쪽 그림마다 `doc`(몇째 부)이 붙는다 — 묶음이 부 경계를 넘지 않게 하고, 문항 번호 중복도 부마다 따로 센다(`seenByDoc`). 안 그러면 어느 시험지든 1·2·3번이 있어 **둘째 부가 통째로 버려진다**. `examDocNames`(부 이름) · `examDocScans`(이미 읽은 부 → 문항. 여기 있는 부는 다시 안 읽는다 — 한 부씩 올려 쌓는 길의 핵심이다) · `examShowScanResult`(한 부면 문항표, 여럿이면 합치기표) · `buildExamMergeRows`(**한 번이라도 나온 유형은 무조건 1문항**을 깔고 남는 자리만 빈도에 비례해 나눈다 — 평균만 내면 3년에 한 번 나온 유형이 반올림에서 사라지는데 정작 대비할 것이 그것이다) · `renderExamMerge`(부별 개수를 보여 주고 유형마다 ±로 고치게 한다) · `examMergeToQuestions` |
 | PDF에서 지문 꺼내기 | `read_pdf_pages`(글자층+좌표 읽기), `_pdf_columns`(단 나누기), `split_pdf_passages`(문항형/문단형 판정), `_pdf_clean_passage`(번호·보기·정답교정 정리). 여기까지는 Gemini를 부르지 않습니다 — 규칙이 실패했을 때만 `call_gemini_pdf_split`이 '경계 줄 번호'만 물어봅니다 |
 | 단어장 — 사진·PDF에서 단어 목록 가져오기 | `call_gemini_vocab_ocr`(사진), `parse_vocab_lines_rule`(PDF, 규칙만으로 "단어 — 뜻" 줄을 골라냄 · 0원), `call_gemini_vocab_pdf`(규칙이 못 뽑을 때만, `read_pdf_pages`가 이미 뽑아 둔 글자를 다시 보냄) |
 | 출력 HTML 정리 | `sanitize_inline`, `sanitize_quiz_html`, `clean_korean`, `clean_note`, `normalize_ruby`, `fix_underline_bounds` |
@@ -235,6 +236,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | `QUIZ_TYPE_LABELS` | `MCQ_TYPES`, `SAQ_TYPES` |
 | `MCQ_ONLY_TYPES` | `MCQ_TRANSFORM_TYPES` |
 | `WORKBOOK_STAGE_IDS` | `WB_STAGES`의 id — 워크북 요금이 단계 수에 걸려 있다 |
+| `EXAM_MAX_PAGES` | `EXAM_MAX_PAGES` — 기출을 여러 부 쌓으므로 한 부의 서너 배가 든다 |
 
 **`outline`(주제 & 흐름 요약)은 두 자료가 같은 것을 만듭니다.** 규칙은
 `_OUTLINE_RULES` 한 벌뿐이고 `SYSTEM_PROMPT`와 `BRIEF_SYSTEM_PROMPT`가 나눠 씁니다 —
