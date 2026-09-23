@@ -5901,11 +5901,9 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true, st
   parts.push(`<section class="passage-block qz-block">`);
   const banner = passageBanner(job, total, label);
 
-  /* 문항 카드는 별도 래퍼에 담는다 — 인쇄할 때 이 래퍼에만 2단 조판을 적용하고
-     '정답 및 해설' 표는 단 나눔 없이 전체 폭을 쓰게 하기 위해서다.
-     래퍼에 어느 탭 것인지도 적는다. 인쇄에서 유형 이름표를 감추는 데 쓴다 —
-     동형 모의고사는 "mcq"로 그리므로 객관식과 함께 감춰진다. */
-  parts.push(`<div class="qz-cards qz-kind-${kind === "saq" ? "saq" : "mcq"}">`);
+  // 문항 카드는 별도 래퍼에 담는다 — 인쇄할 때 이 래퍼에만 2단 조판을 적용하고
+  // '정답 및 해설' 표는 단 나눔 없이 전체 폭을 쓰게 하기 위해서다.
+  parts.push(`<div class="qz-cards">`);
   /* 시험지 머리글은 2단 상자 '안'에 두고 인쇄 CSS가 두 단에 걸치게 한다
      (column-span:all). 바깥(상자 앞)에 두었더니 첫 쪽에서 다단 조각의 높이가
      머리글만큼 깎여, 그 조각에 안 들어가는 카드가 통째로 다음 쪽으로 밀리고
