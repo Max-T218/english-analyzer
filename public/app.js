@@ -4210,7 +4210,7 @@ function renderBriefEntries(entries) {
     )
     .join("");
   if (done.length) {
-    briefDocEl.insertAdjacentHTML("beforeend", `<footer>소책자용 분석 · 자동 생성</footer>`);
+    briefDocEl.insertAdjacentHTML("beforeend", `<footer>지문 요약분석 · 자동 생성</footer>`);
   }
   // 표지는 이 칸의 첫 자식으로 붙는데 방금 innerHTML로 통째로 갈아엎었으므로 다시 얹는다
   // — 안 부르면 '표지 제목'을 적어 둬도 소책자에만 표지가 안 생긴다.
@@ -4269,8 +4269,8 @@ briefBtn.addEventListener("click", async () => {
     const langs = pickedImgLangs("brief");
     const cost = (PRICING.brief + PRICING.infographic * langs.length) * jobs.length;
     const what = langs.length
-      ? `소책자 분석과 요약 이미지 ${langs.length}종을`
-      : "소책자 분석을";
+      ? `요약분석과 요약 이미지 ${langs.length}종을`
+      : "요약분석을";
     if (!(await costConfirmed(cost, `지문 ${jobs.length}개의 ${what} 만듭니다.`, jobs.length,
         reduceAdvice(
           jobs.length,
@@ -4292,12 +4292,12 @@ briefBtn.addEventListener("click", async () => {
   for (let i = 0; i < jobs.length; i++) {
     const job = jobs[i];
     briefLoadingTextEl.textContent =
-      jobs.length > 1 ? `${job.name} 분석하는 중… (${i + 1}/${jobs.length})` : "AI가 소책자 분석을 만들고 있습니다…";
+      jobs.length > 1 ? `${job.name} 분석하는 중… (${i + 1}/${jobs.length})` : "AI가 요약분석을 만들고 있습니다…";
     try {
       const data = await postGenerate(
         "/api/brief",
         { passage: job.text, targetGrammar: grammarEl.value },
-        "소책자 분석에 실패했습니다."
+        "요약분석에 실패했습니다."
       );
       const entry = { job, data };
       entries.push(entry);
@@ -4347,17 +4347,17 @@ briefBtn.addEventListener("click", async () => {
   briefBtn.disabled = false;
   refreshTokenDisplay();
   const okCount = entries.filter((e) => !e.error).length;
-  if (okCount) showDoneGuide(`지문 ${okCount}개의 소책자 분석`, false);
+  if (okCount) showDoneGuide(`지문 ${okCount}개의 요약분석`, false);
 });
 
 /* 워드(.docx) 내보내기는 두지 않는다 — 지문 상세분석에 없는 것과 같은 이유다.
    영어 위의 루비(한글 뜻)를 워드가 표현하지 못해, 변환하면 그 뜻이 문장 안으로
    끼어든다("Many people believe 믿다 that 명사절 접속사 talent is fixed"). 실제로
    변환해 확인한 결과다. 인쇄/PDF는 브라우저가 루비를 그대로 그려 주므로 문제없다. */
-briefPrintBtn.addEventListener("click", () => printDoc(() => passageBasedName("소책자분석")));
+briefPrintBtn.addEventListener("click", () => printDoc(() => passageBasedName("요약분석")));
 TAB_SAVE.brief = {
   saveBtn: briefSaveBtn,
-  canSave: () => (lastBriefEntries.length ? "" : "저장할 소책자 분석이 없습니다. 먼저 만들어 주세요."),
+  canSave: () => (lastBriefEntries.length ? "" : "저장할 요약분석이 없습니다. 먼저 만들어 주세요."),
   getPayload: () => ({
     passages: passageMgr.getJobs(),
     entries: lastBriefEntries,
@@ -7673,7 +7673,7 @@ TAB_SAVE.vocab = {
 const TAB_LABELS = {
   passage: "📄 지문",
   analyze: "📖 지문 상세분석",
-  brief: "📕 소책자 분석",
+  brief: "📑 지문 요약분석",
   mcq: "📝 객관식 문제",
   saq: "✍️ 주관식 문제",
   workbook: "📚 워크북",
@@ -7686,7 +7686,7 @@ const PASSAGE_TAB = "passage";
 const SAVE_TITLE_SUGGEST = {
   passage: () => passageBasedName("지문"),
   analyze: () => passageBasedName("지문분석"),
-  brief: () => passageBasedName("소책자분석"),
+  brief: () => passageBasedName("요약분석"),
   // 인쇄창에서 적어 둔 시험지명이 있으면 그것을 먼저 제안한다(저장함에서도 같은 이름)
   mcq: () => (QUIZ_SHEET_TITLE.mcq && QUIZ_SHEET_TITLE.mcq.get()) || passageBasedName("객관식문제"),
   saq: () => (QUIZ_SHEET_TITLE.saq && QUIZ_SHEET_TITLE.saq.get()) || passageBasedName("주관식문제"),
@@ -8282,12 +8282,12 @@ const HOWTO = {
   },
 
   brief: {
-    title: "📕 소책자 분석 만드는 법",
+    title: "📑 지문 요약분석 만드는 법",
     lead: "상세분석과 같은 방식으로 분석하되(같은 색·같은 루비) 학생이 들고 다닐 수 있게 얇게 만듭니다.",
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "(선택) <b>[요약 이미지 함께 만들기]</b>를 켜면 지문을 한 장으로 요약한 그림이 맨 뒤에 붙습니다.",
-      "<b>[소책자 분석 만들기]</b>를 누릅니다.",
+      "<b>[요약분석 만들기]</b>를 누릅니다.",
       "<b>[📄 쪽 구성]</b>을 누르면 인쇄했을 때 쪽이 어디서 넘어가는지 보이고, 앞 쪽에 몇 mm가 비는지도 알려 줍니다. 카드 위 단추로 경계를 옮기세요.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>",
     ],

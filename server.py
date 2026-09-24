@@ -5208,7 +5208,7 @@ Only return JSON after all nine checks.
 Return valid JSON only. No markdown fences, no extra prose."""
 )
 
-_BRIEF_TRUNC_MSG = "지문이 너무 길어 소책자 분석을 만들다가 잘렸습니다. 지문을 나눠 시도해 주세요."
+_BRIEF_TRUNC_MSG = "지문이 너무 길어 요약분석을 만들다가 잘렸습니다. 지문을 나눠 시도해 주세요."
 
 
 def build_brief_user_prompt(passage, target_grammar="", complete_hint=None,
@@ -8041,6 +8041,15 @@ CHANGELOG = [
             "통째로 비는 일이 있었습니다. 적히는 내용은 그대로입니다.",
         ],
     },
+    {
+        "version": 37,
+        "date": "2026-09-24",
+        "items": [
+            "'소책자 분석' 탭의 이름이 '📑 지문 요약분석'으로 바뀌었습니다. 지문 상세분석과 "
+            "무엇이 다른지 이름만 보고도 알 수 있게 했습니다 — 해설 칸과 어휘표를 빼고 "
+            "해석을 의역 한 줄로 담은 얇은 판입니다. 기능과 요금은 그대로입니다.",
+        ],
+    },
 ]
 
 
@@ -10380,7 +10389,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._pending_label = "지문 상세분석"
                 elif path == "/api/brief":
                     cost = PRICE_BRIEF_KRW
-                    self._pending_label = "소책자 분석"
+                    self._pending_label = "지문 요약분석"
                 elif path == "/api/infographic":
                     # 지문 1개에 그림 1장. 분석과 달리 한 번에 여러 장을 받지 않는다 —
                     # 1장에 8~12초가 걸려서 여러 장을 한 요청에 묶으면 프록시가 끊는다.
