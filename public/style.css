@@ -618,6 +618,15 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .howto-sample .passage-banner{display:none;}
 .howto-sample .passage-block{margin:0;}
 .howto-sample .sent{margin-bottom:0;}
+/* 결과물 PDF 쪽 그림 — 종이 한 장처럼 보이게 흰 바탕에 그림자를 얹어 차례로 쌓는다 */
+.howto-pages{display:flex; flex-direction:column; gap:16px;}
+.howto-page{margin:0;}
+.howto-page img{
+  display:block; width:100%; height:auto; background:#fff;
+  border-radius:4px; box-shadow:0 1px 3px rgba(15,27,45,.12),0 4px 14px rgba(15,27,45,.08);
+}
+.howto-page figcaption{margin-top:6px; font-size:12px; font-weight:700; color:var(--ink-soft);}
+.howto-pages-note{margin:12px 0 0; font-size:11.5px; color:var(--ink-soft);}
 @media (max-width:820px){
   /* 가로 탭으로 바뀌면 격자의 한 칸을 차지한다 — 줄 밖으로 삐져나가지 않게 */
   .howto-btn{margin-top:0; text-align:center; grid-column:1 / -1;}
