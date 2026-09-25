@@ -49,6 +49,22 @@
   }
 }
 
+/* 결과물(인쇄되는 것)은 화면에서도 인쇄물과 같은 색으로 보여야 한다.
+   2026-09-26에 앱 화면 색(청회색 바탕·파랑 강조)을 바꿨지만, 결과물은 인쇄 색이 따로
+   정해져 있어(아래 @media print의 :root) 그대로 두었다. 그런데 결과물도 화면에서는 같은
+   변수를 읽으므로, 이 칸들 안에서는 바꾸기 전 색을 되돌려 준다 — 안 그러면 화면에서는
+   문장 번호·해설 칸이 파랑으로 보이는데 뽑으면 남색·회색으로 나온다.
+   **@media screen 안에 둔다** — 밖에 두면 인쇄 때 아래 인쇄 색을 덮어써 인쇄물이 바뀐다.
+   결과물 칸을 새로 만들면 여기에도 넣을 것. */
+@media screen{
+  #result, #briefDoc, #mcqResult, #saqResult, #workbookDoc, #vocabDoc, #examPaperResult,
+  .gate-preview, .howto-sample{
+    --paper:#ffffff; --card:#ffffff; --ink:#1b2430; --ink-soft:#485463;
+    --line:#e3e7ec; --line-soft:#eef1f4; --accent:#1f4e6b; --accent-soft:#e8eef3;
+    --shadow:0 1px 2px rgba(20,30,45,.05),0 6px 20px rgba(20,30,45,.05);
+  }
+}
+
 /* 글꼴은 이 한 곳에서만 정한다 — 화면·인쇄 어디서든 같은 글씨체로 보이도록.
    (예전에는 제목에 Georgia를 썼는데 한글 글리프가 없어 바탕체로 대체되면서
     영문과 한글의 글씨체가 한 줄 안에서 달라 보였다) */
@@ -1867,6 +1883,9 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
     --ref:#7a4d22;
     --conj2:#4c1d95; --conj2-bg:#b09bde; --conj3:#8f1259; --conj3-bg:#f3bcd6;
     --target-hl:#ffd8a8; --target-ink:#c2410c;
+    /* 그림자도 인쇄 값을 따로 둔다 — 화면 그림자는 2026-09-26에 바꿨는데, 여기 없으면
+       인쇄에서도 화면 값을 따라가 흐름 요약 상자(.ol-box 등)의 그림자가 함께 바뀐다 */
+    --shadow:0 1px 2px rgba(20,30,45,.05),0 6px 20px rgba(20,30,45,.05);
   }
   /* 모든 색/배경을 강제로 인쇄 (형광펜·범례 스와치·루비 색상 포함) */
   *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
