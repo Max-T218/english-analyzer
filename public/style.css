@@ -1,7 +1,11 @@
+/* 화면 글꼴(Pretendard). 아래 --font의 맨 앞에 있고, 못 받아 오면 맑은 고딕으로 물러난다. */
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css");
 :root{
   color-scheme:light;
-  --paper:#ffffff; --card:#ffffff; --ink:#1b2430; --ink-soft:#485463;
-  --line:#e3e7ec; --line-soft:#eef1f4; --accent:#1f4e6b; --accent-soft:#e8eef3;
+  /* 앱 화면: 옅은 청회색 바탕 위에 흰 카드, 선명한 파랑 강조(2026-09-25).
+     인쇄 색은 아래 @media print의 :root가 따로 정하므로 여기를 바꿔도 결과물 색은 그대로다. */
+  --paper:#eef2f8; --card:#ffffff; --ink:#0f1b2d; --ink-soft:#5a6b82;
+  --line:#dbe3ee; --line-soft:#eaf0f7; --accent:#2563eb; --accent-soft:#e3ecfd;
   /* 어법(빨강) + 어휘(파랑) = 어법+어휘(보라) 로 색이 맞물려 있으므로 이 셋은 건드리지 않는다.
      병렬구조는 원래 하늘색(#1f9dd0)이라 어휘의 파랑과 구분이 잘 안 돼 초록으로 바꿨다. */
   --g:#cf2e2e; --v:#1f6fb2; --gv:#7a3fa0; --conj:#15803d; --hl:#fff1a8; --conj-bg:#a9e3bb;
@@ -32,7 +36,7 @@
   --target-hl:#ffd8a8; --target-ink:#c2410c;
   /* 학원 마크 패널 전용 강조색 — 위쪽 설정 항목들과 뚜렷이 구분되도록 따뜻한 색으로 */
   --brand:#b45309; --brand-soft:#fdf1e0;
-  --shadow:0 1px 2px rgba(20,30,45,.05),0 6px 20px rgba(20,30,45,.05);
+  --shadow:0 4px 16px rgba(15,40,90,.07);
 }
 @media (prefers-color-scheme:dark) and (min-width:999999px){
   :root{
@@ -48,7 +52,7 @@
 /* 글꼴은 이 한 곳에서만 정한다 — 화면·인쇄 어디서든 같은 글씨체로 보이도록.
    (예전에는 제목에 Georgia를 썼는데 한글 글리프가 없어 바탕체로 대체되면서
     영문과 한글의 글씨체가 한 줄 안에서 달라 보였다) */
-:root{ --font:"Segoe UI","Malgun Gothic",Pretendard,system-ui,-apple-system,sans-serif; }
+:root{ --font:"Pretendard Variable",Pretendard,"Segoe UI","Malgun Gothic",system-ui,-apple-system,sans-serif; }
 *{box-sizing:border-box;}
 html,body{margin:0;}
 html{background:var(--paper);}
@@ -64,22 +68,25 @@ input,select,textarea,button{font-family:inherit;}
 .wrap{max-width:1100px; margin:0 auto; padding:28px 22px 90px;}
 
 /* ── 헤더 ── */
-.app-head{margin-bottom:20px;}
-.app-head .eyebrow{
-  font-size:clamp(22px,6vw,30px); letter-spacing:.03em; text-transform:uppercase;
-  color:var(--accent); font-weight:800; line-height:1.2; margin:0 0 6px; text-wrap:balance;
+.app-head{
+  /* 짙은 남색 띠. .wrap의 위·좌우 여백(28px 22px)만큼 끌어내어 띠가 가장자리에 붙게 한다 */
+  background:#0f1b2d; margin:-28px -22px 22px; padding:22px 22px 18px; border-radius:0 0 18px 18px;
 }
-.app-head p{color:var(--ink-soft); font-size:14px; margin:0;}
+.app-head .eyebrow{
+  font-size:clamp(22px,6vw,30px); letter-spacing:.02em; text-transform:uppercase;
+  color:#fff; font-weight:800; line-height:1.2; margin:0 0 6px; text-wrap:balance;
+}
+.app-head p{color:#a9b8cc; font-size:14px; margin:0;}
 
 /* ── 입력 패널 ── */
 .panel{
-  background:var(--card); border:1px solid var(--line); border-radius:14px;
+  background:var(--card); border:none; border-radius:14px;
   padding:18px; box-shadow:var(--shadow); margin-bottom:22px;
 }
 .panel label{display:block; font-size:12.5px; font-weight:700; color:var(--ink-soft); margin:0 0 6px; letter-spacing:.02em;}
 .btn.small{padding:8px 12px; font-size:13px;}
 textarea, input[type=text], select{
-  width:100%; font:inherit; color:var(--ink); background:var(--paper);
+  width:100%; font:inherit; color:var(--ink); background:var(--card);
   border:1px solid var(--line); border-radius:9px; padding:10px 12px;
 }
 textarea{min-height:150px; resize:vertical; line-height:1.55;}
@@ -90,7 +97,7 @@ textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outli
 .btn{
   font:inherit; font-size:14px; font-weight:700; cursor:pointer;
   border:1px solid var(--accent); background:var(--accent); color:#fff;
-  padding:10px 20px; border-radius:9px; display:inline-flex; gap:8px; align-items:center;
+  padding:10px 20px; border-radius:8px; display:inline-flex; gap:8px; align-items:center;
   transition:transform .05s, opacity .15s;
 }
 @media (prefers-color-scheme:dark) and (min-width:999999px){.btn{color:#0f141a;}}
@@ -155,7 +162,7 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 /* ── 시작 화면 (소개 + 키 입력) ── */
 .gate[hidden]{display:none;}
 .gate-intro{
-  padding:26px 26px 22px; border:1px solid var(--line); border-radius:14px;
+  padding:26px 26px 22px; border:none; border-radius:14px;
   background:var(--card); box-shadow:var(--shadow); margin-bottom:16px;
 }
 .gate-intro h2{
@@ -379,6 +386,10 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .account-state{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
 .account-state[hidden]{display:none;}
 .account-name{font-size:13px; font-weight:600; color:var(--ink-soft);}
+/* 이름·잔액은 한 줄을 통째로 쓰게 해서, 그 아래 버튼 여섯 개가 한 줄에 모이게 한다.
+   이름과 한 줄에 두면 폭이 모자라 '회원 탈퇴'만 다음 줄로 떨어졌다. */
+#accountLoggedIn{row-gap:6px;}
+#accountLoggedIn .account-name{flex-basis:100%;}
 
 /* ── 저장 목록 (내 저장함 모달) ── */
 /* ── 저장함 찾기 줄 ── */
@@ -567,11 +578,11 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 }
 .tab-btn{
   font:inherit; font-size:14px; font-weight:700; cursor:pointer; color:var(--ink-soft);
-  background:transparent; border:none; border-left:3px solid transparent; border-radius:8px;
+  background:transparent; border:none; border-radius:8px;
   padding:10px 12px; text-align:left; transition:color .15s, background .15s, border-color .15s;
 }
 .tab-btn:hover{color:var(--accent); background:var(--line-soft);}
-.tab-btn.active{color:var(--accent); background:var(--accent-soft); border-left-color:var(--accent);}
+.tab-btn.active{color:var(--accent); background:var(--card); box-shadow:0 2px 8px rgba(15,40,90,.1);}
 .tab-page{display:none;}
 .tab-page.active{display:block;}
 @media print{ .tabs{display:none !important;} }
@@ -623,7 +634,7 @@ label.chk-lg{gap:8px; font-size:14.5px;}
     border-left:none; border-radius:0; border-bottom:3px solid transparent;
     padding:10px 16px; margin-bottom:-2px;
   }
-  .tab-btn.active{background:transparent; border-left-color:transparent; border-bottom-color:var(--accent);}
+  .tab-btn.active{background:transparent; box-shadow:none; border-bottom-color:var(--accent);}
 }
 @media (max-width:560px){ .tabs{grid-template-columns:repeat(2,1fr);} }
 
