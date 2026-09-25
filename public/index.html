@@ -1257,6 +1257,14 @@
             <label><input type="radio" name="saqOrder" value="all"> 전체 문항 섞기</label>
           </div>
           <div class="hint type-order-hint" id="saqOrderHint"></div>
+
+          <label class="group-label">지문 변형 <span class="group-note">(여러 개 선택 가능 — 고른 만큼 세트가 늘어납니다)</span></label>
+          <div class="quiz-type-grid wide-grid" id="saqVariationGrid">
+            <label><input type="checkbox" name="saqVariation" value="verbatim" checked> 원문 그대로 사용</label>
+            <label><input type="checkbox" name="saqVariation" value="light"> 단어 5개 내외 변형</label>
+            <label><input type="checkbox" name="saqVariation" value="heavy"> 단어 5개 이상 변형</label>
+          </div>
+          <div class="hint type-order-hint" id="saqVariationHint"></div>
         </div>
       </div>
 

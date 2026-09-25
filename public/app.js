@@ -4414,7 +4414,7 @@ const SAQ_TYPES = [
 // select 대신 '체크박스처럼 보이는 라디오 그룹'으로 값을 관리할 때 쓰는 어댑터.
 // select와 똑같이 .value getter/setter, .addEventListener("change", ...)를 제공해서
 // 아래 출제 순서·지문 변형·단어장 형식/정렬 로직을 select였을 때와 그대로 재사용한다.
-// 해당 name의 라디오가 화면에 하나도 없으면(예: 주관식 탭의 '지문 변형') null을 반환해
+// 해당 name의 라디오가 화면에 하나도 없으면 null을 반환해
 // 기존의 `if (variationEl) {...}` 같은 존재 여부 검사가 그대로 동작하게 한다.
 function radioGroup(name) {
   const inputs = () => [...document.querySelectorAll(`input[name="${name}"]`)];
@@ -4739,9 +4739,11 @@ function setupQuizTab({ prefix, types, footer }) {
   const orderEl = radioGroup(prefix + "Order");
   const orderHintEl = $(prefix + "OrderHint");
   const ORDER_STORE = "gemini_" + prefix + "_order";
-  // 지문 변형 — 지금은 객관식 탭에만 있는 컨트롤이라 주관식 탭에서는 checkGroup이 null을 반환한다.
-  // 어법·어휘 선택형처럼 [정답|오답] 쌍이 실제 원문 단어와 정확히 일치해야 하는 주관식
-  // 포맷과 변형이 섞이면 정답 근거가 애매해지므로, 주관식은 항상 "원문 그대로"로 보낸다.
+  // 지문 변형 — 객관식·주관식 두 탭에 다 있다. 주관식은 처음에 뺐었다 — 어법·어휘
+  // 선택형처럼 [정답|오답] 쌍이 지문 낱말과 정확히 맞아야 하는 유형에서 정답 근거가
+  // 애매해질까 봐서였다. 지금은 변형본을 먼저 확정하고(/api/reword) 그 지문을 '원문
+  // 그대로'로 넘겨 출제하므로, 문항과 시험지에 찍히는 지문이 언제나 같은 글이다.
+  // 그 걱정이 사라져 주관식에도 붙였다(2026-09-25).
   const variationEl = checkGroup(prefix + "Variation");
   const variationHintEl = $(prefix + "VariationHint");
   const VARIATION_STORE = "gemini_" + prefix + "_variation";
