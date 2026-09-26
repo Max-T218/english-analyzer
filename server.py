@@ -1919,10 +1919,12 @@ the passage in full.
   passageHtml = 지문 전문. `tfItems` = EXACTLY 5 objects {text, isTrue}:
   · `text` = one short ENGLISH statement about the passage.
   · `isTrue` = true if it matches the passage, false if it contradicts it.
-  Mix them up — roughly 2~3 true and 2~3 false, in a non-obvious order. Each statement must
-  come from a DIFFERENT part of the passage. choices = [], answer = 0.
+  The request states EXACTLY how many items must be false for each OX진위 question — follow
+  that number precisely, even when it is 0 (all true) or 5 (all false). Put the true and false
+  items in a non-obvious order. Each statement must come from a DIFFERENT part of the passage.
+  choices = [], answer = 0.
 - "OX진위(한)" — identical to "OX진위(영)" in every way (same instruction, same passageHtml,
-  same true/false mix, same rules) EXCEPT `text` for each tfItem is written in KOREAN instead
+  same rule for the number of false items, same rules) EXCEPT `text` for each tfItem is written in KOREAN instead
   of English (자연스러운 한국어 문장으로, 영어 원문을 그대로 옮기지 말고 내용만 정확히 번역).
 
 ## Quality rules
@@ -1970,9 +1972,29 @@ QUIZ_VARIATIONS = {
 }
 
 
+OX_TYPES = ("OX진위(영)", "OX진위(한)")
+OX_ITEMS = 5
+# OX 한 문항(5개 진술)에서 X가 몇 개일지의 가중치 — 0~5개.
+# 모델에게 "섞으라"고만 하면 늘 2~3개로 몰려, 학생이 개수만 맞춰 찍는 요령이 생겼다.
+# 그래서 개수를 서버가 뽑아 문항마다 못 박는다. 전부 O·전부 X도 나와야 요령이 안
+# 통하지만, 같은 확률(각 17%)이면 세 번에 한 번꼴로 극단이 나와 시험지가 어색해
+# 보인다 — 양 끝은 약 8%, 가운데는 약 21%로 둔다(2026-09-26 선생님 결정).
+OX_FALSE_WEIGHTS = (2, 5, 5, 5, 5, 2)
+
+
+def plan_ox_false_counts(items):
+    """OX진위 문항마다 X 개수를 뽑는다 — 유형 순서·문항 순서 그대로의 [(유형, X 개수)]."""
+    return [
+        (t, random.choices(range(OX_ITEMS + 1), weights=OX_FALSE_WEIGHTS)[0])
+        for t, n in items if t in OX_TYPES
+        for _ in range(n)
+    ]
+
+
 def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
-                           variation="verbatim", target_grammar=""):
-    """items = [(유형, 문항수)] — 유형마다 몇 문항인지가 요청에 그대로 들어 있다."""
+                           variation="verbatim", target_grammar="", ox_plan=()):
+    """items = [(유형, 문항수)] — 유형마다 몇 문항인지가 요청에 그대로 들어 있다.
+    ox_plan = plan_ox_false_counts가 뽑은 OX 문항별 X 개수."""
     types = [t for t, _ in items]
     count = sum(n for _, n in items)
     lines = [
@@ -1981,6 +2003,17 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
         + ", ".join(f"{t} {n}문항" for t, n in items),
         f"총 문항 수: {count}개 (정확히 이 개수만큼 생성)",
     ]
+    if ox_plan:
+        seen = Counter()
+        desc = []
+        for t, k in ox_plan:
+            seen[t] += 1
+            desc.append(f"{t} {seen[t]}번째 문항 → X {k}개 · O {OX_ITEMS - k}개")
+        lines.append(
+            "⚠️ OX진위의 X(isTrue=false) 개수는 이미 정해져 있습니다. 문항마다 정확히 "
+            "이대로 만드세요 — 0개(전부 O)나 5개(전부 X)여도 그대로 지키세요: "
+            + "; ".join(desc)
+        )
     # 지문 재사용(passageHtml 생략)은 '원문 그대로'일 때만 켠다.
     # light/heavy는 모델이 응답 안에서 즉석으로 리워딩하므로 서버가 가진 원문으로
     # 채우면 학생이 읽는 지문과 어긋난다 — 그때는 지금까지처럼 모델이 직접 싣는다.
@@ -2169,6 +2202,23 @@ def attach_word_count_condition(q):
     return q
 
 
+def _check_ox_plan(result, ox_plan):
+    """모델이 정해 준 X 개수를 지켰는지 세어 로그에만 남긴다.
+
+    어긋나도 고치지 않는다 — 서버가 참·거짓을 뒤집으면 진술 문장과 해설이 그 판정과
+    어긋나 오답이 된다. 얼마나 자주 어기는지 지켜보고, 잦으면 그때 다시 만든다."""
+    if not ox_plan:
+        return
+    got = [q for q in result.get("questions", []) or []
+           if isinstance(q, dict) and q.get("type") in OX_TYPES]
+    for (t, want), q in zip(ox_plan, got):
+        its = [it for it in (q.get("tfItems") or []) if isinstance(it, dict)]
+        falses = sum(1 for it in its if it.get("isTrue") is False)
+        if falses != want or len(its) != OX_ITEMS:
+            print(f"[quiz] OX X 개수 어긋남: {t} 지시 {want}개 → 실제 {falses}개"
+                  f" (진술 {len(its)}개)", flush=True)
+
+
 def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
                       explain_hint=None, variation="verbatim", target_grammar=""):
     """items = [(유형, 문항수)]. 개수 상한은 parse_quiz_items가 이미 적용해 둔다."""
@@ -2190,12 +2240,14 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
             "정확도(모델)에서 Pro를 선택하거나, 변형 정도를 '단어 5개 내외 변형'으로 낮추세요."
         )
 
+    ox_plan = plan_ox_false_counts(items)
     payload = {
         "systemInstruction": {"parts": [{"text": QUIZ_SYSTEM_PROMPT}]},
         "contents": [
             {"role": "user", "parts": [
                 {"text": build_quiz_user_prompt(
-                    passage, items, short_hint, explain_hint, variation, target_grammar
+                    passage, items, short_hint, explain_hint, variation, target_grammar,
+                    ox_plan,
                 )}
             ]}
         ],
@@ -2208,6 +2260,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
         },
     }
     result = _gemini_json(payload, api_key, model, _QUIZ_TRUNC_MSG)
+    _check_ox_plan(result, ox_plan)
 
     # 지문을 그대로 쓰는 유형의 빈 passageHtml을 서버가 채운다.
     # '원문 그대로'일 때만 해당한다 — light/heavy는 모델이 응답 안에서 리워딩한 지문을
@@ -8119,6 +8172,15 @@ CHANGELOG = [
             "문장 전환은 바꿔 쓴 결과가 그 문법이 되도록(예: 부사절 → 분사구문) 냅니다. "
             "동사형 쓰기는 그 문법 때문에 형태가 정해지는 동사를 묻습니다(예: 주격관계대명사 → "
             "선행사에 맞춘 수일치). 지문에 그 문법이 없으면 평소대로 출제합니다.",
+        ],
+    },
+    {
+        "version": 40,
+        "date": "2026-09-26",
+        "items": [
+            "⭕ 주관식 OX진위의 X 개수가 문항마다 0개부터 5개까지 고르게 달라집니다. "
+            "예전에는 늘 2~3개로 나와, 학생이 개수만 맞춰 찍어도 점수가 났습니다. "
+            "이제 전부 O나 전부 X도 가끔 나옵니다.",
         ],
     },
 ]
