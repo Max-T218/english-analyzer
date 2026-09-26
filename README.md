@@ -175,6 +175,8 @@ Gemini 실사용량을 그때그때 재는 대신, **행동 하나당 고정 가
 | `GEMINI_IMAGE_SIZE` | `2K` | 요약 그림 화질. 올리면 원가가 두 배가 되니 `PRICE_INFOGRAPHIC_KRW`와 함께 볼 것 |
 | `GEMINI_IMAGE_ASPECT` | `16:9` | 요약 그림 비율(가로형) |
 | `GEMINI_TIMEOUT` | `300` | Gemini 호출 1회의 소켓 타임아웃(초) |
+| `GEMINI_VIA_VERTEX` | (꺼짐) | `1`이면 Gemini를 AI Studio 대신 구글 클라우드 Vertex AI로 부른다 — 모델·결과는 같고 청구처만 다르다(무료 체험 크레딧은 Vertex에만 쓰인다). 인증은 Firestore 서비스 계정(`aiplatform.user` 역할 필요). Vertex가 실패하면 그 요청은 AI Studio로 다시 간다 |
+| `VERTEX_LOCATION` | `global` | Vertex 호출 지역 |
 | `MAX_RETRY_TOTAL` | `150` | 누적 재시도 대기 상한(초). 넘으면 한국어 오류로 안내 |
 | `REFINE_BUDGET` | `86400` | 이 시간(초)을 쓴 뒤에는 품질 보정 재요청을 시작하지 않음 |
 | `GOOGLE_APPLICATION_CREDENTIALS_JSON` | (필수) | Firestore 서비스 계정 키(JSON 전체 내용) — 없으면 로그인·AI 기능 전체가 막힘 |

@@ -741,6 +741,88 @@ GEMINI_URL = (
 # 응답도 텍스트가 아니라 base64 이미지로 온다(_image_from_interaction 참고).
 GEMINI_IMAGE_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 
+# ── Vertex AI(구글 클라우드)로 같은 Gemini를 부르는 길 ─────────────────────────
+# 모델도 결과도 같고 **요금이 청구되는 곳만 다르다**. 구글 클라우드 무료 체험 크레딧은
+# AI Studio(위 주소들) 요금에는 못 쓰고 Vertex 요금에는 쓸 수 있어서(2026-09-26 공식
+# 문서 확인), 크레딧이 남아 있는 동안 이 길로 돌린다. 인증은 API 키가 아니라
+# Firestore와 같은 서비스 계정이다 — 그 계정에 'Agent Platform User'(aiplatform.user)
+# 역할을 줘 두었다.
+#
+# 기본은 꺼짐. GEMINI_VIA_VERTEX=1일 때만 쓴다. 크레딧이 끝나면(2026-11-02 만료)
+# 이 값만 지우면 원래 길로 돌아간다 — 요금은 두 길이 같아 켜 둬도 손해는 없다.
+#
+# Vertex가 실패하면 **그 자리에서 AI Studio로 다시 보낸다**(_gemini_call_with_retry).
+# 체험 계정은 한도가 낮게 묶여 있을 수 있어, 그 때문에 선생님 요청이 실패하면 안 된다.
+GEMINI_VIA_VERTEX = os.environ.get("GEMINI_VIA_VERTEX", "").strip().lower() in ("1", "true", "yes")
+VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "global").strip() or "global"
+_VERTEX_LOCK = threading.Lock()
+_VERTEX_CREDS = None
+# 권한·설정 문제로 실패하면 한동안 Vertex를 건너뛴다 — 요청마다 헛걸음하면 그만큼 느려진다
+_VERTEX_PAUSED_UNTIL = 0.0
+
+
+def _vertex_credentials():
+    """Vertex용 서비스 계정 자격(토큰이 곧 만료되면 새로 받는다). 없으면 None."""
+    global _VERTEX_CREDS
+    with _VERTEX_LOCK:
+        if _VERTEX_CREDS is None:
+            scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+            raw = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+            path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+            if raw:
+                _VERTEX_CREDS = service_account.Credentials.from_service_account_info(
+                    json.loads(raw), scopes=scopes)
+            elif path:
+                _VERTEX_CREDS = service_account.Credentials.from_service_account_file(
+                    path, scopes=scopes)
+            else:
+                return None
+        if not _VERTEX_CREDS.valid:
+            import google.auth.transport.requests as _gat
+            _VERTEX_CREDS.refresh(_gat.Request())
+        return _VERTEX_CREDS
+
+
+def _vertex_ready():
+    return GEMINI_VIA_VERTEX and time.time() >= _VERTEX_PAUSED_UNTIL
+
+
+def _vertex_post(model, data):
+    """Vertex의 :generateContent로 보낸다. 본문·응답 모양은 AI Studio와 같다."""
+    creds = _vertex_credentials()
+    if creds is None:
+        raise RuntimeError("Vertex용 서비스 계정 키가 없습니다")
+    url = (f"https://aiplatform.googleapis.com/v1/projects/{creds.project_id}"
+           f"/locations/{VERTEX_LOCATION}/publishers/google/models/{model}:generateContent")
+    req = urllib.request.Request(url, data=data, method="POST", headers={
+        "content-type": "application/json", "authorization": "Bearer " + creds.token})
+    with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _vertex_try(model, data):
+    """Vertex로 한 번 시도한다. 안 되면 None — 부른 쪽이 AI Studio로 다시 보낸다.
+
+    응답 시간 초과는 넘기지 않고 그대로 올린다 — 이미 몇 분을 기다린 요청을 다른 길로
+    처음부터 다시 보내면 선생님은 그 두 배를 기다리게 된다."""
+    global _VERTEX_PAUSED_UNTIL
+    try:
+        return _vertex_post(model, data)
+    except TimeoutError:
+        raise
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:300]
+        # 권한·모델 없음은 곧바로 풀리지 않으니 10분, 한도 초과는 1분 쉰다.
+        # 400(요청 모양)은 그 요청만의 문제일 수 있어 쉬지 않는다.
+        pause = {401: 600, 403: 600, 404: 600, 429: 60}.get(e.code, 0)
+        if pause:
+            _VERTEX_PAUSED_UNTIL = time.time() + pause
+        print(f"[vertex] {model} {e.code} → AI Studio로 다시 보냄"
+              f"{f' ({pause}초 쉼)' if pause else ''}: {detail}", flush=True)
+    except Exception as e:
+        print(f"[vertex] {model} {type(e).__name__} → AI Studio로 다시 보냄: {e}", flush=True)
+    return None
+
 
 def _asset_version():
     """화면을 이루는 파일이 바뀔 때마다 달라지는 짧은 표식.
@@ -3331,10 +3413,25 @@ def call_gemini_infographic(passage, api_key, model=None, lang="mix"):
         },
     }
     data = json.dumps(img_payload, ensure_ascii=False).encode("utf-8")
+    # Vertex에는 Interactions API가 없어 :generateContent 모양으로 같은 것을 적는다.
+    # 응답은 inlineData에 base64로 오는데 _image_from_interaction이 그대로 찾아낸다.
+    # (2026-09-26 실측: 16:9·2K·JPEG 요청에 2752×1536 JPEG가 왔다)
+    vertex_data = json.dumps({
+        "contents": [{"role": "user", "parts": [{"text": _infographic_prompt(plan)}]}],
+        "generationConfig": {
+            "responseModalities": ["IMAGE"],
+            "imageConfig": {
+                "aspectRatio": IMAGE_ASPECT,
+                "imageSize": IMAGE_SIZE,
+                "imageOutputOptions": {"mimeType": "image/jpeg"},
+            },
+        },
+    }, ensure_ascii=False).encode("utf-8")
     try:
         body = _gemini_call_with_retry(
             data, api_key, use_model,
             url=GEMINI_IMAGE_URL,
+            vertex_data=vertex_data,
             # 그림 모델을 글자 모델로 갈아탈 수는 없다 — 없으면 없다고 말해야 한다
             allow_fallback=False,
         )
@@ -6572,7 +6669,8 @@ def build_user_prompt(passage, target_grammar, mode, complete_hint=None,
     return "\n".join(lines)
 
 
-def _gemini_call_with_retry(data, api_key, model, url=None, allow_fallback=True):
+def _gemini_call_with_retry(data, api_key, model, url=None, allow_fallback=True,
+                            vertex_data=None):
     """페이로드(JSON bytes)를 모델에 전송하고 재시도·모델 대체를 공통 처리한다
     (지문분석·문제제작 등 모든 Gemini 호출이 공유).
     - flash 429(속도 제한), 5xx(서버 과부하), 네트워크 오류 → 대기 후 자동 재시도
@@ -6584,10 +6682,19 @@ def _gemini_call_with_retry(data, api_key, model, url=None, allow_fallback=True)
     allow_fallback: 모델이 없어졌을 때 다른 모델로 갈아타도 되는가. 이미지 생성처럼
          '대체할 만한 같은 종류의 모델'이 없는 호출은 False로 꺼야 한다 —
          그림 모델 자리에 글자 모델을 넣으면 엉뚱한 실패가 된다.
+    vertex_data: GEMINI_VIA_VERTEX가 켜져 있을 때 Vertex로 보낼 본문. 글자 호출은
+         AI Studio와 본문이 같아 비워 두면 data를 그대로 쓴다. 그림처럼 url을 따로
+         넘기는 호출은 본문 모양이 달라 직접 넘겨야 하고, 안 넘기면 Vertex를 안 탄다.
 
     성공 시 Gemini 응답 바디(dict)를 반환한다."""
+    if vertex_data is None and url is None:
+        vertex_data = data
 
     def _post(use_model):
+        if vertex_data is not None and _vertex_ready():
+            body = _vertex_try(use_model, vertex_data)
+            if body is not None:
+                return body
         req = urllib.request.Request(
             url or GEMINI_URL.format(model=use_model),
             data=data,
