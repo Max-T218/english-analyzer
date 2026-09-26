@@ -755,6 +755,8 @@ GEMINI_IMAGE_URL = "https://generativelanguage.googleapis.com/v1beta/interaction
 # 체험 계정은 한도가 낮게 묶여 있을 수 있어, 그 때문에 선생님 요청이 실패하면 안 된다.
 GEMINI_VIA_VERTEX = os.environ.get("GEMINI_VIA_VERTEX", "").strip().lower() in ("1", "true", "yes")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "global").strip() or "global"
+# Vertex가 잠깐 붐빌 때 AI Studio로 넘기기 전에 다시 보내며 버티는 시간(초) — _vertex_try 참고
+VERTEX_RETRY_BUDGET = float(os.environ.get("VERTEX_RETRY_BUDGET", "120") or 120)
 _VERTEX_LOCK = threading.Lock()
 _VERTEX_CREDS = None
 # 권한·설정 문제로 실패하면 한동안 Vertex를 건너뛴다 — 요청마다 헛걸음하면 그만큼 느려진다
@@ -806,22 +808,55 @@ def _vertex_try(model, data):
     응답 시간 초과는 넘기지 않고 그대로 올린다 — 이미 몇 분을 기다린 요청을 다른 길로
     처음부터 다시 보내면 선생님은 그 두 배를 기다리게 된다."""
     global _VERTEX_PAUSED_UNTIL
-    try:
-        return _vertex_post(model, data)
-    except TimeoutError:
-        raise
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", "replace")[:300]
-        # 권한·모델 없음은 곧바로 풀리지 않으니 10분, 한도 초과는 1분 쉰다.
+    # 429는 몇 초 뒤 다시 보내면 대개 받아 준다. 우리 요청이 많아서가 아니다 — 1분에
+    # 두 건꼴로 차례차례 보내는데도 났다. Vertex는 사용량 약정이 없으면 구글 전체가
+    # 함께 쓰는 여유분에서 처리해 주므로, 그 순간 붐비면 거절되고 조금 뒤면 풀린다.
+    # 여러 선생님 요청이 같은 순간 걸렸을 수 있어 기다리는 시간을 조금씩 흩는다.
+    # (2026-09-26 실측: 84건 중 3건이 429였고, 그때 1분을 통째로 쉬게 해 두어 이어서
+    #  보낸 요청 8건까지 AI Studio로 넘어갔다 — 크레딧 대신 원래 요금이 나간 것이다.)
+    #
+    # 이 길의 목적이 크레딧을 쓰는 것이라 **제작 시간이 늘어도 Vertex에서 버틴다**
+    # (2026-09-26 선생님 결정: "오래 걸려도 되니 Vertex로"). 잠깐 붐빔(429)·서버
+    # 과부하(5xx)·네트워크 끊김은 VERTEX_RETRY_BUDGET(기본 120초) 동안 간격을 늘려 가며
+    # 다시 보내고, 그래도 안 될 때만 AI Studio로 넘긴다 — 결과물을 못 주는 것보다는
+    # 원래 요금으로라도 만드는 편이 낫다.
+    started = time.time()
+    attempt = 0
+    while True:
+        try:
+            return _vertex_post(model, data)
+        except TimeoutError:
+            raise
+        except urllib.error.HTTPError as e:
+            code = e.code   # except를 벗어나면 e가 사라지므로 값만 챙긴다
+            detail = e.read().decode("utf-8", "replace")[:300]
+            transient = code == 429 or code >= 500
+            why = str(code)
+        except urllib.error.URLError as e:
+            code, detail, transient, why = 0, str(e.reason), True, "네트워크"
+        except Exception as e:
+            print(f"[vertex] {model} {type(e).__name__} → AI Studio로 다시 보냄: {e}", flush=True)
+            return None
+        if transient:
+            # 3·6·12·20·30·30…초 + 흩기(여러 요청이 같은 순간 다시 부딪히지 않게)
+            wait = min(3 * (2 ** attempt), 30) * random.uniform(0.8, 1.2)
+            if time.time() - started + wait <= VERTEX_RETRY_BUDGET:
+                attempt += 1
+                print(f"[vertex] {model} {why} → {wait:.0f}초 뒤 Vertex로 다시 ({attempt}회)",
+                      flush=True)
+                time.sleep(wait)
+                continue
+            print(f"[vertex] {model} {why} {VERTEX_RETRY_BUDGET:.0f}초 동안 안 됨"
+                  f" → AI Studio로 다시 보냄: {detail}", flush=True)
+            return None
+        # 권한·모델 없음은 곧바로 풀리지 않으니 10분 쉰다 — 요청마다 헛걸음하지 않게.
         # 400(요청 모양)은 그 요청만의 문제일 수 있어 쉬지 않는다.
-        pause = {401: 600, 403: 600, 404: 600, 429: 60}.get(e.code, 0)
+        pause = {401: 600, 403: 600, 404: 600}.get(code, 0)
         if pause:
             _VERTEX_PAUSED_UNTIL = time.time() + pause
-        print(f"[vertex] {model} {e.code} → AI Studio로 다시 보냄"
+        print(f"[vertex] {model} {why} → AI Studio로 다시 보냄"
               f"{f' ({pause}초 쉼)' if pause else ''}: {detail}", flush=True)
-    except Exception as e:
-        print(f"[vertex] {model} {type(e).__name__} → AI Studio로 다시 보냄: {e}", flush=True)
-    return None
+        return None
 
 
 def _asset_version():
