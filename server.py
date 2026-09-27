@@ -2666,7 +2666,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
             "responseSchema": QUIZ_SCHEMA,
         },
     }
-    result = _gemini_json(payload, api_key, model, _QUIZ_TRUNC_MSG)
+    result = _gemini_json(payload, api_key, model, _QUIZ_TRUNC_MSG, label="quiz")
     _check_ox_plan(result, ox_plan)
     _check_answer_plan(result, answer_plan)
 
@@ -2808,7 +2808,7 @@ def call_gemini_reword(passage, variation, api_key, model):
             "responseSchema": REWORD_SCHEMA,
         },
     }
-    result = _gemini_json(payload, api_key, model, _REWORD_TRUNC_MSG)
+    result = _gemini_json(payload, api_key, model, _REWORD_TRUNC_MSG, label="reword")
 
     out = str(result.get("passage") or "").strip()
     # 빈 응답이나 눈에 띄게 짧아진 결과는 채택하지 않는다 — 문장을 통째로 날려 먹은
@@ -3025,7 +3025,7 @@ def call_gemini_ocr(file, api_key, model, partial=False):
             "responseSchema": OCR_SCHEMA,
         },
     }
-    result = _gemini_json(payload, api_key, model, _OCR_TRUNC_MSG)
+    result = _gemini_json(payload, api_key, model, _OCR_TRUNC_MSG, label="ocr")
 
     # 문장별 배열을 다시 잇는다 (태그가 섞여 오면 걷어낸다)
     text = _join_ocr_lines(result.get("lines"), result.get("kind"))
@@ -3196,7 +3196,7 @@ def call_gemini_vocab_ocr(file, api_key, model):
             "responseSchema": VOCAB_ITEMS_SCHEMA,
         },
     }
-    result = _gemini_json(payload, api_key, model, _VOCAB_OCR_TRUNC_MSG)
+    result = _gemini_json(payload, api_key, model, _VOCAB_OCR_TRUNC_MSG, label="vocabocr")
     items = _clean_vocab_items(result.get("items"))
     note = str(result.get("note") or "").strip()
     if not items:
@@ -3227,7 +3227,7 @@ def call_gemini_vocab_pdf(text, api_key, model):
             "responseSchema": VOCAB_ITEMS_SCHEMA,
         },
     }
-    result = _gemini_json(payload, api_key, model, _VOCAB_PDF_TRUNC_MSG)
+    result = _gemini_json(payload, api_key, model, _VOCAB_PDF_TRUNC_MSG, label="vocabpdf")
     items = _clean_vocab_items(result.get("items"))
     note = str(result.get("note") or "").strip()
     if not items:
@@ -3736,7 +3736,7 @@ def call_gemini_infographic(passage, api_key, model=None, lang="mix"):
         },
     }
     plan = _clean_infographic_plan(
-        _gemini_json(plan_payload, api_key, MODEL, _INFOGRAPHIC_TRUNC_MSG), lang
+        _gemini_json(plan_payload, api_key, MODEL, _INFOGRAPHIC_TRUNC_MSG, label="infographic"), lang
     )
 
     # --- 2단계: 그 문구를 그대로 조판시킨다 (나노바나나 프로) ---
@@ -3778,6 +3778,7 @@ def call_gemini_infographic(passage, api_key, model=None, lang="mix"):
             # 그림 모델을 글자 모델로 갈아탈 수는 없다 — 없으면 없다고 말해야 한다
             allow_fallback=False,
         )
+        _log_usage(body, use_model, label="infographic-image")
     except ProUnavailable:
         # 공통 처리기의 안내문은 '모델 목록에서 Flash를 고르라'고 하는데, 이 기능에는
         # 모델을 고르는 자리가 없고 대체할 그림 모델도 없다. 상황에 맞게 다시 말한다.
@@ -4278,7 +4279,7 @@ def call_gemini_pdf_split(pages, api_key, model):
             "responseSchema": PDF_SPLIT_SCHEMA,
         },
     }
-    result = _gemini_json(payload, api_key, model, _PDF_SPLIT_TRUNC_MSG)
+    result = _gemini_json(payload, api_key, model, _PDF_SPLIT_TRUNC_MSG, label="pdfsplit")
 
     out = []
     for item in result.get("passages") or ():
@@ -4499,7 +4500,7 @@ def call_gemini_exam_scan(files, api_key, model, page_from=0, page_total=0):
     result = _gemini_json(
         payload, api_key, model,
         "시험지의 문항이 너무 많아 분석하다가 잘렸습니다. 쪽을 나눠 올려 주세요.",
-        salvage=True,
+        salvage=True, label="examscan",
     )
     scan = normalize_exam_scan(result)
     if result.get("_truncated"):
@@ -4655,7 +4656,7 @@ def call_gemini_exam_ocr(files, api_key, model, page_from=0, page_total=0):
     result = _gemini_json(
         payload, api_key, model,
         "시험지의 지문이 너무 많아 옮기다가 잘렸습니다. 쪽을 나눠 올려 주세요.",
-        salvage=True,
+        salvage=True, label="examocr",
     )
     out = normalize_exam_ocr(result)
     if result.get("_truncated"):
@@ -5006,7 +5007,7 @@ def call_gemini_workbook(passage, api_key, model, complete_hint=None):
             "responseSchema": WORKBOOK_SCHEMA,
         },
     }
-    return _gemini_json(payload, api_key, model, _WORKBOOK_TRUNC_MSG)
+    return _gemini_json(payload, api_key, model, _WORKBOOK_TRUNC_MSG, label="workbook")
 
 
 # ── 주제 & 흐름 요약 규칙 (상세분석·소책자 공용) ──
@@ -5808,7 +5809,7 @@ def call_gemini_brief(passage, api_key, model, target_grammar="",
             "responseSchema": BRIEF_SCHEMA,
         },
     }
-    return _finish_brief(_gemini_json(payload, api_key, model, _BRIEF_TRUNC_MSG))
+    return _finish_brief(_gemini_json(payload, api_key, model, _BRIEF_TRUNC_MSG, label="brief"))
 
 
 def _finish_brief(result):
@@ -7252,25 +7253,29 @@ def _extract_gemini_json(body, trunc_msg, salvage=False):
     return result
 
 
-def _log_usage(body, model):
+def _log_usage(body, model, label=""):
     """호출 한 번이 쓴 토큰 수를 로그에 한 줄 남긴다 — 원가를 추정이 아니라 실측으로 보기 위해.
 
     청구서는 모델별 합계만 알려 줘 '문제 한 세트에 얼마'를 가를 수 없다. 특히 AI가 답하기
     전에 속으로 생각하는 몫(thoughts)은 출력 요금으로 나가는데 짐작밖에 할 수 없었다
     (2026-09-27 객관식 고난도의 Pro 원가를 계산할 때 걸린 부분). 로그만 남기고 아무것도
-    바꾸지 않는다."""
+    바꾸지 않는다.
+
+    label: 어느 기능의 호출인지(quiz·examocr·examscan 등). 처음에는 모델 이름만 찍었는데,
+    실제로 원가를 물었을 때 여러 기능이 뒤섞인 로그만으로는 어느 줄이 어느 기능인지
+    가릴 수가 없어(2026-09-27, 시험지 OCR 원가를 물었을 때 겪음) 기능 이름을 더했다."""
     u = body.get("usageMetadata") if isinstance(body, dict) else None
     if not isinstance(u, dict):
         return
     print(
-        f"[usage] {model} 입력 {u.get('promptTokenCount', 0)}"
+        f"[usage] {label or '?'} {model} 입력 {u.get('promptTokenCount', 0)}"
         f"(캐시 {u.get('cachedContentTokenCount', 0)}) · 출력 {u.get('candidatesTokenCount', 0)}"
         f" · 생각 {u.get('thoughtsTokenCount', 0)}",
         flush=True,
     )
 
 
-def _gemini_json(payload, api_key, model, trunc_msg, salvage=False):
+def _gemini_json(payload, api_key, model, trunc_msg, salvage=False, label=""):
     """페이로드를 보내고 JSON 결과를 받는다 (모든 Gemini 호출의 공통 입구).
 
     RECITATION으로 막히면 표본추출 설정을 바꿔 다시 시도한다. 이 차단은 '가장 그럴듯한
@@ -7285,7 +7290,7 @@ def _gemini_json(payload, api_key, model, trunc_msg, salvage=False):
             payload.setdefault("generationConfig", {})["temperature"] = temp
         data = json.dumps(payload).encode("utf-8")
         body = _gemini_call_with_retry(data, api_key, model)
-        _log_usage(body, model)
+        _log_usage(body, model, label)
         try:
             return _extract_gemini_json(body, trunc_msg, salvage)
         except Recitation as e:
@@ -7391,7 +7396,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model, complete_hint=Non
             "responseSchema": GEMINI_SCHEMA,
         },
     }
-    result = _gemini_json(payload, api_key, model, _ANALYZE_TRUNC_MSG)
+    result = _gemini_json(payload, api_key, model, _ANALYZE_TRUNC_MSG, label="analyze")
     return finalize_analysis(result)
 
 
@@ -7541,7 +7546,7 @@ def call_gemini_fix(passage, result, targets, api_key, model,
             "responseSchema": SENTENCE_FIX_SCHEMA,
         },
     }
-    fixed = _gemini_json(payload, api_key, model, FIX_TRUNC_MSG)
+    fixed = _gemini_json(payload, api_key, model, FIX_TRUNC_MSG, label="fix")
 
     merged = splice_sentences({"sentences": raw}, fixed, targets)
     if merged is None:
