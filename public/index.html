@@ -1518,6 +1518,9 @@
         <!-- 만들어 둔 시험지는 기출 구성과 따로 저장된다(app.js TAB_SAVE.examspec 주석) -->
         <button class="btn ghost" id="examLoadPaperBtn">📂 저장한 시험지 불러오기</button>
         <button class="btn ghost" id="examClearBtn" style="display:none">🗑️ 올린 시험지 지우기</button>
+        <!-- 한 시험지를 끝내고 다른 시험지로 넘어갈 때 — 이 탭의 것만 모두 비운다(app.js resetExamTab) -->
+        <button class="btn ghost" id="examResetBtn"
+                title="올린 기출, 유형 분석표, 시험 범위 지문, 만든 시험지를 모두 비웁니다. 학교 이름 같은 머리글은 남습니다.">🔄 새로 시작하기</button>
         <span class="hint cost-hint" id="examCostHint" role="status" aria-live="polite"></span>
       </div>
       <div class="error" id="examError"></div>

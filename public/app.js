@@ -8623,6 +8623,7 @@ const HOWTO = {
       "(선택) 목표 어법 · 출제 순서 · 몇 부(1부 / A형·B형) · 시험지 머리글(학교 이름·고사 이름 등) · 표지 제목을 정합니다.",
       "<b>[📝 문제 제작]</b>을 누릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b> — 사이트 저장은 만든 시험지를 저장하고, 기출 구성 저장과는 따로 쌓입니다. 저장한 시험지는 맨 위 <b>[📂 저장한 시험지 불러오기]</b>로 되불러옵니다.",
+      "다른 시험지를 만들려면 맨 위 <b>[🔄 새로 시작하기]</b>를 누릅니다 — 올린 기출·분석표·시험 범위 지문·만든 시험지를 모두 비우고, 학교 이름 같은 머리글은 남깁니다. 필요한 것은 먼저 저장해 두세요.",
     ],
     tip: "목표 어법도 이 탭의 칸을 씁니다 — 지문 칸이 따로이므로 위 공용 칸의 값은 여기에 쓰이지 않습니다. 시험 범위 지문은 <b>[💾 지문 저장]</b>으로 남겨 두면 학기 내내 되불러 쓸 수 있습니다.",
   },
@@ -10948,6 +10949,56 @@ TAB_SAVE.examspec = {
     examPaperErrorEl.textContent = notice;
   },
 };
+/* 새로 시작하기 — 한 시험지를 다 만들고 다른 시험지를 만들려면 전에는 올린 기출 지우기,
+   지문 칸 하나하나 지우기, 새로고침을 섞어 써야 했다(새로고침은 다른 탭 결과까지 날린다).
+   이 탭의 것만 한 번에 비운다. 머리글(학교·과목·학년·출제자·시간·고사명)은 남긴다 —
+   같은 선생님이 다음 시험지를 만들 때도 대개 그대로이고, 다시 적는 수고만 는다.
+   저장본은 건드리지 않는다. 화면만 비운다. */
+function resetExamTab() {
+  if (examBusy || examPaperBusy) {
+    alert("분석이나 제작이 진행 중입니다. 끝난 뒤에 눌러 주세요.");
+    return;
+  }
+  const has = examPages.length || examScanNow || examPaperSets.length ||
+    examPaperMgr.getJobs().length || examResultEl.innerHTML.trim();
+  if (has && !confirm(
+    "올린 기출 시험지, 유형 분석표, 시험 범위 지문, 만든 시험지를 모두 비우고 새로 시작합니다.\n" +
+    "저장하지 않은 것은 되살릴 수 없습니다. 학교 이름 같은 머리글은 남습니다.\n\n계속할까요?"
+  )) return;
+
+  // 올린 기출과 분석 결과 (examClearBtn과 같은 것 + 합치기 표)
+  clearTimeout(examAutoTimer);
+  examPages = [];
+  examDocNames = [];
+  examDocScans.clear();
+  examAutoDone = false;
+  examMergeRows = [];
+  examScanTitle = "";
+  examResultEl.innerHTML = "";
+  examErrorEl.textContent = "";
+  examSyncStatus();
+
+  // 구성·시험 범위 지문·만든 시험지
+  examScanNow = null;
+  examPlanNow = null;
+  examPaperSets = [];
+  examPaperMgr.setJobs([]);
+  examGrammarEl.value = "";
+  if (examPassageStatusEl) examPassageStatusEl.textContent = "";
+  if (DOC_TITLES.exam) DOC_TITLES.exam.set("");
+  examPaperErrorEl.textContent = "";
+  examPaperPanelEl.hidden = true;
+  renderExamPaperSets();
+  updateExamPaperCost();
+  // 저장함에서 불러온 것을 고치던 중이라는 기억도 지운다 — 새 시험지를 저장할 때
+  // 앞 시험지 저장본을 덮어쓰라고 권하면 안 된다
+  delete LOADED_SAVED.exam;
+  delete LOADED_SAVED.examspec;
+  syncTabChrome("exam");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+$("examResetBtn").addEventListener("click", resetExamTab);
+
 // 이 두 탭은 TAB_SAVE를 훑어 저장 단추를 다는 곳보다 뒤에 등록되므로 여기서 직접 단다
 $("examPaperSaveBtn").addEventListener("click", () => openSaveDialog("exam"));
 $("examSpecSaveBtn").addEventListener("click", () => openSaveDialog("examspec"));
