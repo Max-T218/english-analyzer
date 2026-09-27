@@ -177,7 +177,10 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `savedOnlyTab`이 정한다) · `material`(제작 자료 전부). 저장본은 `saved_items` 한 곳에
 쌓이고 **보는 창만 다르다** — 저장할 때 어디에 넣을지 고르게 하지 않는다.
 `tab` 창은 탭마다 있는 '📂 불러오기'(`<탭>LoadBtn`)와 시험지 탭의
-'📂 저장한 구성 불러오기'(`examLoadSpecBtn`)가 연다. 창 문구는 글자일 수도 함수일
+'📂 저장한 구성 불러오기'(`examLoadSpecBtn`) · '📂 저장한 시험지 불러오기'(`examLoadPaperBtn`)가 연다.
+시험지 탭은 저장 종류가 둘이다 — 만든 시험지는 `exam`, 기출 구성만은 `examspec`
+(화면 탭이 없어 `SAVED_TAB_HOME`으로 `exam` 탭을 연다). 2026-09-27 전에는 구성만 저장한 것도
+`exam`으로 들어갔는데, `savedTabOf`가 내용(시험지 없이 구성표만)·제목('기출구성')으로 가려 `examspec`으로 다룬다. 창 문구는 글자일 수도 함수일
 수도 있어 `libWord`로 꺼내고, 기본 문구와 달라야 하는 탭만 `TAB_LIBRARY_WORDS`에
 적는다) ·
 `openSavedList` / `loadSavedItem` / `passageLoadTo` / `passageSaveFrom`(저장함도 저장

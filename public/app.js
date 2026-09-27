@@ -7905,7 +7905,21 @@ const TAB_LABELS = {
   workbook: "📚 워크북",
   vocab: "📒 단어장",
   exam: "🧾 시험지",
+  // 기출 구성은 시험지와 따로 저장한다(TAB_SAVE.examspec 주석 참고). 화면 탭은 없고
+  // 동형 모의고사 탭(SAVED_TAB_HOME)에서 쓰인다.
+  examspec: "🧩 기출 구성",
 };
+// 화면 탭이 따로 없는 저장 종류 → 불러올 때 열 탭
+const SAVED_TAB_HOME = { examspec: "exam" };
+/* 기출 구성을 따로 저장하기 전(2026-09-27)에는 구성만 저장한 것도 tab "exam"으로
+   들어갔다. 만든 시험지(sets)가 없고 구성표만 있는 저장본이 그것이다 — 목록에서는
+   제목 머리('기출구성')로, 불러올 때는 내용으로 가려 기출 구성으로 다룬다. */
+function savedTabOf(item) {
+  if (!item || item.tab !== "exam") return item && item.tab;
+  const p = item.payload;
+  if (p) return !(p.sets || []).length && p.examSpec ? "examspec" : "exam";
+  return /^기출구성/.test(item.title || "") ? "examspec" : "exam";
+}
 // 저장 종류 — "지문"만 따로 두고 나머지(제작 결과물)는 한 묶음으로 본다
 const PASSAGE_TAB = "passage";
 // 저장 제목 기본값 — 기존 인쇄 파일명 규칙을 재사용하고, 밑줄만 보기 좋게 공백으로 바꾼다
@@ -7926,10 +7940,12 @@ const SAVE_TITLE_SUGGEST = {
   exam: () => {
     const h = examHeadValues();
     const label = sanitizeFilename([h.school, h.title].filter(Boolean).join(" "));
-    // 저장함 목록에는 제목만 보인다(payload를 열지 않는다). 시험지가 든 저장과 구성표만
-    // 든 저장을 목록에서 가려내려면 제목이 그 말을 해 주는 수밖에 없다.
-    const prefix = examPaperSets.length ? "시험지" : "기출구성";
-    return [prefix, label, todayStr()].filter(Boolean).join("_");
+    return ["시험지", label, todayStr()].filter(Boolean).join("_");
+  },
+  examspec: () => {
+    const h = examHeadValues();
+    const label = sanitizeFilename([h.school, h.title].filter(Boolean).join(" "));
+    return ["기출구성", label, todayStr()].filter(Boolean).join("_");
   },
 };
 
@@ -8108,12 +8124,18 @@ const tabPlainLabel = (tab) => (TAB_LABELS[tab] || "").replace(/^\S+\s*/, "");
    있는지 알 수 없다. */
 const TAB_LIBRARY_WORDS = {
   exam: {
-    title: "🧾 기출 구성 저장함",
+    title: "🧾 시험지 저장함",
+    lead: "저장해 둔 동형 모의고사 시험지입니다. [불러오기]를 누르면 만든 문항과 시험 범위 " +
+          "지문, 그 시험지를 만든 기출 구성까지 함께 되돌아와 다시 인쇄하거나 다른 부를 " +
+          "이어 만들 수 있습니다.",
+    empty: "아직 저장한 시험지가 없습니다. 시험지를 만든 뒤 “💾 사이트 저장”을 눌러 보세요.",
+  },
+  examspec: {
+    title: "🧩 기출 구성 저장함",
     lead: "저장해 둔 기출 구성입니다. [불러오기]를 누르면 기출 시험지를 다시 올리지 않고 " +
-          "그 구성 그대로 시험지를 이어서 만들 수 있습니다. 시험지를 이미 만들어 둔 " +
-          "저장본이라면 만든 문항과 시험 범위 지문까지 함께 되돌아옵니다.",
+          "그 구성 그대로 시험지를 만들 수 있습니다.",
     empty: "아직 저장한 기출 구성이 없습니다. 기출을 분석한 뒤 “💾 이 기출 구성 저장”을 " +
-           "누르거나, 시험지를 만든 뒤 “💾 사이트 저장”을 눌러 보세요.",
+           "눌러 보세요.",
   },
 };
 
@@ -8282,7 +8304,8 @@ async function openSavedList(kind, target, onlyTab) {
   savedListBodyEl.innerHTML = `<p class="saved-list-empty">불러오는 중…</p>`;
   try {
     const data = await getJson("/api/saved", "저장 목록을 불러오지 못했습니다.");
-    savedItemsCache = data.items || [];
+    // 옛 기출 구성 저장본(tab "exam")을 기출 구성으로 돌려 보인다 — savedTabOf 참고
+    savedItemsCache = (data.items || []).map((it) => ({ ...it, tab: savedTabOf(it) }));
     renderSavedList();
   } catch (err) {
     savedItemsCache = [];
@@ -8295,7 +8318,7 @@ async function openSavedList(kind, target, onlyTab) {
 async function loadSavedItem(id, mode) {
   try {
     const item = await getJson(`/api/saved/${encodeURIComponent(id)}`, "불러오기에 실패했습니다.");
-    const tab = item.tab;
+    const tab = savedTabOf(item);
     if (!TAB_SAVE[tab]) return;
     const append = mode === "append";
     savedListModalEl.hidden = true;
@@ -8334,7 +8357,7 @@ async function loadSavedItem(id, mode) {
       passageLoadTo = null;
       return;
     }
-    const tabBtn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+    const tabBtn = document.querySelector(`.tab-btn[data-tab="${SAVED_TAB_HOME[tab] || tab}"]`);
     if (tabBtn) tabBtn.click();
     /* 통째로 불러오면 지문이 다 바뀌므로 화면에 남아 있던 이전 제작 결과물을 모두
        지운다 — 안 그러면 방금 불러온 지문과 맞지 않는 결과물이 그대로 남아 어느
@@ -8595,11 +8618,11 @@ const HOWTO = {
     steps: [
       "기출 시험지 <b>PDF·사진</b>을 끌어다 놓으면 바로 <b>유형 분석</b>을 시작합니다. 한 번 분석해 저장해 둔 구성이 있으면 <b>[📂 저장한 구성 불러오기]</b>로 건너뛰어도 됩니다.",
       "기출을 <b>여러 부</b> 쓰려면 다음 시험지를 이어서 올리세요 — 곧바로 이어서 분석하고, 한 구성으로 합칩니다. <b>한 번이라도 나온 유형은 1문항씩</b> 깔고 남는 자리를 자주 나온 유형에 더 줍니다.",
-      "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손본 뒤 <b>[이 구성으로 시험지 만들기]</b>를 누릅니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 남겨 둘 수 있습니다.",
+      "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손본 뒤 <b>[이 구성으로 시험지 만들기]</b>를 누릅니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 따로 남겨 둘 수 있습니다 — 시험지를 만든 뒤에도 누를 수 있습니다.",
       "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b>로 채울 수도 있고, 기출 속 지문을 쓰려면 <b>[📄 지문도 가져오기]</b>를 누르세요(쪽마다 값이 붙습니다).",
       "(선택) 목표 어법 · 출제 순서 · 몇 부(1부 / A형·B형) · 시험지 머리글(학교 이름·고사 이름 등) · 표지 제목을 정합니다.",
       "<b>[📝 문제 제작]</b>을 누릅니다.",
-      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b>",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b> — 사이트 저장은 만든 시험지를 저장하고, 기출 구성 저장과는 따로 쌓입니다. 저장한 시험지는 맨 위 <b>[📂 저장한 시험지 불러오기]</b>로 되불러옵니다.",
     ],
     tip: "목표 어법도 이 탭의 칸을 씁니다 — 지문 칸이 따로이므로 위 공용 칸의 값은 여기에 쓰이지 않습니다. 시험 범위 지문은 <b>[💾 지문 저장]</b>으로 남겨 두면 학기 내내 되불러 쓸 수 있습니다.",
   },
@@ -10638,12 +10661,13 @@ function examSheetHeadHtml(set) {
   `;
 }
 
-/* '이 기출 구성 저장' 줄은 분석은 끝났는데 아직 시험지를 안 만들었을 때만 보인다.
-   한 부라도 만들면 아래 '💾 사이트 저장'이 시험지와 구성표를 함께 담으므로 여기서 감춘다 —
-   저장 버튼이 둘 보이면 어느 쪽이 무엇을 담는지 알 수 없다. */
+/* '이 기출 구성 저장' 줄은 구성표가 있으면 늘 보인다. 예전에는 시험지를 만들면 감추고
+   아래 '💾 사이트 저장' 하나로 둘을 함께 담았는데, 그러면 구성만 따로 남길 길이 없고
+   구성을 불러와 만든 시험지를 저장할 때 그 구성 저장본을 덮어쓰라고 권했다
+   (2026-09-27 따로 저장하게 나눔 — TAB_SAVE.examspec 참고). */
 function syncExamSpecSave() {
   const row = $("examSpecSaveRow");
-  if (row) row.hidden = !(examScanNow && !examPaperSets.length);
+  if (row) row.hidden = !examScanNow;
 }
 
 function renderExamPaperSets() {
@@ -10815,21 +10839,44 @@ function examSpecToScan(spec) {
    계산해 낸 배분 결과와 우리가 만든 문항, 그리고 위의 구성표뿐이다.
    배분표가 있어야 나중에 B형을 따로 만들 때 A형이 쓴 (지문, 유형)을 피할 수 있고
    (대원칙 2), 구성표가 있어야 기출을 다시 올리지 않고 그 B형을 만들 수 있다. */
+/* 기출 구성을 불러와 채우는 부분 — 시험지 저장본과 기출 구성 저장본이 함께 쓴다.
+   구성표가 함께 저장돼 있으면 기출을 다시 올리지 않고 제작 칸을 연다. 알릴 말을 돌려준다. */
+function applyExamSpecPayload(examSpec) {
+  const { scan, stale } = examSpecToScan(examSpec);
+  openExamPaperPanel(scan);   // examScanNow를 세우고 구성 안내를 다시 그린다
+  if (!stale.length) return "";
+  const names = [...new Set(stale)].join(", ");
+  return (
+    `저장한 뒤 유형 목록이 바뀌어 ${stale.length}문항이 빠졌습니다 — ${names}. ` +
+    `없어졌거나 이름이 바뀐 유형이라 지금은 만들 수 없습니다. 남은 문항으로 만들거나, ` +
+    `기출을 다시 올려 분석하면 지금 유형으로 다시 판정합니다.`
+  );
+}
+
+// 시험지 머리글(학교명·고사명 등)을 되살린다. 머리글이 없던 시절 저장본은 칸을
+// 건드리지 않는다 (과목 기본값 '영어'가 빈칸으로 지워지지 않게)
+function applyExamSheetHead(sheetHead) {
+  if (!sheetHead) return;
+  Object.keys(examHeadEls).forEach((k) => {
+    if (examHeadEls[k]) examHeadEls[k].value = sheetHead[k] || "";
+  });
+}
+
+/* 동형 모의고사는 저장이 두 갈래다.
+     · 시험지(tab "exam") — 만든 시험지 + 배분표 + 그 시험지를 만든 기출 구성표
+     · 기출 구성(tab "examspec") — 구성표 + 입력칸의 지문만
+   예전에는 한 갈래(tab "exam")에 둘 다 넣었다. 그러자 구성 저장본을 불러와 시험지를
+   만든 뒤 저장하면 그 구성 저장본을 덮어쓰라고 권했고(덮어쓰면 구성 저장본이 사라진다),
+   두 가지가 한 저장함에 섞여 무엇이 무엇인지 제목으로만 가려야 했다. 옛 저장본은
+   savedTabOf가 내용을 보고 제자리로 돌려 보인다. */
 TAB_SAVE.exam = {
   saveBtn: $("examPaperSaveBtn"),
-  /* 시험지를 아직 안 만들었어도 구성표만으로 저장할 수 있다 — 분석은 1~3분이 걸리고
-     값이 매겨지면 요금도 나가는데, 지문을 다 넣기 전에 새로고침하면 통째로 날아갔다. */
   canSave: () =>
-    examPaperSets.length || examScanNow
-      ? ""
-      : "저장할 것이 없습니다. 기출 시험지를 올려 유형 분석을 먼저 해 주세요.",
+    examPaperSets.length ? "" : "저장할 시험지가 없습니다. 시험지를 먼저 만들어 주세요.",
   saveLead: () =>
-    examPaperSets.length
-      ? "만든 시험지와 배분표, 기출 구성표를 함께 저장합니다. " +
-        "기출의 발문·문항 번호·고사 이름은 저장하지 않습니다."
-      : "기출 구성표와 지금 입력칸에 있는 지문을 저장합니다 (아직 만든 시험지가 없습니다). " +
-        "불러오면 기출을 다시 올리지 않고 이 구성 그대로 이어서 만들 수 있습니다. " +
-        "기출의 발문·문항 번호·고사 이름은 저장하지 않습니다.",
+    "만든 시험지와 배분표, 그 시험지를 만든 기출 구성표를 함께 저장합니다. " +
+    "기출 구성만 따로 남기려면 위의 “💾 이 기출 구성 저장”을 쓰세요. " +
+    "기출의 발문·문항 번호·고사 이름은 저장하지 않습니다.",
   getPayload: () => ({
     passages: examPaperMgr.getJobs(),
     sets: examPaperSets,
@@ -10842,30 +10889,15 @@ TAB_SAVE.exam = {
   applyPayload: (payload) => {
     examPaperMgr.setJobs(payload.passages || []);
     examGrammarEl.value = payload.targetGrammar || "";
-    // 머리글이 없던 시절에 저장한 것은 칸을 건드리지 않는다 (과목 기본값 '영어'가
-    // 빈칸으로 지워지지 않게)
-    if (payload.sheetHead) {
-      Object.keys(examHeadEls).forEach((k) => {
-        if (examHeadEls[k]) examHeadEls[k].value = payload.sheetHead[k] || "";
-      });
-    }
+    applyExamSheetHead(payload.sheetHead);
     examPaperSets = Array.isArray(payload.sets) ? payload.sets : [];
     examPlanNow = null;
 
-    /* 구성표가 함께 저장돼 있으면 기출을 다시 올리지 않고 제작 칸을 연다.
-       불러온 부의 배분표가 곧 '피해야 할 조합'이 되므로(대원칙 2), 여기서 곧바로
+    /* 불러온 부의 배분표가 곧 '피해야 할 조합'이 되므로(대원칙 2), 여기서 곧바로
        B형을 이어 만들 수 있다. 구성표가 없는 옛 저장본은 예전처럼 인쇄·저장만 된다. */
     let notice = "";
     if (payload.examSpec) {
-      const { scan, stale } = examSpecToScan(payload.examSpec);
-      openExamPaperPanel(scan);   // examScanNow를 세우고 구성 안내를 다시 그린다
-      if (stale.length) {
-        const names = [...new Set(stale)].join(", ");
-        notice =
-          `저장한 뒤 유형 목록이 바뀌어 ${stale.length}문항이 빠졌습니다 — ${names}. ` +
-          `없어졌거나 이름이 바뀐 유형이라 지금은 만들 수 없습니다. 남은 문항으로 만들거나, ` +
-          `기출을 다시 올려 분석하면 지금 유형으로 다시 판정합니다.`;
-      }
+      notice = applyExamSpecPayload(payload.examSpec);
     } else {
       examScanNow = null;
       examPaperPanelEl.hidden = true;
@@ -10884,12 +10916,44 @@ TAB_SAVE.exam = {
     renderExamPaperSets();
   },
 };
+/* 기출 구성만 저장 — 분석은 1~3분이 걸리고 값이 매겨지면 요금도 나가는데, 지문을 다
+   넣기 전에 새로고침하면 통째로 날아갔다. 시험지를 만든 뒤에도 따로 누를 수 있다. */
+TAB_SAVE.examspec = {
+  saveBtn: $("examSpecSaveBtn"),
+  canSave: () =>
+    examScanNow ? "" : "저장할 구성이 없습니다. 기출 시험지를 올려 유형 분석을 먼저 해 주세요.",
+  saveLead: () =>
+    "기출 구성표와 지금 시험 범위 칸에 있는 지문을 저장합니다 (만든 시험지는 담지 않습니다). " +
+    "불러오면 기출을 다시 올리지 않고 이 구성 그대로 시험지를 만들 수 있습니다. " +
+    "기출의 발문·문항 번호·고사 이름은 저장하지 않습니다.",
+  getPayload: () => ({
+    passages: examPaperMgr.getJobs(),
+    targetGrammar: examGrammarEl.value,
+    sheetHead: examHeadValues(),
+    examSpec: examScanNow ? examSpecFromScan(examScanNow) : null,
+  }),
+  applyPayload: (payload) => {
+    // 지문 없이 구성만 저장했으면 지금 넣어 둔 시험 범위 지문은 그대로 둔다
+    if ((payload.passages || []).some((p) => p && String(p.text || "").trim())) {
+      examPaperMgr.setJobs(payload.passages);
+      examGrammarEl.value = payload.targetGrammar || "";
+    }
+    applyExamSheetHead(payload.sheetHead);
+    examPaperSets = [];
+    examPlanNow = null;
+    const notice = payload.examSpec ? applyExamSpecPayload(payload.examSpec) : "";
+    renderExamPaperSets();
+    updateExamPaperCost();
+    syncTabChrome("exam");
+    examPaperErrorEl.textContent = notice;
+  },
+};
+// 이 두 탭은 TAB_SAVE를 훑어 저장 단추를 다는 곳보다 뒤에 등록되므로 여기서 직접 단다
 $("examPaperSaveBtn").addEventListener("click", () => openSaveDialog("exam"));
-// 분석만 끝난 상태에서 누르는 저장 — 같은 저장 창을 쓴다. 무엇이 담기는지는
-// saveLead가, 목록에서 어떻게 보일지는 SAVE_TITLE_SUGGEST가 경우에 맞춰 바꾼다.
-$("examSpecSaveBtn").addEventListener("click", () => openSaveDialog("exam"));
-// 저장해 둔 기출 구성만 모아 연다 — 기출을 다시 올리지 않고 그 구성에서 이어 만든다
-$("examLoadSpecBtn").addEventListener("click", () => openSavedList("tab", null, "exam"));
+$("examSpecSaveBtn").addEventListener("click", () => openSaveDialog("examspec"));
+// 저장해 둔 기출 구성만 / 저장해 둔 시험지만 모아 연다
+$("examLoadSpecBtn").addEventListener("click", () => openSavedList("tab", null, "examspec"));
+$("examLoadPaperBtn").addEventListener("click", () => openSavedList("tab", null, "exam"));
 
 /* ══════ 반 · 학생 · 단어시험 배정 (관리자가 허가한 선생님에게만 탭이 보인다) ══════
    AI를 부르지 않는다 — 서버가 같은 단어장 안의 다른 뜻/단어로 오답을 만들고,
