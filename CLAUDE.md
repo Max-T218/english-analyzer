@@ -239,6 +239,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | `MCQ_ONLY_TYPES` | `MCQ_TRANSFORM_TYPES` |
 | `WORKBOOK_STAGE_IDS` | `WB_STAGES`의 id — 워크북 요금이 단계 수에 걸려 있다 |
 | `EXAM_MAX_PAGES` | `EXAM_MAX_PAGES` — 기출을 여러 부 쌓으므로 한 부의 서너 배가 든다 |
+| `QUIZ_HARD_RULES` 8~12번(주관식 유형) | `SAQ_HARD_TYPES` — 주관식 고난도가 되는 유형. 화면이 이 목록 밖의 유형은 고난도로 보내지 않는다 |
 | `RECHARGE_AMOUNTS` | `index.html`의 `recharge-preset-btn` 금액 단추 — 금액 직접 입력은 카카오페이 입점 조건 때문에 뺐다(2026-09-27) |
 
 **`outline`(주제 & 흐름 요약)은 두 자료가 같은 것을 만듭니다.** 규칙은

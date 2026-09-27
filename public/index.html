@@ -1253,6 +1253,13 @@
           <div class="quiz-type-grid" id="saqTypeGrid"></div>
           <div class="hint cost-hint" id="saqCostHint" role="status" aria-live="polite"></div>
 
+          <label class="group-label">난이도 <span class="group-note">(묻는 말을 얼마나 까다롭게 만들지 고릅니다 — 둘 다 고르면 두 벌이 나옵니다)</span></label>
+          <div class="quiz-type-grid radio-grid">
+            <label><input type="checkbox" name="saqLevel" value="normal" checked> 기본</label>
+            <label><input type="checkbox" name="saqLevel" value="hard"> 고난도</label>
+          </div>
+          <div class="hint type-order-hint" id="saqLevelHint"></div>
+
           <label class="group-label">출제 순서</label>
           <div class="quiz-type-grid radio-grid">
             <label><input type="radio" name="saqOrder" value="type" checked> 유형 순서대로</label>

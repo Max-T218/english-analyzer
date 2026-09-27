@@ -181,12 +181,17 @@ async function downloadDocx({ resultEl, name, answerHeading, btn, errorEl, strip
      화면에서 '숨김'은 대개 CSS로 처리하므로(워크북 정답이 대표적이다 — .wb-ans는 늘
      HTML에 있고 .show-answers가 붙었을 때만 보인다) innerHTML을 그대로 보내면 화면에
      안 보이던 것이 워드에는 찍힌다. 복제본에서 실제로 지워 보낸다. */
-  let source = resultEl.innerHTML;
+  /* 실패 안내 상자(buildErrorHtml)는 언제나 뺀다 — 인쇄에서 숨기는 것(style.css의
+     .passage-error)과 같은 까닭이다. 감싸는 칸째 지워 빈 자리도 남기지 않는다. */
+  const clone = resultEl.cloneNode(true);
+  clone.querySelectorAll(".passage-error").forEach((el) => {
+    const block = el.closest(".passage-block");
+    (block && clone.contains(block) ? block : el).remove();
+  });
   if (strip && strip.length) {
-    const clone = resultEl.cloneNode(true);
     clone.querySelectorAll(strip.join(",")).forEach((el) => el.remove());
-    source = clone.innerHTML;
   }
+  const source = clone.innerHTML;
   const label = btn ? btn.textContent : "";
   if (btn) {
     btn.disabled = true;
@@ -4668,6 +4673,19 @@ function groupLabel(group) {
   return group.map((it) => (it.count > 1 ? `${it.id} ${it.count}문항` : it.id)).join(", ");
 }
 
+/* 주관식에서 '고난도'로 만들 수 있는 유형 — server.py의 QUIZ_HARD_RULES 8~12번과 한 벌이다
+   (한쪽만 고치면 화면은 고난도라고 보냈는데 지시문에 규칙이 없어 기본과 같은 문제가 나온다).
+   나머지는 정답이 지문의 원래 형태 그대로라(어휘·어법 선택형, 틀린 어휘·어법 찾기, 동사형
+   쓰기, 빈칸 쓰기) 외운 학생이 구조적으로 유리하거나, 이미 바꿔 쓰는 유형이라(문장 전환)
+   고난도가 따로 뜻이 없다. 서술형배열은 '필요 없는 낱말 끼우기'를 넣으면 옮긴다.
+   요약문 완성은 넣었다가 뺐다 — 함정 낱말이 정답처럼 읽혀 정답 시비가 났다(까닭은
+   server.py의 QUIZ_HARD_RULES 위 주석).
+   객관식은 모든 유형이 고난도가 된다(null). */
+const SAQ_HARD_TYPES = new Set([
+  "OX진위(영)", "OX진위(한)", "질문에 답하기",
+  "표현 찾아 쓰기", "영영풀이 쓰기", "조건 영작",
+]);
+
 function chunkTypes(items, size = QUIZ_QUESTIONS_PER_CALL) {
   const out = [];
   const pack = (list) => {
@@ -4735,7 +4753,8 @@ function setupQuizTab({ prefix, types, footer }) {
   const variationHintEl = $(prefix + "VariationHint");
   const VARIATION_STORE = "gemini_" + prefix + "_variation";
   const costHintEl = $(prefix + "CostHint");
-  // 난이도 — 객관식 탭에만 있다(없으면 늘 기본). 고난도는 배운 지문으로 내신을 대비할 때
+  // 난이도 — 객관식·주관식 두 탭에 있다(칸이 없으면 늘 기본). 주관식은 고난도가 되는
+  // 유형이 정해져 있다(SAQ_HARD_TYPES, levelPlan). 고난도는 배운 지문으로 내신을 대비할 때
   // 쓴다: 정답은 지문과 다른 말로, 오답에는 지문 낱말을 그대로 넣어 외운 학생이 걸리게
   // 한다. 서버가 QUIZ_HARD_RULES를 덧붙이고 Pro로 만든다. 값은 기본과 같다.
   // 지문 변형처럼 둘 다 고를 수 있다 — 고르면 같은 지문으로 기본 한 벌·고난도 한 벌이
@@ -4748,7 +4767,37 @@ function setupQuizTab({ prefix, types, footer }) {
     const on = levelEl ? levelEl.values.filter((v) => v in LEVEL_LABELS) : [];
     return on.length ? on : ["normal"];
   };
-  const levelCount = () => (levelEl ? Math.max(1, levelEl.values.length) : 1);
+  // 고난도로 만들 수 있는 유형인가 — 주관식만 가린다(객관식은 전부 된다)
+  const HARD_OK = prefix === "saq" ? SAQ_HARD_TYPES : null;
+  const hardOk = (id) => !HARD_OK || HARD_OK.has(id);
+  const hardOnly = () => {
+    const lv = levels();
+    return lv.length === 1 && lv[0] === "hard";
+  };
+  /* 난이도마다 무엇을 어떤 난이도로 만들지 — [{lv, runs:[{items, difficulty}], dropped, asNormal}].
+     · 기본: 고른 유형 전부를 기본으로.
+     · 기본 + 고난도: 고난도 벌에는 고난도가 되는 유형만 넣고, 나머지는 빼서(dropped)
+       미리 알린다 — 고난도라고 값을 받고 기본과 같은 문제를 내면 안 된다.
+     · 고난도만: 고난도가 안 되는 유형은 새로 고르지 못하게 막지만, 그 전에 이미 골라
+       둔 것은 버리지 않고 기본으로 만들어 같은 벌에 넣는다(asNormal). 값은 같다. */
+  function levelPlan(picked) {
+    const lvs = levels();
+    return lvs.map((lv) => {
+      if (lv !== "hard") return { lv, runs: [{ items: picked, difficulty: "normal" }], dropped: [], asNormal: [] };
+      const ok = picked.filter((it) => hardOk(it.id));
+      const no = picked.filter((it) => !hardOk(it.id));
+      const runs = ok.length ? [{ items: ok, difficulty: "hard" }] : [];
+      if (lvs.length > 1) return { lv, runs, dropped: no, asNormal: [] };
+      if (no.length) runs.push({ items: no, difficulty: "normal" });
+      return { lv, runs, dropped: [], asNormal: no };
+    });
+  }
+  const planItems = (p) => p.runs.flatMap((r) => r.items);
+  const planCount = (p) => planItems(p).reduce((s, it) => s + it.count, 0);
+  const typeName = (id) => {
+    const t = types.find((x) => x.id === id);
+    return (t && t.label) || id;
+  };
 
   /* 유형 칩 생성 — 체크박스(선택)와 스테퍼(문항 수)를 형제로 둔다.
      스테퍼를 <label> 안에 넣으면 +/− 를 누를 때마다 라벨이 체크박스를 토글해 버리므로,
@@ -4763,7 +4812,9 @@ function setupQuizTab({ prefix, types, footer }) {
     const shown = t.label || t.id;
     chip.innerHTML =
       `<label><input type="checkbox" value="${esc(t.id)}" ${t.def ? "checked" : ""}>` +
-      `<span class="type-name">${esc(shown)}</span></label>` +
+      // 이름 아래 줄에 붙는 표시 — 고난도를 골랐을 때 고난도가 안 되는 유형에만 채워진다
+      // (syncTypeChips). 이름 옆에 두면 칸이 좁아 이름이 세 줄로 쪼개졌다.
+      `<span class="type-name">${esc(shown)}<span class="type-badge" hidden></span></span></label>` +
       `<div class="type-count" title="${esc(typeMaxNote(t.id))}">` +
       `<button type="button" class="type-step" data-step="-1" aria-label="${esc(shown)} 문항 수 줄이기">−</button>` +
       `<span class="type-n" aria-live="polite" data-n="1"></span>` +
@@ -4844,8 +4895,27 @@ function setupQuizTab({ prefix, types, footer }) {
       chip.querySelector('.type-step[data-step="1"]').disabled = on && cur >= max;
       // − 는 켜져 있으면 언제나 열어 둔다 — 1에서 한 번 더 누르면 유형이 꺼진다
       chip.querySelector('.type-step[data-step="-1"]').disabled = !on;
+
+      // 고난도가 안 되는 유형 — '고난도만'이면 새로 고르지 못하게 막는다. 이미 골라 둔
+      // 것은 끌 수 있게 열어 두고 기본으로 만든다고 표시한다(levelPlan의 asNormal).
+      // '기본 + 고난도'면 막지 않고(기본 벌에는 들어간다) 고난도 벌에서 빠진다고만 표시한다.
+      const badge = chip.querySelector(".type-badge");
+      const hard = levels().includes("hard");
+      const blocked = hard && !hardOk(chip.dataset.id);
+      const lock = blocked && hardOnly() && !on;
+      chip.querySelector("input").disabled = lock;
+      if (lock) chip.querySelector('.type-step[data-step="1"]').disabled = true;
+      chip.classList.toggle("hard-locked", lock);
+      badge.hidden = !blocked;
+      badge.textContent = !blocked ? "" : hardOnly() ? (on ? "기본으로 제작" : "고난도 불가") : "기본만";
+      chip.title = !blocked
+        ? ""
+        : hardOnly()
+        ? "이 유형은 고난도로 만들 수 없습니다. 이미 골랐다면 기본으로 만듭니다."
+        : "이 유형은 고난도로 만들 수 없어 기본 벌에만 들어갑니다.";
     });
     updateCostHint();
+    updateLevelHint();
   }
 
   /* 지문 1개 · 변형 1세트를 만드는 값. server.py의 _quiz_action_cost와 같은 식이다
@@ -4877,17 +4947,19 @@ function setupQuizTab({ prefix, types, footer }) {
     }
     const total = items.reduce((s, it) => s + it.count, 0);
     const varSets = variationEl ? Math.max(1, variationEl.values.length) : 1;
-    const lvSets = levelCount();
-    const sets = varSets * lvSets;
+    // 난이도 벌마다 문항 수가 다를 수 있다 — 기본 + 고난도에서 고난도가 안 되는 유형은
+    // 고난도 벌에서 빠지므로, 벌마다 따로 세어 더한다.
+    const plan = levelPlan(items);
+    const perVar = plan.reduce((s, p) => s + planCount(p), 0);
+    const perVarCost = plan.reduce((s, p) => s + costPerSet(planItems(p)), 0);
     const parts = [`선택 <b>${items.length}유형</b> · <b>${total}문항</b>`];
-    if (sets > 1) {
-      const why = [];
-      if (varSets > 1) why.push(`변형 ${varSets}세트`);
-      if (lvSets > 1) why.push(`난이도 ${lvSets}벌`);
-      parts.push(`× ${why.join(" × ")} = <b>${total * sets}문항</b>`);
+    if (plan.length > 1) {
+      parts.push(`→ ${plan.map((p) => `${LEVEL_LABELS[p.lv]} ${planCount(p)}문항`).join(" + ")}`);
     }
+    if (varSets > 1) parts.push(`× 변형 ${varSets}세트`);
+    if (plan.length > 1 || varSets > 1) parts.push(`= <b>${perVar * varSets}문항</b>`);
     if (PRICING) {
-      parts.push(`— 지문 1개당 <b>${pt((costPerSet(items) * sets))}</b>`);
+      parts.push(`— 지문 1개당 <b>${pt(perVarCost * varSets)}</b>`);
     }
     costHintEl.innerHTML = parts.join(" ");
   }
@@ -4925,6 +4997,38 @@ function setupQuizTab({ prefix, types, footer }) {
       levelHintEl.textContent = "난이도를 하나 이상 선택하세요.";
       return;
     }
+    // 고난도가 안 되는 유형을 골랐을 때 어떻게 되는지 — 주관식에서만 생긴다(levelPlan)
+    const picked = pickedItems();
+    const blockedNames = picked.filter((it) => !hardOk(it.id)).map((it) => typeName(it.id));
+    const blockedNote = !blockedNames.length || !on.includes("hard")
+      ? ""
+      : on.length > 1
+      ? `<br>⚠️ <b>${blockedNames.join(", ")}</b>은(는) 고난도로 만들 수 없어 <b>기본 벌에만</b> 들어갑니다. ` +
+        "고난도 벌에서 빠진 만큼 요금도 빠집니다."
+      : `<br>⚠️ <b>${blockedNames.join(", ")}</b>은(는) 고난도로 만들 수 없어 <b>기본으로</b> 만듭니다. 요금은 같습니다.`;
+    const lockNote = HARD_OK && on.length === 1 && on[0] === "hard"
+      ? "<br>고난도로 만들 수 없는 유형은 고를 수 없게 막아 두었습니다(" +
+        types.filter((t) => !hardOk(t.id)).map((t) => t.label || t.id).join(", ") + ")."
+      : "";
+    if (prefix === "saq") {
+      // 주관식은 보기가 없는 유형이 대부분이라 '보기' 대신 '묻는 말'로 설명한다
+      levelHintEl.innerHTML =
+        (on.length > 1
+          ? "<b>기본 + 고난도</b> — 같은 지문으로 <b>두 벌</b>을 따로 만듭니다. " +
+            "기본은 지문의 문장을 살려 묻고, 고난도는 묻는 말을 지문과 다른 말로 바꿔 뜻을 이해해야 풀게 합니다."
+          : on[0] === "hard"
+          ? "<b>고난도</b> — 지문을 외운 것만으로는 못 풀게 만듭니다.<br>" +
+            "· <b>묻는 말</b>: 진술·질문·뜻풀이를 지문과 <b>다른 말로 바꿔</b> 씁니다.<br>" +
+            "· <b>함정</b>: OX는 <b>한 군데만 살짝</b> 틀리게, 질문은 <b>두 대목을 이어야</b> 답이 나오게, " +
+            "조건 영작은 <b>원문과 다른 구조</b>로 쓰게 합니다.<br>" +
+            "· <b>풀려면</b>: 외운 문장을 옮겨서는 안 되고, <b>뜻을 이해해야</b> 합니다. (만드는 시간이 조금 더 걸립니다)"
+          : "<b>기본</b> — 지문의 문장을 살려 묻습니다.<br>" +
+            "· <b>묻는 말</b>: 진술·질문·뜻풀이에 지문의 표현을 <b>그대로 살려</b> 씁니다.<br>" +
+            "· <b>함정</b>: 틀린 진술은 지문과 <b>뚜렷이 어긋나게</b> 만듭니다.<br>" +
+            "· <b>풀려면</b>: <b>지문 내용을 알면</b> 무리 없이 풀 수 있습니다.") +
+        blockedNote + lockNote;
+      return;
+    }
     if (on.length > 1) {
       levelHintEl.innerHTML =
         "<b>기본 + 고난도</b> — 같은 지문으로 <b>두 벌</b>을 따로 만듭니다. " +
@@ -4953,8 +5057,8 @@ function setupQuizTab({ prefix, types, footer }) {
     levelEl.values = saved.length ? saved : ["normal"];
     levelEl.addEventListener("change", () => {
       localStorage.setItem(LEVEL_STORE, levelEl.values.join(","));
-      updateLevelHint();
-      updateCostHint(); // 두 벌이면 총 문항 수·금액도 두 배
+      // 칩의 잠금·표시, 금액, 설명을 한꺼번에 다시 맞춘다(syncTypeChips가 셋 다 부른다)
+      syncTypeChips();
     });
     updateLevelHint();
   }
@@ -5006,7 +5110,8 @@ function setupQuizTab({ prefix, types, footer }) {
 
   // 전체 선택 / 전체 해제 (일부만 선택된 상태는 '중간' 표시)
   function syncAll() {
-    const boxes = [...gridEl.querySelectorAll("input")];
+    // 고난도로 막아 둔 유형(꺼져 있고 고를 수 없는 것)은 세지 않는다
+    const boxes = [...gridEl.querySelectorAll("input")].filter((b) => b.checked || !b.disabled);
     const on = boxes.filter((b) => b.checked).length;
     allEl.checked = on === boxes.length;
     allEl.indeterminate = on > 0 && on < boxes.length;
@@ -5014,6 +5119,8 @@ function setupQuizTab({ prefix, types, footer }) {
   allEl.addEventListener("change", () => {
     const check = allEl.checked;
     gridEl.querySelectorAll(".type-chip").forEach((chip) => {
+      // '고난도만'일 때 막아 둔 유형은 전체 선택으로도 켜지 않는다
+      if (check && hardOnly() && !hardOk(chip.dataset.id)) return;
       chip.querySelector("input").checked = check;
       if (check) setCount(chip, 1); // 켤 때는 언제나 1부터
     });
@@ -5054,27 +5161,33 @@ function setupQuizTab({ prefix, types, footer }) {
       errorEl.textContent = "난이도를 하나 이상 선택하세요.";
       return;
     }
-    const lvs = levels();
-    // 변형 세트 × 난이도 = 지문 하나가 만들어 내는 벌 수. 지문 변형은 난이도와 상관없이
-    // 한 번만 한다 — 기본·고난도 두 벌이 같은 변형본을 써야 두 벌을 견줄 수 있다.
-    const sets = vars.length * lvs.length;
+    // 난이도 벌마다 무엇을 어떤 난이도로 만들지(levelPlan). 기본 + 고난도에서 고난도가 안
+    // 되는 유형만 골랐으면 고난도 벌이 비어 빠진다 — 그 사실은 설명 칸이 이미 알린다.
+    const plan = levelPlan(picked).filter((p) => p.runs.length);
+    // 호출 묶음은 run마다 따로 나눈다 — 한 호출 안의 문항은 난이도가 하나여야 한다.
+    plan.forEach((p) => p.runs.forEach((r) => (r.chunks = chunkTypes(r.items))));
+    const chunksPerVar = plan.reduce((s, p) => s + p.runs.reduce((a, r) => a + r.chunks.length, 0), 0);
+    // 지문 변형은 난이도와 상관없이 한 번만 한다 — 기본·고난도 두 벌이 같은 변형본을 써야
+    // 두 벌을 견줄 수 있다.
+    const perVarQuestions = plan.reduce((s, p) => s + planCount(p), 0);
+    const perVarCost = plan.reduce((s, p) => s + costPerSet(planItems(p)), 0);
     const setsNote = [
+      plan.length > 1 ? `(${plan.map((p) => `${LEVEL_LABELS[p.lv]} ${planCount(p)}`).join(" + ")})문항` : `${perSetQuestions}문항`,
       vars.length > 1 ? `변형 ${vars.length}세트` : "",
-      lvs.length > 1 ? `난이도 ${lvs.length}벌` : "",
     ].filter(Boolean);
     const setsAdvice =
       (vars.length > 1 ? ` 지문 변형 세트를 ${vars.length}개에서 줄여도 값이 내려갑니다.` : "") +
-      (lvs.length > 1 ? " 난이도를 하나만 골라도 값이 절반으로 내려갑니다." : "");
+      (plan.length > 1 ? " 난이도를 하나만 고르면 값이 그만큼 내려갑니다." : "");
     // 지문 수까지 곱한 실제 총량을 여기서 확인한다 — 지문은 이 탭 밖에서 바뀌므로
     // 유형 칸의 실시간 요약만으로는 잡히지 않는다.
     const billable = billableJobCount();
-    const perJobQuestions = perSetQuestions * sets; // 지문 1개가 만들어 내는 문항 수
+    const perJobQuestions = perVarQuestions * vars.length; // 지문 1개가 만들어 내는 문항 수
     const runQuestions = billable * perJobQuestions;
     // 유형마다 단가가 갈리고 추가 문항은 따로 매겨진다(costPerSet). 지문변형 세트를
     // 여러 개 고르면 세트 수만큼 문제 생성이 통째로 반복된다.
     const rewordSets = vars.filter((v) => v !== "verbatim").length;
     const cost = PRICING
-      ? billable * (sets * costPerSet(picked) + rewordSets * PRICING.reword)
+      ? billable * (vars.length * perVarCost + rewordSets * PRICING.reword)
       : 0;
     // 한 묶음에 담을 지문 수. 0이면 나누지 않고 지금까지대로 한 번에 간다.
     let batchSize = 0;
@@ -5086,7 +5199,7 @@ function setupQuizTab({ prefix, types, footer }) {
       const perBatch = Math.max(1, Math.floor(QUIZ_MAX_QUESTIONS_PER_RUN / perJobQuestions));
       const choice = await askBigRun({
         questions: runQuestions,
-        quizCalls: billable * sets * chunkTypes(picked).length,
+        quizCalls: billable * vars.length * chunksPerVar,
         rewordCalls: billable * rewordSets,
         perBatch,
         batches: Math.ceil(billable / perBatch),
@@ -5103,8 +5216,7 @@ function setupQuizTab({ prefix, types, footer }) {
     } else if (PRICING) {
       const label =
         `${docName}를 만듭니다.\n` +
-        `지문 ${billable}개 × ${perSetQuestions}문항` +
-        setsNote.map((s) => ` × ${s}`).join("") +
+        `지문 ${billable}개 × ` + setsNote.join(" × ") +
         ` = 총 ${runQuestions}문항`;
       if (!(await costConfirmed(cost, label, jobs.length,
         reduceAdvice(jobs.length, "고른 유형 수나 유형별 문항 수를 줄이면") + setsAdvice))) return;
@@ -5143,9 +5255,11 @@ function setupQuizTab({ prefix, types, footer }) {
     };
 
     const total = jobs.length;
-    const chunks = chunkTypes(picked);
-    // 전체 진행 칸 수 = 지문 × 변형 × 난이도 × 청크. 어디까지 왔는지 보여 주기 위한 값.
-    const steps = total * sets * chunks.length;
+    // 전체 진행 칸 수 = 지문 × 변형 × (난이도 벌마다의 청크 합). 어디까지 왔는지 보여 주기 위한 값.
+    const steps = total * vars.length * chunksPerVar;
+    // 유형 칸에 놓인 순서 — 난이도가 섞인 벌(고난도만 + 기본으로 만드는 유형)은 호출이
+    // 둘로 갈려 돌아오므로, 문항을 이 순서로 다시 줄 세운다.
+    const typeOrder = new Map(picked.map((it, i) => [it.id, i]));
     let step = 0;
     let okCount = 0;
     let stopped = false;
@@ -5221,21 +5335,25 @@ function setupQuizTab({ prefix, types, footer }) {
                 const left = steps - step;
                 if (left > 0) append(quotaStopHtml(left, err, "작업"));
               }
-              step += chunks.length * lvs.length;
+              step += chunksPerVar;
               continue;
             }
           }
 
           // ② 난이도마다 한 벌씩 — 기본·고난도를 둘 다 골랐으면 같은 지문(같은 변형본)으로
           //    두 벌을 차례로 만든다. 이름표는 '변형 · 난이도'를 이어 붙여 벌마다 갈라 둔다.
-          for (let l = 0; l < lvs.length && !stopped; l++) {
-            const lv = lvs[l];
-            const label = [varLabel, lvs.length > 1 ? LEVEL_LABELS[lv] : ""].filter(Boolean).join(" · ");
-            const lvTag = lvs.length > 1 ? `${tag} · ${LEVEL_LABELS[lv]}` : tag;
+          for (let l = 0; l < plan.length && !stopped; l++) {
+            const lv = plan[l].lv;
+            const label = [varLabel, plan.length > 1 ? LEVEL_LABELS[lv] : ""].filter(Boolean).join(" · ");
+            const lvTag = plan.length > 1 ? `${tag} · ${LEVEL_LABELS[lv]}` : tag;
             // 확정된 지문을 '원문 그대로'로 넘긴다. 변형은 ①에서 이미 끝났다.
             const questions = [];
             const failed = [];
-            for (const group of chunks) {
+            // 한 벌 안에서도 난이도가 갈릴 수 있다(고난도만 + 기본으로 만드는 유형) — run마다
+            // 제 난이도로 보낸다. 나머지 경우는 run이 하나뿐이다.
+            const calls = plan[l].runs.flatMap((r) => r.chunks.map((group) => ({ group, difficulty: r.difficulty })));
+            for (const { group, difficulty } of calls) {
+              if (stopped) break;
               step++;
               loadingTextEl.textContent =
                 steps > 1
@@ -5252,7 +5370,7 @@ function setupQuizTab({ prefix, types, footer }) {
                     // 어법 계열 유형이 섞여 있을 때만 서버가 쓴다. 비어 있으면 지금까지대로
                     // AI가 지문에 맞춰 알아서 문법 포인트를 고른다.
                     targetGrammar: grammarEl.value,
-                    difficulty: lv,
+                    difficulty,
                   },
                   "문제 생성에 실패했습니다."
                 );
@@ -5271,6 +5389,10 @@ function setupQuizTab({ prefix, types, footer }) {
               }
             }
 
+            // 유형 칸의 순서대로 다시 줄 세운다 — 호출이 난이도별·지문변형형별로 갈려 돌아오면
+            // 칸 순서와 어긋난다. 같은 유형끼리는 받은 순서를 지킨다(sort는 안정 정렬).
+            questions.sort((a, b) => (typeOrder.get(a.type) ?? 999) - (typeOrder.get(b.type) ?? 999));
+
             // 일부 청크가 실패해도 성공한 문항은 살려 낸다 (그만큼 토큰을 이미 썼다)
             if (questions.length) {
               /* 문항마다 '어느 변형 세트에서 나왔는지'와 그 지문의 변형 낱말을 붙여 둔다.
@@ -5279,7 +5401,7 @@ function setupQuizTab({ prefix, types, footer }) {
                  지문의 낱말까지 잘못 칠해지기 때문이다. */
               questions.forEach((q) => {
                 q.__label = label;
-                q.__labelIdx = v * lvs.length + l;
+                q.__labelIdx = v * plan.length + l;
                 q.__variations = varied;
               });
               if (shuffleAll()) {
@@ -5843,14 +5965,12 @@ function quizBodyHtml(q) {
   }
 
   if (fmt === "fix") {
-    // 틀린 어휘·어법 찾기 — 심어둔 오답에 밑줄, 아래에 '틀린말 → 바른말' 줄
+    // 틀린 어휘·어법 찾기 — 지문은 그대로 두고 아래에 '틀린말 → 바른말' 줄만 둔다.
+    // 예전에는 심어 둔 오답에 밑줄을 그었는데, 발문이 "모두 찾아 고쳐 쓰시오"라 밑줄이
+    // 곧 정답을 알려 주는 셈이었다 — 학생은 찾지 않고 고치기만 하면 됐다(2026-09-27 뺌).
+    // 몇 개인지는 답란 줄 수로 알 수 있게 남겨 둔다.
     const fixes = (q.fixes || []).filter((f) => f && f.wrong);
-    let text = esc(q.passageHtml || "");
-    fixes.forEach((f) => {
-      const w = esc(f.wrong).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const re = new RegExp(`(^|[^\\w<>])(${w})(?![\\w>])`);
-      text = text.replace(re, (m, pre, word) => `${pre}<u>${word}</u>`);
-    });
+    const text = esc(q.passageHtml || "");
     const lines = fixes
       .map((_, i) => `<div class="qz-fixline">(${i + 1}) ${wbBlank(150)} → ${wbBlank(150)}</div>`)
       .join("");
@@ -8404,6 +8524,10 @@ const HOWTO = {
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "(선택) <b>목표 어법</b>을 적으면 어법 선택형·틀린 어법 찾기·동사형 쓰기의 정답 자리를 그 문법으로 내고, <b>서술형배열·조건 영작·문장 전환</b>은 그 문법이 쓰인 문장을 골라 출제합니다.",
       "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다.",
+      "<b>난이도</b>를 고릅니다 — 묻는 말을 얼마나 까다롭게 만들지 정합니다. 둘의 요금은 같고, <b>둘 다 고르면</b> 기본 한 벌·고난도 한 벌이 나옵니다.<br>" +
+        "· <b>기본</b>: 진술·질문·뜻풀이에 지문의 표현을 살려 씁니다. 지문 내용을 알면 풀 수 있습니다.<br>" +
+        "· <b>고난도</b>: 묻는 말을 지문과 다른 말로 바꾸고, OX는 한 군데만 살짝 틀리게, 질문은 두 대목을 이어야 답이 나오게, 조건 영작은 원문과 다른 구조로 쓰게 합니다.<br>" +
+        "· 고난도가 되는 유형은 <b>OX진위(영·한)·질문에 답하기·표현 찾아 쓰기·영영풀이 쓰기·조건 영작</b>입니다. 나머지는 <b>기본 + 고난도</b>면 기본 벌에만 들어가고, <b>고난도만</b> 고르면 새로 고를 수 없게 막히며 이미 고른 것은 기본으로 만듭니다.",
       "(선택) <b>지문 변형</b>(원문 그대로 / 5개 내외 / 5개 이상)과 <b>출제 순서</b>를 고릅니다.",
       "(선택) <b>시험지 제목</b>을 적으면 시험지와 정답지에 찍히고, 첫 장에 표지가 붙습니다.",
       "<b>[문제 만들기]</b>를 누릅니다.",

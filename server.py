@@ -17,6 +17,7 @@ import copy
 import difflib
 import hashlib
 import hmac
+import http.client
 import io
 import json
 import os
@@ -1974,6 +1975,9 @@ the passage in full.
   · <보기>의 각 뜻은 실제로 하나 이상의 밑줄과 짝지어져야 한다 — 어느 밑줄과도 맞지
     않는 보기 항목을 넣지 마라(선택형과 달리 오답 매력을 위한 미끼 항목을 두는 유형이
     아니다).
+  · 문법 용어는 교과서 용어 그대로 정확히 쓴다. 특히 It ~ that 강조구문의 It은
+    '형식주어(가주어)'가 아니다 — "It ~ that 강조구문의 It"이라고 쓴다. 가주어는
+    진주어(to부정사·that절)를 대신하는 It에만 쓰고, 두 가지를 섞어 부르지 마라.
   choices = [], answer = 0, answerText = "", tfItems = [], fixes = [], glossItems = [].
 - "빈칸 쓰기" (format "fill") — instruction
   "다음 글의 빈칸에 들어갈 알맞은 낱말을 윗글에서 찾아 쓰시오."
@@ -2038,7 +2042,9 @@ the passage in full.
   EXCEPT that exactly 2~3 words are replaced by contextually WRONG words (주로 반의어).
   `fixes` = one {wrong, right} per replaced word: `wrong` = the word you planted (must appear
   VERBATIM in passageHtml), `right` = the original word from the passage.
-  The app underlines the planted words and prints the correction lines.
+  The app prints the passage as-is (NO underline — the student must find the errors) and one
+  correction line per planted word. So the planted word must read naturally enough that it
+  is not spotted at a glance, yet be clearly wrong once the context is read.
   choices = [], answer = 0, answerText = "", findItems = [], glossItems = [].
 - "틀린 어법 찾기" (format "fix") — instruction
   "다음 글에서 어법상 틀린 부분을 모두 찾아 바르게 고쳐 쓰시오."
@@ -2058,6 +2064,9 @@ the passage in full.
 - "OX진위(한)" — identical to "OX진위(영)" in every way (same instruction, same passageHtml,
   same rule for the number of false items, same rules) EXCEPT `text` for each tfItem is written in KOREAN instead
   of English (자연스러운 한국어 문장으로, 영어 원문을 그대로 옮기지 말고 내용만 정확히 번역).
+  ⚠️ When BOTH "OX진위(영)" and "OX진위(한)" are requested, they sit on the same test sheet:
+  the Korean item must test DIFFERENT facts from the English item — never a translation of
+  the English statements (the same five facts twice is one question asked twice).
 
 ## Quality rules
 - Base everything on the ACTUAL passage content — never invent facts not in the passage.
@@ -2195,6 +2204,12 @@ OX_FALSE_WEIGHTS = (2, 5, 5, 5, 5, 2)
 # 그 뒤에 덧붙는다. 위 규칙의 "clearly correct/wrong"과 부딪히는 곳은 여기가 이긴다고
 # 못 박되, '정답은 하나'라는 조건만은 그대로 둔다(어려운 것과 정답 시비는 다르다).
 # 고난도는 유형과 상관없이 호출 전체를 Pro로 보낸다(/api/quiz 라우팅 참고).
+#
+# 주관식 "요약문 완성"은 고난도에서 뺐다(2026-09-27). '지문 낱말로 함정 오답을 만든다'는
+# 규칙이 이 유형에서는 정답 시비를 낳았다 — 지문 낱말은 대개 정답과 같은 쪽 개념이라
+# (이 지문에서는 failure·familiar) 빈칸에 넣어도 지문으로 옹호가 됐다. 금지 낱말을 예로
+# 들어 못 박아도 세 번의 시험에서 계속 다시 넣었다. 다시 넣으려면 함정 규칙부터 빼고
+# 시험할 것 — 요약문을 다른 말로 쓰는 것만으로도 어려움은 생긴다.
 QUIZ_HARD_RULES = r"""
 
 ## 난이도: 고난도 — THESE RULES OVERRIDE THE ABOVE WHERE THEY CONFLICT
@@ -2210,7 +2225,8 @@ that makes it wrong. A tempting distractor that only shifts the cause or the emp
 "the feeling of failure makes memory durable" when the passage credits the effort of
 retrieval) is too close to the answer — if you cannot point to a sentence that rules it
 out, rewrite it until you can.
-These rules apply to format "mc" items. Leave every other format exactly as specified above.
+Rules 1–7 apply to format "mc" items. Rules 8–12 apply to the written types they name.
+Any type not named below keeps exactly the rules above.
 
 1. PARAPHRASE THE CORRECT ANSWER. The correct choice must NOT reuse the passage's key
    content words. Express the idea with synonyms, a more abstract wording, or a restructured
@@ -2249,6 +2265,41 @@ These rules apply to format "mc" items. Leave every other format exactly as spec
    four underlines on meaning-bearing words, not trivial ones.
 7. `explanation` — besides why the answer is right, name the trap: say which distractor was
    built to tempt and why it is wrong (e.g. "③은 지문의 표현을 그대로 썼지만 …").
+
+Written (주관식) types — same aim: a student who only remembers the passage's sentences
+cannot answer; one who understands them can. The answer must stay GRADEABLE — exactly one
+correct answer, as the rules above require. (These rules are paired with SAQ_HARD_TYPES in
+public/app.js — only these types are ever sent here with 고난도.
+"요약문 완성" is deliberately NOT one of them — see the note above QUIZ_HARD_RULES.)
+8. "OX진위(영)"·"OX진위(한)" — write EVERY statement (true ones too) in new words, never a
+   copied or lightly edited passage sentence, so wording alone gives nothing away. A false
+   statement differs from the passage by exactly ONE precise point (subject, number,
+   negation, sequence, scope, cause) — never an obviously alien claim.
+   If both OX types are requested, the rule above still holds: the Korean item tests
+   different facts — rewording in new words is no excuse to translate the English item.
+9. "질문에 답하기" — replace the rule "답이 지문 한 군데에 명확히 있어야 한다" with: the
+   answer must COMBINE two separate parts of the passage (a cause stated early and its
+   result stated later, a claim and its example …), so no single sentence can be copied as
+   the answer. The answer must still be ONE clear content that a grader can check.
+   Ask the question in words different from the passage.
+   NO word bank: set `wordBank` to [] and do not add a <조건> about using given words — a
+   bank of the answer's key words hands the student the answer that the question made hard
+   to find. Keep only the start-word condition and the complete-sentence condition.
+10. "표현 찾아 쓰기" — write each `ko` as an explanation of the meaning, not a word-for-word
+   gloss (e.g. "원래 의도와 반대되는 결과를 낳다", not "역효과를 내다"). It must still point to
+   exactly one phrase in the passage.
+   Stay INSIDE the phrase's own meaning: explain what it says, never add a cause, feeling,
+   or interpretation it does not carry (for "feels like failure", "실패한 것처럼 느껴지다"
+   rephrased is fine; "자신의 능력이 부족하다고 착각하게 만들다" adds meaning — not allowed).
+11. "영영풀이 쓰기" — the definition must not contain the answer word or any word sharing its
+   root; describe the meaning through its use or effect. It must still point to exactly one
+   word in the passage.
+12. "조건 영작" — pick the sentence as usual, but add at least ONE <조건> that forces a
+   structure DIFFERENT from the passage's own sentence (e.g. the passage uses a because-
+   clause → require 분사구문; active → require 수동태; relative clause → require 분사 수식).
+   Then `answerText` is that REWRITTEN sentence, not the passage's verbatim sentence —
+   keep its meaning identical and make the conditions specific enough that only one
+   answer satisfies them. `wordBank` must fit the rewritten sentence.
 """
 
 
@@ -2668,6 +2719,17 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
         # 조건 영작의 낱말 수 조건은 모델이 아니라 여기서 붙인다
         if q.get("type") == "조건 영작":
             attach_word_count_condition(q)
+        # 고난도 질문에 답하기는 <보기>를 주지 않는다(QUIZ_HARD_RULES 9번). 지시문으로만
+        # 막으면 모델이 가끔 다시 넣으므로 여기서 걷어 낸다 — 두 대목을 이어야 답이 나오게
+        # 만든 질문 옆에 답의 핵심 낱말을 늘어놓으면 고난도가 무너진다(2026-09-27 시험).
+        # <보기>를 쓰라는 조건 줄도 함께 뺀다. 남는 조건이 없으면 문장 조건을 둔다.
+        if difficulty == "hard" and q.get("type") == "질문에 답하기":
+            q["wordBank"] = []
+            conds = q.get("conditions")
+            conds = [c for c in conds if isinstance(c, str) and c.strip()] if isinstance(conds, list) else []
+            q["conditions"] = [c for c in conds if "보기" not in c] or [
+                "주어와 동사를 갖춘, 문법적으로 완성된 문장으로 답을 작성할 것"
+            ]
     return result
 
 
@@ -7024,7 +7086,14 @@ def _gemini_call_with_retry(data, api_key, model, url=None, allow_fallback=True,
                 time.sleep(wait)
                 waited += wait
                 attempt += 1
-            except urllib.error.URLError:
+            # URLError는 '연결을 맺다가' 끊긴 경우만 잡는다. 응답을 '받는 도중' 끊기면
+            # (ConnectionResetError=WinError 10054, RemoteDisconnected, IncompleteRead)
+            # urllib이 감싸 주지 않아 그대로 올라와, 재시도 없이 곧장 실패했다 —
+            # 2026-09-27 주관식 고난도 한 묶음(Pro가 오래 생각하는 호출)이 이렇게 날아갔다.
+            # 같은 네트워크 오류로 보고 똑같이 기다렸다 다시 보낸다.
+            # 응답 시간 초과(TimeoutError)는 넣지 않는다 — 이미 GEMINI_TIMEOUT(300초)을
+            # 기다린 뒤라 다시 보내면 사용자가 그 두 배를 기다리게 된다.
+            except (urllib.error.URLError, ConnectionError, http.client.HTTPException):
                 wait = min(RETRY_MIN_WAIT * (2 ** attempt), RETRY_MAX_WAIT)
                 if waited + wait > MAX_RETRY_TOTAL:
                     raise RuntimeError("네트워크가 계속 불안정합니다. 연결을 확인하고 다시 시도하세요.")
@@ -8599,6 +8668,19 @@ CHANGELOG = [
             "글의 논리를 이해해야 맞힐 수 있습니다. 해설에 어느 보기가 함정인지도 "
             "적어 드립니다. 요금은 기본과 같습니다. 둘 다 고르면 같은 지문으로 "
             "기본 한 벌·고난도 한 벌을 한 번에 만듭니다.",
+        ],
+    },
+    {
+        "version": 42,
+        "date": "2026-09-27",
+        "items": [
+            "✍️ 주관식에도 '난이도'가 생겼습니다. '고난도'는 진술·질문·뜻풀이를 지문과 다른 "
+            "말로 바꿔 묻고, OX는 한 군데만 살짝 틀리게, 질문은 두 대목을 이어야 답이 나오게, "
+            "조건 영작은 원문과 다른 구조로 쓰게 해 외운 문장만으로는 못 풀게 합니다. "
+            "고난도가 되는 유형은 OX진위·질문에 답하기·표현 찾아 쓰기·영영풀이 쓰기·"
+            "조건 영작이고, 요금은 기본과 같습니다.",
+            "✏️ 틀린 어휘·어법 찾기에서 고쳐야 할 낱말에 더 이상 밑줄을 긋지 않습니다. "
+            "밑줄이 곧 정답을 알려 주고 있어, 이제 학생이 지문에서 직접 찾아야 합니다.",
         ],
     },
 ]
