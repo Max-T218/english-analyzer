@@ -4735,6 +4735,20 @@ function setupQuizTab({ prefix, types, footer }) {
   const variationHintEl = $(prefix + "VariationHint");
   const VARIATION_STORE = "gemini_" + prefix + "_variation";
   const costHintEl = $(prefix + "CostHint");
+  // 난이도 — 객관식 탭에만 있다(없으면 늘 기본). 고난도는 배운 지문으로 내신을 대비할 때
+  // 쓴다: 정답은 지문과 다른 말로, 오답에는 지문 낱말을 그대로 넣어 외운 학생이 걸리게
+  // 한다. 서버가 QUIZ_HARD_RULES를 덧붙이고 Pro로 만든다. 값은 기본과 같다.
+  // 지문 변형처럼 둘 다 고를 수 있다 — 고르면 같은 지문으로 기본 한 벌·고난도 한 벌이
+  // 나온다(수업용·시험용을 한 번에 뽑는 쓰임). 세트가 늘어나는 만큼 값도 는다.
+  const levelEl = checkGroup(prefix + "Level");
+  const levelHintEl = $(prefix + "LevelHint");
+  const LEVEL_STORE = "gemini_" + prefix + "_level";
+  const LEVEL_LABELS = { normal: "기본", hard: "고난도" };
+  const levels = () => {
+    const on = levelEl ? levelEl.values.filter((v) => v in LEVEL_LABELS) : [];
+    return on.length ? on : ["normal"];
+  };
+  const levelCount = () => (levelEl ? Math.max(1, levelEl.values.length) : 1);
 
   /* 유형 칩 생성 — 체크박스(선택)와 스테퍼(문항 수)를 형제로 둔다.
      스테퍼를 <label> 안에 넣으면 +/− 를 누를 때마다 라벨이 체크박스를 토글해 버리므로,
@@ -4862,9 +4876,16 @@ function setupQuizTab({ prefix, types, footer }) {
       return;
     }
     const total = items.reduce((s, it) => s + it.count, 0);
-    const sets = variationEl ? Math.max(1, variationEl.values.length) : 1;
+    const varSets = variationEl ? Math.max(1, variationEl.values.length) : 1;
+    const lvSets = levelCount();
+    const sets = varSets * lvSets;
     const parts = [`선택 <b>${items.length}유형</b> · <b>${total}문항</b>`];
-    if (sets > 1) parts.push(`× 변형 ${sets}세트 = <b>${total * sets}문항</b>`);
+    if (sets > 1) {
+      const why = [];
+      if (varSets > 1) why.push(`변형 ${varSets}세트`);
+      if (lvSets > 1) why.push(`난이도 ${lvSets}벌`);
+      parts.push(`× ${why.join(" × ")} = <b>${total * sets}문항</b>`);
+    }
     if (PRICING) {
       parts.push(`— 지문 1개당 <b>${pt((costPerSet(items) * sets))}</b>`);
     }
@@ -4894,6 +4915,49 @@ function setupQuizTab({ prefix, types, footer }) {
     updateOrderHint();
   });
   updateOrderHint();
+
+  function updateLevelHint() {
+    if (!levelHintEl) return;
+    // 두 설명은 같은 세 줄(정답 · 오답 · 맞히려면)로 맞춘다 — 둘을 번갈아 눌러 보면
+    // 같은 자리의 글자만 바뀌어, 무엇이 다른지 바로 견줄 수 있게.
+    const on = levelEl ? levelEl.values : [];
+    if (!on.length) {
+      levelHintEl.textContent = "난이도를 하나 이상 선택하세요.";
+      return;
+    }
+    if (on.length > 1) {
+      levelHintEl.innerHTML =
+        "<b>기본 + 고난도</b> — 같은 지문으로 <b>두 벌</b>을 따로 만듭니다. " +
+        "기본은 지문 내용을 알면 고를 수 있고, 고난도는 정답을 다른 말로 바꿔 쓰고 오답에 " +
+        "지문 낱말을 그대로 넣은 함정을 섞어 글의 논리를 이해해야 맞힙니다. " +
+        "세트가 두 벌이라 요금도 두 배입니다.";
+      return;
+    }
+    levelHintEl.innerHTML =
+      on[0] === "hard"
+        ? "<b>고난도</b> — 기본보다 보기를 까다롭게 만듭니다.<br>" +
+          "· <b>정답</b>: 지문의 표현을 <b>다른 말로 바꿔</b> 씁니다.<br>" +
+          "· <b>오답</b>: 지문 속 낱말을 <b>그대로 넣은 함정</b>을 섞습니다.<br>" +
+          "· <b>맞히려면</b>: 눈에 익은 낱말로는 못 고르고, <b>글의 논리를 이해해야</b> 합니다. " +
+          "해설에 어느 보기가 함정이었는지도 적습니다. (만드는 시간이 조금 더 걸립니다)"
+        : "<b>기본</b> — 정답이 분명하게 드러나는 보기를 만듭니다.<br>" +
+          "· <b>정답</b>: 지문의 표현을 <b>살려</b> 씁니다.<br>" +
+          "· <b>오답</b>: 지문 내용과 <b>뚜렷이 어긋나게</b> 만듭니다.<br>" +
+          "· <b>맞히려면</b>: <b>지문 내용을 알면</b> 무리 없이 고를 수 있습니다.";
+  }
+  if (levelEl) {
+    // 출제 순서와 같이 탭을 오갈 때만 기억한다(창을 새로 열면 늘 '기본'부터).
+    const saved = (localStorage.getItem(LEVEL_STORE) || "normal")
+      .split(",")
+      .filter((v) => v in LEVEL_LABELS);
+    levelEl.values = saved.length ? saved : ["normal"];
+    levelEl.addEventListener("change", () => {
+      localStorage.setItem(LEVEL_STORE, levelEl.values.join(","));
+      updateLevelHint();
+      updateCostHint(); // 두 벌이면 총 문항 수·금액도 두 배
+    });
+    updateLevelHint();
+  }
 
   // 지문 변형 정도 — 있는 탭에서만 동작 (없으면 항상 ["verbatim"] 한 세트로 취급).
   // 여러 개를 고르면 고른 수만큼 문제 세트가 만들어진다 (원문 1세트 + 변형 1세트 …).
@@ -4986,16 +5050,31 @@ function setupQuizTab({ prefix, types, footer }) {
       errorEl.textContent = "지문 변형을 하나 이상 선택하세요.";
       return;
     }
+    if (levelEl && !levelEl.values.length) {
+      errorEl.textContent = "난이도를 하나 이상 선택하세요.";
+      return;
+    }
+    const lvs = levels();
+    // 변형 세트 × 난이도 = 지문 하나가 만들어 내는 벌 수. 지문 변형은 난이도와 상관없이
+    // 한 번만 한다 — 기본·고난도 두 벌이 같은 변형본을 써야 두 벌을 견줄 수 있다.
+    const sets = vars.length * lvs.length;
+    const setsNote = [
+      vars.length > 1 ? `변형 ${vars.length}세트` : "",
+      lvs.length > 1 ? `난이도 ${lvs.length}벌` : "",
+    ].filter(Boolean);
+    const setsAdvice =
+      (vars.length > 1 ? ` 지문 변형 세트를 ${vars.length}개에서 줄여도 값이 내려갑니다.` : "") +
+      (lvs.length > 1 ? " 난이도를 하나만 골라도 값이 절반으로 내려갑니다." : "");
     // 지문 수까지 곱한 실제 총량을 여기서 확인한다 — 지문은 이 탭 밖에서 바뀌므로
     // 유형 칸의 실시간 요약만으로는 잡히지 않는다.
     const billable = billableJobCount();
-    const perJobQuestions = perSetQuestions * vars.length; // 지문 1개가 만들어 내는 문항 수
+    const perJobQuestions = perSetQuestions * sets; // 지문 1개가 만들어 내는 문항 수
     const runQuestions = billable * perJobQuestions;
     // 유형마다 단가가 갈리고 추가 문항은 따로 매겨진다(costPerSet). 지문변형 세트를
     // 여러 개 고르면 세트 수만큼 문제 생성이 통째로 반복된다.
     const rewordSets = vars.filter((v) => v !== "verbatim").length;
     const cost = PRICING
-      ? billable * (vars.length * costPerSet(picked) + rewordSets * PRICING.reword)
+      ? billable * (sets * costPerSet(picked) + rewordSets * PRICING.reword)
       : 0;
     // 한 묶음에 담을 지문 수. 0이면 나누지 않고 지금까지대로 한 번에 간다.
     let batchSize = 0;
@@ -5007,7 +5086,7 @@ function setupQuizTab({ prefix, types, footer }) {
       const perBatch = Math.max(1, Math.floor(QUIZ_MAX_QUESTIONS_PER_RUN / perJobQuestions));
       const choice = await askBigRun({
         questions: runQuestions,
-        quizCalls: billable * vars.length * chunkTypes(picked).length,
+        quizCalls: billable * sets * chunkTypes(picked).length,
         rewordCalls: billable * rewordSets,
         perBatch,
         batches: Math.ceil(billable / perBatch),
@@ -5020,17 +5099,15 @@ function setupQuizTab({ prefix, types, footer }) {
       // 잔액이 모자라면 반드시 세워야 한다.
       const bigLabel = `${docName}를 만듭니다. (지문 ${billable}개 · 총 ${runQuestions}문항)`;
       if (!(await hasEnoughPoints(cost, bigLabel, jobs.length,
-        reduceAdvice(jobs.length, "고른 유형 수나 유형별 문항 수를 줄이면") +
-          (vars.length > 1 ? ` 지문 변형 세트를 ${vars.length}개에서 줄여도 값이 내려갑니다.` : "")))) return;
+        reduceAdvice(jobs.length, "고른 유형 수나 유형별 문항 수를 줄이면") + setsAdvice))) return;
     } else if (PRICING) {
       const label =
         `${docName}를 만듭니다.\n` +
         `지문 ${billable}개 × ${perSetQuestions}문항` +
-        (vars.length > 1 ? ` × 변형 ${vars.length}세트` : "") +
+        setsNote.map((s) => ` × ${s}`).join("") +
         ` = 총 ${runQuestions}문항`;
       if (!(await costConfirmed(cost, label, jobs.length,
-        reduceAdvice(jobs.length, "고른 유형 수나 유형별 문항 수를 줄이면") +
-          (vars.length > 1 ? ` 지문 변형 세트를 ${vars.length}개에서 줄여도 값이 내려갑니다.` : "")))) return;
+        reduceAdvice(jobs.length, "고른 유형 수나 유형별 문항 수를 줄이면") + setsAdvice))) return;
     }
 
     btn.disabled = true;
@@ -5067,8 +5144,8 @@ function setupQuizTab({ prefix, types, footer }) {
 
     const total = jobs.length;
     const chunks = chunkTypes(picked);
-    // 전체 진행 칸 수 = 지문 × 변형 × 청크. 어디까지 왔는지 보여 주기 위한 값.
-    const steps = total * vars.length * chunks.length;
+    // 전체 진행 칸 수 = 지문 × 변형 × 난이도 × 청크. 어디까지 왔는지 보여 주기 위한 값.
+    const steps = total * sets * chunks.length;
     let step = 0;
     let okCount = 0;
     let stopped = false;
@@ -5115,9 +5192,9 @@ function setupQuizTab({ prefix, types, footer }) {
 
         for (let v = 0; v < vars.length && !stopped; v++) {
           const variation = vars[v];
-          const label = vars.length > 1 ? VARIATION_LABELS[variation] : "";
+          const varLabel = vars.length > 1 ? VARIATION_LABELS[variation] : "";
           const who = total > 1 || job.named ? job.name : "지문";
-          const tag = batchTag + (label ? `${who} · ${label}` : who);
+          const tag = batchTag + (varLabel ? `${who} · ${varLabel}` : who);
 
           // ① 변형본 확정 — 유형을 나눠 여러 번 호출해도 모든 문항이 같은 지문을 쓰도록
           //    문제를 만들기 전에 지문을 한 번만 다시 쓴다.
@@ -5137,100 +5214,108 @@ function setupQuizTab({ prefix, types, footer }) {
               source = (r.passage || "").trim() || job.text;
               varied = Array.isArray(r.variations) ? r.variations : [];
             } catch (err) {
-              append(buildErrorHtml(job, total, err.message || String(err), label, prefix));
+              append(buildErrorHtml(job, total, err.message || String(err), varLabel, prefix));
               if (isQuotaError(err)) {
                 stopped = true;
                 stopErr = err;
                 const left = steps - step;
                 if (left > 0) append(quotaStopHtml(left, err, "작업"));
               }
-              step += chunks.length;
+              step += chunks.length * lvs.length;
               continue;
             }
           }
 
-          // ② 문제 생성 — 확정된 지문을 '원문 그대로'로 넘긴다. 변형은 ①에서 이미 끝났다.
-          const questions = [];
-          const failed = [];
-          for (const group of chunks) {
-            step++;
-            loadingTextEl.textContent =
-              steps > 1
-                ? `${tag} 문제 만드는 중… (${step}/${steps}) — ${groupLabel(group)}`
-                : "AI가 문제를 만들고 있습니다…";
-            const qzStart = Date.now();
-            try {
-              const data = await postGenerate(
-                "/api/quiz",
-                {
-                  passage: source,
-                  types: group,   // [{id, count}] — 유형별 문항 수가 그대로 실린다
-                  variation: "verbatim",
-                  // 어법 계열 유형이 섞여 있을 때만 서버가 쓴다. 비어 있으면 지금까지대로
-                  // AI가 지문에 맞춰 알아서 문법 포인트를 고른다.
-                  targetGrammar: grammarEl.value,
-                },
-                "문제 생성에 실패했습니다."
-              );
-              noteCallSecs("quiz", (Date.now() - qzStart) / 1000);
-              if (Array.isArray(data.questions)) questions.push(...data.questions);
-              // 지문이 짧아 서버가 뺀 유형(문장삽입) — 요금은 안 나갔지만 빠진 줄은 알려야 한다
-              (data.skipped || []).forEach((msg) => failed.push({ group: [{ id: "문장삽입" }], msg }));
-            } catch (err) {
-              failed.push({ group, msg: err.message || String(err) });
-              // 한도 소진·Pro 불가는 기다려도 안 풀린다 — 남은 작업을 시도하지 않는다
-              if (isQuotaError(err)) {
-                stopped = true;
-                stopErr = err;
-                break;
+          // ② 난이도마다 한 벌씩 — 기본·고난도를 둘 다 골랐으면 같은 지문(같은 변형본)으로
+          //    두 벌을 차례로 만든다. 이름표는 '변형 · 난이도'를 이어 붙여 벌마다 갈라 둔다.
+          for (let l = 0; l < lvs.length && !stopped; l++) {
+            const lv = lvs[l];
+            const label = [varLabel, lvs.length > 1 ? LEVEL_LABELS[lv] : ""].filter(Boolean).join(" · ");
+            const lvTag = lvs.length > 1 ? `${tag} · ${LEVEL_LABELS[lv]}` : tag;
+            // 확정된 지문을 '원문 그대로'로 넘긴다. 변형은 ①에서 이미 끝났다.
+            const questions = [];
+            const failed = [];
+            for (const group of chunks) {
+              step++;
+              loadingTextEl.textContent =
+                steps > 1
+                  ? `${lvTag} 문제 만드는 중… (${step}/${steps}) — ${groupLabel(group)}`
+                  : "AI가 문제를 만들고 있습니다…";
+              const qzStart = Date.now();
+              try {
+                const data = await postGenerate(
+                  "/api/quiz",
+                  {
+                    passage: source,
+                    types: group,   // [{id, count}] — 유형별 문항 수가 그대로 실린다
+                    variation: "verbatim",
+                    // 어법 계열 유형이 섞여 있을 때만 서버가 쓴다. 비어 있으면 지금까지대로
+                    // AI가 지문에 맞춰 알아서 문법 포인트를 고른다.
+                    targetGrammar: grammarEl.value,
+                    difficulty: lv,
+                  },
+                  "문제 생성에 실패했습니다."
+                );
+                noteCallSecs("quiz", (Date.now() - qzStart) / 1000);
+                if (Array.isArray(data.questions)) questions.push(...data.questions);
+                // 지문이 짧아 서버가 뺀 유형(문장삽입) — 요금은 안 나갔지만 빠진 줄은 알려야 한다
+                (data.skipped || []).forEach((msg) => failed.push({ group: [{ id: "문장삽입" }], msg }));
+              } catch (err) {
+                failed.push({ group, msg: err.message || String(err) });
+                // 한도 소진·Pro 불가는 기다려도 안 풀린다 — 남은 작업을 시도하지 않는다
+                if (isQuotaError(err)) {
+                  stopped = true;
+                  stopErr = err;
+                  break;
+                }
               }
             }
-          }
 
-          // 일부 청크가 실패해도 성공한 문항은 살려 낸다 (그만큼 토큰을 이미 썼다)
-          if (questions.length) {
-            /* 문항마다 '어느 변형 세트에서 나왔는지'와 그 지문의 변형 낱말을 붙여 둔다.
-               나중에 '문제 섞기'로 다시 섞을 때 세트를 갈라 두는 데 쓴다. 변형 낱말을
-               문항에 두는 이유는 지문마다 바뀐 낱말이 달라, 세트로 합쳐 두면 다른
-               지문의 낱말까지 잘못 칠해지기 때문이다. */
-            questions.forEach((q) => {
-              q.__label = label;
-              q.__labelIdx = v;
-              q.__variations = varied;
-            });
-            if (shuffleAll()) {
-              /* 전체 문항 섞기 — 지문 경계를 넘어 섞으려면 모든 지문이 끝나야 하므로
-                 여기서는 그리지 않고 모아 두었다가 아래에서 한 번에 섞어 그린다.
-                 변형 세트(label)끼리는 섞지 않는다 — 같은 지문의 원문판·변형판이
-                 한 시험지에 뒤섞이면 거의 같은 지문을 두 번 풀게 되고, 애초에 변형을
-                 여러 개 고르는 건 A형/B형처럼 여러 벌을 뽑으려는 것이기 때문이다. */
-              const bucket = randomBuckets.get(label) || { questions: [], variations: [] };
-              bucket.questions.push(...questions);
-              bucket.variations.push(...varied);
-              randomBuckets.set(label, bucket);
-            } else {
-              // 지문 내 유형 섞기 — 지문 묶음은 그대로 두고 그 안에서만 순서를 섞는다.
-              // 문제지 번호와 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매긴다.
-              const set = { questions, variations: varied };
-              if (shuffleInPassage()) {
-                set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
+            // 일부 청크가 실패해도 성공한 문항은 살려 낸다 (그만큼 토큰을 이미 썼다)
+            if (questions.length) {
+              /* 문항마다 '어느 변형 세트에서 나왔는지'와 그 지문의 변형 낱말을 붙여 둔다.
+                 나중에 '문제 섞기'로 다시 섞을 때 세트를 갈라 두는 데 쓴다. 변형 낱말을
+                 문항에 두는 이유는 지문마다 바뀐 낱말이 달라, 세트로 합쳐 두면 다른
+                 지문의 낱말까지 잘못 칠해지기 때문이다. */
+              questions.forEach((q) => {
+                q.__label = label;
+                q.__labelIdx = v * lvs.length + l;
+                q.__variations = varied;
+              });
+              if (shuffleAll()) {
+                /* 전체 문항 섞기 — 지문 경계를 넘어 섞으려면 모든 지문이 끝나야 하므로
+                   여기서는 그리지 않고 모아 두었다가 아래에서 한 번에 섞어 그린다.
+                   변형 세트(label)끼리는 섞지 않는다 — 같은 지문의 원문판·변형판이
+                   한 시험지에 뒤섞이면 거의 같은 지문을 두 번 풀게 되고, 애초에 변형을
+                   여러 개 고르는 건 A형/B형처럼 여러 벌을 뽑으려는 것이기 때문이다. */
+                const bucket = randomBuckets.get(label) || { questions: [], variations: [] };
+                bucket.questions.push(...questions);
+                bucket.variations.push(...varied);
+                randomBuckets.set(label, bucket);
+              } else {
+                // 지문 내 유형 섞기 — 지문 묶음은 그대로 두고 그 안에서만 순서를 섞는다.
+                // 문제지 번호와 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매긴다.
+                const set = { questions, variations: varied };
+                if (shuffleInPassage()) {
+                  set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
+                }
+                const built = buildQuizHtml(set, job, total, prefix, label, "", showExp(), noSoFar);
+                noSoFar += (set.questions || []).length;
+                append(built.html);
+                answerParts.push(built.answerHtml);
+                if (built.hasExpCol) expCol = true;
+                entries.push({ job, label, set, total });
+                showFooter();
               }
-              const built = buildQuizHtml(set, job, total, prefix, label, "", showExp(), noSoFar);
-              noSoFar += (set.questions || []).length;
-              append(built.html);
-              answerParts.push(built.answerHtml);
-              if (built.hasExpCol) expCol = true;
-              entries.push({ job, label, set, total });
-              showFooter();
+              okCount++;
             }
-            okCount++;
-          }
-          failed.forEach((f) => {
-            append(buildErrorHtml(job, total, `${groupLabel(f.group)} — ${f.msg}`, label, prefix));
-          });
-          if (stopped && stopErr) {
-            const left = steps - step;
-            if (left > 0) append(quotaStopHtml(left, stopErr, "작업"));
+            failed.forEach((f) => {
+              append(buildErrorHtml(job, total, `${groupLabel(f.group)} — ${f.msg}`, label, prefix));
+            });
+            if (stopped && stopErr) {
+              const left = steps - step;
+              if (left > 0) append(quotaStopHtml(left, stopErr, "작업"));
+            }
           }
         }
       }
@@ -5399,6 +5484,7 @@ function setupQuizTab({ prefix, types, footer }) {
       counts: Object.fromEntries(items.map((it) => [it.id, it.count])),
       order: orderEl.value,
       variation: variationEl ? variationEl.values : [],
+      level: levelEl ? levelEl.values : [],
     };
   }
   function applyQuizSettings(settings) {
@@ -5421,6 +5507,13 @@ function setupQuizTab({ prefix, types, footer }) {
     if (variationEl && Array.isArray(settings.variation) && settings.variation.length) {
       variationEl.values = settings.variation;
       updateVariationHint();
+    }
+    // 난이도가 생기기 전(2026-09-27)에 저장한 자료에는 값이 없다 — 그때는 다 기본이었다.
+    if (levelEl) {
+      const want = [].concat(settings.level || []).filter((v) => v in LEVEL_LABELS);
+      levelEl.values = want.length ? want : ["normal"];
+      updateLevelHint();
+      updateCostHint();
     }
   }
 
@@ -8291,6 +8384,9 @@ const HOWTO = {
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. (선택) <b>목표 어법</b>을 적으면 어법 문항의 정답 자리를 그 문법으로 냅니다.",
       "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추).",
+      "<b>난이도</b>를 고릅니다 — 보기를 얼마나 까다롭게 만들지 정합니다. 둘의 요금은 같고, <b>둘 다 고르면</b> 같은 지문으로 기본 한 벌·고난도 한 벌이 나옵니다(요금도 두 벌).<br>" +
+        "· <b>기본</b>: 정답은 지문의 표현을 <b>살려</b> 쓰고, 오답은 지문 내용과 <b>뚜렷이 어긋나게</b> 만듭니다. 지문 내용을 알면 고를 수 있습니다.<br>" +
+        "· <b>고난도</b>: 정답은 지문의 표현을 <b>다른 말로 바꿔</b> 쓰고, 오답에 지문 속 낱말을 <b>그대로 넣은 함정</b>을 섞습니다. 눈에 익은 낱말로는 못 고르고 글의 논리를 이해해야 맞힙니다. 해설에 어느 보기가 함정이었는지도 적습니다.",
       "(선택) <b>지문 변형</b> — 원문 그대로 / 단어 5개 내외 변형 / 5개 이상 변형. 여러 개 고르면 고른 만큼 세트가 늘어납니다.",
       "<b>출제 순서</b>를 고릅니다 — 유형 순서 / 지문 내 유형 섞기 / 전체 문항 섞기.",
       "(선택) <b>시험지 제목</b>을 적으면 시험지 맨 위와 정답지에 찍히고, 첫 장에 표지가 붙습니다. 인쇄 창에서 적어도 같은 칸에 들어갑니다.",

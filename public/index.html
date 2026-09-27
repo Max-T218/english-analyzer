@@ -1176,6 +1176,13 @@
           <div class="quiz-type-grid" id="mcqTypeGrid"></div>
           <div class="hint cost-hint" id="mcqCostHint" role="status" aria-live="polite"></div>
 
+          <label class="group-label">난이도 <span class="group-note">(보기를 얼마나 까다롭게 만들지 고릅니다 — 둘 다 고르면 두 벌이 나옵니다)</span></label>
+          <div class="quiz-type-grid radio-grid">
+            <label><input type="checkbox" name="mcqLevel" value="normal" checked> 기본</label>
+            <label><input type="checkbox" name="mcqLevel" value="hard"> 고난도</label>
+          </div>
+          <div class="hint type-order-hint" id="mcqLevelHint"></div>
+
           <label class="group-label">출제 순서</label>
           <div class="quiz-type-grid radio-grid">
             <label><input type="radio" name="mcqOrder" value="type" checked> 유형 순서대로</label>

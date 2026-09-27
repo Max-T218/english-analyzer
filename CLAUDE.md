@@ -325,6 +325,8 @@ localStorage를 통째로 비우기 때문입니다).
 - **모델을 사용자가 고르게 만들지 마세요.** 기능마다 서버가 고정합니다 —
   `/api/quiz`는 고른 유형에 `QUIZ_PLAIN_PASSAGE_TYPES` 밖의 것이 **하나라도 섞이면**
   그 호출 전체가 `GEMINI_MODEL_PRO`(Pro)로 갑니다(객관식·주관식 구분 없음).
+  객관식 탭의 난이도 **고난도**(`difficulty: "hard"`)도 유형과 상관없이 Pro이고,
+  지시문 뒤에 `QUIZ_HARD_RULES`가 붙습니다(기본은 지시문·모델 모두 예전 그대로).
   지문변형 heavy도 Pro이고, 시험지 스캔을 읽는 `/api/examscan`·`/api/examocr`도 Pro입니다
   (글자가 흐리고 쪽마다 방향이 달라 여기서 잘못 읽으면 이후가 통째로 어긋납니다).
   나머지는 전부 `GEMINI_MODEL`(Flash)입니다.

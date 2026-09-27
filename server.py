@@ -1518,7 +1518,7 @@ in every other question.
   types below). For every other format, set to [].
 - `wordBank`: for "compose" always, and for "answer" only when that item gives a word bank
   (see below) — the <보기> words in DICTIONARY form. For every other format, set to [].
-- `explanation`: 2–4 Korean sentences (문어체) explaining why the answer is correct and why
+- `explanation`: 2–4 Korean sentences (합니다체) explaining why the answer is correct and why
   the others are wrong — specific, referencing the passage content.
 
 ## Type-specific rules (only use types present in the allowed list)
@@ -2063,7 +2063,9 @@ the passage in full.
 - Base everything on the ACTUAL passage content — never invent facts not in the passage.
 - Only ONE choice may be correct; the other 4 must be clearly wrong to a careful reader but
   plausible enough to require real understanding (avoid silly/obviously-wrong options).
-- Vary which choice number is correct across questions (don't make the answer always ①).
+- When the request fixes the correct choice number for an item ("정답 번호는 이미 정해져
+  있습니다"), place the answer exactly there. Otherwise vary which choice number is correct
+  across questions (don't make the answer always ①).
 - Escape literal < > & in passage text as &lt; &gt; &amp; before adding your own <u>/<b>/<br>.
 
 ## explanation — MANDATORY FOR EVERY SINGLE QUESTION (no exceptions)
@@ -2078,6 +2080,8 @@ This is the most frequently violated rule. Read it twice.
   (OX진위(영)/OX진위(한), 틀린 어법/어휘 찾기, 선택형) cover EVERY part, e.g. "(1)…, (2)…".
 - Before returning, count your questions and count your non-empty explanations. The two
   numbers MUST be equal. If they are not, write the missing explanations and only then return.
+- ONE STYLE for every explanation: 합니다체 (…입니다 / …합니다), never 해라체 (…이다 / …한다).
+  Refer to choices by circled numbers (①, ②, ③ …), never "1번", "2번".
 
 Return valid JSON only."""
 
@@ -2184,6 +2188,69 @@ OX_ITEMS = 5
 # 보인다 — 양 끝은 약 8%, 가운데는 약 21%로 둔다(2026-09-26 선생님 결정).
 OX_FALSE_WEIGHTS = (2, 5, 5, 5, 5, 2)
 
+# 객관식 '고난도' — 배운 지문으로 내신을 대비할 때 쓴다(2026-09-27).
+# 학생이 이미 수업에서 읽은 지문이라 기본 방식으로 내면 내용만 기억해도 다 맞힌다.
+# 그래서 '외운 학생'과 '이해한 학생'이 갈리도록 보기를 만드는 법만 바꾼다.
+# 기본(QUIZ_SYSTEM_PROMPT)은 한 글자도 건드리지 않는다 — 이 덩어리는 고난도일 때만
+# 그 뒤에 덧붙는다. 위 규칙의 "clearly correct/wrong"과 부딪히는 곳은 여기가 이긴다고
+# 못 박되, '정답은 하나'라는 조건만은 그대로 둔다(어려운 것과 정답 시비는 다르다).
+# 고난도는 유형과 상관없이 호출 전체를 Pro로 보낸다(/api/quiz 라우팅 참고).
+QUIZ_HARD_RULES = r"""
+
+## 난이도: 고난도 — THESE RULES OVERRIDE THE ABOVE WHERE THEY CONFLICT
+The students have ALREADY STUDIED this passage in class. They know its content and remember
+much of its wording, so items built the default way are answered from memory alone. Build
+items that a student who merely memorized the passage gets WRONG, while a student who truly
+understands its logic gets RIGHT.
+Wherever the rules above say the answer should be "clearly correct" or the distractors
+"clearly wrong" / "one clearly the best fit", REPLACE that with: distractors must be
+genuinely tempting. But there must still be EXACTLY ONE defensible answer — before
+returning, re-check each item: for EVERY distractor, name to yourself the passage sentence
+that makes it wrong. A tempting distractor that only shifts the cause or the emphasis (e.g.
+"the feeling of failure makes memory durable" when the passage credits the effort of
+retrieval) is too close to the answer — if you cannot point to a sentence that rules it
+out, rewrite it until you can.
+These rules apply to format "mc" items. Leave every other format exactly as specified above.
+
+1. PARAPHRASE THE CORRECT ANSWER. The correct choice must NOT reuse the passage's key
+   content words. Express the idea with synonyms, a more abstract wording, or a restructured
+   phrase (passage "reduce stress" → answer "ease mental pressure"). The meaning must stay
+   exactly faithful — only the surface changes.
+2. SURFACE-WORD TRAPS — TWO, at most THREE. Two (at most three) of the four distractors
+   reuse the passage's own memorable words or phrases VERBATIM while stating something the
+   passage does not claim (wrong relation, wrong scope, wrong direction). A student who picks
+   "the choice with the words I remember" must land on one of these.
+   The REMAINING distractor(s) — at least ONE — must be PARAPHRASED just like the answer:
+   new wording, wrong content.
+   ⚠️ NO ODD-ONE-OUT. The answer must NOT be the only choice written in unfamiliar words —
+   otherwise students learn "pick the choice that does not sound like the passage" and
+   answer without reading. Before returning, look at the five choices by SURFACE alone
+   (which ones echo the passage's wording, which ones do not): if that alone points to the
+   answer, rewrite a distractor into new words, or let the answer keep one neutral word
+   from the passage.
+3. DISTRACTOR RECIPES — for 주제·제목·요지·목적 (and any choice set that summarizes the
+   passage), build the four distractors from at least THREE different recipes below:
+   · partial — states only one example, one paragraph, or the premise, not the whole point
+   · too broad — generalizes beyond what the passage argues
+   · too narrow — a true supporting detail presented as the main point
+   · reversed — flips a cause→effect, contrast, or the author's evaluation
+   · opposing view — the belief the passage argues AGAINST, stated as if it were the point
+   · overstatement — adds always/only/never/must that the passage does not support
+4. "빈칸" — blank the phrase carrying the passage's central claim or its logical turn, not
+   a detail recoverable from its own sentence. The correct choice is a PARAPHRASE of the
+   removed phrase (rule 1), never the original wording. Include one distractor that reuses
+   the original phrase's words with a twisted meaning (rule 2).
+5. "내용일치(영)"·"내용일치(한)"·"내용불일치(영)"·"내용불일치(한)" — write every choice as a
+   paraphrase, not a copied sentence. The false statements must differ from the passage by
+   ONE precise point (subject, number, negation, sequence, scope, cause) — never an
+   obviously alien claim.
+6. "어휘" — the wrong word must look natural in its own sentence and be exposed only by the
+   passage's argument (e.g. increase ↔ decrease where only the logic decides). Put the other
+   four underlines on meaning-bearing words, not trivial ones.
+7. `explanation` — besides why the answer is right, name the trap: say which distractor was
+   built to tempt and why it is wrong (e.g. "③은 지문의 표현을 그대로 썼지만 …").
+"""
+
 
 def plan_ox_false_counts(items):
     """OX진위 문항마다 X 개수를 뽑는다 — 유형 순서·문항 순서 그대로의 [(유형, X 개수)]."""
@@ -2194,11 +2261,65 @@ def plan_ox_false_counts(items):
     ]
 
 
+# 객관식 정답 번호를 서버가 미리 정해 주는 유형 — 보기 다섯이 '내용'이라 정답을 어느
+# 자리에 두든 문제가 그대로인 것만 넣는다.
+# 모델에게 "정답 번호를 골고루"라고만 하면 ①·③에 몰렸다 — 2026-09-27 시험지 16문항이
+# ① 8 · ② 1 · ③ 7 · ④ 0 · ⑤ 0이었고, 한 벌 네 문항이 전부 ①인 것도 있었다. 정답
+# 자리를 외우거나 찍는 요령이 생기므로 OX의 X 개수처럼 서버가 뽑아 못 박는다.
+# 넣지 않은 것: 어휘·어법·지칭 추론·옳은 문장 찾기·영영풀이 오류 찾기(정답이 지문 속
+# 밑줄의 위치라 번호를 정하면 어느 낱말을 고를지까지 묶인다), 문장삽입(정답이 빠진
+# 문장의 원래 자리로 정해진다), 무관한 문장(③·④에 두라는 규칙이 따로 있다).
+QUIZ_ANSWER_PLAN_TYPES = {
+    "주제", "제목", "요지", "목적", "심경", "빈칸", "순서", "함축의미", "영영풀이",
+    "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
+    "요약문", "연결어 2빈칸 추론", "어법 분석",
+}
+# 정답을 ①에 두지 말라는 규칙이 따로 있는 유형(프롬프트의 해당 유형 설명 참고)
+QUIZ_ANSWER_NOT_FIRST = {"요약문", "연결어 2빈칸 추론"}
+
+
+def plan_answer_positions(items):
+    """정답 번호를 정해 줄 문항마다 번호를 뽑는다 — 유형 순서·문항 순서 그대로의 [(유형, 번호)].
+
+    다섯 번호를 섞은 주머니에서 하나씩 꺼내, 한 번의 호출 안에서는 번호가 겹치지 않다가
+    다섯을 다 쓰면 주머니를 새로 채운다. 그냥 무작위로 뽑으면 네 문항이 우연히 같은
+    번호로 몰리는 일이 생각보다 잦다."""
+    plan, bag = [], []
+    for t, n in items:
+        if t not in QUIZ_ANSWER_PLAN_TYPES:
+            continue
+        allowed = (2, 3, 4, 5) if t in QUIZ_ANSWER_NOT_FIRST else (1, 2, 3, 4, 5)
+        for _ in range(n):
+            pick = [p for p in bag if p in allowed]
+            if not pick:
+                bag = [1, 2, 3, 4, 5]
+                random.shuffle(bag)
+                pick = [p for p in bag if p in allowed]
+            bag.remove(pick[0])
+            plan.append((t, pick[0]))
+    return plan
+
+
+def _check_answer_plan(result, answer_plan):
+    """정해 준 정답 번호를 지켰는지 세어 로그에만 남긴다(_check_ox_plan과 같은 원칙).
+
+    어긋나도 서버가 보기를 옮기지 않는다 — 해설이 보기 번호를 짚어 가며 쓰여 있어
+    보기만 옮기면 해설이 엉뚱한 번호를 가리키게 된다."""
+    if not answer_plan:
+        return
+    got = [q for q in result.get("questions", []) or []
+           if isinstance(q, dict) and q.get("type") in QUIZ_ANSWER_PLAN_TYPES]
+    for (t, want), q in zip(answer_plan, got):
+        if q.get("answer") != want:
+            print(f"[quiz] 정답 번호 어긋남: {t} 지시 {want} → 실제 {q.get('answer')}", flush=True)
+
+
 def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
                            variation="verbatim", target_grammar="", ox_plan=(),
-                           insert_hint=None):
+                           insert_hint=None, answer_plan=()):
     """items = [(유형, 문항수)] — 유형마다 몇 문항인지가 요청에 그대로 들어 있다.
-    ox_plan = plan_ox_false_counts가 뽑은 OX 문항별 X 개수."""
+    ox_plan = plan_ox_false_counts가 뽑은 OX 문항별 X 개수.
+    answer_plan = plan_answer_positions가 뽑은 객관식 문항별 정답 번호."""
     types = [t for t, _ in items]
     count = sum(n for _, n in items)
     lines = [
@@ -2216,6 +2337,17 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
         lines.append(
             "⚠️ OX진위의 X(isTrue=false) 개수는 이미 정해져 있습니다. 문항마다 정확히 "
             "이대로 만드세요 — 0개(전부 O)나 5개(전부 X)여도 그대로 지키세요: "
+            + "; ".join(desc)
+        )
+    if answer_plan:
+        seen = Counter()
+        desc = []
+        for t, p in answer_plan:
+            seen[t] += 1
+            desc.append(f"{t} {seen[t]}번째 문항 → 정답 {'①②③④⑤'[p - 1]}")
+        lines.append(
+            "⚠️ 객관식 정답 번호는 이미 정해져 있습니다. 정답 보기를 그 번호 자리에 놓고 오답 넷을 "
+            "나머지 자리에 채우세요(answer도 그 번호). 해설이 짚는 보기 번호도 이 배치를 따르세요: "
             + "; ".join(desc)
         )
     # 지문 재사용(passageHtml 생략)은 '원문 그대로'일 때만 켠다.
@@ -2440,8 +2572,9 @@ def _check_ox_plan(result, ox_plan):
 
 def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
                       explain_hint=None, variation="verbatim", target_grammar="",
-                      insert_hint=None):
-    """items = [(유형, 문항수)]. 개수 상한은 parse_quiz_items가 이미 적용해 둔다."""
+                      insert_hint=None, difficulty="normal"):
+    """items = [(유형, 문항수)]. 개수 상한은 parse_quiz_items가 이미 적용해 둔다.
+    difficulty="hard"면 QUIZ_HARD_RULES를 지시문 뒤에 덧붙인다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -2461,13 +2594,16 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
         )
 
     ox_plan = plan_ox_false_counts(items)
+    answer_plan = plan_answer_positions(items)
     payload = {
-        "systemInstruction": {"parts": [{"text": QUIZ_SYSTEM_PROMPT}]},
+        "systemInstruction": {"parts": [{"text": QUIZ_SYSTEM_PROMPT + (
+            QUIZ_HARD_RULES if difficulty == "hard" else ""
+        )}]},
         "contents": [
             {"role": "user", "parts": [
                 {"text": build_quiz_user_prompt(
                     passage, items, short_hint, explain_hint, variation, target_grammar,
-                    ox_plan, insert_hint,
+                    ox_plan, insert_hint, answer_plan,
                 )}
             ]}
         ],
@@ -2481,6 +2617,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
     }
     result = _gemini_json(payload, api_key, model, _QUIZ_TRUNC_MSG)
     _check_ox_plan(result, ox_plan)
+    _check_answer_plan(result, answer_plan)
 
     # 지문을 그대로 쓰는 유형의 빈 passageHtml을 서버가 채운다.
     # '원문 그대로'일 때만 해당한다 — light/heavy는 모델이 응답 안에서 리워딩한 지문을
@@ -7046,6 +7183,24 @@ def _extract_gemini_json(body, trunc_msg, salvage=False):
     return result
 
 
+def _log_usage(body, model):
+    """호출 한 번이 쓴 토큰 수를 로그에 한 줄 남긴다 — 원가를 추정이 아니라 실측으로 보기 위해.
+
+    청구서는 모델별 합계만 알려 줘 '문제 한 세트에 얼마'를 가를 수 없다. 특히 AI가 답하기
+    전에 속으로 생각하는 몫(thoughts)은 출력 요금으로 나가는데 짐작밖에 할 수 없었다
+    (2026-09-27 객관식 고난도의 Pro 원가를 계산할 때 걸린 부분). 로그만 남기고 아무것도
+    바꾸지 않는다."""
+    u = body.get("usageMetadata") if isinstance(body, dict) else None
+    if not isinstance(u, dict):
+        return
+    print(
+        f"[usage] {model} 입력 {u.get('promptTokenCount', 0)}"
+        f"(캐시 {u.get('cachedContentTokenCount', 0)}) · 출력 {u.get('candidatesTokenCount', 0)}"
+        f" · 생각 {u.get('thoughtsTokenCount', 0)}",
+        flush=True,
+    )
+
+
 def _gemini_json(payload, api_key, model, trunc_msg, salvage=False):
     """페이로드를 보내고 JSON 결과를 받는다 (모든 Gemini 호출의 공통 입구).
 
@@ -7061,6 +7216,7 @@ def _gemini_json(payload, api_key, model, trunc_msg, salvage=False):
             payload.setdefault("generationConfig", {})["temperature"] = temp
         data = json.dumps(payload).encode("utf-8")
         body = _gemini_call_with_retry(data, api_key, model)
+        _log_usage(body, model)
         try:
             return _extract_gemini_json(body, trunc_msg, salvage)
         except Recitation as e:
@@ -8432,6 +8588,17 @@ CHANGELOG = [
             "⭕ 주관식 OX진위의 X 개수가 문항마다 0개부터 5개까지 고르게 달라집니다. "
             "예전에는 늘 2~3개로 나와, 학생이 개수만 맞춰 찍어도 점수가 났습니다. "
             "이제 전부 O나 전부 X도 가끔 나옵니다.",
+        ],
+    },
+    {
+        "version": 41,
+        "date": "2026-09-27",
+        "items": [
+            "📝 객관식에 '난이도'가 생겼습니다. '고난도'는 기본보다 보기를 까다롭게 만듭니다 — "
+            "정답은 지문과 다른 말로 바꿔 쓰고, 오답에는 지문 낱말을 그대로 넣은 함정을 섞어 "
+            "글의 논리를 이해해야 맞힐 수 있습니다. 해설에 어느 보기가 함정인지도 "
+            "적어 드립니다. 요금은 기본과 같습니다. 둘 다 고르면 같은 지문으로 "
+            "기본 한 벌·고난도 한 벌을 한 번에 만듭니다.",
         ],
     },
 ]
@@ -11790,7 +11957,13 @@ class Handler(BaseHTTPRequestHandler):
             # 예전에는 이 조건에 '객관식이면서'가 붙어 있어 주관식은 아무리 지문을 변형해도
             # Flash로 갔다. 어법 선택형·틀린 어법 찾기가 객관식 어법 문제와 같은 난이도인데
             # 모델만 낮았던 것이라, 조건에서 객관식 제한을 뺐다.
-            model = MODEL_PRO if any(
+            #
+            # 난이도 '고난도'(객관식 탭)는 유형과 상관없이 Pro다. 매력적인 오답을 짓는 일은
+            # 주제·제목처럼 지문을 안 건드리는 유형에서도 Flash보다 Pro가 훨씬 낫다.
+            # 값은 그대로 받는다 — 원가가 유형 하나에 20~30원 오르지만 정찰가(250원)
+            # 안에서 감당된다(2026-09-27 계산). 모르는 값은 기본으로 본다.
+            difficulty = "hard" if req.get("difficulty") == "hard" else "normal"
+            model = MODEL_PRO if difficulty == "hard" or any(
                 t not in QUIZ_PLAIN_PASSAGE_TYPES for t, _ in items
             ) else MODEL
             variation = req.get("variation") or "verbatim"
@@ -11800,7 +11973,7 @@ class Handler(BaseHTTPRequestHandler):
             t0 = time.monotonic()
             try:
                 result = call_gemini_quiz(passage, items, api_key, model, variation=variation,
-                                          target_grammar=quiz_grammar)
+                                          target_grammar=quiz_grammar, difficulty=difficulty)
                 # 문항 누락 방어 — 요청한 개수보다 적게 오면 한 번 더 요청해 채운다
                 want = sum(n for _, n in items)
                 for _ in range(2):
@@ -11818,7 +11991,7 @@ class Handler(BaseHTTPRequestHandler):
                     retry = call_gemini_quiz(
                         passage, items, api_key, model,
                         short_hint=(missing or got), variation=variation,
-                        target_grammar=quiz_grammar
+                        target_grammar=quiz_grammar, difficulty=difficulty,
                     )
                     # 더 많이 만들어 온 결과만 채택 (재시도가 더 나쁘면 기존 유지)
                     if len(retry.get("questions", [])) > got:
@@ -11834,7 +12007,7 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     retry = call_gemini_quiz(
                         passage, items, api_key, model, explain_hint=missing, variation=variation,
-                        target_grammar=quiz_grammar
+                        target_grammar=quiz_grammar, difficulty=difficulty,
                     )
                     # 문항 수가 줄지 않고 해설이 더 잘 채워진 결과만 채택
                     if (
@@ -11857,6 +12030,7 @@ class Handler(BaseHTTPRequestHandler):
                             retry = call_gemini_quiz(
                                 passage, items, api_key, model, variation=variation,
                                 target_grammar=quiz_grammar, insert_hint=bad,
+                                difficulty=difficulty,
                             )
                         except Exception:
                             break
