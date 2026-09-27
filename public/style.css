@@ -1928,6 +1928,12 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   .qz-block{break-before:auto; page-break-before:auto;}
   /* 지문이 바뀌는 자리를 눈으로 알아볼 만큼은 띄운다 */
   .qz-block + .qz-block{margin-top:7mm;}
+  /* 동형 모의고사는 예외의 예외 — 거기서 .qz-block 하나는 지문이 아니라 한 부(A형·B형)다.
+     위 규칙대로 이어 붙이면 A형 마지막 쪽 남은 자리에 B형 머리글만 들어가고 문항은
+     다음 쪽에서 시작했다(머리글의 break-after:avoid는 크로미움이 무시한다 — .qz-lead 주석).
+     나눠 줄 때 형별로 떼어야 하니 둘째 부부터는 새 쪽에서 시작한다.
+     부 사이에 배분표(.exam-plan, 인쇄에서 숨김)가 끼어 있어 +가 아니라 ~로 잇는다. */
+  #examPaperResult .qz-block ~ .qz-block{break-before:page; page-break-before:always; margin-top:0;}
   /* 지문 이름표 + 첫 문항 한 상자 (app.js의 .qz-lead 주석 참고).
      이 규칙 하나가 이름표를 첫 문항에 붙들어 둔다 — 상자가 통째로 움직이므로
      이름표만 앞 쪽에 남을 수 없다.
