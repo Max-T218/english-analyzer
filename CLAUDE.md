@@ -134,7 +134,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | 결제(포트원) — 결제창 열기 전 요청 생성 → 결제 후 서버가 직접 확인하고서만 충전 | `PORTONE_STORE_ID`/`PORTONE_CHANNEL_KEY_CARD`/`PORTONE_API_SECRET`, `create_payment_intent`, `confirm_payment_intent`(`payment_intents` 컬렉션, 브라우저가 보고하는 성공 여부를 그대로 믿지 않는다). **포트원 V2 응답의 필드 이름을 손볼 때는 스키마를 먼저 확인하세요** — `channel`을 `selectedChannel`로, 통화를 `amount` 안으로 잘못 읽어 실결제가 돈만 빠져나가고 충전이 안 되던 사고가 있었습니다 |
 | 결제 취소 → 포인트 자동 회수(웹훅) | `PORTONE_WEBHOOK_SECRET`, `_verify_portone_webhook`(Standard Webhooks 규격 — 서명 대상은 `{id}.{시각}.{본문}`이라 **받은 그대로의 바이트**가 필요하다. 그래서 라우팅이 `_handle_post` 앞쪽, `raw`가 살아 있는 자리에 있다), `apply_payment_cancellation`(알림 금액을 믿지 않고 포트원에 다시 물어본다. 이미 쓴 포인트는 빼지 않고 남은 유상분에서만 회수하며, 누적 취소액 기준이라 같은 알림이 두 번 와도 한 번만 반영된다). 실패하면 일부러 200이 아닌 응답을 보내 포트원이 재전송하게 한다 |
 | 반 · 학생 · 단어시험(AI 안 씀) | `_classroom_approved`/`set_classroom_approved`(관리자 승인 게이트), `create_class`/`regenerate_class_code`(반 하나당 코드 하나, `classes`/`class_codes` 컬렉션)/`create_student`/`delete_student`(`students` 컬렉션, 개별 코드 없음. `create_student`가 이름을 앱 전체에서 유일하도록 등록 시점에 동명이인을 거부한다), `login_student`(이름만 받아 로그인 — 반 코드 없음, `students` 전체를 이름으로 검색)/`create_student_session`/`_student_session_user`(학생 세션, `admin_sessions`와 같은 모양), `create_test_assignment`(`student_id`를 주면 그 학생 한 명에게만, 안 주면 반 전체에)/`_assignment_targets_student`(반 전체/개별 배정 판정, 조회·응시·제출 세 곳이 공유)/`_build_student_questions`(객관식 오답을 같은 단어장의 다른 뜻/단어에서 결정적으로 뽑음)/`grade_and_submit_attempt`(`test_assignments`/`test_attempts` 컬렉션, 문서 ID를 `{assignment_id}_{student_id}_{round}`로 고정해 그 회차의 중복 제출을 막음 — 재시험 기준은 아래 참고)/`_get_student_attempts`/`_attempt_progress`(합격 여부·합격 회차·다음 회차 계산)/`delete_assignment`(시험과 딸린 답안까지 삭제) |
-| 동형 모의고사 제작 승인 게이트 | `_exam_approved`/`set_exam_approved`(회원 문서의 `exam_approved`, 기본 꺼짐), `/api/admin/approve-exam`, `/api/examscan`이 호출 앞에서 확인한다. 반/학생 승인(`classroom_approved`)과 같은 모양이지만 **별개의 플래그**다 — 한쪽만 켜 줄 수 있어야 한다 |
+| 동형 모의고사 제작 공개 범위 | **2026-09-27부터 모든 회원에게 열렸다** — `EXAM_OPEN_TO_ALL`(환경변수, 기본 켜짐)이면 `_exam_approved`가 늘 참이다. 다시 막으려면 Render에서 `EXAM_OPEN_TO_ALL=0` — 그때는 예전처럼 회원 문서의 `exam_approved`(관리자가 `/api/admin/approve-exam`으로 켠다)를 본다. `/api/examscan`·`/api/examocr`가 호출 앞에서 확인한다. 반/학생 승인(`classroom_approved`)과는 **별개의 플래그**다. 스위치가 켜져 있으면 `admin.html`의 모의고사 칸은 단추 대신 '전체 공개'로 보인다 |
 | Firestore 연결 | `_load_firestore` |
 | 회원가입·인증코드·비밀번호 | `start_signup`, `complete_signup`, `login_with_password`, `_hash_password` |
 | 가입 동의(약관·개인정보·만14세) | `TERMS_VERSION`, `_consent_record`(화면을 거치지 않는 요청도 여기서 막는다), `upsert_user`(구글은 **계정을 새로 만들 때만** 동의를 따진다 — 로그인 창의 구글 버튼으로도 새 계정이 만들어지므로 화면이 아니라 서버에서 막아야 빠짐없다). 화면은 `public/app.js`의 `AGREE_BOXES`/`syncAgree`/`resetAgree` |
@@ -142,7 +142,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | 원가 실측(Render 로그) | `_log_usage`(`[usage] <기능이름> <모델> 입력 N(캐시 N) · 출력 N · 생각 N`). 기능 이름표는 2026-09-27에 넣었다 — 이전에는 모델 이름만 찍혀 어느 기능 호출인지 로그만으로 못 갈랐다. `_gemini_json`을 부르는 자리마다 `label="quiz"`처럼 넘긴다. 새 `call_gemini_*`를 추가하면 이 label도 함께 붙일 것 |
 | Vertex AI로 부르는 길(청구처만 다르다) | `GEMINI_VIA_VERTEX`(기본 꺼짐), `_vertex_credentials`(Firestore와 같은 서비스 계정), `_vertex_try`(실패하면 None → `_gemini_call_with_retry`의 `_post`가 AI Studio로 다시 보낸다. 권한·한도 오류면 잠시 Vertex를 건너뛴다). 그림은 Interactions API가 Vertex에 없어 `call_gemini_infographic`이 `vertex_data`로 `:generateContent` 모양을 따로 넘긴다. **구글 클라우드 무료 체험 크레딧이 AI Studio 요금에는 안 쓰여서 만든 길이다**(2026-11-02 만료) |
 | 기능별 프롬프트·스키마·호출 | `*_SCHEMA` / `*_SYSTEM_PROMPT` / `call_gemini_*` 3종 세트 — quiz, reword, ocr, workbook, vocab(`VOCAB_ITEMS_SCHEMA` 하나를 `call_gemini_vocab_ocr`/`call_gemini_vocab_pdf` 둘이 같이 씁니다). 지문 분석만 이름에 접두어가 없어 `GEMINI_SCHEMA` / `SYSTEM_PROMPT`입니다 |
-| 시험지(스캔본)에서 읽기 — 쪽 그림을 Gemini에 직접 보낸다 | `call_gemini_exam_scan`/`EXAM_SCAN_SYSTEM_PROMPT`(발문만 읽어 유형표를 만든다 — **지문은 일부러 안 옮긴다**), `call_gemini_exam_ocr`/`EXAM_OCR_SYSTEM_PROMPT`/`normalize_exam_ocr`(그 구멍을 메우는 쪽. 지문만 옮겨 적고 발문·보기·각주·손글씨는 버린다), `EXAM_MAX_PAGES`. 둘 다 **Pro 고정**이고 `_exam_approved`로 막혀 있다. 화면은 `public/app.js`의 `extractJpegs`(PDF 안의 JPEG를 그대로 꺼낸다 — 외부 라이브러리 없음)/`runExamScan`(유형 분석 — 3쪽씩)/`runExamOcr`(지문 옮겨 적기 — **2쪽씩 한 쪽 겹쳐**. 3쪽을 한 번에 보내면 글자를 빠뜨리는 것을 실측했다. 까닭은 그 함수 위 주석에 있다)/`passageKey`(같은 지문 가리기 — 앞머리와 꼬리 두 열쇠를 쓴다) |
+| 시험지(스캔본)에서 읽기 — 쪽 그림을 Gemini에 직접 보낸다 | `call_gemini_exam_scan`/`EXAM_SCAN_SYSTEM_PROMPT`(발문만 읽어 유형표를 만든다 — **지문은 일부러 안 옮긴다**), `call_gemini_exam_ocr`/`EXAM_OCR_SYSTEM_PROMPT`/`normalize_exam_ocr`(그 구멍을 메우는 쪽. 지문만 옮겨 적고 발문·보기·각주·손글씨는 버린다), `EXAM_MAX_PAGES`. 둘 다 **Pro 고정**이고 `_exam_approved`를 거친다(지금은 `EXAM_OPEN_TO_ALL`로 모두에게 열림). 화면은 `public/app.js`의 `extractJpegs`(PDF 안의 JPEG를 그대로 꺼낸다 — 외부 라이브러리 없음)/`runExamScan`(유형 분석 — 3쪽씩)/`runExamOcr`(지문 옮겨 적기 — **2쪽씩 한 쪽 겹쳐**. 3쪽을 한 번에 보내면 글자를 빠뜨리는 것을 실측했다. 까닭은 그 함수 위 주석에 있다)/`passageKey`(같은 지문 가리기 — 앞머리와 꼬리 두 열쇠를 쓴다) |
 | 기출 **여러 부**를 한 구성으로 합치기 | 쪽 그림마다 `doc`(몇째 부)이 붙는다 — 묶음이 부 경계를 넘지 않게 하고, 문항 번호 중복도 부마다 따로 센다(`seenByDoc`). 안 그러면 어느 시험지든 1·2·3번이 있어 **둘째 부가 통째로 버려진다**. `examDocNames`(부 이름) · `examDocScans`(이미 읽은 부 → 문항. 여기 있는 부는 다시 안 읽는다 — 한 부씩 올려 쌓는 길의 핵심이다) · `examShowScanResult`(한 부면 문항표, 여럿이면 합치기표) · `buildExamMergeRows`(**한 번이라도 나온 유형은 무조건 1문항**을 깔고 남는 자리만 빈도에 비례해 나눈다 — 평균만 내면 3년에 한 번 나온 유형이 반올림에서 사라지는데 정작 대비할 것이 그것이다) · `renderExamMerge`(부별 개수를 보여 주고 유형마다 ±로 고치게 한다) · `examMergeToQuestions` |
 | PDF에서 지문 꺼내기 | `read_pdf_pages`(글자층+좌표 읽기), `_pdf_columns`(단 나누기), `split_pdf_passages`(문항형/문단형 판정), `_pdf_clean_passage`(번호·보기·정답교정 정리). 여기까지는 Gemini를 부르지 않습니다 — 규칙이 실패했을 때만 `call_gemini_pdf_split`이 '경계 줄 번호'만 물어봅니다 |
 | 단어장 — 사진·PDF에서 단어 목록 가져오기 | `call_gemini_vocab_ocr`(사진), `parse_vocab_lines_rule`(PDF, 규칙만으로 "단어 — 뜻" 줄을 골라냄 · 0원), `call_gemini_vocab_pdf`(규칙이 못 뽑을 때만, `read_pdf_pages`가 이미 뽑아 둔 글자를 다시 보냄) |
@@ -203,8 +203,10 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 
 탭 6개 — `analyze`, `mcq`, `saq`, `workbook`, `vocab`, `exam`.
 
-그중 **둘은 관리자가 승인한 선생님에게만 보입니다** — `exam`(동형 모의고사 제작,
+그중 **둘은 서버가 허락해야 보입니다** — `exam`(동형 모의고사 제작,
 `examTabBtn`)과 그 뒤에 붙는 `students`(반/학생 관리, `studentsTabBtn`)입니다.
+`exam`은 2026-09-27부터 모든 회원에게 보이고(`EXAM_OPEN_TO_ALL`), `students`는 여전히
+관리자가 승인한 선생님에게만 보입니다.
 `renderAccount`가 각각 `examApproved`·`classroomApproved` 값으로 `hidden`을 켜고 끕니다.
 승인이 꺼졌는데 마침 그 탭을 보고 있었다면 `hideExamTab`이 첫 탭으로 물러나게 합니다 —
 단추만 감추면 화면이 남아 계속 쓸 수 있는 것처럼 보이기 때문입니다.
@@ -295,7 +297,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `student_session` 쿠키로 인증)
 
 **POST** — `/api/analyze` `/api/quiz` `/api/workbook` `/api/reword` `/api/ocr` `/api/pdfsplit`
-`/api/examscan`(기출 시험지 → 문항 유형표) `/api/examocr`(같은 쪽 그림 → 영어 지문. 둘 다 관리자 승인 필요)
+`/api/examscan`(기출 시험지 → 문항 유형표) `/api/examocr`(같은 쪽 그림 → 영어 지문. 둘 다 `_exam_approved` 확인 — 지금은 모두에게 열림)
 `/api/vocabocr` `/api/vocabpdf` `/api/models`
 `/api/auth/google` `/api/auth/signup` `/api/auth/verify` `/api/auth/login` `/api/auth/delete`
 `/api/logout` `/api/account/recharge` `/api/account/recharge/confirm` `/api/account/ack-update`

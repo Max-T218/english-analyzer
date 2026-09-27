@@ -327,11 +327,16 @@ function renderUsers() {
         </button>
       </td>
       <td style="padding:8px 6px;">
-        <button type="button" class="btn ${u.examApproved ? "" : "ghost"} small exam-btn"
+        ${u.examOpen
+          /* 서버의 EXAM_OPEN_TO_ALL이 켜져 있으면 모든 회원이 쓴다 — 회원별 단추를 눌러도
+             달라지는 것이 없으므로 단추 대신 글자로 보인다. 끄면 예전 단추가 돌아온다. */
+          ? `<span style="font-size:11.5px; color:var(--ink-soft);"
+                   title="모든 회원에게 열려 있습니다. 승인제로 되돌리려면 Render 환경변수 EXAM_OPEN_TO_ALL=0">전체 공개</span>`
+          : `<button type="button" class="btn ${u.examApproved ? "" : "ghost"} small exam-btn"
                 style="padding:4px 7px; font-size:11.5px;"
                 title="동형 모의고사 제작을 이 선생님에게 허용할지">
           ${u.examApproved ? "허용됨" : "미허용"}
-        </button>
+        </button>`}
       </td>
       <td style="padding:8px 6px;">
         <!-- flex-wrap: 창이 좁아지면 넘치는 대신 아래로 접히게 한다. 넘치면 오른쪽 끝의

@@ -8698,6 +8698,18 @@ CHANGELOG = [
             "두 부가 같은 지문을 겹쳐 쓰지 않습니다.",
         ],
     },
+    {
+        "version": 44,
+        "date": "2026-09-27",
+        "items": [
+            "🧾 '동형 모의고사 제작'을 이제 모든 선생님이 쓸 수 있습니다. 학교 기출 시험지를 "
+            "올리면 몇 번이 무슨 유형인지 읽어 구성표를 만들고, 시험 범위 지문으로 같은 "
+            "구성의 시험지를 A형·B형까지 만듭니다. 기출 분석에는 포인트가 들지 않고, "
+            "문제를 만들 때만 문항 수대로 값이 매겨집니다.",
+            "기출 구성과 만든 시험지를 따로 저장할 수 있고, 다른 시험지로 넘어갈 때는 "
+            "'🔄 새로 시작하기'로 한 번에 비웁니다. 답지에도 A형·B형이 적힙니다.",
+        ],
+    },
 ]
 
 
@@ -8748,9 +8760,9 @@ def _account_payload(user_id):
         "krwPaid": paid,
         # 반/학생 관리 탭을 보여줄지 — 관리자가 켜 준 선생님만 True
         "classroomApproved": bool(info.get("classroom_approved")),
-        # 동형 모의고사 제작 탭을 보여줄지 — 위와 같은 모양이지만 별개의 승인이다
-        # (기출 시험지를 올려 분석하는 기능이라 남의 학교 시험지가 들어온다)
-        "examApproved": bool(info.get("exam_approved")),
+        # 동형 모의고사 제작 탭을 보여줄지 — 위와 같은 모양이지만 별개의 승인이다.
+        # EXAM_OPEN_TO_ALL이 켜져 있으면 모두에게 보인다(_exam_approved 주석 참고)
+        "examApproved": EXAM_OPEN_TO_ALL or bool(info.get("exam_approved")),
         # 로그인마다 함께 내려준다 — 비어 있으면 화면이 아무것도 띄우지 않는다
         "updates": _unseen_updates(info.get("last_seen_changelog")),
     }
@@ -9625,6 +9637,8 @@ def list_all_users():
             "createdAt": d.get("created_at", ""),
             "classroomApproved": bool(d.get("classroom_approved")),
             "examApproved": bool(d.get("exam_approved")),
+            # 모두에게 열려 있으면 회원별 허용 단추가 뜻이 없다 — 화면이 '전체 공개'로 바꿔 보인다
+            "examOpen": EXAM_OPEN_TO_ALL,
             "lastLogin": _kst_date(d.get("last_login")) or "",
             "dormant": bool(d.get("dormant")),
             # 휴면 예정 통지를 보낸 계정은 예정일까지 함께 보여 준다
@@ -9836,9 +9850,22 @@ def set_classroom_approved(user_id, approved):
 # 동형 모의고사 제작(기출 시험지 분석 → 같은 구성의 시험지 제작). 위 반/학생 승인과
 # 똑같은 모양이지만 켜고 끄는 대상이 다르므로 플래그를 따로 둔다 — 한 선생님이 학생
 # 기능만, 또는 시험지 기능만 쓸 수 있어야 한다.
+#
+# 2026-09-27부터 모든 회원에게 열었다(EXAM_OPEN_TO_ALL, 기본 켜짐). 처음 승인제로 둔
+# 까닭은 남의 학교 기출을 올려 읽는 기능이라서였는데, 발문·문항 번호·고사 이름은
+# 저장하지 않고(examSpecFromScan) 약관 9조가 입력 자료의 권리를 이용자에게 두고 있다.
+# 원가도 따져 봤다 — 유형 분석은 받지 않지만 기출 한 부에 300원 안팎이라 분석 16번에
+# 한 번만 시험지로 이어져도 손해가 아니다(전일고 2부 → A형·B형 실측: 원가 약 4,200원,
+# 받은 값 13,500P). 다시 막으려면 Render에서 EXAM_OPEN_TO_ALL=0으로 두면 된다 — 그때는
+# 예전처럼 관리자가 켜 준 선생님(exam_approved)만 쓴다.
+EXAM_OPEN_TO_ALL = os.environ.get("EXAM_OPEN_TO_ALL", "1").strip().lower() in ("1", "true", "yes")
+
+
 def _exam_approved(user_id):
-    """관리자가 이 선생님에게 동형 모의고사 제작을 켜 줬는지. 남의 학교 기출 시험지를
-    올려 읽는 기능이라 가입만으로는 못 쓰게 막아 둔다 — admin.html에서 관리자가 켠다."""
+    """이 선생님이 동형 모의고사 제작을 쓸 수 있는지. EXAM_OPEN_TO_ALL이 켜져 있으면
+    모두 쓴다. 꺼져 있으면 admin.html에서 관리자가 켜 준 선생님만 쓴다."""
+    if EXAM_OPEN_TO_ALL:
+        return True
     _require_db()
     snap = DB.collection("users").document(user_id).get()
     return bool((snap.to_dict() or {}).get("exam_approved")) if snap.exists else False
