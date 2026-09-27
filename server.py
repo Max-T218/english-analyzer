@@ -1496,7 +1496,8 @@ in every other question.
   passage out again wastes output and risks it drifting from what other questions show.
   Every OTHER type still requires `passageHtml`, because its passage is genuinely modified.
 - `choices`: for "mc", EXACTLY 5 short strings — do NOT prefix them with ①②③④⑤ (the app adds
-  those). For "write" and "tf", set `choices` to an empty array [].
+  those). The one exception is "문장삽입", which has 3~5 (see its rule below).
+  For "write" and "tf", set `choices` to an empty array [].
 - `answer`: for "mc", integer 1–5 = the 1-based index of the correct choice.
   For "write" and "tf", set `answer` to 0.
 - `answerText`: for "write", the correct English sentence (verbatim from the passage).
@@ -1613,9 +1614,18 @@ the passage in full.
   (each starting a new line via <br><br>) given in a SCRAMBLED (non-original) order. choices
   = 5 plausible orderings like "(B)-(A)-(C)", only one matching the passage's true order.
 - "문장삽입" — instruction as described above (includes the sentence to insert). passageHtml
-  = the rest of the passage (after removing one sentence) with 5 candidate insertion points
-  marked as circled numbers ①~⑤ placed BETWEEN sentences. choices = ["①","②","③","④","⑤"]
-  in that literal order; answer = where the removed sentence truly belongs.
+  = the rest of the passage (after removing one sentence) with candidate insertion points
+  marked as circled numbers. HOW MANY points is fixed by the request line "문장삽입 보기 수: K"
+  (K is 3, 4 or 5 — a short passage has room for fewer points). Mark EXACTLY K points,
+  ① … up to the K-th circled number, in order:
+    · ① comes AFTER the first remaining sentence — never in front of the passage's first
+      sentence (a point before everything is not a real position).
+    · Between any two consecutive markers there is at least one full sentence — never two
+      markers side by side, never a marker standing alone on an empty line.
+    · Only the LAST marker may sit after the passage's final sentence.
+  When K equals the number of remaining sentences, that simply means one marker after every
+  sentence. choices = the first K of ["①","②","③","④","⑤"] in that literal order (3~5 items);
+  answer = where the removed sentence truly belongs (1…K).
 - "무관한 문장" (format "mc") — instruction "다음 글에서 전체 흐름과 관계 없는 문장은?"
   `passageHtml` = the passage rebuilt like this, PLAIN TEXT with circled numbers only
   (no HTML tags):
@@ -2067,6 +2077,71 @@ This is the most frequently violated rule. Read it twice.
 Return valid JSON only."""
 
 
+# 문장삽입의 보기(삽입 위치) 수. 자리는 '주어진 문장을 빼고 남은 문장 뒤'마다 하나씩
+# 생기므로 문장 수에 묶인다. 예전에는 무조건 5개를 시켜서, 4문장짜리 지문에서 ①이 첫
+# 문장 앞에 붙고 ④⑤가 마지막 문장 뒤 빈 줄에 나란히 찍히는 — 같은 자리가 보기 둘이 되는 —
+# 문항이 나왔다. 그래서 문장 수만큼만 만들고, 3개도 안 나오면 그 유형을 뺀다.
+INSERTION_MIN_CHOICES = 3
+_INSERT_MARK_RE = re.compile(r"[①-⑤]")
+_INSERT_WORD_RE = re.compile(r"[A-Za-z]{2,}")
+
+
+def insertion_choice_count(passage):
+    """이 지문으로 낼 문장삽입의 보기 수(3~5). 3개도 못 만들면 None."""
+    k = min(5, rough_sentence_count(passage) - 1)
+    return k if k >= INSERTION_MIN_CHOICES else None
+
+
+def insertion_problems(result, k):
+    """문장삽입 문항의 삽입 표시가 제자리에 있는지 본다 — 어긋난 문항의 설명 목록.
+
+    보기는 번호뿐이라, 번호 앞이나 두 번호 사이에 문장이 없으면 학생이 지문을 읽지
+    않고도 보기를 지울 수 있다. 번호 뒤에 문장이 없어도 되는 것은 마지막 번호뿐이다."""
+    out = []
+    for i, q in enumerate(result.get("questions", []) or []):
+        if not isinstance(q, dict) or q.get("type") != "문장삽입":
+            continue
+        text = re.sub(r"<[^>]*>", " ", str(q.get("passageHtml") or ""))
+        marks = _INSERT_MARK_RE.findall(text)
+        parts = _INSERT_MARK_RE.split(text)
+        why = []
+        if len(marks) != k:
+            why.append(f"번호가 {len(marks)}개 — 정확히 {k}개여야 함")
+        elif "".join(marks) != "①②③④⑤"[:k]:
+            why.append("번호가 ①부터 차례대로가 아님")
+        if marks and not _INSERT_WORD_RE.search(parts[0]):
+            why.append("① 앞에 문장이 없음")
+        for j in range(1, len(parts) - 1):
+            if not _INSERT_WORD_RE.search(parts[j]):
+                why.append(f"{marks[j - 1]}와 {marks[j]} 사이에 문장이 없음")
+        try:
+            ans = int(q.get("answer") or 0)
+        except (TypeError, ValueError):
+            ans = 0
+        if not 1 <= ans <= k:
+            why.append(f"정답 번호가 1~{k} 밖")
+        if why:
+            out.append(f"{i + 1}번 문항({', '.join(why)})")
+    return out
+
+
+def fit_quiz_items(raw_types, passage):
+    """parse_quiz_items + 지문 길이로 낼 수 없는 유형 빼기. (items, 뺀 유형 안내 목록).
+
+    문장삽입은 보기(삽입 위치)를 3개도 못 두는 짧은 지문이면 뺀다. 요금 계산과 생성이
+    둘 다 이 함수를 거쳐야 뺀 유형에 값이 매겨지지 않는다."""
+    items = parse_quiz_items(raw_types)
+    skipped = []
+    if any(t == "문장삽입" for t, _ in items) and insertion_choice_count(passage or "") is None:
+        items = [(t, n) for t, n in items if t != "문장삽입"]
+        skipped.append(
+            f"문장삽입은 지문에 문장이 {INSERTION_MIN_CHOICES + 1}개 이상 있어야 만들 수 있어 "
+            "뺐습니다(주어진 문장을 빼고도 넣을 자리가 3곳은 있어야 합니다). 이 유형 요금은 "
+            "나가지 않았습니다."
+        )
+    return items, skipped
+
+
 def blank_explanations(result):
     """해설이 비어 있는(또는 사실상 비어 있는) 문항의 1-based 번호 목록."""
     out = []
@@ -2109,7 +2184,8 @@ def plan_ox_false_counts(items):
 
 
 def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
-                           variation="verbatim", target_grammar="", ox_plan=()):
+                           variation="verbatim", target_grammar="", ox_plan=(),
+                           insert_hint=None):
     """items = [(유형, 문항수)] — 유형마다 몇 문항인지가 요청에 그대로 들어 있다.
     ox_plan = plan_ox_false_counts가 뽑은 OX 문항별 X 개수."""
     types = [t for t, _ in items]
@@ -2238,6 +2314,20 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
                 f"⚠️ 이전 시도는 {short_hint}문항만 만들었습니다. 이번에는 반드시 {count}문항을 "
                 f"끝까지 모두 생성하세요. 중간에 멈추지 마세요."
             )
+    if "문장삽입" in types:
+        # 보기 수는 모델이 세게 두지 않고 서버가 정해 준다 — 문장 수를 잘못 세면
+        # 빈 자리에 번호를 찍게 되고, 그게 이 줄을 넣게 된 바로 그 사고다.
+        k = insertion_choice_count(passage) or INSERTION_MIN_CHOICES
+        lines.append(
+            f"문장삽입 보기 수: {k} — 삽입 위치 번호를 ①부터 정확히 {k}개만 찍고 "
+            f"choices도 그 {k}개만 담으세요. ①은 첫 문장 뒤에, 번호와 번호 사이에는 반드시 "
+            "문장이 있어야 합니다(지문 끝 뒤에 올 수 있는 것은 마지막 번호뿐)."
+        )
+    if insert_hint:
+        lines.append(
+            "⚠️ 이전 시도의 문장삽입 번호 위치가 잘못됐습니다: " + "; ".join(insert_hint)
+            + ". 번호 앞·번호 사이마다 실제 문장이 오도록 다시 만드세요."
+        )
     if explain_hint:
         lines.append(
             f"⚠️ 이전 시도는 {len(explain_hint)}개 문항({', '.join(map(str, explain_hint))}번)의 "
@@ -2337,7 +2427,8 @@ def _check_ox_plan(result, ox_plan):
 
 
 def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
-                      explain_hint=None, variation="verbatim", target_grammar=""):
+                      explain_hint=None, variation="verbatim", target_grammar="",
+                      insert_hint=None):
     """items = [(유형, 문항수)]. 개수 상한은 parse_quiz_items가 이미 적용해 둔다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -2364,7 +2455,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
             {"role": "user", "parts": [
                 {"text": build_quiz_user_prompt(
                     passage, items, short_hint, explain_hint, variation, target_grammar,
-                    ox_plan,
+                    ox_plan, insert_hint,
                 )}
             ]}
         ],
@@ -2419,6 +2510,12 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
             lst = q.get(key)
             if isinstance(lst, list):
                 q[key] = [sanitize_quiz_html(s) if isinstance(s, str) else s for s in lst]
+        # 문장삽입의 보기는 지문에 찍힌 번호 그 자체다 — 보기 목록을 번호에 맞춘다
+        # (모델이 번호는 3개 찍고 choices는 5개를 채워 오는 식으로 어긋나지 않게).
+        if q.get("type") == "문장삽입":
+            marks = _INSERT_MARK_RE.findall(re.sub(r"<[^>]*>", " ", q.get("passageHtml") or ""))
+            if INSERTION_MIN_CHOICES <= len(marks) <= 5 and "".join(marks) == "①②③④⑤"[:len(marks)]:
+                q["choices"] = marks
         # 조건 영작의 낱말 수 조건은 모델이 아니라 여기서 붙인다
         if q.get("type") == "조건 영작":
             attach_word_count_condition(q)
@@ -10671,7 +10768,9 @@ class Handler(BaseHTTPRequestHandler):
                     cost = PRICE_INFOGRAPHIC_KRW
                     self._pending_label = "요약 이미지"
                 elif path == "/api/quiz":
-                    quiz_items = parse_quiz_items(req.get("types"))
+                    quiz_items, _ = fit_quiz_items(
+                        req.get("types"), (req.get("passage") or "").strip()
+                    )
                     cost = _quiz_action_cost(quiz_items)
                     total_q = sum(n for _t, n in quiz_items)
                     self._pending_label = f"문제 제작 · {total_q}문항"
@@ -11655,9 +11754,12 @@ class Handler(BaseHTTPRequestHandler):
             if len(passage) < 20:
                 self._send_json({"error": "문제를 만들 영어 지문을 입력하세요 (20자 이상)."}, 400)
                 return
-            items = parse_quiz_items(req.get("types"))
+            items, skipped = fit_quiz_items(req.get("types"), passage)
             if not items:
-                self._send_json({"error": "출제 유형을 하나 이상 선택하세요."}, 400)
+                self._send_json(
+                    {"error": " ".join(skipped) if skipped else "출제 유형을 하나 이상 선택하세요."},
+                    400,
+                )
                 return
             api_key = req.get("apiKey") or ""
             # 지문을 '변형하는' 유형이 하나라도 섞여 있으면 그 호출 전체를 Pro로 올린다.
@@ -11725,6 +11827,28 @@ class Handler(BaseHTTPRequestHandler):
                         and len(blank_explanations(retry)) < len(missing)
                     ):
                         result = retry
+
+                # 문장삽입 번호 위치 방어 — 번호 앞이나 번호 사이에 문장이 없는 문항은
+                # 보기가 사실상 줄어든 문항이라 그대로 내보내면 안 된다.
+                insert_k = insertion_choice_count(passage)
+                if insert_k and any(t == "문장삽입" for t, _ in items):
+                    for _ in range(2):
+                        bad = insertion_problems(result, insert_k)
+                        if not bad or _over_budget(t0):
+                            break
+                        retry = call_gemini_quiz(
+                            passage, items, api_key, model, variation=variation,
+                            target_grammar=quiz_grammar, insert_hint=bad,
+                        )
+                        # 문항·해설이 줄지 않고 번호 위치가 나아진 결과만 채택
+                        if (
+                            len(retry.get("questions", [])) >= len(result.get("questions", []))
+                            and len(blank_explanations(retry)) <= len(blank_explanations(result))
+                            and len(insertion_problems(retry, insert_k)) < len(bad)
+                        ):
+                            result = retry
+                if skipped:
+                    result["skipped"] = skipped
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
                 return
