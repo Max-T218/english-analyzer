@@ -10682,6 +10682,8 @@ async function runExamPaper() {
   const examRun = newReqId();
   let step = 0;
   let stopped = false;
+  let madeCopies = 0;   // 이번 누름에서 완성된 부·문항 — 끝나고 완료 안내에 쓴다
+  let madeQuestions = 0;
 
   for (let c = 0; c < copies && !stopped; c++) {
     const rows = plans[c];
@@ -10734,6 +10736,8 @@ async function runExamPaper() {
       ordered.forEach((q) => delete q._plan);
       examPaperSets.push({ label, questions: ordered, plan, failed });
       renderExamPaperSets();
+      madeCopies++;
+      madeQuestions += ordered.length;
     }
   }
 
@@ -10746,6 +10750,30 @@ async function runExamPaper() {
   }
   // 다음에 누르면 방금 쓴 (지문, 유형) 조합을 피해 새로 배분한다 — 대원칙 2
   examPlanNow = null;
+
+  /* 완료 안내 — 다른 탭(분석·문제·워크북)은 다 띄우는데 여기만 빠져 있었다
+     (2026-09-28 선생님 지적). 이 탭은 한 부에 30번 가까이 불러 30분을 넘기기 일쑤라,
+     기다리다 다른 일을 하던 선생님이 끝난 줄 모르고 있게 된다. 결과로 내려 주고,
+     브라우저의 다른 탭에 가 있으면 탭 제목에도 표시해 둔다(돌아오면 원래대로). */
+  if (madeCopies) {
+    examPaperResultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    showDoneGuide(`시험지 ${madeCopies}부(${madeQuestions}문항)`, false);
+    markTabDone("✅ 시험지 완성");
+  }
+}
+
+/* 브라우저의 다른 탭에 가 있는 동안 작업이 끝나면 탭 제목 앞에 표시를 단다.
+   돌아오면 떼고 원래 제목으로 돌린다. 이미 보고 있으면 아무것도 하지 않는다.
+   ORIGINAL_TITLE은 인쇄 파일 이름을 잠깐 바꿨다 되돌릴 때도 쓰는 원래 제목이다. */
+function markTabDone(mark) {
+  if (!document.hidden) return;
+  document.title = `${mark} · ${ORIGINAL_TITLE}`;
+  const restore = () => {
+    if (document.hidden) return;
+    document.title = ORIGINAL_TITLE;
+    document.removeEventListener("visibilitychange", restore);
+  };
+  document.addEventListener("visibilitychange", restore);
 }
 
 /* ── 시험지 머리글 ──
