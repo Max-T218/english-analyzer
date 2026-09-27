@@ -5187,6 +5187,8 @@ function setupQuizTab({ prefix, types, footer }) {
               );
               noteCallSecs("quiz", (Date.now() - qzStart) / 1000);
               if (Array.isArray(data.questions)) questions.push(...data.questions);
+              // 지문이 짧아 서버가 뺀 유형(문장삽입) — 요금은 안 나갔지만 빠진 줄은 알려야 한다
+              (data.skipped || []).forEach((msg) => failed.push({ group: [{ id: "문장삽입" }], msg }));
             } catch (err) {
               failed.push({ group, msg: err.message || String(err) });
               // 한도 소진·Pro 불가는 기다려도 안 풀린다 — 남은 작업을 시도하지 않는다
