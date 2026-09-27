@@ -9182,6 +9182,22 @@ function extractJpegs(buf) {
   return out;
 }
 
+/* 꺼낸 JPEG를 쪽 그림으로 믿어도 되는가. 안 되는 PDF가 둘 있다.
+   (1) 글자를 흑백 조각으로 따로 떼어 둔 스캔(MRC 압축 — 팩스 압축 CCITT·JBIG2).
+       JPEG는 글자가 빠진 배경뿐이라, 꺼내 보내면 AI가 빈 종이를 읽는다.
+       2026 전주제일고 2학년 1차고사: 쪽마다 배경 JPEG 1장 + 글자 조각 22개였다.
+   (2) JPEG를 한 번 더 압축해 둔 PDF(Filter [/FlateDecode /DCTDecode]). 시작 표시가
+       안 보여 몇 장만 꺼내지고 나머지 쪽이 소리 없이 빠진다 — 위 시험지는 8쪽 중 1장만
+       꺼내졌다. 꺼낸 장수가 쪽 수보다 적은 것으로 알아본다(많은 것은 괜찮다 — 로고 같은
+       그림이 섞였을 뿐 쪽은 다 있다).
+   둘 다 PDF를 통째로 보내면 Gemini가 겹을 합쳐 그린 쪽을 직접 읽는다. */
+function examPdfNeedsWhole(buf, jpegCount) {
+  const s = new TextDecoder("latin1").decode(buf);
+  if (/\/(CCITTFaxDecode|JBIG2Decode)\b/.test(s)) return true;
+  const pages = (s.match(/\/Type\s*\/Page(?![A-Za-z])/g) || []).length;
+  return pages > 0 && jpegCount < pages;
+}
+
 async function examAddFiles(fileList) {
   if (examBusy) return;
   examBusy = true;
@@ -9201,18 +9217,19 @@ async function examAddFiles(fileList) {
         examStatus(`${file.name} 에서 쪽을 꺼내는 중…`);
         const buf = new Uint8Array(await file.arrayBuffer());
         const blobs = extractJpegs(buf);
-        if (blobs.length) {
+        if (blobs.length && !examPdfNeedsWhole(buf, blobs.length)) {
           for (const b of blobs) {
             if (examPages.length >= EXAM_MAX_PAGES) break;
             // 사진 업로드와 같은 축소를 탄다
             examPages.push({ ...(await photoToPart(b)), doc: examDocNames.length - 1 });
           }
         } else {
-          // 꺼낼 그림이 없는 PDF — 원본을 그대로 넘긴다. 이런 PDF는 대개 작다.
+          // 쪽 그림을 꺼낼 수 없는 PDF(글자 PDF · 팩스 압축 스캔 · 겹 스캔 —
+          // examPdfNeedsWhole 참고) — 원본을 그대로 넘긴다. 이런 PDF는 대개 작다.
           const data = await blobToBase64(file);
           if (data.length > 9 * 1024 * 1024) {
             examErrorEl.textContent =
-              `${file.name} 은 그림이 들어 있지 않은 PDF인데 용량이 너무 큽니다. ` +
+              `${file.name} 은 쪽 그림을 꺼낼 수 없는 PDF인데 용량이 너무 큽니다. ` +
               `쪽을 사진으로 찍거나 캡처해서 올려 주세요.`;
             continue;
           }
