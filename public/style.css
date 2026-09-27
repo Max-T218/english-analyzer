@@ -523,6 +523,9 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 }
 .bonus-banner b{color:var(--accent); font-weight:700;}
 .bonus-banner .bonus-was{color:var(--ink-soft); text-decoration:line-through; font-weight:400;}
+/* 동형 모의고사 상한 이벤트 안내 — 예상 비용 옆에 붙는다(app.js의 examEventNote) */
+.exam-event-tag{display:inline-block; margin-left:4px; padding:1px 8px; border-radius:999px;
+  background:var(--accent-soft); color:var(--accent); font-size:11.5px; font-weight:700;}
 .ocr-status{
   margin-top:8px; padding:9px 12px; border-radius:8px; font-size:12px; line-height:1.65;
   background:var(--paper); border:1px solid var(--line);

@@ -156,6 +156,19 @@ DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "10000"))
 # 비워 두면(SIGNUP_BONUS_UNTIL="") 이벤트가 없는 것으로 본다.
 SIGNUP_BONUS_MULTIPLIER = int(os.environ.get("SIGNUP_BONUS_MULTIPLIER", "2"))
 SIGNUP_BONUS_UNTIL = os.environ.get("SIGNUP_BONUS_UNTIL", "2026-09-30").strip()
+# 동형 모의고사 상한 이벤트 — [📝 문제 제작]을 한 번 누를 때(A형·B형 모두 합쳐) 아무리
+# 문항이 많아도 EXAM_EVENT_CAP_KRW까지만 받는다. 문항마다 만들어질 때 값을 받는 방식은
+# 그대로라, 짧은 시험지는 평소 값 그대로이고 긴 시험지만 싸진다(누구도 손해 보지 않게).
+# 끝나는 날을 코드가 아는 것은 가입 축하금 이벤트와 같은 이유다. 비워 두면 이벤트 없음.
+#
+# '한 번 누름'은 화면이 만든 examRun 값으로 가린다. 그 값을 지어내 상한을 무한히 쓰는
+# 것을 막으려고, 한 번 누름에 상한이 걸리는 문항 수를 EXAM_EVENT_RUN_MAX_Q로 묶는다
+# (화면이 한 번에 만들 수 있는 최대치 = 구성 60문항 × 2부). 넘친 문항은 평소 값이다.
+EXAM_EVENT_CAP_KRW = int(os.environ.get("EXAM_EVENT_CAP_KRW", "9900"))
+EXAM_EVENT_UNTIL = os.environ.get("EXAM_EVENT_UNTIL", "2026-10-16").strip()
+EXAM_EVENT_RUN_MAX_Q = 120
+EXAM_EVENT_RUN_MAX_AGE = 6 * 60 * 60  # 한 번 누름이 이보다 오래 이어질 일은 없다
+_EXAM_RUN_RE = re.compile(r"^[A-Za-z0-9]{8,40}$")
 # 지금 걸려 있는 이용약관의 판(public/terms.html의 시행일). 가입할 때 이 값을 계정에
 # 함께 적어 둬야, 나중에 약관을 고쳤을 때 "누가 어느 판에 동의했는지"를 가릴 수 있다.
 # ⚠️ terms.html을 고치면 이 값도 함께 올릴 것 — 안 올리면 옛 판에 동의한 사람과
@@ -8095,6 +8108,63 @@ def _signup_bonus_active():
     return datetime.now(timezone.utc).astimezone(KST).date() <= end
 
 
+def _exam_event_active():
+    """동형 모의고사 상한 이벤트가 지금(KST 기준) 살아 있는지. 끝나는 날은 그날까지 포함."""
+    if EXAM_EVENT_CAP_KRW <= 0 or not EXAM_EVENT_UNTIL:
+        return False
+    try:
+        end = datetime.strptime(EXAM_EVENT_UNTIL, "%Y-%m-%d").date()
+    except ValueError:
+        print(f"[이벤트] EXAM_EVENT_UNTIL를 읽을 수 없다: {EXAM_EVENT_UNTIL!r}", flush=True)
+        return False
+    return datetime.now(timezone.utc).astimezone(KST).date() <= end
+
+
+def _exam_run_state(user_id, run_id):
+    """이번 '한 번 누름'에서 지금까지 받은 값과 문항 수. (charged, count)를 돌려준다.
+
+    회원 문서의 exam_event_run 한 칸에 둔다 — 한 사람이 동시에 두 번 누를 일은 없고
+    (화면이 제작 중에는 단추를 막는다), 따로 컬렉션을 둘 만큼의 기록도 아니다.
+    다른 run_id이거나 오래된 기록이면 새 누름으로 보고 0부터 센다."""
+    snap = DB.collection("users").document(user_id).get()
+    run = ((snap.to_dict() or {}) if snap.exists else {}).get("exam_event_run") or {}
+    if run.get("id") != run_id:
+        return 0, 0
+    try:
+        started = datetime.fromisoformat(run.get("started", ""))
+        if (datetime.now(timezone.utc) - started).total_seconds() > EXAM_EVENT_RUN_MAX_AGE:
+            return 0, 0
+    except (TypeError, ValueError):
+        return 0, 0
+    return int(run.get("charged") or 0), int(run.get("count") or 0)
+
+
+def _exam_run_capped(user_id, run_id, cost):
+    """이번 문항에 실제로 받을 값 — 상한까지 남은 만큼만. 상한이 안 걸리면 cost 그대로."""
+    charged, count = _exam_run_state(user_id, run_id)
+    if count >= EXAM_EVENT_RUN_MAX_Q:
+        return cost
+    return max(0, min(cost, EXAM_EVENT_CAP_KRW - charged))
+
+
+def _exam_run_record(user_id, run_id, amount):
+    """문항 하나가 만들어져 값을 받은 뒤 부른다 — 받은 값과 문항 수를 쌓는다."""
+    charged, count = _exam_run_state(user_id, run_id)
+    ref = DB.collection("users").document(user_id)
+    if count == 0 and charged == 0:
+        ref.update({"exam_event_run": {
+            "id": run_id,
+            "started": datetime.now(timezone.utc).isoformat(),
+            "charged": amount,
+            "count": 1,
+        }})
+    else:
+        ref.update({
+            "exam_event_run.charged": firestore.Increment(amount),
+            "exam_event_run.count": firestore.Increment(1),
+        })
+
+
 def _signup_grant():
     """새 회원에게 넣어 줄 축하금과 원장에 적을 이름. (금액, 이름)을 돌려준다.
 
@@ -8714,6 +8784,14 @@ CHANGELOG = [
             "문제를 만들 때만 문항 수대로 값이 매겨집니다.",
             "기출 구성과 만든 시험지를 따로 저장할 수 있고, 다른 시험지로 넘어갈 때는 "
             "'🔄 새로 시작하기'로 한 번에 비웁니다. 답지에도 A형·B형이 적힙니다.",
+        ],
+    },    {
+        "version": 45,
+        "date": "2026-09-28",
+        "items": [
+            "🎉 10월 16일까지 동형 모의고사 이벤트 — [📝 문제 제작]을 한 번 누를 때 "
+            "아무리 많이 만들어도(A형·B형 두 부를 함께 만들어도) 최대 9,900포인트만 "
+            "받습니다. 문항이 적으면 평소대로 문항 수만큼만 나갑니다.",
         ],
     },
 ]
@@ -10579,7 +10657,17 @@ class Handler(BaseHTTPRequestHandler):
         생성 계열 응답은 전부 여기를 지난다. 한 자리에 모아 둔 것은 순서가 중요해서다:
         차감을 먼저 하고 그다음에 들고 있어야, 여기서부터 답장이 끊기더라도 화면이 같은
         요청번호로 다시 물어 값을 두 번 내지 않고 받아 갈 수 있다(_hold_get 참고)."""
+        if self._exam_run:
+            # 동형 모의고사 상한 이벤트 — 잔액을 확인한 뒤 Gemini를 기다리는 사이에 값이
+            # 바뀌었을 수 있어, 받기 직전에 상한까지 남은 값을 한 번 더 센다.
+            self._pending_charge = _exam_run_capped(
+                self._auth_user_id, self._exam_run, self._pending_charge)
         charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
+        if self._exam_run:
+            try:
+                _exam_run_record(self._auth_user_id, self._exam_run, self._pending_charge)
+            except Exception as e:  # 기록이 실패해도 만든 문항은 돌려준다
+                print(f"[이벤트] 동형 모의고사 누름 기록 실패: {e}", flush=True)
         _hold_put(self._auth_user_id, path, (req or {}).get("reqId"), result)
         self._send_json(result)
 
@@ -10663,6 +10751,10 @@ class Handler(BaseHTTPRequestHandler):
                 "examScan": PRICE_EXAMSCAN_KRW,
                 # 시험지에서 지문 꺼내기 — 이것만 쪽당이다(화면이 쪽 수를 곱해 보여 준다)
                 "examOcrPage": PRICE_EXAM_OCR_KRW,
+                # 동형 모의고사 상한 이벤트 — 한 번 누를 때(여러 부 합쳐) 이 값까지만.
+                # 끝나면 0과 빈 날짜가 내려가 화면의 안내와 상한 계산이 함께 사라진다.
+                "examEventCap": EXAM_EVENT_CAP_KRW if _exam_event_active() else 0,
+                "examEventUntil": EXAM_EVENT_UNTIL if _exam_event_active() else "",
                 # PDF에서 지문 꺼내기 — 규칙으로 나눌 때는 언제나 0원이고,
                 # 'AI로 다시 시도'를 눌렀을 때만 이 값이 매겨진다
                 "pdfSplit": PRICE_PDFSPLIT_KRW,
@@ -10959,6 +11051,7 @@ class Handler(BaseHTTPRequestHandler):
         self._auth_user_id = None
         self._pending_charge = 0
         self._pending_label = "사용"
+        self._exam_run = None
 
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/brief", "/api/models", "/api/quiz", "/api/workbook",
@@ -11083,6 +11176,14 @@ class Handler(BaseHTTPRequestHandler):
                     cost = _quiz_action_cost(quiz_items)
                     total_q = sum(n for _t, n in quiz_items)
                     self._pending_label = f"문제 제작 · {total_q}문항"
+                    # 동형 모의고사 상한 이벤트 — 시험지 탭은 한 호출에 한 문항만 보낸다.
+                    # 그 모양이 아닌 요청에 examRun이 실려 오면 평소 값으로 받는다.
+                    exam_run = str(req.get("examRun") or "")
+                    if (_exam_event_active() and _EXAM_RUN_RE.match(exam_run)
+                            and total_q == 1 and len(quiz_items) == 1):
+                        self._exam_run = exam_run
+                        cost = _exam_run_capped(user_id, exam_run, cost)
+                        self._pending_label = "동형 모의고사 · 1문항"
                 elif path == "/api/workbook":
                     wb_stages = parse_workbook_stages(req.get("stages"))
                     cost = _workbook_cost(wb_stages)

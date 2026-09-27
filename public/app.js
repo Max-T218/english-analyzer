@@ -8628,7 +8628,7 @@ const HOWTO = {
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b> — 사이트 저장은 만든 시험지를 저장하고, 기출 구성 저장과는 따로 쌓입니다. 저장한 시험지는 맨 위 <b>[📂 저장한 시험지 불러오기]</b>로 되불러옵니다.",
       "다른 시험지를 만들려면 맨 위 <b>[🔄 새로 시작하기]</b>를 누릅니다 — 올린 기출·분석표·시험 범위 지문·만든 시험지를 모두 비우고, 학교 이름 같은 머리글은 남깁니다. 필요한 것은 먼저 저장해 두세요.",
     ],
-    tip: "목표 어법도 이 탭의 칸을 씁니다 — 지문 칸이 따로이므로 위 공용 칸의 값은 여기에 쓰이지 않습니다. 시험 범위 지문은 <b>[💾 지문 저장]</b>으로 남겨 두면 학기 내내 되불러 쓸 수 있습니다.",
+    tip: "이벤트 기간에는 [📝 문제 제작] 한 번에(A형·B형 포함) 드는 포인트에 상한이 있습니다 — 상한과 기간은 문제 제작 단추 위 예상 비용 옆에 표시됩니다. 목표 어법도 이 탭의 칸을 씁니다 — 지문 칸이 따로이므로 위 공용 칸의 값은 여기에 쓰이지 않습니다. 시험 범위 지문은 <b>[💾 지문 저장]</b>으로 남겨 두면 학기 내내 되불러 쓸 수 있습니다.",
   },
 
   students: {
@@ -10476,6 +10476,26 @@ function examSlotPrice(slot) {
   return PRICING.saq;
 }
 
+/* 동형 모의고사 상한 이벤트 — [📝 문제 제작] 한 번(여러 부 합쳐)에 이 값까지만 받는다.
+   상한도 끝나는 날도 서버가 정한다(/api/pricing). 실제로 상한을 거는 것도 서버다 —
+   여기서는 예상 비용과 안내 문구를 서버와 같게 보여 줄 뿐이다. */
+function examEventCap() {
+  return PRICING && Number(PRICING.examEventCap) > 0 ? Number(PRICING.examEventCap) : 0;
+}
+
+function examRunPrice(full) {
+  const cap = examEventCap();
+  return cap ? Math.min(full, cap) : full;
+}
+
+function examEventNote() {
+  const cap = examEventCap();
+  if (!cap) return "";
+  const m = String(PRICING.examEventUntil || "").match(/^\d{4}-(\d{2})-(\d{2})$/);
+  const when = m ? `${Number(m[1])}월 ${Number(m[2])}일까지 ` : "";
+  return `${when}이벤트 — 한 번 제작에 아무리 많이 만들어도(A형·B형 포함) 최대 ${pt(cap)}`;
+}
+
 function examCopies() {
   const n = Number(examCopiesEl ? examCopiesEl.value : 1) || 1;
   return Math.min(EXAM_PAPER_MAX_COPIES, Math.max(1, n));
@@ -10495,8 +10515,13 @@ function updateExamPaperCost() {
     `· 지문 <b>${jobs.length}개</b> 입력됨`,
   ];
   if (PRICING) {
-    const won = slots.reduce((s, sl) => s + examSlotPrice(sl), 0) * copies;
-    parts.push(`— 예상 <b>${pt(won)}</b>`);
+    const full = slots.reduce((s, sl) => s + examSlotPrice(sl), 0) * copies;
+    const won = examRunPrice(full);
+    parts.push(
+      `— 예상 <b>${pt(won)}</b>` +
+      (won < full ? ` <s>${pt(full)}</s>` : "") +
+      (examEventCap() ? ` <span class="exam-event-tag">${esc(examEventNote())}</span>` : "")
+    );
   }
   // 대원칙 1이 곧 '문항 수 ≤ 지문 수'다. 지문이 모자라면 배분 자체가 성립하지 않으므로
   // 제작 버튼을 누르기 전에 먼저 알려 준다.
@@ -10623,10 +10648,11 @@ async function runExamPaper() {
   if (!examPlanNow || examPaperBusy) return;
   const { jobs, copies, plans } = examPlanNow;
   const won = PRICING
-    ? examPlanNow.slots.reduce((s, sl) => s + examSlotPrice(sl), 0) * copies
+    ? examRunPrice(examPlanNow.slots.reduce((s, sl) => s + examSlotPrice(sl), 0) * copies)
     : 0;
   const totalSteps = plans.reduce((n, rows) => n + rows.length, 0);
-  if (!(await costConfirmed(won, `시험지 ${copies}부(${totalSteps}문항)를 만듭니다.`, copies,
+  const eventLine = examEventNote() ? `\n(${examEventNote()})` : "";
+  if (!(await costConfirmed(won, `시험지 ${copies}부(${totalSteps}문항)를 만듭니다.${eventLine}`, copies,
       `만들 부수를 ${copies}부에서 줄이거나, 시험지 구성에서 문항 수를 줄이면 값이 내려갑니다.`))) return;
 
   examPaperBusy = true;
@@ -10638,6 +10664,8 @@ async function runExamPaper() {
   if (replanBtn) replanBtn.disabled = true;
 
   const jobOf = (no) => jobs.find((j) => j.no === no);
+  // 이번 누름의 표 — 서버가 이 값으로 여러 부의 값을 모아 상한(이벤트)을 건다
+  const examRun = newReqId();
   let step = 0;
   let stopped = false;
 
@@ -10662,6 +10690,7 @@ async function runExamPaper() {
             variation: "verbatim",
             // 이 탭은 지문칸이 따로이므로 목표 어법도 이 탭 칸의 값을 쓴다
             targetGrammar: examGrammarEl.value,
+            examRun,
           },
           "문제 생성에 실패했습니다."
         );
