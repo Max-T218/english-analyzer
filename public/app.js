@@ -893,9 +893,6 @@ deleteAccountBtn.addEventListener("click", async () => {
    1) 서버에 결제 요청을 만든다(아직 포인트 안 줌) → 2) 포트원 결제창을 띄운다 →
    3) 결제창이 끝나면 서버에 확인시킨다 — 서버가 포트원에 직접 물어봐서 실제로
    결제된 게 맞을 때만 충전한다(브라우저가 '성공했다'는 말만 믿지 않는다). */
-const rechargeCustomForm = $("rechargeCustomForm");
-const rechargeCustomAmountEl = $("rechargeCustomAmount");
-const rechargeCustomBtn = $("rechargeCustomBtn");
 const rechargeStatusEl = $("rechargeStatus");
 const rechargeErrorEl = $("rechargeError");
 const rechargePhoneEl = $("rechargePhone");
@@ -903,7 +900,7 @@ const rechargePhoneEl = $("rechargePhone");
 async function submitRecharge(amount) {
   rechargeErrorEl.textContent = "";
   if (!Number.isFinite(amount) || amount <= 0) {
-    rechargeErrorEl.textContent = "충전할 금액을 올바르게 입력하세요.";
+    rechargeErrorEl.textContent = "충전할 금액을 골라 주세요.";
     return;
   }
   // 이니시스 V2 일반결제는 구매자 이메일·휴대폰 번호가 없으면 결제창 자체를 못 띄운다
@@ -958,8 +955,6 @@ const openRechargeBtn = $("openRechargeBtn");
 if (openRechargeBtn) {
   openRechargeBtn.addEventListener("click", () => {
     rechargeErrorEl.textContent = "";
-    rechargeCustomForm.hidden = true;
-    rechargeCustomAmountEl.value = "";
     openModal(rechargeModalEl);
   });
 }
@@ -967,14 +962,6 @@ $("rechargePresets").addEventListener("click", (e) => {
   const btn = e.target.closest(".recharge-preset-btn");
   if (!btn) return;
   submitRecharge(parseInt(btn.dataset.amount, 10));
-});
-$("rechargeCustomToggleBtn").addEventListener("click", () => {
-  rechargeCustomForm.hidden = !rechargeCustomForm.hidden;
-  if (!rechargeCustomForm.hidden) rechargeCustomAmountEl.focus();
-});
-rechargeCustomForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  submitRecharge(parseInt(rechargeCustomAmountEl.value, 10));
 });
 
 /* ── 이메일/비밀번호 로그인·회원가입 ── */

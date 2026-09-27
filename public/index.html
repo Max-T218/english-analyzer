@@ -861,21 +861,17 @@
       </div>
 
       <div class="recharge-presets" id="rechargePresets">
+        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="1000">1,000원</button>
+        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="2000">2,000원</button>
+        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="5000">5,000원</button>
         <button type="button" class="btn ghost small recharge-preset-btn" data-amount="10000">10,000원</button>
         <button type="button" class="btn ghost small recharge-preset-btn" data-amount="20000">20,000원</button>
         <button type="button" class="btn ghost small recharge-preset-btn" data-amount="30000">30,000원</button>
         <button type="button" class="btn ghost small recharge-preset-btn" data-amount="50000">50,000원</button>
-        <button type="button" class="btn ghost small" id="rechargeCustomToggleBtn">직접입력</button>
       </div>
-
-      <form class="auth-panel" id="rechargeCustomForm" hidden>
-        <label for="rechargeCustomAmount">충전할 금액(원)</label>
-        <input type="number" id="rechargeCustomAmount" min="1" step="1" placeholder="예: 15000">
-        <div class="gate-actions">
-          <button type="submit" class="btn" id="rechargeCustomBtn">충전하기</button>
-          <span class="gate-status" id="rechargeStatus"></span>
-        </div>
-      </form>
+      <!-- 금액 직접 입력은 뺐다 — 카카오페이 입점 심사가 '고객이 금액을 직접 입력하는
+           결제'를 받지 않는다(2026-09-27). 서버도 RECHARGE_AMOUNTS 밖의 금액은 거부한다. -->
+      <span class="gate-status" id="rechargeStatus"></span>
       <div class="error" id="rechargeError"></div>
     </div>
   </div>

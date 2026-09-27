@@ -168,6 +168,9 @@ PORTONE_STORE_ID = os.environ.get("PORTONE_STORE_ID", "")
 PORTONE_CHANNEL_KEY_CARD = os.environ.get("PORTONE_CHANNEL_KEY_CARD", "")
 PORTONE_API_SECRET = os.environ.get("PORTONE_API_SECRET", "")
 PORTONE_API_BASE = "https://api.portone.io"
+# 충전할 수 있는 금액. 화면(public/index.html의 recharge-preset-btn)과 반드시 같이 고칠 것 —
+# 고객이 금액을 직접 입력하는 결제는 카카오페이 입점 심사에서 받지 않는다.
+RECHARGE_AMOUNTS = (1_000, 2_000, 5_000, 10_000,20_000, 30_000, 50_000)
 # 결제 취소 알림(웹훅)의 서명을 확인할 열쇠. 포트원 콘솔의 '결제알림(Webhook) 관리'에서
 # 받는다. 비어 있으면 서명 확인을 건너뛰되 로그에 남긴다 — 알림은 '다시 확인해 보라'는
 # 신호로만 쓰고 실제 취소 금액은 서버가 포트원 API에 직접 물어보므로, 가짜 알림이 와도
@@ -10953,7 +10956,10 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 self._send_json({"error": "충전 금액이 올바르지 않습니다."}, 400)
                 return
-            if amount <= 0 or amount > 10_000_000:
+            # 정해 둔 금액만 받는다 — 카카오페이 입점 심사가 '고객이 금액을 직접
+            # 입력하는 결제'를 받지 않는다(2026-09-27). 화면에서 칸만 빼면 요청을
+            # 직접 보내 임의 금액을 결제할 수 있으므로 서버에서 막는다.
+            if amount not in RECHARGE_AMOUNTS:
                 self._send_json({"error": "충전 금액이 올바르지 않습니다."}, 400)
                 return
             if not (PORTONE_STORE_ID and PORTONE_CHANNEL_KEY_CARD and PORTONE_API_SECRET):
