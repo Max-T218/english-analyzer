@@ -7158,6 +7158,12 @@ def _gemini_call_with_retry(data, api_key, model, url=None, allow_fallback=True,
         raise RuntimeError(f"Gemini API 오류 {e.code}: {msg}")
     except urllib.error.URLError as e:
         raise RuntimeError(f"네트워크 오류: {e.reason}")
+    # 응답을 기다리다 GEMINI_TIMEOUT을 넘겼다. 그냥 두면 파이썬의 영어 문구
+    # ("The read operation timed out")가 선생님 화면에 그대로 나갔다(2026-09-28).
+    except TimeoutError:
+        raise RuntimeError(
+            f"AI가 {int(GEMINI_TIMEOUT // 60)}분 안에 답하지 못했습니다(시간 초과)"
+        )
 
 
 def _repair_truncated_json(text):

@@ -9156,6 +9156,20 @@ let examDocNames = [];          // 부 이름(올린 파일 이름). 길이가 �
    새 기출을 올렸을 때 앞서 분석한 부까지 다시 읽으면 그 값을 또 내야 하고 시간도
    부마다 곱해진다. 여기에 있는 부는 건너뛴다. */
 let examDocScans = new Map();   // doc → [문항…]
+/* 분석하다 끝내 못 읽은 쪽. 부는 위 examDocScans에 '읽음'으로 들어가므로, 여기 따로
+   적어 두지 않으면 [유형 분석하기]를 다시 눌러도 그 쪽을 다시 읽을 길이 없었다 —
+   문항이 빠진 채로 굳었다. 다시 누르면 여기 적힌 쪽만 한 쪽씩 읽는다(runExamScan). */
+let examDocFailed = new Map();  // doc → Set(그 부 안에서 몇째 쪽, 1부터)
+
+function examFailedPagesText() {
+  const parts = [];
+  examDocFailed.forEach((pages, doc) => {
+    const list = [...pages].sort((a, b) => a - b).join("·");
+    parts.push(examDocNames.length > 1
+      ? `${examDocNames[doc] || `기출 ${doc + 1}`} ${list}쪽` : `${list}쪽`);
+  });
+  return parts.join(" / ");
+}
 let examBusy = false;
 let examAutoTimer = null;
 let examAutoDone = false;       // 지금 올려 둔 시험지로 자동 분석을 이미 걸었는가
@@ -9271,7 +9285,9 @@ function examSyncStatus() {
   const done = examDocScans.size;
   const left = docs - done;
   let next = "";
-  if (!left) {
+  if (!left && examDocFailed.size) {
+    next = ` · 못 읽은 쪽(${examFailedPagesText()})이 있습니다 — “유형 분석하기”를 누르면 그 쪽만 다시 읽습니다`;
+  } else if (!left) {
     next = done ? " · 모두 분석했습니다" : "";
   } else if (!examAutoDone) {
     // 자동 분석이 걸려 있다. 첫 부인지 이어 붙이는 부인지에 따라 말을 바꾼다.
@@ -9331,6 +9347,7 @@ examClearBtn.addEventListener("click", () => {
   examPages = [];
   examDocNames = [];
   examDocScans.clear();
+  examDocFailed.clear();
   examAutoDone = false;   // 새 시험지를 올리면 다시 자동으로 분석한다
   examResultEl.innerHTML = "";
   examErrorEl.textContent = "";
@@ -9865,13 +9882,23 @@ async function runExamScan() {
     }
     i = j;
   }
+  // 지난번에 못 읽은 쪽은 그 쪽만 한 쪽씩 다시 읽는다(examDocFailed 참고)
+  examDocFailed.forEach((pages, doc) => {
+    const docStart = examPages.findIndex((p) => (p.doc || 0) === doc);
+    if (docStart < 0) return;
+    [...pages].sort((a, b) => a - b).forEach((n) => {
+      const page = examPages[docStart + n - 1];
+      if (page && (page.doc || 0) === doc) batches.push({ from: n, files: [page], doc });
+    });
+  });
   if (!batches.length) {
     // 새로 올린 기출이 없다 — 이미 읽어 둔 것으로 표만 다시 그린다
     examShowScanResult([]);
     return;
   }
   if (PRICING && PRICING.examScan > 0) {
-    // 나눠 부르면 호출 수만큼 값이 매겨진다 — 확인 문구에 실제 총액을 적는다
+    // 나눠 부르면 호출 수만큼 값이 매겨진다 — 확인 문구에 실제 총액을 적는다.
+    // (묶음이 실패해 한 쪽씩 다시 읽는 호출은 여기 안 셌다 — 지금은 분석이 0원이다)
     const won = PRICING.examScan * batches.length;
     if (!(await costConfirmed(won, `기출 시험지 ${examPages.length}쪽을 ${batches.length}번에 나눠 분석합니다.`,
         examPages.length, "분석할 쪽 수를 줄이면 값이 내려갑니다."))) return;
@@ -9887,41 +9914,82 @@ async function runExamScan() {
 
   const questions = [];
   /* 쪽 경계에 걸친 문항이 두 묶음에서 겹쳐 오는 것을 막는다. 부마다 따로 센다 —
-     어느 시험지든 1·2·3번을 갖고 있어, 한 집합으로 세면 둘째 부가 통째로 버려진다. */
+     어느 시험지든 1·2·3번을 갖고 있어, 한 집합으로 세면 둘째 부가 통째로 버려진다.
+     못 읽은 쪽만 다시 읽을 때는 그 부에서 이미 읽은 번호부터 깔고 시작한다. */
   const seenByDoc = new Map();
+  examDocScans.forEach((qs, doc) => {
+    seenByDoc.set(doc, new Set(qs.map((q) => String(q.no || "").trim()).filter(Boolean)));
+  });
   const notes = [];
-  const failed = [];
+  const okPages = [];    // [{doc, page}] — 이번에 읽은 쪽
+  const badPages = [];   // [{doc, page}] — 끝내 못 읽은 쪽
+  let lastErr = "";
   let title = "";
+  const docLabel = (doc) => (examDocNames.length > 1
+    ? `${examDocNames[doc] || `기출 ${doc + 1}`} — ` : "");
+  const pagesOf = (from, n, doc) => Array.from({ length: n }, (_v, k) => ({ doc, page: from + k }));
 
+  const readBatch = async (from, files, doc) => {
+    const scan = await postGenerate(
+      "/api/examscan",
+      { files, pageFrom: from, pageTotal: examPages.length },
+      "시험지 분석에 실패했습니다."
+    );
+    if (!title && scan.title) title = scan.title;
+    if (scan.note) notes.push(scan.note);
+    let seen = seenByDoc.get(doc);
+    if (!seen) { seen = new Set(); seenByDoc.set(doc, seen); }
+    for (const q of scan.questions || []) {
+      const key = String(q.no || "").trim();
+      if (key && seen.has(key)) continue;   // 같은 번호가 또 오면 먼저 읽은 것을 남긴다
+      if (key) seen.add(key);
+      questions.push({ ...q, doc });
+    }
+    okPages.push(...pagesOf(from, files.length, doc));
+  };
+
+  let quotaOut = false;
   for (let b = 0; b < batches.length; b++) {
     const { from, files, doc } = batches[b];
     const to = from + files.length - 1;
-    const which = examDocNames.length > 1
-      ? `${examDocNames[doc] || `기출 ${doc + 1}`} — ` : "";
+    if (quotaOut) {   // 한도 소진 뒤의 묶음은 부르지 않고 '못 읽은 쪽'으로 남긴다
+      badPages.push(...pagesOf(from, files.length, doc));
+      continue;
+    }
     examLoadingTextEl.textContent =
       batches.length > 1
-        ? `AI가 시험지를 읽고 있습니다… (${b + 1}/${batches.length}) — ${which}${from}~${to}쪽`
-        : `AI가 시험지 ${examPages.length}쪽을 읽고 있습니다… (1~3분 걸립니다)`;
+        ? `AI가 시험지를 읽고 있습니다… (${b + 1}/${batches.length}) — ${docLabel(doc)}${from}~${to}쪽`
+        : `AI가 시험지 ${files.length}쪽을 읽고 있습니다… (1~3분 걸립니다)`;
     try {
-      const scan = await postGenerate(
-        "/api/examscan",
-        { files, pageFrom: from, pageTotal: examPages.length },
-        "시험지 분석에 실패했습니다."
-      );
-      if (!title && scan.title) title = scan.title;
-      if (scan.note) notes.push(scan.note);
-      let seen = seenByDoc.get(doc);
-      if (!seen) { seen = new Set(); seenByDoc.set(doc, seen); }
-      for (const q of scan.questions || []) {
-        const key = String(q.no || "").trim();
-        if (key && seen.has(key)) continue;   // 같은 번호가 또 오면 먼저 읽은 것을 남긴다
-        if (key) seen.add(key);
-        questions.push({ ...q, doc });
-      }
+      await readBatch(from, files, doc);
     } catch (err) {
-      failed.push(`${from}~${to}쪽: ${err.message || String(err)}`);
+      lastErr = err.message || String(err);
       // 한도 소진은 기다려도 안 풀린다 — 남은 묶음을 시도하지 않는다
-      if (isQuotaError(err)) break;
+      if (isQuotaError(err)) {
+        quotaOut = true;
+        badPages.push(...pagesOf(from, files.length, doc));
+        continue;
+      }
+      /* 여러 쪽 묶음이 실패하면 그 자리에서 한 쪽씩 나눠 다시 읽는다. Pro가 3쪽을
+         한꺼번에 보다가 5분(GEMINI_TIMEOUT)을 넘겨 1~3쪽 문항이 통째로 빠진 일이
+         있었다(2026-09-28, 두 번 다 첫 묶음). 한 쪽이면 일이 작아 제한 안에 든다.
+         쪽 경계에 걸친 문항은 앞뒤 쪽에서 겹쳐 올 수 있는데, 위 번호 중복 거르기가 맡는다. */
+      if (files.length === 1) {
+        badPages.push({ doc, page: from });
+        continue;
+      }
+      for (let k = 0; k < files.length; k++) {
+        if (quotaOut) { badPages.push({ doc, page: from + k }); continue; }
+        examLoadingTextEl.textContent =
+          `${docLabel(doc)}${from}~${to}쪽을 한 번에 못 읽어 한 쪽씩 다시 읽습니다… (${from + k}쪽)`;
+        try {
+          await readBatch(from + k, [files[k]], doc);
+        } catch (err2) {
+          lastErr = err2.message || String(err2);
+          if (isQuotaError(err2)) quotaOut = true;
+          badPages.push({ doc, page: from + k });
+        }
+      }
     }
   }
 
@@ -9933,16 +10001,33 @@ async function runExamScan() {
     const arr = examDocScans.get(q.doc);
     if (arr) arr.push(q);
   });
+  /* 못 읽은 쪽을 다시 읽어 붙인 문항은 끝에 쌓이므로 번호 차례로 다시 세운다.
+     번호가 숫자가 아닌 것(서답형 1 등)은 숫자 뒤에, 서로의 차례는 그대로 둔다. */
+  if (okPages.length && examDocFailed.size) {
+    const num = (q) => { const m = /^\d+/.exec(String(q.no || "").trim()); return m ? Number(m[0]) : Infinity; };
+    examDocScans.forEach((arr) => arr.sort((a, b) => num(a) - num(b)));
+  }
+  // 못 읽은 쪽 장부를 고친다 — 이번에 읽힌 쪽은 지우고, 또 실패한 쪽은 남긴다
+  okPages.forEach(({ doc, page }) => { const s = examDocFailed.get(doc); if (s) s.delete(page); });
+  badPages.forEach(({ doc, page }) => {
+    if (!examDocFailed.has(doc)) examDocFailed.set(doc, new Set());
+    examDocFailed.get(doc).add(page);
+  });
+  examDocFailed.forEach((s, doc) => { if (!s.size) examDocFailed.delete(doc); });
   if (title) examScanTitle = examScanTitle || title;
 
+  const failedTxt = examFailedPagesText();
   if (questions.length || examDocScans.size) {
-    if (failed.length) {
-      notes.push(`읽지 못한 쪽이 있습니다 — ${failed.join(" / ")}. 그 쪽의 문항은 빠져 있습니다.`);
+    if (failedTxt) {
+      notes.push(`읽지 못한 쪽이 있습니다 — ${failedTxt}(${lastErr}). 그 쪽의 문항은 빠져 있습니다. ` +
+                 `“유형 분석하기”를 다시 누르면 그 쪽만 다시 읽습니다.`);
     }
     examShowScanResult(notes);
     refreshTokenDisplay();  // 분석에 요금이 나갔으므로 잔액 표시만 갱신(화면은 그대로)
   } else {
-    examErrorEl.textContent = failed.join(" / ") || "시험지에서 문항을 찾지 못했습니다.";
+    examErrorEl.textContent = failedTxt
+      ? `읽지 못한 쪽이 있습니다 — ${failedTxt}(${lastErr}). “유형 분석하기”를 다시 누르면 그 쪽만 다시 읽습니다.`
+      : "시험지에서 문항을 찾지 못했습니다.";
   }
   examLoadingEl.classList.remove("on");
   examBusy = false;
@@ -10990,6 +11075,7 @@ function resetExamTab() {
   examPages = [];
   examDocNames = [];
   examDocScans.clear();
+  examDocFailed.clear();
   examAutoDone = false;
   examMergeRows = [];
   examScanTitle = "";
