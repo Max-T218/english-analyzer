@@ -8621,7 +8621,7 @@ const HOWTO = {
     steps: [
       "기출 시험지 <b>PDF·사진</b>을 끌어다 놓으면 바로 <b>유형 분석</b>을 시작합니다. 한 번 분석해 저장해 둔 구성이 있으면 <b>[📂 저장한 구성 불러오기]</b>로 건너뛰어도 됩니다.",
       "기출을 <b>여러 부</b> 쓰려면 다음 시험지를 이어서 올리세요 — 곧바로 이어서 분석하고, 한 구성으로 합칩니다. <b>한 번이라도 나온 유형은 1문항씩</b> 깔고 남는 자리를 자주 나온 유형에 더 줍니다.",
-      "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손봅니다 — 고친 숫자는 누를 것 없이 <b>바로</b> 아래 제작 칸에 반영됩니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 따로 남겨 둘 수 있습니다 — 시험지를 만든 뒤에도 누를 수 있습니다.",
+      "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손봅니다 — 고친 숫자는 누를 것 없이 <b>바로</b> 아래 제작 칸에 반영됩니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 따로 남겨 둘 수 있습니다 — 시험지를 만든 뒤에도 누를 수 있습니다. <b>불러온 구성도</b> 같은 표가 떠서 개수를 고칠 수 있습니다.",
       "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b>로 채울 수도 있고, 기출 속 지문을 쓰려면 <b>[📄 지문도 가져오기]</b>를 누르세요(쪽마다 값이 붙습니다).",
       "(선택) 목표 어법 · 출제 순서 · 몇 부(1부 / A형·B형) · 시험지 머리글(학교 이름·고사 이름 등) · 표지 제목을 정합니다.",
       "<b>[📝 문제 제작]</b>을 누릅니다.",
@@ -9512,17 +9512,23 @@ function syncExamMergeTotal() {
   }
 }
 
-function renderExamMerge(questions, note, detailHtml) {
-  const docs = examDocNames.length;
+/* saved가 참이면 저장해 둔 구성을 불러온 것이다(applyExamSpecPayload). 올린 기출이 없으니
+   부별 칸 하나를 '저장본'으로 두고, 그 개수를 그대로 기본값으로 쓴다(한 부일 때와 같다).
+   예전에는 불러오면 요약 한 줄만 나와, 문항 수를 고치려면 기출을 다시 올려야 했다. */
+function renderExamMerge(questions, note, detailHtml, saved) {
+  const names = saved ? ["저장본"] : examDocNames;
+  const docs = names.length;
   examMergeRows = buildExamMergeRows(questions, docs);
   if (!examMergeRows.length) {
     examErrorEl.textContent = "올린 기출에서 이 앱으로 만들 수 있는 유형을 찾지 못했습니다.";
     return;
   }
   const dropped = (questions || []).filter((q) => !q.kind || q.fit === "없음").length;
-  const heads = examDocNames
-    .map((nm, i) => `<th class="exam-merge-doc" title="${esc(nm)}">${esc(String(i + 1))}부</th>`)
-    .join("");
+  const heads = saved
+    ? `<th class="exam-merge-doc">저장본</th>`
+    : names
+      .map((nm, i) => `<th class="exam-merge-doc" title="${esc(nm)}">${esc(String(i + 1))}부</th>`)
+      .join("");
   const rows = examMergeRows
     .map((r, i) => `
       <tr data-row="${i}">
@@ -9539,24 +9545,31 @@ function renderExamMerge(questions, note, detailHtml) {
 
   examResultEl.innerHTML = `
     <section class="panel exam-report">
+      ${saved ? `
+      <h3 class="exam-title">저장한 기출 구성을 불러왔습니다</h3>
+      <p class="hint">
+        저장할 때의 개수가 그대로 들어가 있습니다. 숫자는 바꿔도 됩니다 — 안 낼 유형은 0으로 두세요.
+        고친 구성을 다음에도 쓰려면 <b>[💾 이 기출 구성 저장]</b>으로 다시 저장하세요.
+        ${dropped ? `이 앱으로 못 만드는 문항 ${dropped}개는 빼고 셌습니다.` : ""}
+      </p>` : `
       <h3 class="exam-title">기출 ${docs}부를 한 구성으로 합칩니다</h3>
       <p class="exam-summary">
-        올린 기출: ${examDocNames.map((nm, i) => `<b>${i + 1}부</b> ${esc(nm)}`).join(" · ")}
+        올린 기출: ${names.map((nm, i) => `<b>${i + 1}부</b> ${esc(nm)}`).join(" · ")}
       </p>
       <p class="hint">
         <b>한 번이라도 나온 유형은 1문항씩 깔고</b>, 남는 자리를 자주 나온 유형에 더 줬습니다.
         숫자는 바꿔도 됩니다 — 안 낼 유형은 0으로 두세요.
         ${dropped ? `이 앱으로 못 만드는 문항 ${dropped}개는 빼고 셌습니다.` : ""}
-      </p>
+      </p>`}
       ${note ? `<p class="hint">${esc(note)}</p>` : ""}
       <div class="exam-merge-target">
         <label for="examMergeTarget"><b>총 문항 수</b></label>
         <input type="number" id="examMergeTarget" min="1" max="${EXAM_MERGE_MAX_TOTAL}"
                value="${examMergeDefaultTotal(examMergeRows)}" inputmode="numeric">
         <span class="hint">
-          기본값은 <b>기출 한 부의 평균 크기</b>입니다${docs > 1
+          ${saved ? "기본값은 <b>저장한 구성의 문항 수</b>입니다." : `기본값은 <b>기출 한 부의 평균 크기</b>입니다${docs > 1
             ? ` — 올린 ${docs}부의 문항 수를 평균 낸 값이지 더한 값이 아닙니다`
-            : ""}.
+            : ""}.`}
           실제 시험에 맞춰 바꾸면 유형마다 다시 나눠 드립니다.
         </span>
       </div>
@@ -9622,7 +9635,8 @@ function renderExamMerge(questions, note, detailHtml) {
      표에는 0인데 예전 문항 수대로 만들어진다. */
   const applyMerge = () => {
     openExamPaperPanel({
-      title: docs > 1 ? `기출 ${docs}부 합친 구성` : (examScanTitle || "기출 시험지"),
+      title: saved ? "저장한 기출 구성"
+        : docs > 1 ? `기출 ${docs}부 합친 구성` : (examScanTitle || "기출 시험지"),
       note: "", questions: examMergeToQuestions(examMergeRows),
     });
   };
@@ -10977,7 +10991,16 @@ function examSpecToScan(spec) {
    구성표가 함께 저장돼 있으면 기출을 다시 올리지 않고 제작 칸을 연다. 알릴 말을 돌려준다. */
 function applyExamSpecPayload(examSpec) {
   const { scan, stale } = examSpecToScan(examSpec);
-  openExamPaperPanel(scan);   // examScanNow를 세우고 구성 안내를 다시 그린다
+  /* 기출을 방금 분석했을 때와 같은 구성표(± · 총 문항 수)를 띄워, 불러온 구성도 고칠 수
+     있게 한다. 표가 제작 칸도 함께 연다(renderExamMerge → openExamPaperPanel).
+     만들 수 있는 문항이 하나도 없는 저장본이면 표 없이 예전처럼 요약만 연다. */
+  if (buildExamMergeRows(scan.questions, 1).length) {
+    examErrorEl.textContent = "";
+    renderExamMerge(scan.questions, "", "", true);
+  } else {
+    examResultEl.innerHTML = "";
+    openExamPaperPanel(scan);   // examScanNow를 세우고 구성 안내를 다시 그린다
+  }
   if (!stale.length) return "";
   const names = [...new Set(stale)].join(", ");
   return (
