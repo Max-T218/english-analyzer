@@ -10681,7 +10681,21 @@ function renderExamPaperSets() {
           esc(set.failed.map((f) => `${f.type}`).join(", ")) + `</p>`
         : "";
       const built = buildQuizHtml({ questions: set.questions, variations: [] }, head, 1, "mcq", "", sheetHead);
-      if (built.answerHtml) answerParts.push(built.answerHtml);
+      /* 답지에도 몇 형인지 적는다. 머리글이 붙으면 위에서 이름표를 빼므로(named:false)
+         buildQuizHtml이 답지 이름표도 달지 않는다 — 그대로 두면 A형·B형 답지가 번호만
+         1번부터 두 번 나와 어느 형 답인지 알 수 없다. 한 부뿐이면 label이 비어 안 붙는다.
+         따로 이름표 줄을 두지 않고 '📌 정답 및 해설' 제목 안에 넣는다 — 이름표 줄은
+         break-after:avoid에 기대는데 크로미움이 그 값을 무시해 쪽 끝에 홀로 남을 수 있다. */
+      if (built.answerHtml) {
+        answerParts.push(
+          set.label && sheetHead
+            ? built.answerHtml.replace(
+                `<span class="num">📌</span> `,
+                `<span class="num">📌</span> ${esc(set.label)} `
+              )
+            : built.answerHtml
+        );
+      }
       if (built.hasExpCol) anyExpCol = true;
       return (
         fails +
