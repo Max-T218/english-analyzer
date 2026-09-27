@@ -8621,7 +8621,7 @@ const HOWTO = {
     steps: [
       "기출 시험지 <b>PDF·사진</b>을 끌어다 놓으면 바로 <b>유형 분석</b>을 시작합니다. 한 번 분석해 저장해 둔 구성이 있으면 <b>[📂 저장한 구성 불러오기]</b>로 건너뛰어도 됩니다.",
       "기출을 <b>여러 부</b> 쓰려면 다음 시험지를 이어서 올리세요 — 곧바로 이어서 분석하고, 한 구성으로 합칩니다. <b>한 번이라도 나온 유형은 1문항씩</b> 깔고 남는 자리를 자주 나온 유형에 더 줍니다.",
-      "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손본 뒤 <b>[이 구성으로 시험지 만들기]</b>를 누릅니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 따로 남겨 둘 수 있습니다 — 시험지를 만든 뒤에도 누를 수 있습니다.",
+      "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손봅니다 — 고친 숫자는 누를 것 없이 <b>바로</b> 아래 제작 칸에 반영됩니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 따로 남겨 둘 수 있습니다 — 시험지를 만든 뒤에도 누를 수 있습니다.",
       "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b>로 채울 수도 있고, 기출 속 지문을 쓰려면 <b>[📄 지문도 가져오기]</b>를 누르세요(쪽마다 값이 붙습니다).",
       "(선택) 목표 어법 · 출제 순서 · 몇 부(1부 / A형·B형) · 시험지 머리글(학교 이름·고사 이름 등) · 표지 제목을 정합니다.",
       "<b>[📝 문제 제작]</b>을 누릅니다.",
@@ -9485,8 +9485,6 @@ function syncExamMergeTotal() {
   const kinds = examMergeRows.filter((r) => r.want > 0).length;
   const el = $("examMergeTotal");
   if (el) el.innerHTML = `넣을 문항 <b>${total}개</b> · 유형 <b>${kinds}가지</b>`;
-  const btn = $("examMergeGoBtn");
-  if (btn) btn.disabled = !total;
   const zero = examMergeRows.filter((r) => r.want === 0).length;
   const warn = $("examMergeWarn");
   if (warn) {
@@ -9555,7 +9553,6 @@ function renderExamMerge(questions, note, detailHtml) {
       </div>
       <div class="actions" style="margin-top:12px">
         <span class="hint" id="examMergeTotal"></span>
-        <button type="button" class="btn" id="examMergeGoBtn">이 구성으로 시험지 만들기</button>
       </div>
       <p class="hint" id="examMergeWarn" hidden></p>
     </section>` + (detailHtml || "");
@@ -9575,6 +9572,7 @@ function renderExamMerge(questions, note, detailHtml) {
     // 손으로 고친 값이 총 문항 수 칸과 어긋나 보이지 않게 함께 맞춘다
     const t = $("examMergeTarget");
     if (t) t.value = examMergeRows.reduce((a, r) => a + r.want, 0);
+    applyMerge();
   });
   /* 표를 통째로 다시 그리지 않고 숫자 칸만 고쳐 칠한다 — 다시 그리면 총 문항 수
      칸에서 입력 초점이 빠져 숫자를 이어 칠 수 없다. */
@@ -9595,6 +9593,7 @@ function renderExamMerge(questions, note, detailHtml) {
     targetEl.value = v;
     allocateExamMerge(examMergeRows, v);
     repaintWants();
+    applyMerge();
   };
   targetEl.addEventListener("change", applyTarget);
   // 엔터로도 반영한다 — 숫자를 치고 바로 결과를 보고 싶은 자리다
@@ -9602,20 +9601,20 @@ function renderExamMerge(questions, note, detailHtml) {
     if (e.key === "Enter") { e.preventDefault(); applyTarget(); }
   });
 
-  const applyMerge = (scroll) => {
-    const merged = examMergeToQuestions(examMergeRows);
-    if (!merged.length) return;
+  /* 모두 0으로 내려도 넘긴다 — 빈 목록을 안 넘기면 직전 구성이 제작 칸에 남아,
+     표에는 0인데 예전 문항 수대로 만들어진다. */
+  const applyMerge = () => {
     openExamPaperPanel({
       title: docs > 1 ? `기출 ${docs}부 합친 구성` : (examScanTitle || "기출 시험지"),
-      note: "", questions: merged,
+      note: "", questions: examMergeToQuestions(examMergeRows),
     });
-    if (scroll) examPaperPanelEl.scrollIntoView({ behavior: "smooth", block: "start" });
   };
-  $("examMergeGoBtn").addEventListener("click", () => applyMerge(true));
   syncExamMergeTotal();
-  /* 표를 그리자마자 제작 칸도 열어 둔다 — 숫자를 안 고칠 사람이 더 많고, 한 부만
-     올렸을 때 지금까지 그렇게 동작해 왔다. 숫자를 고쳤을 때만 위 단추를 누르면 된다. */
-  applyMerge(false);
+  /* 표를 그리자마자 제작 칸도 열어 두고, 숫자를 고치면(± · 총 문항 수) 그때마다 다시
+     넘긴다. 예전에는 [이 구성으로 시험지 만들기]를 눌러야만 고친 숫자가 반영돼, 총 문항
+     수를 28로 고쳐 놓고도 처음 값 25로 A·B형 50문항이 만들어진 일이 있었다
+     (2026-09-28). 그래서 그 단추를 없앴다 — 누를 일이 없어야 빠뜨릴 일도 없다. */
+  applyMerge();
 }
 
 // 한 유형에 너무 많이 몰면 지문이 모자라 배분이 깨진다 — 화면에서 먼저 막는다
