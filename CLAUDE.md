@@ -188,7 +188,10 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `vocabEditorOpen` / `runVocabOcr` / `runVocabPdf`(단어장 직접 입력·사진·PDF — 인식 결과는
 바로 저장되지 않고 편집 표를 거쳐 "이 단어장에 추가"를 눌러야 확정된다)
 
-지문 칸 상한은 `MAX_PASSAGES`(40, 공용)와 `EXAM_PAPER_MAX_PASSAGES`(40, 시험지)입니다.
+지문 칸 상한은 `MAX_PASSAGES`(40, 공용)와 `EXAM_PAPER_MAX_PASSAGES`(100, 시험지)입니다.
+시험지 쪽이 큰 까닭은 거기 지문이 '골라 쓰는 풀'이라 늘려도 요금·시간이 문항 수 그대로이기
+때문입니다(2026-09-27에 40 → 100). 두 상한이 달라서 저장본을 작은 칸으로 불러오면 넘친 만큼
+빠지는데, `setJobs`가 빠진 수를 돌려주고 `passageDropNote`가 알립니다.
 많이 담은 채 실행하면 시간이 지문 수만큼 곱해지므로 `costConfirmed`가 실행 직전에
 한 번 더 알립니다(`MANY_PASSAGES_WARN`).
 

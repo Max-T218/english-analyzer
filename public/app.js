@@ -1388,7 +1388,7 @@ function splitPassageText(raw) {
   return text.split(/\n+/).map((s) => s.trim()).filter(Boolean);
 }
 
-// max를 받는 이유: 지문 입력칸이 두 벌이고 상한이 서로 다르다(공용 10개 / 시험지 40개).
+// max를 받는 이유: 지문 입력칸이 두 벌이고 상한이 서로 다르다(공용 40개 / 시험지 100개).
 // 안 넘기면 지금까지대로 MAX_PASSAGES를 쓴다.
 function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) {
   const limit = max || MAX_PASSAGES;
@@ -1752,19 +1752,31 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
   // 저장해 둔 지문 목록으로 입력칸을 통째로 되살린다("불러오기"에서만 쓰인다 —
   // 평소 입력은 저장하지 않는다는 원칙과는 별개로, 사용자가 직접 누른 "저장" 결과를
   // 불러올 때만 예외적으로 지문을 채운다).
+  /* 반환 {added, dropped} — dropped는 상한(limit)에 걸려 못 넣은 지문 수다.
+     예전에는 말없이 건너뛰었다. 칸마다 상한이 달라지면서(공용 40 · 시험 범위 100)
+     시험 범위에서 저장한 70개를 공용 칸으로 불러오면 30개가 소리 없이 사라지게 됐다 —
+     부르는 쪽이 이 값으로 알린다(passageDropNote). */
   function setJobs(jobs) {
     listEl.innerHTML = "";
     const list = Array.isArray(jobs) && jobs.length ? jobs : [null];
+    let added = 0;
+    let dropped = 0;
     list.forEach((job) => {
       const ta = addRow(false);
-      if (!ta || !job) return; // 상한(limit)에 걸리면 나머지는 건너뜀
+      if (!ta) {
+        if (job) dropped++;
+        return;
+      }
+      if (!job) return;
       ta.value = job.text || "";
       if (job.named && job.name) {
         ta.closest(".passage-item").querySelector(".passage-name").value = job.name;
       }
       updatePassageCount(ta);
+      added++;
     });
     renumber();
+    return { added, dropped };
   }
 
   /* 저장해 둔 지문을 지금 있는 칸을 그대로 두고 '뒤에' 이어 붙인다.
@@ -1899,6 +1911,15 @@ let passageSaveFrom = null;   // null이면 공용 지문칸, 아니면 {mgr, gr
 const passageSaveMgr = () => (passageSaveFrom ? passageSaveFrom.mgr : passageMgr);
 const passageSaveGrammarEl = () => (passageSaveFrom ? passageSaveFrom.grammarEl : grammarEl);
 
+// 불러온 지문이 칸 상한을 넘어 일부만 들어갔을 때의 안내 — 몇 개가 빠졌는지, 왜인지.
+function passageDropNote(added, dropped, limit) {
+  const elsewhere = limit < EXAM_PAPER_MAX_PASSAGES
+    ? `, 동형 모의고사의 시험 범위 칸(최대 ${EXAM_PAPER_MAX_PASSAGES}개)에서 쓰세요.`
+    : ".";
+  return `저장본의 지문 ${added + dropped}개 중 ${added}개만 넣었습니다 — 이 칸은 최대 ${limit}개라 ` +
+    `뒤쪽 ${dropped}개는 들어가지 않았습니다. 필요한 지문만 남겨 다시 저장하거나` + elsewhere;
+}
+
 TAB_SAVE.passage = {
   saveBtn: $("passageSaveBtn"),
   canSave: () => (passageSaveMgr().getJobs().length ? "" : "저장할 지문이 없습니다. 지문을 먼저 입력해 주세요."),
@@ -1922,8 +1943,9 @@ TAB_SAVE.passage = {
         full ? "warn" : "ok"
       );
     } else {
-      passageMgr.setJobs(payload.passages || []);
+      const { added, dropped } = passageMgr.setJobs(payload.passages || []);
       grammarEl.value = payload.targetGrammar || "";
+      if (dropped) ocrStatus(passageDropNote(added, dropped, MAX_PASSAGES), "warn");
     }
     passageListEl.scrollIntoView({ behavior: "smooth", block: "start" });
   },
@@ -2594,7 +2616,7 @@ syncPager();
    공용 지문칸과 학원 마크 칸은 탭 바깥(탭 버튼보다 위)에 있어서 어느 탭에서나 화면
    맨 위에 뜬다. 두 탭은 이 지문칸을 쓰지 않는다 —
      · 기출(시험지 제작)은 자기 입력칸(examPaperMgr)을 쓴다. 상한이 달라서다
-       (공용 10개 / 시험지 40개). 두 칸이 동시에 보이면 어디에 넣어야 하는지 알 수
+       (공용 40개 / 시험지 100개). 두 칸이 동시에 보이면 어디에 넣어야 하는지 알 수
        없고, 잘못 넣으면 아무 일도 일어나지 않는다.
      · 단어장은 지문칸을 아예 읽지 않는다 — 지문 분석 결과(이미 저장된 값)나
        직접 입력·사진·PDF로만 채운다. 지문칸이 떠 있으면 '여기다 지문을 넣어야
@@ -8298,8 +8320,10 @@ async function loadSavedItem(id, mode) {
           ? `지문 ${added}개를 뒤에 붙였습니다 (총 ${mgr.getJobs().length}개). 칸이 가득 차 나머지는 넣지 못했습니다.`
           : `지문 ${added}개를 뒤에 붙였습니다 (총 ${mgr.getJobs().length}개).`;
       } else {
-        mgr.setJobs(list);
-        msg = `지문 ${mgr.getJobs().length}개를 넣었습니다.`;
+        const { added, dropped } = mgr.setJobs(list);
+        msg = dropped
+          ? passageDropNote(added, dropped, EXAM_PAPER_MAX_PASSAGES)
+          : `지문 ${mgr.getJobs().length}개를 넣었습니다.`;
       }
       if (passageLoadTo.after) passageLoadTo.after(msg);
       refitPassages();
@@ -9919,7 +9943,14 @@ examBtn.addEventListener("click", runExamScan);
    실패할 수 있는 경우를 전부 배분 단계에서 잡는 것이 요점이다. 배분은 AI 호출이 0회라
    몇 번을 다시 굴려도 요금이 없고, 만들 수 없는 조합은 돈을 쓰기 전에 드러난다. */
 
-const EXAM_PAPER_MAX_PASSAGES = 40;
+// 시험 범위 칸의 지문 상한. 2026-09-27에 40 → 100 — 시험 범위가 40개를 넘는 학교가 나왔다.
+// 이 칸은 지문마다 문항을 만드는 곳이 아니라 '골라 쓰는 풀'이라, 지문을 늘려도 AI 호출·
+// 요금·시간은 문항 수 그대로다(위 설명). 실제 천장은 사이트 저장의 문서 1MB — 지문 하나
+// 약 1.3KB, 완성 2부 약 180KB라 600개 안팎에서 막힌다. 100은 그보다 한참 아래로, 화면
+// 스크롤이 감당할 만한 선이다. 공용 칸(MAX_PASSAGES 40)은 지문 수만큼 요금이 곱해지는
+// 곳이라 따로 둔다 — 여기서 저장한 지문을 거기로 불러오면 넘친 만큼 빠졌다고 알린다
+// (passageDropNote).
+const EXAM_PAPER_MAX_PASSAGES = 100;
 // 부수 상한. 계산상으로는 더 나오지만(유형별 적합 지문 ÷ 부당 문항 수) 2부가 이미
 // 60회 호출·30~60분이고, 그보다 길면 한 탭을 붙들고 있기 어려워 실제로 안 쓰인다.
 const EXAM_PAPER_MAX_COPIES = 2;
@@ -10045,6 +10076,11 @@ function planExamPaper(slots, jobs, copies, usedPairs, seed) {
   const key = (no, type) => `${no}|${type}`;
   const taken = new Set(usedPairs || []);
   const plans = [];
+  // 앞선 부(이미 만든 부 포함)가 쓴 지문 — 다음 부는 되도록 안 쓴 지문부터 고른다.
+  // 대원칙 2는 (지문, 유형) 조합만 막아서, 지문이 넉넉해도 A형과 B형이 같은 지문을
+  // 다른 유형으로 꽤 겹쳐 썼다(100지문 · 30문항 2부에서 7개). 지문이 겹치면 A형을 푼
+  // 학생이 B형에서 내용을 이미 아는 채로 푼다. 안 쓴 지문이 모자랄 때만 겹친다.
+  const usedBefore = new Set([...taken].map((k) => Number(String(k).split("|")[0])));
 
   for (let c = 0; c < copies; c++) {
     const usedHere = new Set();          // 대원칙 1 — 이 부 안에서 쓴 지문
@@ -10065,12 +10101,17 @@ function planExamPaper(slots, jobs, copies, usedPairs, seed) {
       // 먼저 섞고 나서 breadth로 정렬한다 — 정렬이 안정적이라 같은 값끼리는 섞인
       // 순서가 남고, [다시 배분]이 다른 표를 내놓는다.
       cands = seededShuffle(cands, seed + c * 977 + i);
-      cands.sort((a, b) => (breadth.get(a) || 0) - (breadth.get(b) || 0));
+      cands.sort(
+        (a, b) =>
+          (usedBefore.has(a) ? 1 : 0) - (usedBefore.has(b) ? 1 : 0) ||
+          (breadth.get(a) || 0) - (breadth.get(b) || 0)
+      );
       const pick = cands[0];
       usedHere.add(pick);
       taken.add(key(pick, s.type));
       rows[i] = { q: s.q, type: s.type, engine: s.engine, passageNo: pick };
     }
+    usedHere.forEach((no) => usedBefore.add(no));
     plans.push(rows);
   }
   return { ok: true, plans };
