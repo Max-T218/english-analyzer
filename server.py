@@ -1616,7 +1616,9 @@ the passage in full.
 - "문장삽입" — instruction as described above (includes the sentence to insert). passageHtml
   = the rest of the passage (after removing one sentence) with candidate insertion points
   marked as circled numbers. HOW MANY points is fixed by the request line "문장삽입 보기 수: K"
-  (K is 3, 4 or 5 — a short passage has room for fewer points). Mark EXACTLY K points,
+  (K is 3, 4 or 5 — a short passage has room for fewer points). NEVER remove the passage's
+  FIRST sentence — it sets the topic, and every insertion point comes after it, so a removed
+  first sentence would have no marker to belong to. Mark EXACTLY K points,
   ① … up to the K-th circled number, in order:
     · ① comes AFTER the first remaining sentence — never in front of the passage's first
       sentence (a point before everything is not a real position).
@@ -2099,30 +2101,36 @@ def insertion_problems(result, k):
     않고도 보기를 지울 수 있다. 번호 뒤에 문장이 없어도 되는 것은 마지막 번호뿐이다."""
     out = []
     for i, q in enumerate(result.get("questions", []) or []):
-        if not isinstance(q, dict) or q.get("type") != "문장삽입":
-            continue
-        text = re.sub(r"<[^>]*>", " ", str(q.get("passageHtml") or ""))
-        marks = _INSERT_MARK_RE.findall(text)
-        parts = _INSERT_MARK_RE.split(text)
-        why = []
-        if len(marks) != k:
-            why.append(f"번호가 {len(marks)}개 — 정확히 {k}개여야 함")
-        elif "".join(marks) != "①②③④⑤"[:k]:
-            why.append("번호가 ①부터 차례대로가 아님")
-        if marks and not _INSERT_WORD_RE.search(parts[0]):
-            why.append("① 앞에 문장이 없음")
-        for j in range(1, len(parts) - 1):
-            if not _INSERT_WORD_RE.search(parts[j]):
-                why.append(f"{marks[j - 1]}와 {marks[j]} 사이에 문장이 없음")
-        try:
-            ans = int(q.get("answer") or 0)
-        except (TypeError, ValueError):
-            ans = 0
-        if not 1 <= ans <= k:
-            why.append(f"정답 번호가 1~{k} 밖")
+        why = insertion_issue(q, k)
         if why:
             out.append(f"{i + 1}번 문항({', '.join(why)})")
     return out
+
+
+def insertion_issue(q, k):
+    """문장삽입 문항 하나의 결함 목록(없으면 빈 목록). 다른 유형은 늘 빈 목록."""
+    if not isinstance(q, dict) or q.get("type") != "문장삽입":
+        return []
+    text = re.sub(r"<[^>]*>", " ", str(q.get("passageHtml") or ""))
+    marks = _INSERT_MARK_RE.findall(text)
+    parts = _INSERT_MARK_RE.split(text)
+    why = []
+    if len(marks) != k:
+        why.append(f"번호가 {len(marks)}개 — 정확히 {k}개여야 함")
+    elif "".join(marks) != "①②③④⑤"[:k]:
+        why.append("번호가 ①부터 차례대로가 아님")
+    if marks and not _INSERT_WORD_RE.search(parts[0]):
+        why.append("① 앞에 문장이 없음")
+    for j in range(1, len(parts) - 1):
+        if not _INSERT_WORD_RE.search(parts[j]):
+            why.append(f"{marks[j - 1]}와 {marks[j]} 사이에 문장이 없음")
+    try:
+        ans = int(q.get("answer") or 0)
+    except (TypeError, ValueError):
+        ans = 0
+    if not 1 <= ans <= k:
+        why.append(f"정답 번호가 1~{k} 밖")
+    return why
 
 
 def fit_quiz_items(raw_types, passage):
@@ -2320,8 +2328,9 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
         k = insertion_choice_count(passage) or INSERTION_MIN_CHOICES
         lines.append(
             f"문장삽입 보기 수: {k} — 삽입 위치 번호를 ①부터 정확히 {k}개만 찍고 "
-            f"choices도 그 {k}개만 담으세요. ①은 첫 문장 뒤에, 번호와 번호 사이에는 반드시 "
-            "문장이 있어야 합니다(지문 끝 뒤에 올 수 있는 것은 마지막 번호뿐)."
+            f"choices도 그 {k}개만 담으세요. 지문의 첫 문장은 주어진 문장으로 빼지 마세요. ①은 "
+            "첫 문장 뒤에, 번호와 번호 사이에는 반드시 문장이 있어야 합니다(지문 끝 뒤에 올 수 "
+            "있는 것은 마지막 번호뿐)."
         )
     if insert_hint:
         lines.append(
@@ -11836,10 +11845,15 @@ class Handler(BaseHTTPRequestHandler):
                         bad = insertion_problems(result, insert_k)
                         if not bad or _over_budget(t0):
                             break
-                        retry = call_gemini_quiz(
-                            passage, items, api_key, model, variation=variation,
-                            target_grammar=quiz_grammar, insert_hint=bad,
-                        )
+                        # 재요청이 실패해도(한도·시간·잘림) 이미 받은 결과는 살린다 —
+                        # 번호 위치 하나 때문에 다른 문항까지 통째로 잃으면 안 된다.
+                        try:
+                            retry = call_gemini_quiz(
+                                passage, items, api_key, model, variation=variation,
+                                target_grammar=quiz_grammar, insert_hint=bad,
+                            )
+                        except Exception:
+                            break
                         # 문항·해설이 줄지 않고 번호 위치가 나아진 결과만 채택
                         if (
                             len(retry.get("questions", [])) >= len(result.get("questions", []))
@@ -11847,6 +11861,28 @@ class Handler(BaseHTTPRequestHandler):
                             and len(insertion_problems(retry, insert_k)) < len(bad)
                         ):
                             result = retry
+                    # 다시 시켜도 끝내 고쳐지지 않은 문항은 내보내지 않는다 — 보기가 겹치는
+                    # 문항을 시험지에 싣느니 빠졌다고 알리는 편이 낫다. 뺀 만큼 값도 뺀다.
+                    qs = result.get("questions", []) or []
+                    kept = [x for x in qs if not insertion_issue(x, insert_k)]
+                    dropped = len(qs) - len(kept)
+                    if dropped:
+                        result["questions"] = kept
+                        items = [
+                            (t, n - dropped if t == "문장삽입" else n) for t, n in items
+                        ]
+                        items = [(t, n) for t, n in items if n > 0]
+                        self._pending_charge = _quiz_action_cost(items)
+                        self._pending_label = f"문제 제작 · {sum(n for _t, n in items)}문항"
+                        skipped.append(
+                            f"문장삽입 {dropped}문항은 번호 위치가 끝내 바르게 나오지 않아 뺐습니다. "
+                            "뺀 문항 요금은 나가지 않았습니다. 다시 만들어 보세요."
+                        )
+                if not result.get("questions"):
+                    self._send_json(
+                        {"error": " ".join(skipped) or "문항이 만들어지지 않았습니다."}, 502
+                    )
+                    return
                 if skipped:
                     result["skipped"] = skipped
             except NeedsPro as e:
