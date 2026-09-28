@@ -8360,6 +8360,24 @@ async function loadSavedItem(id, mode) {
       passageLoadTo = null;
       return;
     }
+    /* 동형 모의고사 저장본(시험지·기출 구성)은 그 탭을 '새로 시작하기'처럼 통째로 비운 뒤
+       불러온 것만 채운다. 앞서 하던 분석·지문·시험지가 불러온 구성과 뒤섞이면 무엇이
+       어느 구성에서 나온 것인지 알 수 없다. 다만 방금 만든 시험지를 모르고 잃은 일이
+       있었으므로(되돌릴 수 없다) 비우기 전에 먼저 묻는다 — [취소]면 아무것도 안 바뀐다. */
+    const examLoad = SAVED_TAB_HOME[tab] === "exam" || tab === "exam";
+    if (examLoad && !append) {
+      if (examBusy || examPaperBusy) {
+        alert("분석이나 제작이 진행 중입니다. 끝난 뒤에 불러와 주세요.");
+        return;
+      }
+      if (examTabHasWork() && !confirm(
+        "지금 동형 모의고사 탭에서 하던 작업이 모두 사라집니다.\n" +
+        "(분석한 기출, 입력한 시험 범위 지문, 만든 시험지)\n" +
+        "아직 저장하지 않았다면 [취소]를 누르고 먼저 저장하세요.\n\n" +
+        "지우고 불러올까요?"
+      )) return;
+      clearExamTab();
+    }
     const tabBtn = document.querySelector(`.tab-btn[data-tab="${SAVED_TAB_HOME[tab] || tab}"]`);
     if (tabBtn) tabBtn.click();
     /* 통째로 불러오면 지문이 다 바뀌므로 화면에 남아 있던 이전 제작 결과물을 모두
@@ -8367,7 +8385,9 @@ async function loadSavedItem(id, mode) {
        지문으로 만든 것인지 알 수 없게 된다(지문만 불러온 경우가 특히 그랬다).
        뒤에 붙일 때는 지우지 않는다. 앞서 있던 지문이 그 자리에 그대로 남으므로
        그 지문으로 만든 결과물도 여전히 맞는 짝이다. */
-    if (!append) {
+    /* 동형 모의고사는 위에서 이 탭만 비웠다 — 지문 칸(시험 범위)이 따로라 다른 탭의
+       결과물과 짝이 어긋나지 않으므로, 다른 탭에서 만든 분석·문제까지 지울 까닭이 없다. */
+    if (!append && !examLoad) {
       clearAllTabResults();
       clearDocTitles();
       // 다른 탭에 남아 있던 '어느 자료에서 왔는가'도 함께 잊는다 — 결과물을 다 지웠으므로
@@ -11118,7 +11138,7 @@ TAB_SAVE.examspec = {
     examSpec: examScanNow ? examSpecFromScan(examScanNow) : null,
   }),
   applyPayload: (payload) => {
-    // 지문 없이 구성만 저장했으면 지금 넣어 둔 시험 범위 지문은 그대로 둔다
+    // 탭은 loadSavedItem이 이미 비웠다. 지문 없이 구성만 저장한 것이면 지문 칸은 빈 채로 둔다
     if ((payload.passages || []).some((p) => p && String(p.text || "").trim())) {
       examPaperMgr.setJobs(payload.passages);
       examGrammarEl.value = payload.targetGrammar || "";
@@ -11138,18 +11158,25 @@ TAB_SAVE.examspec = {
    이 탭의 것만 한 번에 비운다. 머리글(학교·과목·학년·출제자·시간·고사명)은 남긴다 —
    같은 선생님이 다음 시험지를 만들 때도 대개 그대로이고, 다시 적는 수고만 는다.
    저장본은 건드리지 않는다. 화면만 비운다. */
+function examTabHasWork() {
+  return !!(examPages.length || examScanNow || examPaperSets.length ||
+    examPaperMgr.getJobs().some((j) => j && String(j.text || "").trim()) ||
+    examResultEl.innerHTML.trim());
+}
 function resetExamTab() {
   if (examBusy || examPaperBusy) {
     alert("분석이나 제작이 진행 중입니다. 끝난 뒤에 눌러 주세요.");
     return;
   }
-  const has = examPages.length || examScanNow || examPaperSets.length ||
-    examPaperMgr.getJobs().length || examResultEl.innerHTML.trim();
-  if (has && !confirm(
+  if (examTabHasWork() && !confirm(
     "올린 기출 시험지, 유형 분석표, 시험 범위 지문, 만든 시험지를 모두 비우고 새로 시작합니다.\n" +
     "저장하지 않은 것은 되살릴 수 없습니다. 학교 이름 같은 머리글은 남습니다.\n\n계속할까요?"
   )) return;
-
+  clearExamTab();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+/* 묻지 않고 비운다 — '새로 시작하기'와 저장본 불러오기(loadSavedItem)가 함께 쓴다 */
+function clearExamTab() {
   // 올린 기출과 분석 결과 (examClearBtn과 같은 것 + 합치기 표)
   clearTimeout(examAutoTimer);
   examPages = [];
@@ -11180,7 +11207,6 @@ function resetExamTab() {
   delete LOADED_SAVED.exam;
   delete LOADED_SAVED.examspec;
   syncTabChrome("exam");
-  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 $("examResetBtn").addEventListener("click", resetExamTab);
 
