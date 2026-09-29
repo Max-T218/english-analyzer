@@ -122,7 +122,7 @@ const TREND_CSS = `
 .trend-tile em:not(.tv-dt-legend),.trend-tile > span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
 .rp-note{margin-top:18px;padding:10px 12px;border-top:1px solid #c3c2b7;font-size:12px;color:#52514e;break-inside:avoid}
 .rp-note b{display:block;font-size:12.5px;color:#0b0b0b;margin-bottom:2px}
-.rp-note p{margin:0}
+.rp-note p{margin:0 0 2px}
 /* 보고서 칸이 좁으면(화면 폭이 아니라 그래프 상자 폭 기준) 네 칸을 2×2로 — 한 줄에 넷을 두면
    "선택 10 · 서술 4" 같은 글이 잘렸다. 인쇄(A4)는 폭이 넉넉해 넷이 한 줄로 나온다. */
 .trend-dash{container-type:inline-size}
@@ -980,7 +980,10 @@ function trendHtml(st, ai) {
         <tbody>${body}</tbody>
       </table></div>` : ""}
       ${trendCoverageHtml(cv)}
-      ${ai && ai.caution ? `<div class="rp-note"><b>유의 사항</b><p>${esc(ai.caution)}</p></div>` : ""}
+      <div class="rp-note"><b>유의 사항</b>
+        <p>이 보고서의 문항 유형 분류와 시험 범위 지문 대조는 AI가 시험지 이미지를 읽어 만든 결과이므로 일부 오류가 있을 수 있습니다. 중요한 판단에는 원본 시험지와 함께 확인해 주십시오.</p>
+        ${ai && ai.caution ? `<p>${esc(ai.caution)}</p>` : ""}
+      </div>
     </div>`;
 }
 
