@@ -105,7 +105,7 @@ const TREND_CSS = `
 .trend-dash{border:1px solid rgba(11,11,11,.10);border-radius:12px;padding:16px 18px;margin:10px 0 6px;break-inside:avoid;background:#fcfcfb}
 .trend-dash h5{margin:18px 0 8px;font-size:13.5px;font-weight:700;color:#0b0b0b}
 .trend-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
-.trend-tile{border:1px solid rgba(11,11,11,.08);background:#fff;border-radius:10px;padding:10px 11px}
+.trend-tile{border:1px solid rgba(11,11,11,.08);background:#fff;border-radius:10px;padding:10px 11px;border-top:4px solid var(--acc,#c3c2b7)}
 .trend-tile span{display:block;font-size:12px;color:#52514e}
 .trend-tile b{display:block;font-size:24px;line-height:1.25;font-weight:700;color:#0b0b0b;margin:2px 0}
 .trend-tile b.sm{font-size:18px;line-height:1.55}
@@ -147,9 +147,15 @@ const TREND_CSS = `
 .tv-v small{color:#898781;font-size:11px}
 .tv-cov{display:grid;grid-template-columns:minmax(0,1fr) minmax(140px,42%) 92px;gap:8px 12px;align-items:center;font-size:12.5px}
 .tv-cl{color:#0b0b0b;word-break:keep-all}
-.tv-track{height:10px;border-radius:5px;background:#d2efe3;overflow:hidden}
+.tv-track{height:12px;border-radius:6px;background:#d2efe3;overflow:hidden}
 .tv-fill{height:100%;background:#1baf7a;border-radius:5px}
 .tv-cov .tv-v{text-align:right}
+.tv-domwrap{display:flex;align-items:center;gap:22px}
+.tv-ring{flex:none}
+.tv-domlist{flex:1;display:grid;grid-template-columns:14px max-content max-content minmax(0,1fr);gap:7px 10px;align-items:center;font-size:12.5px}
+.tv-dk2 i{display:block;width:12px;height:12px;border-radius:3px}
+.tv-dv{white-space:nowrap;color:#52514e}.tv-dv b{font-size:15px;color:#0b0b0b}.tv-dv span{margin-left:4px;color:#898781}
+@media (max-width:640px){.tv-domwrap{flex-direction:column;align-items:flex-start}}
 @media (max-width:640px){.tv-grid{grid-template-columns:1fr}}
 `;
 
@@ -655,22 +661,6 @@ function trendGroupStats(cv) {
    인쇄하면 이 칸이 첫 장을 차지하고 자세한 표는 다음 장부터 나온다(break-after). 유형은
    많아야 24가지라 한 줄 17px로 그리면 A4 한 장에 다른 그래프와 함께 들어간다. 서술형 유형은
    색을 달리해 선택형과 한눈에 갈리게 했다. */
-/* 선다형·서답형 도넛. 두 조각뿐이라 원형이 잘 읽힌다(조각이 많으면 막대가 낫다).
-   조각 사이에 2px 틈을 두어 테두리 없이 갈라 보이게 한다. */
-function trendDonutSvg(a, b) {
-  const total = a + b;
-  if (!total) return "";
-  const r = 30, w = 12, c = 2 * Math.PI * r, gap = a && b ? 2 : 0;
-  const la = (a / total) * c, lb = (b / total) * c;
-  const arc = (len, off, color) => len > gap
-    ? `<circle r="${r}" cx="40" cy="40" fill="none" stroke="${color}" stroke-width="${w}"
-         stroke-dasharray="${(len - gap).toFixed(2)} ${(c - len + gap).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}"
-         transform="rotate(-90 40 40)"/>` : "";
-  return `<svg class="tv-donut" viewBox="0 0 80 80" width="64" height="64" role="img" aria-label="선다형 ${a}문항, 서답형 ${b}문항">
-    ${arc(la, 0, "#2a78d6")}${arc(lb, la, "#eb6834")}
-    <text x="40" y="44" text-anchor="middle" font-size="13" font-weight="700" fill="#0b0b0b">${Math.round((a / total) * 100)}%</text>
-  </svg>`;
-}
 
 /* 시험지별 유형 변화 꺾은선 — 시험지가 두 부 이상일 때만 뜻이 있다(한 부면 점 하나라 선이
    안 된다). 많이 나온 유형 셋만 그린다: 선이 넷을 넘으면 서로 엉켜 읽히지 않고, 참조
@@ -711,6 +701,44 @@ function trendLineSvg(st) {
     <svg class="tv-line" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="시험지별 유형 문항 수 변화">${grid}${xl}${lines}</svg>`;
 }
 
+/* ── 색 = 영역 ──
+   파랑 한 가지로는 눈에 들어오지 않아(2026-09-29 사용자), 색에 뜻을 싣는다: 유형 막대는
+   그 유형이 속한 영역의 색이고, 영역 도넛도 같은 색이다 — 막대 색만 봐도 어느 영역이 많은지
+   보인다. 색은 dataviz 참조 팔레트의 1~5번을 그 차례 그대로 쓴다(이웃한 둘이 색맹 기준을
+   통과하도록 검증된 차례 — 도넛 조각은 이웃하므로 차례를 바꾸지 말 것). */
+const TREND_DOMAIN_COLOR = {
+  "대의 파악": "#2a78d6",
+  "세부 정보": "#eb6834",
+  "논리·흐름": "#1baf7a",
+  "어법·어휘": "#eda100",
+  "서술형": "#e87ba4",
+  "기타": "#9a9890",
+};
+const TREND_MC_COLOR = "#475467";   // 선다형(도넛) — 영역 색과 겹치지 않는 먹색
+const trendColorOf = (label) => TREND_DOMAIN_COLOR[trendDomainOf(label)] || "#9a9890";
+
+/* 도넛 — 조각 사이에 2px 틈(테두리 없이 갈라 보이게). parts: [{v, color, label}] */
+function trendRingSvg(parts, size, stroke, center, sub) {
+  const total = parts.reduce((a, p) => a + p.v, 0);
+  if (!total) return "";
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r, h = size / 2;
+  const gap = parts.filter((p) => p.v > 0).length > 1 ? 2 : 0;
+  let off = 0;
+  const arcs = parts.map((p) => {
+    const len = (p.v / total) * c;
+    const out = len > gap ? `<circle r="${r}" cx="${h}" cy="${h}" fill="none" stroke="${p.color}" stroke-width="${stroke}"
+      stroke-dasharray="${(len - gap).toFixed(2)} ${(c - len + gap).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}"
+      transform="rotate(-90 ${h} ${h})"><title>${esc(p.label || "")} ${p.v}</title></circle>` : "";
+    off += len;
+    return out;
+  }).join("");
+  return `<svg class="tv-ring" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img">
+    ${arcs}
+    ${center ? `<text x="${h}" y="${h + (sub ? 1 : 5)}" text-anchor="middle" font-size="${size > 100 ? 22 : 13}" font-weight="700" fill="#0b0b0b">${center}</text>` : ""}
+    ${sub ? `<text x="${h}" y="${h + 18}" text-anchor="middle" font-size="11" fill="#6b6a65">${sub}</text>` : ""}
+  </svg>`;
+}
+
 function trendDashHtml(st, cv) {
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
   // 두 판이 같은 눈금을 쓴다 — 선택형 5문항과 서술형 4문항의 막대 길이가 그대로 견줘져야 한다
@@ -718,54 +746,70 @@ function trendDashHtml(st, cv) {
   const isSub = (r) => /^서술형/.test(r.label);
   const mcRows = st.list.filter((r) => !isSub(r));
   const subRows = st.list.filter(isSub);
-  const many = Math.max(mcRows.length, subRows.length) > 14;
-  /* 유형을 선택형·서술형 두 판으로 나눈다. 한 판에 색 두 가지를 섞으면 범례를 오가며 읽어야
-     하는데, 판을 나누면 판 제목이 그 역할을 한다. 값은 막대 끝에 붙인다(멀리 오른쪽 끝에
-     두면 어느 막대의 값인지 눈으로 줄을 따라가야 했다). */
-  const panel = (rows, title, cls) => (rows.length ? `
+  const rowsN = Math.max(mcRows.length, subRows.length);
+  const many = rowsN > 10;    // 줄 간격을 좁힌다
+  const dense = rowsN > 12;   // 더 좁히고 영역 도넛도 줄인다
+  const xdense = rowsN > 17;  // 유형이 거의 다 나온 시험지(중학교 등) — 가장 촘촘하게
+  const panel = (rows, title, color) => (rows.length ? `
       <div class="tv-panel">
-        <div class="tv-ph"><span class="tv-key ${cls}"></span>${title}<b>${rows.reduce((a, r) => a + r.total, 0)}문항</b></div>
-        <div class="tv-bars${many ? " many" : ""}">${rows.map((r) => `
+        <div class="tv-ph"><span class="tv-key" style="background:${color}"></span>${title}<b>${rows.reduce((a, r) => a + r.total, 0)}문항</b></div>
+        <div class="tv-bars${xdense ? " dense xdense" : dense ? " dense" : many ? " many" : ""}">${rows.map((r) => `
           <div class="tv-l" title="${esc(r.label)}">${esc(r.label.replace(/^서술형:\s*/, ""))}</div>
-          <div class="tv-b"><span class="tv-bar ${cls}" style="width:${Math.max(3, Math.round((r.total / max) * 78))}%"></span><span class="tv-v">${r.total}<small> · ${pct(r.total, st.grand)}%</small></span></div>`).join("")}
+          <div class="tv-b"><span class="tv-bar" style="background:${trendColorOf(r.label)};width:${Math.max(3, Math.round((r.total / max) * 78))}%"></span><span class="tv-v">${r.total}<small> · ${pct(r.total, st.grand)}%</small></span></div>`).join("")}
         </div>
       </div>` : "");
-  const groups = trendGroupStats(cv);
   const used = cv ? cv.rows.filter((r) => r.count > 0).length : 0;
-  // 범위별 출제율은 게이지로 — 옅은 길(전체) 위에 채운 만큼(출제된 지문)
-  const cov = [...groups].map(([name, g]) => `
-      <div class="tv-cl">${esc(name)}</div>
-      <div class="tv-track"><div class="tv-fill" style="width:${pct(g.used, g.total)}%"></div></div>
-      <div class="tv-v">${g.used}/${g.total}개<small> · ${pct(g.used, g.total)}%</small></div>`).join("");
   const mc = st.grand - st.subTotal;
+  const doms = trendDomains(st);
   const tiles = [
-    /* 총 문항 칸 — 숫자와 도넛을 나란히, 선다형·서답형 개수는 그 아래 한 줄로만.
-       예전에는 좁은 칸에 글자와 도넛을 함께 넣어 "선/다형/22"처럼 글자가 쪼개졌다. */
-    `<div class="trend-tile tv-donut-tile">
-      <div class="tv-dt-top"><div><span>총 문항</span><b>${st.grand}<small>문항</small></b></div>${trendDonutSvg(mc, st.subTotal)}</div>
-      <em class="tv-dt-legend"><i class="tv-key mc"></i>선다형 ${mc}<i class="tv-key sub"></i>서답형 ${st.subTotal}</em>
+    `<div class="trend-tile tv-donut-tile" style="--acc:${TREND_MC_COLOR}">
+      <div class="tv-dt-top"><div><span>총 문항</span><b>${st.grand}<small>문항</small></b></div>${trendRingSvg([
+        { v: mc, color: TREND_MC_COLOR, label: "선다형" },
+        { v: st.subTotal, color: TREND_DOMAIN_COLOR["서술형"], label: "서답형" },
+      ], 64, 12, `${pct(mc, st.grand)}%`)}</div>
+      <em class="tv-dt-legend"><i class="tv-key" style="background:${TREND_MC_COLOR}"></i>선다형 ${mc}<i class="tv-key" style="background:${TREND_DOMAIN_COLOR["서술형"]}"></i>서답형 ${st.subTotal}</em>
     </div>`,
-    `<div class="trend-tile"><span>출제 유형</span><b>${st.list.length}가지</b><em>선택 ${mcRows.length} · 서술 ${subRows.length}</em></div>`,
-    `<div class="trend-tile"><span>가장 많은 유형</span><b class="sm">${esc(st.list[0].label)}</b><em>${st.list[0].total}문항 · ${pct(st.list[0].total, st.grand)}%</em></div>`,
-    cv ? `<div class="trend-tile"><span>출제된 범위 지문</span><b>${used}<small>/${cv.rows.length}</small></b><em>${pct(used, cv.rows.length)}%</em></div>` : "",
+    `<div class="trend-tile" style="--acc:${TREND_DOMAIN_COLOR["세부 정보"]}"><span>출제 유형</span><b>${st.list.length}가지</b><em>선택 ${mcRows.length} · 서술 ${subRows.length}</em></div>`,
+    `<div class="trend-tile" style="--acc:${trendColorOf(st.list[0].label)}"><span>가장 많은 유형</span><b class="sm">${esc(st.list[0].label)}</b><em>${st.list[0].total}문항 · ${pct(st.list[0].total, st.grand)}%</em></div>`,
+    cv ? `<div class="trend-tile" style="--acc:${TREND_DOMAIN_COLOR["논리·흐름"]}"><span>출제된 범위 지문</span><b>${used}<small>/${cv.rows.length}</small></b><em>${pct(used, cv.rows.length)}%</em></div>` : "",
   ].join("");
+  // 영역 — 큰 도넛 + 색 표시가 붙은 표(영역 · 문항 · 비율 · 들어 있는 유형)
+  const domHtml = `
+      <div class="tv-domwrap${xdense ? " xdense" : ""}">
+        ${trendRingSvg(doms.map((x) => ({ v: x.total, color: TREND_DOMAIN_COLOR[x.name], label: x.name })), xdense ? 100 : dense ? 116 : 150, xdense ? 20 : dense ? 22 : 26, `${st.grand}`, "문항")}
+        <div class="tv-domlist">${doms.map((x) => `
+          <div class="tv-dk2"><i style="background:${TREND_DOMAIN_COLOR[x.name]}"></i></div>
+          <div class="tv-dn">${esc(x.name)}</div>
+          <div class="tv-dv"><b>${x.total}</b>문항 <span>${pct(x.total, st.grand)}%</span></div>
+          <div class="tv-dk">${x.kinds.map(esc).join(", ")}</div>`).join("")}
+        </div>
+      </div>`;
   return `
     <div class="trend-dash">
       <div class="trend-tiles ${cv ? "t4" : "t3"}">${tiles}</div>
-      <h5>유형별 문항 수</h5>
-      <div class="tv-grid">${panel(mcRows, "선택형", "mc")}${panel(subRows, "서술형", "sub")}</div>
       <h5>영역별 출제 비중</h5>
-      <div class="tv-dom">${(() => {
-        const doms = trendDomains(st);
-        const dmax = Math.max(...doms.map((x) => x.total)) || 1;
-        return doms.map((x) => `
-          <div class="tv-dn">${esc(x.name)}</div>
-          <div class="tv-b"><span class="tv-bar dom" style="width:${Math.max(3, Math.round((x.total / dmax) * 70))}%"></span><span class="tv-v">${x.total}<small> · ${pct(x.total, st.grand)}%</small></span></div>
-          <div class="tv-dk">${x.kinds.map(esc).join(", ")}</div>`).join("");
-      })()}</div>
-      ${trendLineSvg(st)}
-      ${cov ? `<h5>범위별 출제된 지문</h5>
+      ${domHtml}
+      <h5>유형별 문항 수 <small>(막대 색 = 영역)</small></h5>
+      <div class="tv-grid">${panel(mcRows, "선택형", TREND_MC_COLOR)}${panel(subRows, "서술형", TREND_DOMAIN_COLOR["서술형"])}</div>
+    </div>`;
+}
+
+/* 그래프 뒤 덩어리 — 범위별 출제율과 해마다의 유형 변화. 1쪽에 그래프를 모두 담으면 A4 한 장을
+   넘기므로(표지·핵심 요약과 함께) 이 둘은 2쪽 머리로 보낸다. 둘 다 없으면(범위 없음 · 시험지
+   한 부) 빈 문자열이다. */
+function trendDashExtraHtml(st, cv) {
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const cov = [...trendGroupStats(cv)].map(([name, g]) => `
+      <div class="tv-cl">${esc(name)}</div>
+      <div class="tv-track"><div class="tv-fill" style="width:${pct(g.used, g.total)}%"></div></div>
+      <div class="tv-v">${g.used}/${g.total}개<small> · ${pct(g.used, g.total)}%</small></div>`).join("");
+  const line = trendLineSvg(st);
+  if (!cov && !line) return "";
+  return `
+    <div class="trend-dash">
+      ${cov ? `<h5 style="margin-top:0">범위별 출제된 지문</h5>
       <div class="tv-cov">${cov}</div>` : ""}
+      ${line}
     </div>`;
 }
 
@@ -971,9 +1015,18 @@ function trendHtml(st, ai) {
   return `
     <div class="trend-report">
       ${head}
-      ${findings}
-      ${aiHtml}
-      <div class="${ai ? "trend-pg" : ""}"><h4 class="sec">한눈에 보는 출제 현황</h4>${trendDashHtml(st, cv)}</div>
+      <h4 class="sec">한눈에 보는 출제 현황</h4>${trendDashHtml(st, cv)}
+      ${(() => {
+        /* 1쪽은 표지와 그래프만 — 그림이 먼저 눈에 들어오게(2026-09-29 사용자 요청).
+           핵심 요약까지 1쪽에 넣으면 A4를 약 100px 넘겨(실측 1117/1017) 2쪽 머리로 보낸다.
+           2쪽: 핵심 요약 → 지문 출처와 변화(범위 게이지·해마다의 꺾은선) → 총평 → 대비 전략. */
+        const extra = trendDashExtraHtml(st, cv);
+        return `<div class="trend-pg">
+          ${findings}
+          ${extra ? `<h4 class="sec">지문 출처와 변화</h4>${extra}` : ""}
+          ${aiHtml}
+        </div>`;
+      })()}
       ${st.docs > 1 ? `<h4 class="sec">시험지별 유형 출제 현황</h4>
       <div style="overflow-x:auto"><table>
         <thead><tr><th>유형</th>${heads}<th>합계</th><th>비율</th><th>비중</th><th>구분</th></tr></thead>
@@ -1068,6 +1121,9 @@ function trendPrint() {
     .trend-tile b{font-size:26px}.trend-tile b.sm{font-size:19px}
     .tv-bars{font-size:13px;gap:7px 12px}.tv-bar{height:15px}
     .tv-bars.many{gap:4px 12px}.tv-bars.many .tv-bar{height:12px}
+    .tv-bars.dense{gap:2px 12px;font-size:12px;line-height:16px}.tv-bars.dense .tv-bar{height:11px}
+    .tv-bars.xdense{gap:1px 12px;font-size:11.5px;line-height:15px}.tv-bars.xdense .tv-bar{height:10px}
+    .tv-domwrap.xdense .tv-domlist{gap:3px 10px}
     .tv-ph{font-size:13.5px}
     .tv-cov{font-size:13px;gap:8px 12px}.tv-track{height:12px}
     .tv-dom{font-size:13px;gap:6px 12px}.tv-bar.dom{height:14px}
@@ -1264,7 +1320,7 @@ HOWTO.trend = {
     "<b>[분석하기]</b>를 누르면 AI가 부마다 문항 유형을 읽습니다. <b>시험 범위 지문을 넣어 두었을 때만</b> 시험지의 지문도 옮겨 적어 범위와 대조합니다 — 범위를 비워 두면 유형만 읽어 훨씬 빠릅니다. 여러 해 시험지를 모아 경향만 볼 때는 범위를 비워 두세요. 시험지 한 부에 몇 분 걸립니다. 못 읽은 것이 있으면 다시 누르세요 — 못 읽은 것만 다시 읽습니다.",
     "분석이 끝나면 아래에 <b>보고서</b>가 나옵니다 — 요약, 부별 유형 표, 비중 그래프, 그리고 <b>매회 출제 / 가끔 출제 / 한 번만</b> 구분이 들어 있습니다.",
     "분석이 끝나면 <b>시험지 분석 총평과 유형별 대비 전략</b>까지 이어서 자동으로 씁니다. 시험 범위를 나중에 바꿔도 총평은 지워지지 않고 '예전 범위 기준'이라는 안내만 뜹니다 — 새로 쓰려면 <b>[✨ 총평 다시 쓰기]</b>를 누르세요(다시 쓸 때도 값이 매겨집니다).",
-    "<b>[🖨 인쇄 / PDF 저장]</b>은 보고서만 새 창에 담아 인쇄합니다 — 1쪽 총평, 2쪽 그래프, 3쪽부터 시험 범위 지문별 출제 현황입니다. 팝업이 막혀 있으면 이 사이트의 팝업을 허용하세요.",
+    "<b>[🖨 인쇄 / PDF 저장]</b>은 보고서만 새 창에 담아 인쇄합니다 — 1쪽 그래프(한눈에 보는 출제 현황), 2쪽 핵심 요약·총평·대비 전략, 3쪽부터 시험 범위 지문별 출제 현황입니다. 팝업이 막혀 있으면 이 사이트의 팝업을 허용하세요.",
     "<b>[💾 분석 저장]</b>으로 분석 결과를 저장해 두면, 다음에는 시험지를 다시 올리지 않고 <b>[📂 저장한 분석 불러오기]</b>로 바로 열 수 있습니다. <b>[➕ 저장한 분석 더하기]</b>는 지금 화면에 다른 저장본을 이어 붙여 한 보고서로 합칩니다(시험지만 합치고 시험 범위는 가져오지 않습니다). 합친 뒤 <b>[✨ 시험지 분석 총평 쓰기]</b>로 총평을 새로 쓰세요.",
   ],
   tip: "유형은 중·고등 내신에 두루 쓰는 이름(대화문 내용 파악, 영영풀이, 서술형 영작 등)으로 모든 문항을 셉니다 — 중학교 시험지도 됩니다. 범위 대조는 글자 겹침으로 짝을 짓기 때문에, 지문을 크게 바꿔 낸 문항은 '범위에서 찾지 못한 지문'으로 나올 수 있습니다. 저장본에는 시험지 그림이 들어가지 않습니다 — 그래서 지문을 읽지 않고 저장한 분석은 나중에 지문을 다시 읽을 수 없습니다.",
