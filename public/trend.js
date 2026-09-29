@@ -643,16 +643,28 @@ function trendCoverage() {
   };
 }
 
+/* 묶음 이름(저장본 제목)이 없는 범위 지문 — 칸에 직접 붙여 넣었거나 이름을 "제목 · 지문"꼴로
+   달지 않은 것. 예전에는 이런 지문을 묶음에서 빼 버려, 범위별 출제율 그래프에 대화문만 나오고
+   본문이 통째로 빠진 일이 있었다(2026-09-29 아중중 보고서). 한 묶음으로 모아 함께 센다. */
+const TREND_OTHER_GROUP = "그 밖의 범위 지문";
+/* 묶음 이름이 없으면 지문 이름의 숫자 앞 말로 묶는다 — "본문 5-3" · "본문5-2" → "본문",
+   "지문 3" → "지문". 그것도 없으면 '그 밖의 범위 지문'. */
+const trendGroupKey = (r) => {
+  if (r.group) return r.group;
+  const m = /^\s*([^\d·]+?)\s*\d/.exec(r.label || "");
+  return m && m[1].trim() ? m[1].trim() : TREND_OTHER_GROUP;
+};
+
 // 범위(저장본 제목)마다 지문 몇 개 중 몇 개가 나왔는지
 function trendGroupStats(cv) {
   const groups = new Map();
   (cv ? cv.rows : []).forEach((r) => {
-    if (!r.group) return;
-    const g = groups.get(r.group) || { total: 0, used: 0, hits: 0 };
+    const key = trendGroupKey(r);
+    const g = groups.get(key) || { total: 0, used: 0, hits: 0 };
     g.total++;
     if (r.count > 0) g.used++;
     g.hits += r.hits.reduce((a, h) => a + h.length, 0);
-    groups.set(r.group, g);
+    groups.set(key, g);
   });
   return groups;
 }
@@ -847,10 +859,10 @@ function trendCoverageHtml(cv) {
   let lastGroup = null;
   const body = shown.map((r) => {
     let head = "";
-    if (grouped && r.group !== lastGroup) {
-      lastGroup = r.group;
-      const g = groups.get(r.group);
-      head = `<tr class="grp"><td colspan="${cols}">${esc(r.group || "(이름 없음)")}${g ? ` <span class="qk">· ${g.used}/${g.total}개 출제</span>` : ""}</td></tr>`;
+    if (grouped && trendGroupKey(r) !== lastGroup) {
+      lastGroup = trendGroupKey(r);
+      const g = groups.get(lastGroup);
+      head = `<tr class="grp"><td colspan="${cols}">${esc(lastGroup)}${g ? ` <span class="qk">· ${g.used}/${g.total}개 출제</span>` : ""}</td></tr>`;
     }
     return `${head}
     <tr>
@@ -863,7 +875,7 @@ function trendCoverageHtml(cv) {
   // 안 나온 지문 — 범위별로 묶어 이름만 늘어놓는다
   const missing = new Map();
   cv.rows.filter((r) => r.count === 0).forEach((r) => {
-    const key = grouped ? (r.group || "(이름 없음)") : "";
+    const key = grouped ? trendGroupKey(r) : "";
     if (!missing.has(key)) missing.set(key, []);
     missing.get(key).push(rowName(r));
   });
