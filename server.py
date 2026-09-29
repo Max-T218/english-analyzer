@@ -363,6 +363,12 @@ PRICE_OCR_KRW = int(os.environ.get("PRICE_OCR_KRW", "0"))                  # 사
 # 정하기 전에 먼저 돈을 내는 셈이 된다.
 # OCR·지문 변형과 같은 자리다 — 결과물이 아니라 '만들기 전 단계'는 받지 않는다.
 PRICE_EXAMSCAN_KRW = int(os.environ.get("PRICE_EXAMSCAN_KRW", "0"))
+# 시험지 분석 리포트 — 보고서 1건당 정액(2026-09-29 사용자 결정: 1,000P). 받는 자리는 총평을
+# 쓸 때 한 번이다(분석이 끝나면 총평까지 저절로 이어지므로 보고서 하나에 한 번 받는 셈이다).
+# 유형 분석·지문 읽기(/api/examscan·/api/examocr)는 동형 모의고사 탭과 값을 같이 쓰는데
+# 그 둘은 무료로 두기로 했으므로, 보고서 값은 여기 한 곳에서만 받는다.
+# 실측 원가(8쪽 시험지 1부): 범위 없이 약 290원 · 범위 대조까지 약 780원 · 3부 합치기 약 860원.
+PRICE_EXAM_TREND_KRW = int(os.environ.get("PRICE_EXAM_TREND_KRW", "1000"))
 # 시험지에서 지문 꺼내기 — 유형 분석과 달리 지문 전문을 옮겨 적으므로 출력이 길고,
 # 쪽마다 그림을 한 장씩 읽는다. 그래서 1벌당이 아니라 '쪽당'으로 매긴다.
 PRICE_EXAM_OCR_KRW = int(os.environ.get("PRICE_EXAM_OCR_KRW", "0"))
@@ -891,7 +897,7 @@ def _asset_version():
     그림만 갈아 끼우면 표식이 그대로여서 브라우저가 하루(max-age=86400) 동안 옛 그림을
     계속 보여 줬다. 파일 이름이 그대로라 헤더 말고는 새 그림임을 알릴 방법이 없다."""
     stamp = 0.0
-    names = ["app.js", "style.css"] + [p.name for p in sorted(PUBLIC_DIR.glob("sample-*.jpg"))]
+    names = ["app.js", "trend.js", "style.css"] + [p.name for p in sorted(PUBLIC_DIR.glob("sample-*.jpg"))]
     for name in names:
         try:
             stamp = max(stamp, (PUBLIC_DIR / name).stat().st_mtime)
@@ -4314,6 +4320,133 @@ def call_gemini_pdf_split(pages, api_key, model):
     return {"passages": out, "note": str(result.get("note") or "").strip()}
 
 
+# ── 출제경향 보고서(/api/examtrend) ──
+# 화면이 이미 읽어 둔 기출 유형표를 부·유형별 개수로 집계해 보내면, 그 숫자만 보고
+# 총평과 유형별 대비 전략을 쓴다. 시험지 그림이나 지문은 다시 보내지 않으므로 Flash로
+# 충분하고 입력이 아주 짧다. 숫자를 새로 만들지 못하게 프롬프트로 막는다.
+EXAM_TREND_MAX_DOCS = 12
+EXAM_TREND_MAX_KINDS = 60
+EXAM_TREND_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "overview": {"type": "STRING"},
+        "strategies": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "kind": {"type": "STRING"},
+                    "advice": {"type": "STRING"},
+                },
+                "required": ["kind", "advice"],
+                "propertyOrdering": ["kind", "advice"],
+            },
+        },
+        "caution": {"type": "STRING"},
+    },
+    "required": ["overview", "strategies", "caution"],
+    "propertyOrdering": ["overview", "strategies", "caution"],
+}
+EXAM_TREND_SYSTEM_PROMPT = """당신은 한국 고등학교 영어 내신 시험을 분석하는 교사용 보조자입니다.
+입력은 한 학교(또는 한 과목)의 기출 시험지 여러 부를 '문항 유형별 출제 개수'로 집계한 표입니다.
+이 숫자만 근거로 출제경향 보고서의 글 부분을 한국어로 씁니다.
+
+규칙
+- 입력에 없는 숫자·유형·학교 사정을 지어내지 않습니다. 표에 나온 개수와 비율만 인용합니다.
+- 부(회차)가 1개뿐이면 '경향'이라 단정하지 말고 '이 시험지의 구성'으로 말하고, caution에 표본이 적다는 점을 적습니다.
+- overview: 3~5문장. 어떤 유형이 비중이 큰지, 해마다 꾸준히 나오는 유형과 한두 번만 나온 유형이 무엇인지 요약합니다.
+- strategies: 개수가 많은 유형부터 최대 6개. kind는 입력의 유형 이름을 그대로 쓰고, advice는 학생·교사가 바로 쓸 수 있는 대비 방법을 1~2문장으로 씁니다.
+- caution: 1~2문장. 표본 크기, 분석하지 못한 문항이 있다는 점 등 해석 시 주의할 점.
+- '시험 범위 지문별 출제 횟수'가 주어지면 overview에 어느 지문이 여러 번 출제됐고 어느 지문이 한 번도 안 나왔는지 한두 문장 덧붙입니다. 이 목록은 글자 겹침으로 짝지은 추정이라 단정하지 않습니다.
+- 존댓말 문어체, 마크다운·HTML 태그 금지."""
+
+
+def _trend_text(s, limit):
+    return _TAG_STRIP_RE.sub("", str(s or "")).strip()[:limit]
+
+
+def call_gemini_exam_trend(data, api_key, model):
+    """집계표(부·유형별 개수)에서 총평과 유형별 대비 전략을 쓴다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+
+    docs = [_trend_text(d, 40) or f"{i + 1}부" for i, d in enumerate((data.get("docs") or [])[:EXAM_TREND_MAX_DOCS])]
+    if not docs:
+        raise RuntimeError("분석할 기출이 없습니다.")
+    lines = []
+    for row in (data.get("kinds") or [])[:EXAM_TREND_MAX_KINDS]:
+        if not isinstance(row, dict):
+            continue
+        kind = _trend_text(row.get("kind"), 40)
+        per = row.get("per") if isinstance(row.get("per"), list) else []
+        counts = []
+        for i in range(len(docs)):
+            try:
+                counts.append(max(0, min(200, int(per[i]))))
+            except (IndexError, TypeError, ValueError):
+                counts.append(0)
+        if kind and sum(counts):
+            lines.append(f"- {kind}: " + ", ".join(f"{d} {n}문항" for d, n in zip(docs, counts)))
+    if not lines:
+        raise RuntimeError("집계할 문항 유형이 없습니다.")
+    try:
+        unmade = max(0, min(999, int(data.get("unmade") or 0)))
+    except (TypeError, ValueError):
+        unmade = 0
+    text = (f"기출 {len(docs)}부: " + " / ".join(docs) + "\n유형별 출제 개수:\n"
+            + "\n".join(lines)
+            + (f"\n유형으로 분류하지 못한 문항: {unmade}개" if unmade else ""))
+    # 시험 범위 대조(화면이 글자 겹침으로 짝지은 결과) — 있을 때만 붙인다
+    plines = []
+    for row in (data.get("passages") or [])[:100]:
+        if not isinstance(row, dict):
+            continue
+        pname = _trend_text(row.get("name"), 50)
+        per = row.get("per") if isinstance(row.get("per"), list) else []
+        hits = []
+        for i in range(len(docs)):
+            try:
+                hits.append(max(0, min(20, int(per[i]))))
+            except (IndexError, TypeError, ValueError):
+                hits.append(0)
+        if pname:
+            used = [d for d, n in zip(docs, hits) if n]
+            plines.append(f"- {pname}: {len(used)}회" + (f" ({', '.join(used)})" if used else ""))
+    if plines:
+        text += "\n시험 범위 지문별 출제 횟수(부 단위):\n" + "\n".join(plines)
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": EXAM_TREND_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": text}]}],
+        "generationConfig": {
+            "temperature": 0.4,
+            "maxOutputTokens": 8192,
+            "responseMimeType": "application/json",
+            "responseSchema": EXAM_TREND_SCHEMA,
+        },
+    }
+    result = _gemini_json(payload, api_key, model,
+                          "보고서 글이 너무 길어 잘렸습니다. 다시 시도해 주세요.", label="examtrend")
+    strategies = []
+    # 6개까지 — 보고서 1쪽(표지 정보·핵심 요약·총평·대비 전략)이 한 장에 들어가야 한다
+    for item in (result.get("strategies") or ())[:6]:
+        if not isinstance(item, dict):
+            continue
+        kind, advice = _trend_text(item.get("kind"), 40), _trend_text(item.get("advice"), 400)
+        if kind and advice:
+            strategies.append({"kind": kind, "advice": advice})
+    return {
+        "overview": _trend_text(result.get("overview"), 1200),
+        "strategies": strategies,
+        "caution": _trend_text(result.get("caution"), 500),
+    }
+
+
 # ── 기출 시험지 유형 분석 스키마 ──
 # 시험지 사진 여러 장을 한 번에 보고, 문항마다 '무엇을 묻는 문제인지'를 뽑는다.
 # 영어 지문은 일부러 옮겨 적지 않는다 — 유형 판정에 필요 없고, 널리 공개된 지문을
@@ -4331,12 +4464,13 @@ EXAM_SCAN_SCHEMA = {
                     "group": {"type": "STRING"},
                     "format": {"type": "STRING"},
                     "prompt": {"type": "STRING"},
+                    "category": {"type": "STRING"},
                     "kind": {"type": "STRING"},
                     "fit": {"type": "STRING"},
                     "note": {"type": "STRING"},
                 },
-                "required": ["no", "group", "format", "prompt", "kind", "fit", "note"],
-                "propertyOrdering": ["no", "group", "format", "prompt",
+                "required": ["no", "group", "format", "prompt", "category", "kind", "fit", "note"],
+                "propertyOrdering": ["no", "group", "format", "prompt", "category",
                                      "kind", "fit", "note"],
             },
         },
@@ -4346,12 +4480,46 @@ EXAM_SCAN_SCHEMA = {
     "propertyOrdering": ["title", "questions", "note"],
 }
 
+# 출제경향 보고서(시험지 분석 리포트 탭)가 쓰는 유형 목록 — category 칸.
+# kind(이 앱으로 만들 수 있는 유형)와 다르다. kind는 '무엇을 만들 수 있나'라 중학교 시험의
+# 대화문·어법 개수 세기·영영풀이 같은 문항은 전부 "없음"으로 빠졌다. 보고서는 '무엇이
+# 출제됐나'를 세야 하므로, 만들 수 있든 없든 모든 문항이 이 목록의 하나를 갖는다.
+# 중·고등 내신에 두루 나오는 이름으로 잡았고, 이름을 바꾸면 이미 저장한 분석과 이름이
+# 달라져 보고서에서 두 줄로 갈린다 — 바꿀 때는 그 점을 알고 바꿀 것.
+EXAM_REPORT_CATEGORIES = (
+    ("주제·제목", "글의 주제·제목 고르기"),
+    ("요지·주장", "필자의 요지·주장 고르기"),
+    ("글의 목적", "글을 쓴 목적 고르기"),
+    ("심경·분위기", "인물의 심경·글의 분위기"),
+    ("함축 의미", "밑줄 친 표현이 뜻하는 바"),
+    ("내용 일치·불일치", "줄글의 세부 내용 — 일치/불일치, 알 수 있는/없는 것, 답할 수 있는/없는 질문"),
+    ("대화문 내용 파악", "대화를 읽고 내용 일치·알 수 있는 것 고르기"),
+    ("대화 흐름·응답", "대화 순서 배열, 흐름상 어색한 말, 대화 빈칸에 알맞은 말"),
+    ("빈칸 추론", "글의 빈칸에 들어갈 말(연결어 빈칸은 제외)"),
+    ("연결어", "빈칸 (A)(B)에 들어갈 연결어·접속부사"),
+    ("순서 배열", "주어진 글 다음에 이어질 글의 순서"),
+    ("문장 삽입", "주어진 문장이 들어가기에 알맞은 곳"),
+    ("무관한 문장", "전체 흐름과 관계없는 문장"),
+    ("요약문 완성", "요약문의 빈칸 (A)(B) 고르기"),
+    ("지칭 대상", "가리키는 대상이 나머지와 다른 것"),
+    ("어법", "어법상 틀린/옳은 것 고르기, 어법에 맞는 문장 개수 세기"),
+    ("어휘·낱말 쓰임", "문맥상 낱말 쓰임이 적절하지 않은 것, 뜻풀이가 다른 것"),
+    ("단어 뜻·영영풀이", "영영풀이, 단어 뜻, 단어 만들기(접두사·합성어)"),
+    ("영어 표현 고르기", "우리말을 영어로 바르게 옮긴 것 고르기(선택형)"),
+    ("서술형: 영작·배열", "우리말 영작, 단어 배열, 조건에 맞게 영작"),
+    ("서술형: 어법 고쳐 쓰기", "틀린 곳을 찾아 바르게 고쳐 쓰기"),
+    ("서술형: 빈칸·단어 쓰기", "빈칸·요약문에 알맞은 단어 쓰기, 본문에서 찾아 쓰기, 단어 변형"),
+    ("서술형: 내용 서술", "질문에 영어로 답하기, 요지·해석을 쓰기, 가리키는 것 찾아 쓰기"),
+    ("기타", "위 어디에도 맞지 않는 것"),
+)
+EXAM_REPORT_CATEGORY_NAMES = frozenset(n for n, _d in EXAM_REPORT_CATEGORIES)
+
 # 시험지가 쓰는 유형 이름은 학교마다 제각각이다("어법상 어색한 것", "밑줄 친 부분 중
 # 틀린 것", "다음 중 옳지 않은 것"). 그 이름을 우리 19유형에 갖다 붙이는 판단을 모델에게
 # 맡기되, 고를 수 있는 이름은 호출할 때 QUIZ_TYPE_LABELS에서 그대로 넣어 준다 —
 # 여기에 유형 이름을 베껴 두면 목록이 바뀔 때 조용히 어긋난다.
-EXAM_SCAN_SYSTEM_PROMPT = r"""You analyse photos of a Korean high-school ENGLISH exam paper
-(고등학교 영어 내신 기출) and report WHAT EACH QUESTION ASKS. Return ONLY the structured JSON
+EXAM_SCAN_SYSTEM_PROMPT = r"""You analyse photos of a Korean middle- or high-school ENGLISH exam
+paper (중·고등학교 영어 내신 기출) and report WHAT EACH QUESTION ASKS. Return ONLY the structured JSON
 in the schema — no markdown, no commentary.
 
 ## Your job is classification, NOT transcription
@@ -4377,6 +4545,11 @@ irrelevant here and copying them wastes the whole output. Read the Korean questi
   if the 발문 is longer, keep the beginning and stop there. This field is only a label the
   teacher reads to recognise the question; a full transcript wastes the output budget that
   the remaining questions need.
+- `category`: what kind of question this IS, from the REPORT CATEGORIES in the user message,
+  copied EXACTLY. EVERY question gets one — this is independent of `kind`/`fit`: a question the
+  app cannot reproduce still has a category. Choose by what the student does (read the 발문
+  and the choices): a dialogue-based 일치 question is 대화문 내용 파악, not 내용 일치·불일치;
+  "어법상 올바른 문장의 개수" is 어법. Use 기타 only when nothing fits.
 - `kind`: the closest type from the ALLOWED LIST given in the user message, copied EXACTLY.
   Use "" when nothing on the list is close.
   The list has three groups (객관식 / 주관식 / 워크북). Korean 내신 서답형 — 영작, 우리말
@@ -4439,8 +4612,12 @@ def build_exam_scan_user_prompt(page_count, page_from=0, page_total=0):
         )
     else:
         head = f"시험지 {page_count}쪽입니다. 모든 쪽의 모든 문항을 빠짐없이 분류하세요."
+    cats = [f"{name} — {desc}" for name, desc in EXAM_REPORT_CATEGORIES]
     return "\n".join([
         head,
+        "",
+        "REPORT CATEGORIES — category 에는 아래 이름 중 하나를 그대로 씁니다(모든 문항에 하나씩):",
+        "\n".join("  " + c for c in cats),
         "",
         "ALLOWED LIST — kind 에는 아래 이름 중 하나를 그대로 쓰고, 해당 없으면 빈 문자열.",
         "",
@@ -4600,7 +4777,10 @@ and drop the marks:
 ## One entry per passage
 Each item of `passages` is ONE reading passage.
 - `label`: the question number(s) the passage serves, as printed - 15번, 1-2번. Use ""
-  when you cannot tell.
+  when you cannot tell. A group header such as "[13-16] 다음 빈칸에 들어갈 말로…" often
+  introduces several questions that EACH have their own passage — then label each passage
+  with ITS OWN number (13번, 14번 …), not the header range. Use a range only when one passage
+  really serves several questions ("[1-2] 다음 글을 읽고 물음에 답하시오").
 - `lines`: ONE SENTENCE per array item, in order. Split at sentence ends (. ? !); never
   split mid-sentence. Use "" (an empty item) to mark a paragraph break.
 - A passage that continues from the previous page is the SAME passage - append its
@@ -4727,6 +4907,10 @@ def normalize_exam_scan(result):
 
         fmt = "서답형" if str(raw.get("format") or "").strip() == "서답형" else "선다형"
         note = sanitize_inline(str(raw.get("note") or ""))
+        # 보고서용 유형 — 목록 밖의 이름은 받지 않는다(보고서에서 줄이 제멋대로 갈린다)
+        category = str(raw.get("category") or "").strip()
+        if category not in EXAM_REPORT_CATEGORY_NAMES:
+            category = "기타"
 
         # 어느 탭에서 만드는지는 모델에게 묻지 않고 이름으로 정한다 — 이름이 어느
         # 목록에 있느냐가 곧 답이라, 모델이 틀릴 여지를 남길 이유가 없다.
@@ -4761,6 +4945,7 @@ def normalize_exam_scan(result):
             "group": sanitize_inline(str(raw.get("group") or "")),
             "format": fmt,
             "prompt": sanitize_inline(str(raw.get("prompt") or "")),
+            "category": category,
             "kind": kind,
             "engine": engine,
             "fit": fit,
@@ -8801,6 +8986,20 @@ CHANGELOG = [
             "고칠 수 있습니다. 기출 시험지를 다시 올리지 않아도 됩니다.",
         ],
     },
+    {
+        "version": 47,
+        "date": "2026-09-29",
+        "items": [
+            "📊 새 탭 [시험지 분석 리포트] — 학교 기출 시험지(PDF·사진)를 올리면 유형별 "
+            "출제 현황 그래프, 핵심 요약, 시험지 분석 총평과 유형별 대비 전략을 담은 "
+            "출제경향 보고서를 만들어 인쇄·저장할 수 있습니다. 시험 범위 지문을 넣으면 "
+            "어느 지문이 몇 번 문항으로 나왔는지도 대조합니다. 중학교 시험지도 됩니다.",
+            "시험지 분석은 무료이고, 보고서 총평을 쓸 때 1건에 1,000포인트가 듭니다. "
+            "여러 해 시험지를 저장해 두었다가 [➕ 저장한 분석 더하기]로 합치면 해마다의 "
+            "유형 변화가 꺾은선 그래프로 나옵니다.",
+            "저장함에서 [✏️ 이름]으로 저장본 이름을 바꿀 수 있습니다.",
+        ],
+    },
 ]
 
 
@@ -9906,6 +10105,17 @@ def save_item(item_id, user_id, tab, title, payload):
     return ref.id
 
 
+def rename_saved_item(item_id, user_id, title):
+    """저장 항목의 이름만 바꾼다(내용·수정 시각은 그대로). 남의 항목이면 False."""
+    _require_db()
+    ref = DB.collection("saved_items").document(item_id)
+    snap = ref.get()
+    if not snap.exists or snap.to_dict().get("user_id") != user_id:
+        return False
+    ref.update({"title": title})
+    return True
+
+
 def delete_saved_item(item_id, user_id):
     _require_db()
     ref = DB.collection("saved_items").document(item_id)
@@ -10756,6 +10966,7 @@ class Handler(BaseHTTPRequestHandler):
                 "ocr": PRICE_OCR_KRW,
                 # 기출 유형 분석 — 기본 0원. 값이 붙어도 시험지 1벌당이지 쪽 수에 곱하지 않는다
                 "examScan": PRICE_EXAMSCAN_KRW,
+                "examTrend": PRICE_EXAM_TREND_KRW,
                 # 시험지에서 지문 꺼내기 — 이것만 쪽당이다(화면이 쪽 수를 곱해 보여 준다)
                 "examOcrPage": PRICE_EXAM_OCR_KRW,
                 # 동형 모의고사 상한 이벤트 — 한 번 누를 때(여러 부 합쳐) 이 값까지만.
@@ -11063,13 +11274,13 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/brief", "/api/models", "/api/quiz", "/api/workbook",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
-                        "/api/pdfsplit",
+                        "/api/examtrend", "/api/pdfsplit",
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
                         "/api/account/recharge", "/api/account/recharge/confirm",
                         "/api/account/ack-update", "/api/portone/webhook",
-                        "/api/saved", "/api/saved/delete",
+                        "/api/saved", "/api/saved/delete", "/api/saved/rename",
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
                         "/api/admin/approve-exam",
@@ -11138,7 +11349,7 @@ class Handler(BaseHTTPRequestHandler):
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/quiz", "/api/workbook",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
-                           "/api/pdfsplit",
+                           "/api/examtrend", "/api/pdfsplit",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf")
         # /api/docx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
         # 않는다(그래서 GENERATE_PATHS가 아니라 여기 따로 붙는다).
@@ -11204,6 +11415,9 @@ class Handler(BaseHTTPRequestHandler):
                     cost = PRICE_EXAMSCAN_KRW
                     pages = len(req.get("files") or ())
                     self._pending_label = f"기출 유형 분석 · {pages}쪽"
+                elif path == "/api/examtrend":
+                    cost = PRICE_EXAM_TREND_KRW
+                    self._pending_label = "출제경향 보고서"
                 elif path == "/api/examocr":
                     # 쪽마다 그림을 한 장씩 읽으므로 쪽 수에 곱한다(examscan과 다른 점).
                     pages = len(req.get("files") or ())
@@ -11741,6 +11955,27 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"id": new_id})
             return
 
+        if path == "/api/saved/rename":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            item_id = req.get("id") or ""
+            title = str(req.get("title") or "").strip()[:100]
+            if not title:
+                self._send_json({"error": "새 이름을 적어 주세요."}, 400)
+                return
+            try:
+                ok = rename_saved_item(item_id, user_id, title)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            if not ok:
+                self._send_json({"error": "저장한 항목을 찾을 수 없습니다."}, 404)
+                return
+            self._send_json({"ok": True, "title": title})
+            return
+
         if path == "/api/saved/delete":
             user_id = _session_user(self)
             if not user_id:
@@ -12096,6 +12331,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
             except ProUnavailable as e:
                 self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        if path == "/api/examtrend":
+            # 동형 모의고사 제작에 딸린 기능이라 /api/examscan과 같은 승인을 요구한다.
+            if not _exam_approved(self._auth_user_id):
+                self._send_json(
+                    {"error": "동형 모의고사 제작은 관리자 승인이 필요합니다.",
+                     "code": "exam_not_approved"}, 403)
+                return
+            data = req.get("data")
+            if not isinstance(data, dict):
+                self._send_json({"error": "보고서로 만들 기출 집계가 없습니다."}, 400)
+                return
+            # 집계표만 읽는 짧은 글쓰기 — 항상 Flash. 사용자가 모델을 고르지 않는다.
+            try:
+                report = call_gemini_exam_trend(data, req.get("apiKey") or "", MODEL)
+                self._charge_and_send(path, req, report)
             except QuotaExceeded as e:
                 self._send_json({"error": str(e), "code": "quota"}, 429)
             except Exception as e:

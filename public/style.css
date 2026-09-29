@@ -444,16 +444,21 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .saved-list-count{text-align:right; font-size:11.5px; color:var(--ink-soft); margin-top:6px;}
 .saved-list{max-height:min(56vh, 460px); overflow:auto; margin:4px 0 0;}
 .saved-list-empty{color:var(--ink-soft); font-size:13.5px; padding:10px 0;}
+/* 윗줄은 종류 표시 + 제목(한 줄 전체), 아랫줄은 단추 — 단추를 제목 옆에 두면 제목 칸이
+   좁아져 저장본 이름이 잘리거나 두 줄로 꺾여 보기 싫었다(2026-09-29 사용자 요청). */
 .saved-list-item{
-  display:flex; align-items:center; gap:10px; padding:10px 4px;
+  display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; padding:10px 4px 8px;
   border-bottom:1px solid var(--line);
 }
 .saved-list-item:last-child{border-bottom:none;}
 .saved-list-tag{font-size:12px; padding:2px 7px; border-radius:6px; background:var(--line-soft); color:var(--ink-soft); white-space:nowrap;}
 .saved-list-info{flex:1 1 auto; min-width:0;}
-.saved-list-title{font-size:14px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+/* 두 줄까지 줄을 바꿔 보여 준다 — 한 줄로 자르면 "영어2 YBM(박…"처럼 저장본을 알아볼 수 없었다 */
+.saved-list-title{font-size:14px; font-weight:600; word-break:keep-all; overflow-wrap:anywhere;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.35;}
 .saved-list-date{font-size:12px; color:var(--ink-soft);}
-.saved-list-actions{display:flex; gap:6px; flex-shrink:0;}
+.saved-list-actions{display:flex; gap:6px; flex:1 0 100%; justify-content:flex-end;}
+.saved-list-actions .btn.small{padding:4px 10px; font-size:12.5px;}
 
 /* 모든 탭이 공유하는 지문 패널 */
 .passage-panel{border-color:var(--accent); border-width:1px; transition:background .12s, box-shadow .12s;}

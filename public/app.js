@@ -781,7 +781,7 @@ function renderAccount(info) {
   isClassroomApproved = !!info.classroomApproved;
   studentsTabBtn.hidden = !isClassroomApproved;
   isExamApproved = !!info.examApproved;
-  if (isExamApproved) examTabBtn.hidden = false;
+  if (isExamApproved) { examTabBtn.hidden = false; trendTabBtn.hidden = false; }
   else hideExamTab();
   updateVocabAssignBtnVisibility();
   const krwText = currentKrw !== null ? ` · 잔액 ${pt(currentKrw)}` : "";
@@ -2543,6 +2543,7 @@ wirePassageDrop(passagePanelEl, passageMgr, ocrStatus, { ocr: true });
 // ── 탭 전환 ──
 const studentsTabBtn = $("studentsTabBtn");
 const examTabBtn = $("examTabBtn");
+const trendTabBtn = $("trendTabBtn");   // 시험지 분석 리포트 — 동형 모의고사와 같은 승인을 따른다(public/trend.js)
 const tabBtns = [...document.querySelectorAll(".tab-btn")];
 const tabPages = [...document.querySelectorAll(".tab-page")];
 function syncFloatPrint() {
@@ -2640,14 +2641,20 @@ function moveBrandPanel(intoExam) {
 
 function syncTabChrome(tab) {
   const onExam = tab === "exam";
-  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || tab === "vocab" || tab === "students";
+  // 시험지 분석 리포트도 공용 지문칸·학원 마크를 쓰지 않는다
+  const onTrend = tab === "trend";
+  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || tab === "vocab" || tab === "students";
   // 기출 탭에서는 분석이 끝나 시험지 칸이 열렸을 때만 마크 칸을 보여 준다
   moveBrandPanel(onExam && !examPaperPanelEl.hidden);
-  if (brandPanelEl) brandPanelEl.hidden = onExam && examPaperPanelEl.hidden;
+  if (brandPanelEl) brandPanelEl.hidden = (onExam && examPaperPanelEl.hidden) || onTrend;
 }
 
 function hideExamTab() {
   examTabBtn.hidden = true;
+  trendTabBtn.hidden = true;
+  if (trendTabBtn.classList.contains("active")) {
+    document.querySelector('.tab-btn[data-tab="analyze"]').click();
+  }
   // 승인이 꺼졌는데 마침 그 탭을 보고 있었다면 첫 탭으로 물러난다 — 단추만 감추면
   // 화면이 그대로 남아 계속 쓸 수 있는 것처럼 보인다.
   if (examTabBtn.classList.contains("active")) {
@@ -8105,15 +8112,13 @@ function savedItemRowHtml(item) {
     <div class="saved-list-item" data-id="${esc(item.id)}">
       <span class="saved-list-tag">${esc(label)}</span>
       <div class="saved-list-info">
-        <div class="saved-list-title">${esc(item.title || "제목 없음")}</div>
+        <div class="saved-list-title" title="${esc(item.title || "제목 없음")}">${esc(item.title || "제목 없음")}</div>
         <div class="saved-list-date">${esc(date)}</div>
       </div>
       <div class="saved-list-actions">
         <button type="button" class="btn ghost small saved-list-load"
                 title="이 저장본을 입력칸으로 가져옵니다.">불러오기</button>
-        ${item.tab === PASSAGE_TAB ? `
-        <button type="button" class="btn ghost small saved-list-copy"
-                title="이 지문 묶음을 텍스트로 복사합니다. 카톡·메일로 보내면 받는 분이 한 번에 넣을 수 있습니다.">📋 복사</button>` : ""}
+        <button type="button" class="btn ghost small saved-list-rename" title="이 저장본의 이름을 바꿉니다.">✏️ 이름</button>
         <button type="button" class="btn ghost small danger saved-list-delete">삭제</button>
       </div>
     </div>`;
@@ -8150,8 +8155,7 @@ const LIBRARY = {
     title: "📄 지문 저장함",
     lead: "저장해 둔 지문입니다. [불러오기]를 누르면 입력칸으로 가져옵니다 — 이미 입력해 둔 " +
           "지문이 있으면, 뒤에 이어 붙일지 지우고 새로 넣을지 그때 물어봅니다. " +
-          "[📋 복사]는 그 지문 묶음을 텍스트로 복사합니다. 카톡·메일로 동료 선생님께 보내면 " +
-          "받는 분이 지문칸에 한 번 붙여넣는 것으로 끝납니다.",
+          "[✏️ 이름]으로 저장본 이름을 바꿀 수 있습니다.",
     empty: "아직 저장한 지문이 없습니다. 지문을 입력한 뒤 “💾 지문 저장”을 눌러 보세요.",
     match: (item) => item.tab === PASSAGE_TAB,
   },
@@ -8324,6 +8328,8 @@ async function loadSavedItem(id, mode) {
     const tab = savedTabOf(item);
     if (!TAB_SAVE[tab]) return;
     const append = mode === "append";
+    // 탭이 불러오기 전에 확인할 일이 있으면 맡긴다(시험지 분석 리포트: 하던 분석이 사라지므로 묻는다)
+    if (TAB_SAVE[tab].beforeLoad && TAB_SAVE[tab].beforeLoad() === false) return;
     savedListModalEl.hidden = true;
     /* 목적지가 따로 정해져 있으면(시험지 탭의 시험 범위 칸) 그 칸에만 넣고 끝낸다.
        아래 본줄기를 타면 안 된다 — 통째로 바꿀 때 clearAllTabResults()가 화면의
@@ -8331,7 +8337,9 @@ async function loadSavedItem(id, mode) {
        보면서 지문을 채우는 중이라 그 표가 사라지면 하던 일이 통째로 날아간다. */
     if (passageLoadTo && tab === PASSAGE_TAB) {
       const mgr = passageLoadTo.mgr;
-      const list = (item.payload || {}).passages || [];
+      // 목적지가 지문을 손볼 일이 있으면 맡긴다(시험지 분석 리포트: 저장본 제목을 이름 앞에 붙인다)
+      const raw = (item.payload || {}).passages || [];
+      const list = passageLoadTo.prepare ? passageLoadTo.prepare(raw, item) : raw;
       /* 목표 어법도 지문과 한 벌이라 함께 되살린다. 뒤에 이어 붙일 때는 덮어쓰지
          않는다 — 앞서 불러온 지문에 맞춰 적어 둔 어법이 조용히 사라진다
          (공용 지문칸의 applyPayload와 같은 규칙). */
@@ -8365,6 +8373,8 @@ async function loadSavedItem(id, mode) {
        어느 구성에서 나온 것인지 알 수 없다. 다만 방금 만든 시험지를 모르고 잃은 일이
        있었으므로(되돌릴 수 없다) 비우기 전에 먼저 묻는다 — [취소]면 아무것도 안 바뀐다. */
     const examLoad = SAVED_TAB_HOME[tab] === "exam" || tab === "exam";
+    // 시험지 분석 리포트는 자기 탭만 바꾼다 — 다른 탭의 결과물까지 지우면 안 된다
+    const ownTabOnly = examLoad || tab === "trend";
     if (examLoad && !append) {
       if (examBusy || examPaperBusy) {
         alert("분석이나 제작이 진행 중입니다. 끝난 뒤에 불러와 주세요.");
@@ -8387,7 +8397,7 @@ async function loadSavedItem(id, mode) {
        그 지문으로 만든 결과물도 여전히 맞는 짝이다. */
     /* 동형 모의고사는 위에서 이 탭만 비웠다 — 지문 칸(시험 범위)이 따로라 다른 탭의
        결과물과 짝이 어긋나지 않으므로, 다른 탭에서 만든 분석·문제까지 지울 까닭이 없다. */
-    if (!append && !examLoad) {
+    if (!append && !ownTabOnly) {
       clearAllTabResults();
       clearDocTitles();
       // 다른 탭에 남아 있던 '어느 자료에서 왔는가'도 함께 잊는다 — 결과물을 다 지웠으므로
@@ -8458,31 +8468,30 @@ savedListBodyEl.addEventListener("click", async (e) => {
     return;
   }
 
-  /* 저장해 둔 지문 묶음을 곧바로 텍스트로 복사한다. 불러오기를 거치지 않는 것은,
-     동료에게 보내려던 것뿐인데 지금 입력칸에 들여놓은 지문이 밀려나면 안 되기 때문이다.
-     목록에는 제목만 있고 지문은 없으므로 이때 한 번 받아 온다. */
-  if (e.target.closest(".saved-list-copy")) {
-    const btn = e.target.closest(".saved-list-copy");
-    const label = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = "복사 중…";
+  /* 저장함의 [📋 복사] 단추는 2026-09-29에 뺐다 — 단추가 넷이 되자 제목 칸이 좁아져
+     저장본 이름을 알아볼 수 없었다(사용자 결정). 지문 묶음 복사는 입력칸의
+     '📋 지문 전체 복사'로 한다(불러온 뒤 누르면 같은 글이 나온다). */
+
+  /* 이름 바꾸기 — 내용은 그대로 두고 이름만 고친다. 지문 저장본의 이름은 시험지 분석
+     리포트에서 '어느 범위의 지문인가'로 쓰이므로(저장함에서 가져오면 이름 앞에 붙는다)
+     나중에 알아보기 쉬운 이름으로 고칠 길이 있어야 한다. */
+  if (e.target.closest(".saved-list-rename")) {
+    const cached = savedItemsCache.find((it) => it.id === id);
+    const now = cached ? cached.title || "" : "";
+    const next = prompt("새 이름을 적어 주세요.", now);
+    if (next === null) return;
+    const title = next.trim();
+    if (!title || title === now) return;
     try {
-      const item = await getJson(`/api/saved/${encodeURIComponent(id)}`, "불러오기에 실패했습니다.");
-      const jobs = ((item.payload || {}).passages) || [];
-      if (!jobs.length) throw new Error("이 저장본에는 지문이 없습니다.");
-      if (!(await copyToClipboard(formatPassageBundle(jobs)))) {
-        throw new Error("브라우저가 복사를 막았습니다. [불러오기]로 지문칸에 가져온 뒤 “📋 지문 전체 복사”를 눌러 보세요.");
-      }
-      // 눌렸는지 알 수 없으면 몇 번씩 다시 누르게 된다 — 잠깐 글자를 바꿔 알린다
-      btn.textContent = `지문 ${jobs.length}개 복사됨`;
-      setTimeout(() => {
-        btn.textContent = label;
-        btn.disabled = false;
-      }, 1800);
+      await postJson("/api/saved/rename", { id, title }, "이름을 바꾸지 못했습니다.");
+      if (cached) cached.title = title;
+      // 지금 화면에 불러와 둔 자료라면 덮어쓰기 안내에 나오는 이름도 맞춘다
+      Object.keys(LOADED_SAVED).forEach((k) => {
+        if (LOADED_SAVED[k].id === id) LOADED_SAVED[k].title = title;
+      });
+      renderSavedList();
     } catch (err) {
-      alert(err.message || "복사에 실패했습니다.");
-      btn.textContent = label;
-      btn.disabled = false;
+      alert(err.message || "이름을 바꾸지 못했습니다.");
     }
     return;
   }

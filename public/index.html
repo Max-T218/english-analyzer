@@ -933,6 +933,8 @@
     <button type="button" class="tab-btn" data-tab="workbook">📚 워크북 제작</button>
     <button type="button" class="tab-btn" data-tab="vocab">📒 단어장</button>
     <button type="button" class="tab-btn" data-tab="exam" id="examTabBtn" hidden>🧾 동형 모의고사 제작</button>
+    <!-- 동형 모의고사와 같은 승인을 따른다 — renderAccount가 hidden을 켜고 끈다(public/trend.js) -->
+    <button type="button" class="tab-btn" data-tab="trend" id="trendTabBtn" hidden>📊 시험지 분석 리포트</button>
     <!-- 관리자가 허가한 선생님에게만 보인다 — renderAccount가 hidden을 켜고 끈다 -->
     <button type="button" class="tab-btn" data-tab="students" id="studentsTabBtn" hidden>🏫 학생 관리</button>
     <!-- 지금 열려 있는 탭의 만드는 순서를 보여 준다. 사이드바가 sticky라 스크롤해도
@@ -1704,6 +1706,92 @@
   </section>
 
   <!-- ══════════ 탭 7: 학생 관리 (관리자가 허가한 선생님만) ══════════ -->
+  <!-- ══════════ 시험지 분석 리포트 ══════════
+       기출 시험지를 올려 유형을 읽고 출제경향 보고서를 만든다. 동형 모의고사 탭과 상태를
+       나누지 않는다 — 올린 것·분석·저장이 모두 이 탭 것이다(public/trend.js). -->
+  <section class="tab-page" id="tab-trend">
+    <section class="panel">
+      <p class="hint">
+        학교 기출 시험지를 올리면 <b>어떤 유형이 몇 문항 나왔는지</b> 읽어서 <b>출제경향 보고서</b>로 만들어 줍니다.
+        시험지를 <b>여러 부</b> 올리면 해마다 나오는 유형과 한 번만 나온 유형을 가려 보여 줍니다.
+        분석한 결과는 <b>저장</b>해 두고 다시 불러 쓸 수 있습니다.
+      </p>
+      <!-- 보고서 제목에 찍힌다 — 출제경향 보고서는 어느 학교 시험인지가 먼저 보여야 한다 -->
+      <div class="row">
+        <div class="field" style="flex:1 1 260px">
+          <label for="trendSchool">학교 이름</label>
+          <input type="text" id="trendSchool" maxlength="40" placeholder="예: 전주제일고등학교">
+        </div>
+        <div class="field" style="flex:1 1 260px">
+          <label for="trendSubject">학년 · 과목</label>
+          <input type="text" id="trendSubject" maxlength="40" placeholder="예: 2학년 영어Ⅱ">
+        </div>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:1 1 100%">
+          <label>기출 시험지</label>
+          <div class="exam-drop" id="trendDrop">
+            <b>시험지 PDF를 여기에 끌어다 놓으세요</b>
+            <span class="exam-drop-sub">PDF 한 파일이 시험지 한 부입니다 · 사진(JPG·PNG)도 됩니다 · 눌러서 파일 고르기</span>
+          </div>
+          <input type="file" id="trendFile" accept="application/pdf,image/*" multiple hidden>
+          <div class="exam-status" id="trendStatus" role="status" aria-live="polite" hidden></div>
+          <div id="trendDocs"></div>
+          <label class="hint" style="display:block;margin-top:6px">
+            <input type="checkbox" id="trendReadPassages" checked>
+            <b>출제 지문도 읽기</b> — 아래 <b>시험 범위 지문을 넣었을 때만</b> 읽어 범위와 대조합니다(시간이 두 배쯤 걸립니다). 범위를 비워 두면 유형만 빠르게 읽습니다
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- 시험 범위 — 동형 모의고사의 시험 범위 칸과 같은 지문 입력칸(trend.js trendRangeMgr).
+         PDF를 이 패널에 끌어다 놓으면 지문을 꺼내 넣는다. -->
+    <section class="panel" id="trendRangePanel">
+      <div class="field-head">
+        <label>시험 범위 지문 (선택) <span id="trendRangeCount"></span></label>
+        <span class="hint">넣어 두면 보고서에 <b>범위의 어느 지문이 몇 번 문항으로 나왔는지</b>가 나옵니다 · 지문마다 이름(예: 1과 본문)을 달면 보고서에 그 이름으로 나옵니다</span>
+      </div>
+      <!-- 저장함·PDF 단추는 목록 위에 둔다 — 범위는 지문이 20~40개라 목록 아래에 두면
+           불러오려고 맨 아래까지 내려가야 했다. '지문 추가'만 새 칸이 생기는 아래에 남긴다. -->
+      <div class="passage-add-row">
+        <button type="button" class="btn ghost small" id="trendRangeLoadBtn">📄 저장함에서 가져오기</button>
+        <button type="button" class="btn ghost small" id="trendRangePdfBtn">📄 PDF에서 가져오기</button>
+        <button type="button" class="btn ghost small" id="trendRangeSaveBtn">💾 지문 저장</button>
+        <input type="file" id="trendRangePdfFile" accept="application/pdf" multiple hidden>
+        <button type="button" class="btn ghost small danger" id="trendRangeClearBtn">🗑️ 지문 전체 지우기</button>
+      </div>
+      <div class="exam-status" id="trendRangeStatus" role="status" aria-live="polite" hidden></div>
+      <div id="trendRangeList"></div>
+      <div class="passage-add-row">
+        <button type="button" class="btn ghost small" id="trendRangeAddBtn">＋ 지문 추가</button>
+        <!-- 위 단추들과 같은 일을 한다(data-trend-proxy가 가리키는 위 단추를 대신 누른다) —
+             목록을 다 채운 뒤 아래에서 바로 저장·추가로 불러오기 할 수 있게 -->
+        <button type="button" class="btn ghost small" data-trend-proxy="trendRangeSaveBtn">💾 지문 저장</button>
+        <button type="button" class="btn ghost small" data-trend-proxy="trendRangeLoadBtn">📄 저장함에서 가져오기</button>
+        <button type="button" class="btn ghost small" data-trend-proxy="trendRangePdfBtn">📄 PDF에서 가져오기</button>
+        <button type="button" class="btn ghost small danger" data-trend-proxy="trendRangeClearBtn">🗑️ 지문 전체 지우기</button>
+        <span class="passage-max-note" id="trendRangeMaxNote" role="status" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="actions">
+        <button class="btn" id="trendRunBtn" disabled>분석하기</button>
+        <button class="btn ghost" id="trendLoadBtn">📂 저장한 분석 불러오기</button>
+        <button class="btn ghost" id="trendAddSavedBtn" title="지금 화면에 저장한 분석을 이어 붙여 하나의 보고서로 합칩니다.">➕ 저장한 분석 더하기</button>
+        <button class="btn ghost" id="trendResetBtn" title="올린 시험지와 분석 결과를 모두 비웁니다.">🔄 새로 시작하기</button>
+        <span class="hint cost-hint" id="trendCostHint" role="status" aria-live="polite"></span>
+      </div>
+      <div class="error" id="trendError"></div>
+    </section>
+    <div class="loading" id="trendLoading">
+      <span class="spinner"></span>
+      <span id="trendLoadingText">AI가 시험지를 읽고 있습니다…</span>
+    </div>
+    <div id="trendResult"></div>
+  </section>
+
   <section class="tab-page" id="tab-students">
     <section class="panel">
       <div class="field-head">
@@ -2063,5 +2151,6 @@
      그 값을 JS가 알아야 한다. %%ASSET_V%%는 index.html에서만 바뀌므로 여기서 넘긴다. -->
 <script>window.ASSET_V = "%%ASSET_V%%";</script>
 <script src="/app.js?v=%%ASSET_V%%"></script>
+<script src="/trend.js?v=%%ASSET_V%%"></script>
 </body>
 </html>
