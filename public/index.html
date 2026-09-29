@@ -80,6 +80,9 @@
 <script src="https://cdn.portone.io/v2/browser-sdk.js" async defer></script>
 </head>
 <body>
+<!-- 워터마크: 인쇄에서만 쪽 전체 뒷배경에 깔린다(position:fixed라 쪽마다 되풀이된다, style.css .print-wm).
+     그림은 학원 마크 칸의 '워터마크 이미지'에서 renderBrand가 넣는다. -->
+<img class="print-wm" id="printWatermark" alt="" hidden>
 <!-- 인쇄 틀: <tfoot>은 매 페이지 하단에 '자리를 차지하며' 반복되므로
      학원명·로고가 본문과 겹치지 않는다. 화면에서는 CSS로 표 구조를 무력화한다. -->
 <table class="print-frame">
@@ -964,7 +967,7 @@
     </div>
 
     <div class="brand-panel">
-      <div class="brand-title">🏫 학원 마크 <span class="sub">(학원명은 인쇄물 좌측 하단, 로고는 우측 하단 · 창을 닫으면 지워집니다)</span></div>
+      <div class="brand-title">🏫 학원 마크 <span class="sub">(학원명은 인쇄물 좌측 하단, 로고는 우측 하단, 워터마크는 쪽 전체 뒷배경 · 창을 닫으면 지워집니다)</span></div>
       <div class="brand-body">
         <div class="row">
           <div class="field">
@@ -975,8 +978,7 @@
             <label for="brandFile">우하단 로고 이미지 (선택, 5MB 이하)</label>
             <input type="file" id="brandFile" accept="image/*">
           </div>
-          <!-- 시험지 분석 리포트 탭에서만 보인다(app.js syncTabChrome) — 워터마크는 그 보고서에만 쓴다 -->
-          <div class="field" id="brandWmField" style="display:none">
+          <div class="field" id="brandWmField">
             <label for="brandWmFile">워터마크 이미지 (선택, 비우면 워터마크 없음)</label>
             <input type="file" id="brandWmFile" accept="image/*">
           </div>
@@ -985,7 +987,7 @@
           <div class="brand-preview" id="brandPreview">
             <span class="muted">업로드한 로고가 여기에 미리보기로 표시됩니다.</span>
           </div>
-          <div class="brand-preview" id="brandWmPreview" style="display:none"></div>
+          <div class="brand-preview" id="brandWmPreview"></div>
           <button type="button" class="btn ghost small" id="brandRemoveBtn">마크 삭제</button>
         </div>
       </div>

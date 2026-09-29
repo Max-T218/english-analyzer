@@ -57,7 +57,6 @@ const newTrendDoc = (name) => ({ name, pages: [], questions: null, failedIdx: []
 /* ── 보고서 CSS: 화면과 인쇄 창이 같은 한 벌을 쓴다 ── */
 const TREND_CSS = `
 .trend-brand-slot{margin-top:14px}
-#brandWmPreview{display:flex;align-items:center;gap:8px}
 .trend-report{font-family:"Malgun Gothic","맑은 고딕",sans-serif;color:#1a1f2b;line-height:1.6}
 .trend-report h3{margin:0 0 4px;font-size:20px}
 .trend-report h4{margin:18px 0 6px;font-size:15px;border-left:4px solid #4d94ec;padding-left:8px}
@@ -1101,69 +1100,24 @@ function trendHtml(st, ai) {
 }
 
 /* ── 학원 마크 ──
-   로고·학원명은 다른 탭과 같은 것(화면 맨 위 [🏫 학원 마크] 칸, app.js BRAND_*_STORE)을 쓴다.
-   보고서는 새 창에서 인쇄하므로 본문 쪽의 .print-foot이 따라오지 않아 여기서 따로 그린다.
-   켜고 끄는 칸은 따로 두지 않는다 — 넣은 것만 찍힌다(2026-09-29 사용자): 학원명·로고가 있으면
-   아래쪽(학원명 왼쪽·로고 오른쪽), 워터마크 이미지가 있으면 뒷배경. 화면 보고서에는 그리지 않는다.
-   워터마크는 로고와 따로 넣는다 — 아래쪽에는 가로로 긴 글자 로고가, 쪽 전체에 까는 워터마크에는
-   동그란 문장이 어울리는 일이 많다. 칸은 학원 마크 칸 안(#brandWmFile, 이 탭에서만 보인다)이고,
-   이 탭에만 쓰는 것이라 변수에만 둔다(새로고침하면 지워진다 — 학원 마크도 창을 열 때마다 비운다). */
-let trendWmImg = "";
+   학원명·우하단 로고·워터마크는 다른 탭과 같은 것(학원 마크 칸, app.js BRAND_*_STORE)을 쓴다.
+   보고서는 새 창에서 인쇄하므로 본문 쪽의 .print-foot·#printWatermark가 따라오지 않아 여기서
+   따로 그린다. 켜고 끄는 칸은 없다 — 넣은 것만 찍힌다(2026-09-29 사용자): 학원명·로고가 있으면
+   아래쪽(학원명 왼쪽·로고 오른쪽), 워터마크 이미지가 있으면 뒷배경. 화면 보고서에는 그리지 않는다. */
 function trendBrand() {
-  let img = "", name = "";
+  let img = "", name = "", wm = "";
   try {
     img = localStorage.getItem(BRAND_IMG_STORE) || "";
     name = (localStorage.getItem(BRAND_NAME_STORE) || "").trim();
+    wm = localStorage.getItem(BRAND_WM_STORE) || "";
   } catch (_) { /* 저장소가 막힌 브라우저 — 마크 없이 인쇄한다 */ }
-  return { img, name };
+  return { img, name, wm };
 }
-/* 학원명·로고를 넣는 칸(app.js의 .brand-panel)은 한 벌뿐이라 syncTabChrome이 아래
+/* 학원 마크 칸(app.js의 .brand-panel)은 한 벌뿐이라 syncTabChrome이 아래
    #trendBrandSlot으로 옮겨 온다. 보고서를 다시 그리면(innerHTML) 그 안의 칸이 함께 지워지므로
    trendRender가 그리기 전에 원래 자리로 돌려놓는다. */
 function trendBrandOptsHtml() {
   return `<div id="trendBrandSlot" class="trend-brand-slot"></div>`;
-}
-// renderBrand(app.js)가 학원명·로고를 바꿀 때마다 부른다
-function trendSyncBrandHint() {
-  trendSyncWmPreview();
-}
-// 학원 마크 칸 안의 워터마크 미리보기 — 무엇을 넣었는지 눈으로 확인하게(2026-09-29 사용자)
-function trendSyncWmPreview() {
-  const box = $("brandWmPreview");
-  if (!box) return;
-  box.innerHTML = trendWmImg
-    ? `<img src="${esc(trendWmImg)}" alt=""><span class="muted">워터마크</span>
-       <button type="button" class="btn ghost small" id="brandWmClear">빼기</button>`
-    : `<span class="muted">워터마크 이미지를 넣으면 보고서 뒷배경에 크게 깔립니다. 안 넣으면 워터마크 없이 인쇄합니다.</span>`;
-  const clear = $("brandWmClear");
-  if (clear) clear.addEventListener("click", () => {
-    trendWmImg = "";
-    if ($("brandWmFile")) $("brandWmFile").value = "";
-    trendSyncBrandHint();
-  });
-}
-if ($("brandWmFile")) {
-  $("brandWmFile").addEventListener("change", (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) { alert("그림 파일만 넣을 수 있습니다."); e.target.value = ""; return; }
-    if (file.size > 5 * 1024 * 1024) { alert("그림 파일이 너무 큽니다 (5MB 이하로 넣어 주세요)."); e.target.value = ""; return; }
-    const reader = new FileReader();
-    reader.onload = () => {
-      trendWmImg = String(reader.result || "");
-      trendSyncBrandHint();
-    };
-    reader.onerror = () => alert("그림 파일을 읽지 못했습니다.");
-    reader.readAsDataURL(file);
-  });
-}
-// [마크 삭제]는 워터마크 이미지도 함께 뺀다(renderBrand가 불러 주는 trendSyncBrandHint가 미리보기를 맞춘다)
-if ($("brandRemoveBtn")) {
-  $("brandRemoveBtn").addEventListener("click", () => {
-    trendWmImg = "";
-    if ($("brandWmFile")) $("brandWmFile").value = "";
-    trendSyncBrandHint();
-  });
 }
 
 function trendRender() {
@@ -1184,7 +1138,6 @@ function trendRender() {
       </div>
     </section>`;
   $("trendAiBtn").addEventListener("click", () => trendRunAi(false));
-  trendSyncBrandHint();
   onTrend();
   $("trendPrintBtn").addEventListener("click", trendPrint);
   $("trendSaveBtn").addEventListener("click", () => openSaveDialog("trend"));
@@ -1273,7 +1226,7 @@ function trendPrint() {
   const brand = trendBrand();
   // 넣은 것만 찍는다 — 학원명·로고가 있으면 아래쪽, 워터마크 이미지가 있으면 뒷배경
   const foot = brand.img || brand.name ? brand : null;
-  const wm = trendWmImg;
+  const wm = brand.wm;
   w.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8">
     <title>${esc(sanitizeFilename([trendSchool(), trendSubject(), "출제경향_보고서"].filter(Boolean).join("_")))}</title>
     <style>@page{size:A4;margin:14mm}body{margin:0;padding:0}${TREND_CSS}

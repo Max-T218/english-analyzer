@@ -1073,17 +1073,39 @@ $("verifyBackBtn").addEventListener("click", () => showSignupStep("form"));
 // ── 학원 마크(로고) — 고정 파일 대신 사용자가 업로드해 이 브라우저에 저장 ──
 const BRAND_IMG_STORE = "brand_mark_img";   // data URL
 const BRAND_NAME_STORE = "brand_mark_name"; // 학원명 텍스트
+/* 워터마크 — 쪽 전체 뒷배경에 옅게 까는 그림. 우하단 로고와 따로 받는다(아래쪽에는 가로로 긴
+   글자 로고가, 쪽 전체에는 동그란 문장이 어울리는 일이 많다). 비우면 워터마크 없이 인쇄한다 —
+   로고로 대신 채우지 않는다(2026-09-29 사용자). 처음엔 시험지 분석 리포트에만 두었다가
+   2026-09-30에 모든 탭 인쇄물로 넓혔다. 인쇄에서는 #printWatermark가 쪽마다 되풀이된다. */
+const BRAND_WM_STORE = "brand_mark_wm";
 const BRAND_MAX_BYTES = 5 * 1024 * 1024;    // 5MB — localStorage 용량 보호
 const brandNameEl = $("brandName");
 const brandFileEl = $("brandFile");
+const brandWmFileEl = $("brandWmFile");
 const brandPreviewEl = $("brandPreview");
+const brandWmPreviewEl = $("brandWmPreview");
 const brandRemoveBtn = $("brandRemoveBtn");
 const brandMarkEl = $("brandMark");
 const brandNameOutEl = $("printBrandName");
+const printWatermarkEl = $("printWatermark");
 
 function renderBrand() {
   const img = localStorage.getItem(BRAND_IMG_STORE) || "";
   const name = (localStorage.getItem(BRAND_NAME_STORE) || "").trim();
+  const wm = localStorage.getItem(BRAND_WM_STORE) || "";
+
+  // 워터마크 — 모든 인쇄 페이지 뒷배경(화면에는 안 보인다)
+  if (printWatermarkEl) {
+    if (wm) printWatermarkEl.src = wm;
+    else printWatermarkEl.removeAttribute("src");
+    printWatermarkEl.hidden = !wm;
+  }
+  if (brandWmPreviewEl) {
+    brandWmPreviewEl.innerHTML = wm
+      ? `<img src="${esc(wm)}" alt=""><span class="muted">워터마크</span>
+         <button type="button" class="btn ghost small" id="brandWmClear">빼기</button>`
+      : `<span class="muted">워터마크 이미지를 넣으면 인쇄물 뒷배경에 크게 깔립니다.</span>`;
+  }
 
   // 학원명 — 모든 인쇄 페이지 좌하단
   if (brandNameOutEl) brandNameOutEl.textContent = name;
@@ -1104,8 +1126,6 @@ function renderBrand() {
         (name ? `<span class="brand-name">${esc(name)}</span>` : "");
     }
   }
-  // 시험지 분석 리포트의 '마크가 없습니다' 안내도 함께 맞춘다(trend.js는 이 파일 뒤에 로드된다)
-  if (typeof trendSyncBrandHint === "function") trendSyncBrandHint();
 }
 
 if (brandNameEl) {
@@ -1144,11 +1164,49 @@ if (brandFileEl) {
   });
 }
 
+if (brandWmFileEl) {
+  brandWmFileEl.addEventListener("change", () => {
+    const file = brandWmFileEl.files && brandWmFileEl.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > BRAND_MAX_BYTES) {
+      alert(!file.type.startsWith("image/")
+        ? "이미지 파일만 넣을 수 있습니다." : "워터마크 파일이 너무 큽니다 (5MB 이하로 넣어 주세요).");
+      brandWmFileEl.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        localStorage.setItem(BRAND_WM_STORE, reader.result);
+      } catch (_) {
+        // 로고와 워터마크가 브라우저 저장 공간(약 5MB)을 나눠 쓴다 — 넘치면 여기서 막힌다
+        alert("그림이 너무 커서 넣지 못했습니다. 더 작은 그림으로 넣어 주세요.");
+        brandWmFileEl.value = "";
+        return;
+      }
+      renderBrand();
+    };
+    reader.onerror = () => alert("워터마크 파일을 읽지 못했습니다.");
+    reader.readAsDataURL(file);
+  });
+}
+// 미리보기의 [빼기] — 미리보기 칸을 renderBrand가 매번 새로 그리므로 칸에 걸어 둔다
+if (brandWmPreviewEl) {
+  brandWmPreviewEl.addEventListener("click", (e) => {
+    if (!e.target.closest("#brandWmClear")) return;
+    localStorage.removeItem(BRAND_WM_STORE);
+    if (brandWmFileEl) brandWmFileEl.value = "";
+    renderBrand();
+  });
+}
+
 if (brandRemoveBtn) {
   brandRemoveBtn.addEventListener("click", () => {
     localStorage.removeItem(BRAND_IMG_STORE);
     localStorage.removeItem(BRAND_NAME_STORE);
+    localStorage.removeItem(BRAND_WM_STORE);
     if (brandFileEl) brandFileEl.value = "";
+    if (brandWmFileEl) brandWmFileEl.value = "";
     if (brandNameEl) brandNameEl.value = "";
     renderBrand();
   });
@@ -2654,8 +2712,6 @@ function syncTabChrome(tab) {
   const trendSlot = onTrend ? $("trendBrandSlot") : null;
   moveBrandPanel(examSlot || trendSlot);
   if (brandPanelEl) brandPanelEl.hidden = (onExam && !examSlot) || (onTrend && !trendSlot);
-  // 워터마크 칸은 시험지 분석 리포트에서만 쓴다(trend.js trendWmImg)
-  ["brandWmField", "brandWmPreview"].forEach((id) => { if ($(id)) $(id).style.display = onTrend ? "" : "none"; });
 }
 
 function hideExamTab() {

@@ -1373,6 +1373,17 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
 }
 .brand-preview .muted{color:var(--ink-soft); font-size:12px;}
 .brand-preview img, .brand-mark img{max-height:36px; max-width:140px; object-fit:contain;}
+#brandWmPreview{display:flex; align-items:center; gap:8px;}
+/* 워터마크 — 화면에는 안 보이고, 인쇄에서 쪽 전체(여백 안쪽)에 비율을 지켜 가득 깐다.
+   fixed라 크롬이 쪽마다 같은 자리에 되풀이해 그린다. 글 위에 아주 옅게 얹는다 — 아래에 깔면
+   흰 칸·표 배경에 가려 안 보인다. multiply로 섞어 흰 바탕 그림의 흰 부분은 사라지게 한다. */
+.print-wm{display:none;}
+@media print{
+  .print-wm:not([hidden]){
+    display:block; position:fixed; top:0; left:0; width:100%; height:100%;
+    object-fit:contain; opacity:.07; mix-blend-mode:multiply; pointer-events:none; z-index:5;
+  }
+}
 .brand-name{font-weight:700; color:var(--ink); font-size:13.5px;}
 
 /* 화면 어디서든 누를 수 있는 고정 인쇄/PDF저장 버튼 — 세로로 쌓아 둔다 */
