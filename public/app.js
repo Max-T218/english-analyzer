@@ -8296,6 +8296,7 @@ async function openSavedList(kind, target, onlyTab) {
   openLibrary = LIBRARY[kind] ? kind : "passage";
   passageLoadTo = target || null;
   savedOnlyTab = onlyTab || "";
+  savedLoadIntoExam = false;   // 필요하면 부른 쪽이 이 뒤에 다시 켠다(examLoadTrendBtn)
   const lib = LIBRARY[openLibrary];
   savedListTitleEl.textContent = libWord(lib.title);
   savedListLeadEl.textContent = passageLoadTo
@@ -8326,6 +8327,11 @@ async function loadSavedItem(id, mode) {
   try {
     const item = await getJson(`/api/saved/${encodeURIComponent(id)}`, "불러오기에 실패했습니다.");
     const tab = savedTabOf(item);
+    // 동형 모의고사 탭의 [📂 분석 리포트에서 불러오기]로 열었으면 리포트 탭이 아니라 그 탭으로 보낸다
+    if (savedLoadIntoExam && tab === "trend") {
+      examApplyTrendItem(item);
+      return;
+    }
     if (!TAB_SAVE[tab]) return;
     const append = mode === "append";
     // 탭이 불러오기 전에 확인할 일이 있으면 맡긴다(시험지 분석 리포트: 하던 분석이 사라지므로 묻는다)
@@ -8535,6 +8541,7 @@ function closeSavedList() {
   savedListModalEl.hidden = true;
   passageLoadTo = null;   // 목적지를 남겨 두면 다음에 부른 지문이 엉뚱한 칸으로 간다
   savedOnlyTab = "";      // 어느 탭 것만 보던 중이었는지도 잊는다
+  savedLoadIntoExam = false;
 }
 savedListCloseBtn.addEventListener("click", closeSavedList);
 savedListModalEl.addEventListener("click", (e) => {
@@ -8648,7 +8655,7 @@ const HOWTO = {
     title: "🧾 동형 모의고사 만드는 법",
     lead: "기출 시험지의 유형 구성을 본떠, 내 지문으로 같은 모양의 시험지를 만듭니다. 기출 분석에는 포인트가 들지 않고, 문제를 만들 때만 문항 수대로 값이 매겨집니다.",
     steps: [
-      "기출 시험지 <b>PDF·사진</b>을 끌어다 놓으면 바로 <b>유형 분석</b>을 시작합니다. 한 번 분석해 저장해 둔 구성이 있으면 <b>[📂 저장한 구성 불러오기]</b>로 건너뛰어도 됩니다.",
+      "기출 시험지 <b>PDF·사진</b>을 끌어다 놓으면 바로 <b>유형 분석</b>을 시작합니다. 한 번 분석해 저장해 둔 구성이 있으면 <b>[📂 저장한 구성 불러오기]</b>로, 시험지 분석 리포트에서 분석해 저장해 둔 기출이면 <b>[📂 분석 리포트에서 불러오기]</b>로 건너뛰어도 됩니다.",
       "기출을 <b>여러 부</b> 쓰려면 다음 시험지를 이어서 올리세요 — 곧바로 이어서 분석하고, 한 구성으로 합칩니다. <b>한 번이라도 나온 유형은 1문항씩</b> 깔고 남는 자리를 자주 나온 유형에 더 줍니다.",
       "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손봅니다 — 고친 숫자는 누를 것 없이 <b>바로</b> 아래 제작 칸에 반영됩니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 따로 남겨 둘 수 있습니다 — 시험지를 만든 뒤에도 누를 수 있습니다. <b>불러온 구성도</b> 같은 표가 떠서 개수를 고칠 수 있습니다.",
       "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b>로 채울 수도 있고, 기출 속 지문을 쓰려면 <b>[📄 지문도 가져오기]</b>를 누르세요.",
@@ -11225,6 +11232,76 @@ $("examSpecSaveBtn").addEventListener("click", () => openSaveDialog("examspec"))
 // 저장해 둔 기출 구성만 / 저장해 둔 시험지만 모아 연다
 $("examLoadSpecBtn").addEventListener("click", () => openSavedList("tab", null, "examspec"));
 $("examLoadPaperBtn").addEventListener("click", () => openSavedList("tab", null, "exam"));
+
+/* 시험지 분석 리포트 저장본을 기출 구성으로 가져온다(2026-09-29 사용자 요청).
+   리포트 저장본에는 부마다 /api/examscan이 돌려준 문항표가 통째로 들어 있다 — category
+   (보고서용)뿐 아니라 이 탭이 쓰는 kind·engine·fit도 함께다. 그래서 기출을 다시 올려
+   분석하지 않고, 그 부들을 '방금 분석을 마친 부'(examDocScans)로 채워 합치기 표를 띄운다.
+   쪽 그림은 리포트가 저장하지 않으므로 [📄 지문도 가져오기]는 쓸 수 없다 — 리포트에
+   넣어 둔 시험 범위 지문을 대신 시험 범위 칸에 넣는다. */
+let savedLoadIntoExam = false;   // 저장함 창을 이 단추로 열었는가 — loadSavedItem이 본다
+$("examLoadTrendBtn").addEventListener("click", () => {
+  openSavedList("tab", null, "trend");   // 창을 여는 동기 부분이 끝난 뒤 목적지를 적는다
+  savedLoadIntoExam = true;
+  savedListTitleEl.textContent = "시험지 분석 리포트에서 불러오기";
+  savedListLeadEl.textContent =
+    "시험지 분석 리포트에서 저장한 분석입니다. [불러오기]를 누르면 그 기출의 유형 구성이 " +
+    "이 탭의 구성표로 들어가고, 리포트에 넣어 둔 시험 범위 지문도 시험 범위 칸에 들어갑니다.";
+});
+
+function examApplyTrendItem(item) {
+  const payload = item.payload || {};
+  const docs = (payload.docs || []).filter((d) => Array.isArray(d.questions) && d.questions.length);
+  if (!docs.length) {
+    alert("이 분석에는 문항 유형표가 없습니다.");
+    return;
+  }
+  if (examBusy || examPaperBusy) {
+    alert("분석이나 제작이 진행 중입니다. 끝난 뒤에 불러와 주세요.");
+    return;
+  }
+  if (examTabHasWork() && !confirm(
+    "지금 동형 모의고사 탭에서 하던 작업이 모두 사라집니다.\n" +
+    "(분석한 기출, 입력한 시험 범위 지문, 만든 시험지)\n" +
+    "아직 저장하지 않았다면 [취소]를 누르고 먼저 저장하세요.\n\n" +
+    "지우고 불러올까요?"
+  )) return;
+  savedListModalEl.hidden = true;
+  clearExamTab();
+  const tabBtn = document.querySelector('.tab-btn[data-tab="exam"]');
+  if (tabBtn) tabBtn.click();
+
+  // 저장한 뒤 유형 목록이 바뀌었으면 그 문항은 만들 수 없는 것으로 돌린다(examSpecToScan과 같은 까닭)
+  const stale = [];
+  docs.forEach((d, i) => {
+    examDocNames.push(String(d.name || `기출 ${i + 1}`).slice(0, 40));
+    examDocScans.set(i, d.questions.map((raw) => {
+      const q = { ...raw, doc: i };
+      if (q.kind && q.engine !== "워크북" && !EXAM_KNOWN_KINDS.has(q.kind)) {
+        stale.push(q.kind);
+        q.kind = "";
+        q.fit = "없음";
+        q.engine = "";
+      }
+      return q;
+    }));
+  });
+  examScanTitle = examDocNames[0] || "";
+  examShowScanResult([]);
+
+  const range = (payload.range || []).filter((j) => j && String(j.text || "").trim());
+  if (range.length) examPaperMgr.setJobs(range);
+  if (payload.school && examHeadEls.school) examHeadEls.school.value = String(payload.school);
+  updateExamPaperCost();
+  syncTabChrome("exam");
+
+  const notes = [`“${item.title || "시험지 분석"}”에서 기출 ${examDocNames.length}부의 구성을 가져왔습니다.`];
+  if (range.length) notes.push(`시험 범위 지문 ${examPaperMgr.getJobs().length}개도 넣었습니다.`);
+  else notes.push("리포트에 시험 범위 지문이 없어 시험 범위 칸은 비워 두었습니다.");
+  if (stale.length) notes.push(`저장한 뒤 유형 목록이 바뀌어 ${stale.length}문항은 뺐습니다(${[...new Set(stale)].join(", ")}).`);
+  // 합치기 표가 오류 칸을 비우므로 그린 뒤에 적는다. 오류가 이미 적혔으면(만들 유형 없음) 그대로 둔다
+  if (!examErrorEl.textContent) examErrorEl.textContent = notes.join(" ");
+}
 
 /* ══════ 반 · 학생 · 단어시험 배정 (관리자가 허가한 선생님에게만 탭이 보인다) ══════
    AI를 부르지 않는다 — 서버가 같은 단어장 안의 다른 뜻/단어로 오답을 만들고,
