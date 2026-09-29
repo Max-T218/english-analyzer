@@ -58,7 +58,7 @@ const newTrendDoc = (name) => ({ name, pages: [], questions: null, failedIdx: []
 const TREND_CSS = `
 .trend-report{font-family:"Malgun Gothic","맑은 고딕",sans-serif;color:#1a1f2b;line-height:1.6}
 .trend-report h3{margin:0 0 4px;font-size:20px}
-.trend-report h4{margin:18px 0 6px;font-size:15px;border-left:4px solid #3b6fd8;padding-left:8px}
+.trend-report h4{margin:18px 0 6px;font-size:15px;border-left:4px solid #4d94ec;padding-left:8px}
 .trend-report .trend-sub{margin:0 0 10px;font-size:12px;color:#5b6473}
 .trend-report .trend-summary{margin:8px 0;padding:10px 12px;background:#f2f5fb;border-radius:8px;font-size:14px}
 .trend-report table{width:100%;border-collapse:collapse;font-size:13px}
@@ -66,7 +66,7 @@ const TREND_CSS = `
 .trend-report th{background:#eaeff8}
 .trend-report td.tk{text-align:left}
 .trend-report td.zero{color:#aab2c0}
-.trend-report .tbar{display:block;height:12px;background:#3b6fd8;border-radius:2px;min-width:2px}
+.trend-report .tbar{display:block;height:12px;background:#4d94ec;border-radius:2px;min-width:2px}
 .trend-report td.tbarcell{width:26%;text-align:left}
 .trend-report .tag{display:inline-block;padding:0 7px;border-radius:9px;font-size:11px;background:#e6ecf7;color:#2c4a86}
 .trend-report .tag.every{background:#dff3e6;color:#1d6b3c}
@@ -76,7 +76,7 @@ const TREND_CSS = `
 .trend-report .trend-caution{margin-top:10px;font-size:12px;color:#5b6473}
 .trend-report .trend-empty{font-size:13px;color:#5b6473}
 .trend-report{counter-reset:sec}
-.trend-report h4.sec::before{counter-increment:sec;content:counter(sec) ". ";color:#2a78d6}
+.trend-report h4.sec::before{counter-increment:sec;content:counter(sec) ". ";color:#4d94ec}
 .rp-head{border-top:3px solid #0b0b0b;padding-top:10px;margin-bottom:14px}
 .rp-kicker{font-size:12px;letter-spacing:.08em;color:#52514e;font-weight:600}
 .trend-report .rp-head h3{font-size:24px;margin:2px 0 10px;letter-spacing:-.01em}
@@ -84,7 +84,7 @@ const TREND_CSS = `
 .trend-report .rp-meta th,.trend-report .rp-meta td{border:0;border-bottom:1px solid #e1e0d9;padding:5px 10px;text-align:left}
 .trend-report .rp-meta th{width:84px;background:#f6f6f3;color:#52514e;font-weight:600;white-space:nowrap}
 .trend-report .rp-meta tr:last-child th,.trend-report .rp-meta tr:last-child td{border-bottom:0}
-.rp-find{margin:4px 0 0;padding:10px 14px 10px 34px;background:#f4f7fc;border-left:3px solid #2a78d6;border-radius:0 8px 8px 0;font-size:13.5px}
+.rp-find{margin:4px 0 0;padding:10px 14px 10px 34px;background:#f4f7fc;border-left:3px solid #4d94ec;border-radius:0 8px 8px 0;font-size:13.5px}
 .rp-find li{margin:3px 0}
 .trend-report .rp-body{font-size:13.5px;margin:4px 0;text-align:justify}
 .trend-report table.rp-strat{font-size:12.5px}
@@ -105,7 +105,8 @@ const TREND_CSS = `
 .trend-dash{border:1px solid rgba(11,11,11,.10);border-radius:12px;padding:16px 18px;margin:10px 0 6px;break-inside:avoid;background:#fcfcfb}
 .trend-dash h5{margin:18px 0 8px;font-size:13.5px;font-weight:700;color:#0b0b0b}
 .trend-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
-.trend-tile{border:1px solid rgba(11,11,11,.08);background:#fff;border-radius:10px;padding:10px 11px;border-top:4px solid var(--acc,#c3c2b7)}
+.trend-tile{border:1px solid rgba(11,11,11,.08);background:#fff;border-radius:10px;padding:10px 11px;border-top:4px solid var(--acc,#c3c2b7);
+  box-shadow:0 2px 6px rgba(26,31,43,.10)}
 .trend-tile span{display:block;font-size:12px;color:#52514e}
 .trend-tile b{display:block;font-size:24px;line-height:1.25;font-weight:700;color:#0b0b0b;margin:2px 0}
 .trend-tile b.sm{font-size:18px;line-height:1.55}
@@ -137,18 +138,21 @@ const TREND_CSS = `
 .tv-ph{display:flex;align-items:center;gap:6px;font-size:12.5px;color:#52514e;margin-bottom:8px}
 .tv-ph b{margin-left:auto;color:#0b0b0b;font-weight:600}
 .tv-key{width:10px;height:10px;border-radius:3px;display:inline-block}
-.tv-key.mc,.tv-bar.mc{background:#2a78d6}
-.tv-key.sub,.tv-bar.sub{background:#eb6834}
+.tv-key.mc,.tv-bar.mc{background:#4d94ec}
+.tv-key.sub,.tv-bar.sub{background:#ff8a4c}
 .tv-bars{display:grid;grid-template-columns:max-content 1fr;gap:7px 10px;align-items:center;font-size:12.5px}
 .tv-l{color:#0b0b0b;white-space:nowrap}
 .tv-b{display:flex;align-items:center;gap:6px;min-width:0;border-left:1px solid #c3c2b7;padding-left:0}
-.tv-bar{height:14px;border-radius:0 4px 4px 0;flex:none}
+.tv-bar{height:14px;border-radius:0 4px 4px 0;flex:none;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.55) 0,rgba(255,255,255,.12) 45%,rgba(0,0,0,.06) 100%);
+  box-shadow:0 1px 2px rgba(26,31,43,.22),inset 0 -1px 0 rgba(0,0,0,.08)}
 .tv-v{font-size:12px;color:#0b0b0b;white-space:nowrap;font-variant-numeric:tabular-nums}
 .tv-v small{color:#898781;font-size:11px}
 .tv-cov{display:grid;grid-template-columns:minmax(0,1fr) minmax(140px,42%) 92px;gap:8px 12px;align-items:center;font-size:12.5px}
 .tv-cl{color:#0b0b0b;word-break:keep-all}
-.tv-track{height:12px;border-radius:6px;background:#d2efe3;overflow:hidden}
-.tv-fill{height:100%;background:#1baf7a;border-radius:5px}
+.tv-track{height:12px;border-radius:6px;background:#d9f7ec;overflow:hidden}
+.tv-fill{height:100%;background:#2fd197;border-radius:5px;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.55) 0,rgba(255,255,255,.1) 50%,rgba(0,0,0,.06) 100%)}
 .tv-cov .tv-v{text-align:right}
 .tv-domwrap{display:flex;align-items:center;gap:22px}
 .tv-ring{flex:none}
@@ -683,7 +687,7 @@ function trendLineSvg(st) {
   // 막대의 파랑(선택형)·주황(서술형)과 뜻이 겹치지 않게 다른 색을 쓴다. 참조 팔레트의 보라·청록·노랑 —
   // validate_palette.js(--pairs all)로 세 쌍 모두 색맹 기준 ΔE 9.1 이상을 통과함을 확인했다(2026-09-29).
   // 밝은 두 색은 바탕 대비가 3:1 아래라, 선 끝 이름표·범례·표가 이름을 함께 싣는다.
-  const colors = ["#4a3aa7", "#1baf7a", "#eda100"];
+  const colors = ["#7c6cf0", "#2fd197", "#ffc02e"];
   const W = 660, H = 210, L = 64, R = 170, T = 14, B = 34;
   const maxY = Math.max(1, ...series.flatMap((r) => r.per));
   const x = (i) => L + (st.docs === 1 ? 0 : (i * (W - L - R)) / (st.docs - 1));
@@ -713,23 +717,57 @@ function trendLineSvg(st) {
     <svg class="tv-line" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="시험지별 유형 문항 수 변화">${grid}${xl}${lines}</svg>`;
 }
 
-/* ── 색 = 영역 ──
-   파랑 한 가지로는 눈에 들어오지 않아(2026-09-29 사용자), 색에 뜻을 싣는다: 유형 막대는
-   그 유형이 속한 영역의 색이고, 영역 도넛도 같은 색이다 — 막대 색만 봐도 어느 영역이 많은지
-   보인다. 색은 dataviz 참조 팔레트의 1~5번을 그 차례 그대로 쓴다(이웃한 둘이 색맹 기준을
-   통과하도록 검증된 차례 — 도넛 조각은 이웃하므로 차례를 바꾸지 말 것). */
+/* ── 영역 색(영역 도넛·서술형 영역 등) ──
+   파랑 한 가지로는 눈에 들어오지 않아(2026-09-29 사용자) 영역마다 색을 준다. 유형 막대는
+   아래 TREND_KIND_SHADE가 유형마다 따로 칠한다. 색은 dataviz 참조 팔레트의 1~5번 차례(파랑·주황·청록·노랑·분홍 — 이웃한 둘이 잘
+   갈리도록 검증된 차례이니 도넛 조각 차례를 바꾸지 말 것)를 따르되, 인쇄물에서 눈에 띄도록
+   한 단계 밝게 올린 값이다(2026-09-29 사용자 요청). 이름표·범례·표가 함께 있어 색만으로 읽지 않는다. */
 const TREND_DOMAIN_COLOR = {
-  "대의 파악": "#2a78d6",
-  "세부 정보": "#eb6834",
-  "논리·흐름": "#1baf7a",
-  "어법·어휘": "#eda100",
-  "서술형": "#e87ba4",
+  "대의 파악": "#4d94ec",
+  "세부 정보": "#ff8a4c",
+  "논리·흐름": "#2fd197",
+  "어법·어휘": "#ffc02e",
+  "서술형": "#f78cb8",
   "기타": "#9a9890",
 };
-const TREND_MC_COLOR = "#475467";   // 선다형(도넛) — 영역 색과 겹치지 않는 먹색
-const trendColorOf = (label) => TREND_DOMAIN_COLOR[trendDomainOf(label)] || "#9a9890";
+const TREND_MC_COLOR = "#8a97b0";   // 선다형(도넛) — 영역 색과 겹치지 않는 먹색
+/* 유형 막대의 색 — 유형마다 무지개 전체에서 서로 다른 색을 준다(2026-09-29 사용자: "세상엔 색이
+   참 많은데 노랑·초록만 쓴다"). 처음에는 색 계열을 영역에 묶었더니 유형이 많은 영역(어법·어휘,
+   논리·흐름)이 한 색 계열로 뭉쳐 같은 유형처럼 보였다. 영역은 영역 도넛(TREND_DOMAIN_COLOR)이
+   따로 보여 준다. 한 시험지에 자주 함께 나오는 유형끼리 색상환에서 멀리 떨어지게 골랐고, 너무
+   연한 색은 흰 종이에서 안 보여 쓰지 않는다. 색은 유형에 붙는다(순위가 아니라). */
+const TREND_KIND_SHADE = {
+  "빈칸 추론": "#2fd197",        // 초록
+  "어법": "#ffc02e",             // 노랑
+  "내용 일치·불일치": "#ff8a4c", // 주황
+  "주제·제목": "#4d94ec",        // 파랑
+  "순서 배열": "#9b6cf0",        // 보라
+  "문장 삽입": "#1fbfb0",        // 청록
+  "요약문 완성": "#f25c5c",      // 빨강
+  "어휘·낱말 쓰임": "#e05fc4",   // 자주
+  "요지·주장": "#38b6f0",        // 하늘
+  "무관한 문장": "#9ccc3d",      // 연두
+  "대화 흐름·응답": "#5d6ff0",   // 남색
+  "대화문 내용 파악": "#ff7fa0", // 분홍
+  "영어 표현 고르기": "#d99a3c", // 호박
+  "단어 뜻·영영풀이": "#c9b52c", // 겨자
+  "연결어": "#4fa3b8",           // 청회
+  "글의 목적": "#c77ddb",        // 연보라
+  "심경·분위기": "#ff9e7a",      // 살구
+  "함축 의미": "#3f6fd1",        // 코발트
+  "지칭 대상": "#b07b52",        // 갈색
+};
+const TREND_SUB_SHADE = {
+  "서술형: 빈칸·단어 쓰기": "#f78cb8", // 분홍
+  "서술형: 영작·배열": "#26c6da",      // 청록
+  "서술형: 내용 서술": "#ffb74d",      // 귤색
+  "서술형: 어법 고쳐 쓰기": "#ab7ae0", // 보라
+};
+const trendColorOf = (label) => TREND_SUB_SHADE[label] || TREND_KIND_SHADE[label]
+  || TREND_DOMAIN_COLOR[trendDomainOf(label)] || "#9a9890";
 
 /* 도넛 — 조각 사이에 2px 틈(테두리 없이 갈라 보이게). parts: [{v, color, label}] */
+let trendRingSeq = 0;
 function trendRingSvg(parts, size, stroke, center, sub) {
   const total = parts.reduce((a, p) => a + p.v, 0);
   if (!total) return "";
@@ -744,8 +782,16 @@ function trendRingSvg(parts, size, stroke, center, sub) {
     off += len;
     return out;
   }).join("");
-  return `<svg class="tv-ring" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img">
-    ${arcs}
+  /* 입체감 — 그림자로 띄우고, 위에서 비치는 흰 광택을 조각 위에 한 겹 덮는다. 원을 기울이는
+     진짜 3D는 앞쪽 조각이 커 보여 비율을 속이므로 쓰지 않는다(2026-09-29). */
+  const id = `tr${++trendRingSeq}`;
+  return `<svg class="tv-ring" viewBox="-4 -3 ${size + 8} ${size + 10}" width="${size}" height="${size}" role="img">
+    <defs>
+      <filter id="${id}s" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="${size > 100 ? 3 : 1.5}" stdDeviation="${size > 100 ? 3 : 1.5}" flood-color="#1a1f2b" flood-opacity=".22"/></filter>
+      <linearGradient id="${id}g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".28"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".10"/></linearGradient>
+    </defs>
+    <g filter="url(#${id}s)">${arcs}</g>
+    <circle r="${r}" cx="${h}" cy="${h}" fill="none" stroke="url(#${id}g)" stroke-width="${stroke}" pointer-events="none"/>
     ${center ? `<text x="${h}" y="${h + (sub ? 1 : 5)}" text-anchor="middle" font-size="${size > 100 ? 22 : 13}" font-weight="700" fill="#0b0b0b">${center}</text>` : ""}
     ${sub ? `<text x="${h}" y="${h + 18}" text-anchor="middle" font-size="11" fill="#6b6a65">${sub}</text>` : ""}
   </svg>`;
@@ -767,7 +813,7 @@ function trendDashHtml(st, cv) {
         <div class="tv-ph"><span class="tv-key" style="background:${color}"></span>${title}<b>${rows.reduce((a, r) => a + r.total, 0)}문항</b></div>
         <div class="tv-bars${xdense ? " dense xdense" : dense ? " dense" : many ? " many" : ""}">${rows.map((r) => `
           <div class="tv-l" title="${esc(r.label)}">${esc(r.label.replace(/^서술형:\s*/, ""))}</div>
-          <div class="tv-b"><span class="tv-bar" style="background:${trendColorOf(r.label)};width:${Math.max(3, Math.round((r.total / max) * 78))}%"></span><span class="tv-v">${r.total}<small> · ${pct(r.total, st.grand)}%</small></span></div>`).join("")}
+          <div class="tv-b"><span class="tv-bar" style="background-color:${trendColorOf(r.label)};width:${Math.max(3, Math.round((r.total / max) * 78))}%"></span><span class="tv-v">${r.total}<small> · ${pct(r.total, st.grand)}%</small></span></div>`).join("")}
         </div>
       </div>` : "");
   const used = cv ? cv.rows.filter((r) => r.count > 0).length : 0;
@@ -801,7 +847,7 @@ function trendDashHtml(st, cv) {
       <div class="trend-tiles ${cv ? "t4" : "t3"}">${tiles}</div>
       <h5>영역별 출제 비중</h5>
       ${domHtml}
-      <h5>유형별 문항 수 <small>(막대 색 = 영역)</small></h5>
+      <h5>유형별 문항 수 </h5>
       <div class="tv-grid">${panel(mcRows, "선택형", TREND_MC_COLOR)}${panel(subRows, "서술형", TREND_DOMAIN_COLOR["서술형"])}</div>
     </div>`;
 }
