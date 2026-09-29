@@ -81,7 +81,7 @@ body{
 /* 입력칸·버튼은 기본값이 브라우저 글꼴(Arial 등)이라 따로 물려줘야 한다 */
 input,select,textarea,button{font-family:inherit;}
 
-.wrap{max-width:1100px; margin:0 auto; padding:28px 22px 90px;}
+.wrap{max-width:1400px; margin:0 auto; padding:28px 22px 90px;}
 
 /* ── 헤더 ── */
 .app-head{
