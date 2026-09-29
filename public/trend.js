@@ -56,6 +56,8 @@ const newTrendDoc = (name) => ({ name, pages: [], questions: null, failedIdx: []
 
 /* ── 보고서 CSS: 화면과 인쇄 창이 같은 한 벌을 쓴다 ── */
 const TREND_CSS = `
+.trend-brand-slot{margin-top:14px}
+#brandWmPreview{display:flex;align-items:center;gap:8px}
 .trend-report{font-family:"Malgun Gothic","맑은 고딕",sans-serif;color:#1a1f2b;line-height:1.6}
 .trend-report h3{margin:0 0 4px;font-size:20px}
 .trend-report h4{margin:18px 0 6px;font-size:15px;border-left:4px solid #4d94ec;padding-left:8px}
@@ -1098,14 +1100,83 @@ function trendHtml(st, ai) {
     </div>`;
 }
 
+/* ── 학원 마크 ──
+   로고·학원명은 다른 탭과 같은 것(화면 맨 위 [🏫 학원 마크] 칸, app.js BRAND_*_STORE)을 쓴다.
+   보고서는 새 창에서 인쇄하므로 본문 쪽의 .print-foot이 따라오지 않아 여기서 따로 그린다.
+   켜고 끄는 칸은 따로 두지 않는다 — 넣은 것만 찍힌다(2026-09-29 사용자): 학원명·로고가 있으면
+   아래쪽(학원명 왼쪽·로고 오른쪽), 워터마크 이미지가 있으면 뒷배경. 화면 보고서에는 그리지 않는다.
+   워터마크는 로고와 따로 넣는다 — 아래쪽에는 가로로 긴 글자 로고가, 쪽 전체에 까는 워터마크에는
+   동그란 문장이 어울리는 일이 많다. 칸은 학원 마크 칸 안(#brandWmFile, 이 탭에서만 보인다)이고,
+   이 탭에만 쓰는 것이라 변수에만 둔다(새로고침하면 지워진다 — 학원 마크도 창을 열 때마다 비운다). */
+let trendWmImg = "";
+function trendBrand() {
+  let img = "", name = "";
+  try {
+    img = localStorage.getItem(BRAND_IMG_STORE) || "";
+    name = (localStorage.getItem(BRAND_NAME_STORE) || "").trim();
+  } catch (_) { /* 저장소가 막힌 브라우저 — 마크 없이 인쇄한다 */ }
+  return { img, name };
+}
+/* 학원명·로고를 넣는 칸(app.js의 .brand-panel)은 한 벌뿐이라 syncTabChrome이 아래
+   #trendBrandSlot으로 옮겨 온다. 보고서를 다시 그리면(innerHTML) 그 안의 칸이 함께 지워지므로
+   trendRender가 그리기 전에 원래 자리로 돌려놓는다. */
+function trendBrandOptsHtml() {
+  return `<div id="trendBrandSlot" class="trend-brand-slot"></div>`;
+}
+// renderBrand(app.js)가 학원명·로고를 바꿀 때마다 부른다
+function trendSyncBrandHint() {
+  trendSyncWmPreview();
+}
+// 학원 마크 칸 안의 워터마크 미리보기 — 무엇을 넣었는지 눈으로 확인하게(2026-09-29 사용자)
+function trendSyncWmPreview() {
+  const box = $("brandWmPreview");
+  if (!box) return;
+  box.innerHTML = trendWmImg
+    ? `<img src="${esc(trendWmImg)}" alt=""><span class="muted">워터마크</span>
+       <button type="button" class="btn ghost small" id="brandWmClear">빼기</button>`
+    : `<span class="muted">워터마크 이미지를 넣으면 보고서 뒷배경에 크게 깔립니다. 안 넣으면 워터마크 없이 인쇄합니다.</span>`;
+  const clear = $("brandWmClear");
+  if (clear) clear.addEventListener("click", () => {
+    trendWmImg = "";
+    if ($("brandWmFile")) $("brandWmFile").value = "";
+    trendSyncBrandHint();
+  });
+}
+if ($("brandWmFile")) {
+  $("brandWmFile").addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { alert("그림 파일만 넣을 수 있습니다."); e.target.value = ""; return; }
+    if (file.size > 5 * 1024 * 1024) { alert("그림 파일이 너무 큽니다 (5MB 이하로 넣어 주세요)."); e.target.value = ""; return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      trendWmImg = String(reader.result || "");
+      trendSyncBrandHint();
+    };
+    reader.onerror = () => alert("그림 파일을 읽지 못했습니다.");
+    reader.readAsDataURL(file);
+  });
+}
+// [마크 삭제]는 워터마크 이미지도 함께 뺀다(renderBrand가 불러 주는 trendSyncBrandHint가 미리보기를 맞춘다)
+if ($("brandRemoveBtn")) {
+  $("brandRemoveBtn").addEventListener("click", () => {
+    trendWmImg = "";
+    if ($("brandWmFile")) $("brandWmFile").value = "";
+    trendSyncBrandHint();
+  });
+}
+
 function trendRender() {
   const st = trendStats();
-  if (!st) { trendResultEl.innerHTML = ""; return; }
+  moveBrandPanel(null);   // 학원 마크 칸을 보고서 밖으로 꺼내 둔다(다시 그리면 지워지므로)
+  const onTrend = () => { if ($("tab-trend").classList.contains("active")) syncTabChrome("trend"); };
+  if (!st) { trendResultEl.innerHTML = ""; onTrend(); return; }
   trendResultEl.innerHTML = `
     <section class="panel exam-report">
       ${trendHtml(st, trendAi)}
       ${trendAi && trendAiStale ? `<p class="hint" style="color:#8a5a12">⚠️ 총평을 쓴 뒤에 시험지나 시험 범위가 바뀌었습니다 — 총평은 예전 내용을 기준으로 쓴 것입니다. 새로 쓰려면 [✨ 총평 다시 쓰기]를 누르세요.</p>` : ""}
       <p class="hint" id="trendAiErr" style="color:#c0392b"></p>
+      ${trendBrandOptsHtml()}
       <div class="trend-tools">
         <button type="button" class="btn small" id="trendAiBtn">${trendAi ? "✨ 총평 다시 쓰기" : "✨ 시험지 분석 총평 쓰기"}</button>
         <button type="button" class="btn ghost small" id="trendPrintBtn">🖨 인쇄 / PDF 저장</button>
@@ -1113,6 +1184,8 @@ function trendRender() {
       </div>
     </section>`;
   $("trendAiBtn").addEventListener("click", () => trendRunAi(false));
+  trendSyncBrandHint();
+  onTrend();
   $("trendPrintBtn").addEventListener("click", trendPrint);
   $("trendSaveBtn").addEventListener("click", () => openSaveDialog("trend"));
 }
@@ -1156,6 +1229,37 @@ async function trendRunAi(auto) {
   }
 }
 
+/* 인쇄 창의 학원 마크.
+   아래쪽: 쪽 바닥에 position:fixed로 두면 크롬이 쪽마다 같은 자리에 되풀이해 그린다 — 앱 본문의
+   tfoot 방식은 '그 쪽 내용이 끝난 자리'에 붙어, 이 보고서처럼 쪽을 일부러 끊으면(1·2쪽) 로고가
+   쪽 중간에 뜬다. 다만 fixed는 자리를 차지하지 않아 내용이 넘어가는 쪽(범위 표)에서 글과
+   겹치므로, 같은 높이의 빈 tfoot을 깔아 쪽마다 그만큼을 비워 둔다.
+   그만큼 쪽 높이가 줄어 1쪽 그래프가 넘칠 수 있어 보고서를 조금(zoom .95) 줄인다 — 쪽마다
+   A4 한 장에 드는지 잰 값이다(1쪽 가장 빽빽할 때 약 1003px × .95 + 바닥 34px ≤ 1017).
+   워터마크: 쪽 전체(여백 안쪽)에 비율을 지켜 가득 차게 fixed로 깔고(2026-09-29 사용자 — 가운데 62%는 작았다), 글 위에 아주 옅게 얹는다(아래에 깔면 흰 칸·표
+   배경에 가려 보이지 않는다). multiply로 섞어 JPG 로고의 흰 바탕은 사라지게 한다. */
+function trendBrandPrintCss(foot) {
+  return `
+    .rp-foot{position:fixed;left:0;right:0;bottom:0;height:9mm;display:flex;justify-content:space-between;
+      align-items:flex-end;font-family:"Malgun Gothic","맑은 고딕",sans-serif;font-weight:700;font-size:11px;color:#1b2430}
+    .rp-foot img{max-height:8mm;max-width:38mm;object-fit:contain}
+    .rp-frame{width:100%;border-collapse:collapse}.rp-frame td{padding:0}
+    .rp-foot-space{height:9mm}
+    .rp-wm{position:fixed;top:0;left:0;width:100%;height:100%;
+      object-fit:contain;opacity:.07;mix-blend-mode:multiply;pointer-events:none;z-index:5}
+    ${foot ? ".rp-frame .trend-report{zoom:.95}" : ""}`;
+}
+function trendBrandPrintBody(report, foot, wm) {
+  let body = report;
+  if (foot) {
+    body = `<table class="rp-frame"><tbody><tr><td>${report}</td></tr></tbody>
+      <tfoot><tr><td><div class="rp-foot-space"></div></td></tr></tfoot></table>
+      <div class="rp-foot"><span>${esc(foot.name)}</span>${foot.img ? `<img src="${esc(foot.img)}" alt="">` : "<span></span>"}</div>`;
+  }
+  if (wm) body += `<img class="rp-wm" src="${esc(wm)}" alt="">`;
+  return body;
+}
+
 // 새 창에 보고서만 담아 인쇄한다 — 이 탭의 업로드 칸·버튼과 섞이지 않는다
 function trendPrint() {
   const st = trendStats();
@@ -1166,6 +1270,10 @@ function trendPrint() {
     if (errEl) errEl.textContent = "팝업이 막혀 인쇄 창을 열지 못했습니다. 이 사이트의 팝업을 허용해 주세요.";
     return;
   }
+  const brand = trendBrand();
+  // 넣은 것만 찍는다 — 학원명·로고가 있으면 아래쪽, 워터마크 이미지가 있으면 뒷배경
+  const foot = brand.img || brand.name ? brand : null;
+  const wm = trendWmImg;
   w.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8">
     <title>${esc(sanitizeFilename([trendSchool(), trendSubject(), "출제경향_보고서"].filter(Boolean).join("_")))}</title>
     <style>@page{size:A4;margin:14mm}body{margin:0;padding:0}${TREND_CSS}
@@ -1186,8 +1294,9 @@ function trendPrint() {
     .tv-cov{font-size:13px;gap:8px 12px}.tv-track{height:12px}
     .tv-dom{font-size:13px;gap:6px 12px}.tv-bar.dom{height:14px}
     .trend-report .rp-strat td{padding:4px 8px}
-    .rp-find{padding:8px 14px 8px 34px}</style></head>
-    <body>${trendHtml(st, trendAi)}</body></html>`);
+    .rp-find{padding:8px 14px 8px 34px}
+    ${trendBrandPrintCss(foot)}</style></head>
+    <body>${trendBrandPrintBody(trendHtml(st, trendAi), foot, wm)}</body></html>`);
   w.document.close();
   w.focus();
   // 글꼴이 자리 잡은 뒤에 인쇄 대화상자를 연다

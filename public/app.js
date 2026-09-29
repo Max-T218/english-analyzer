@@ -1104,6 +1104,8 @@ function renderBrand() {
         (name ? `<span class="brand-name">${esc(name)}</span>` : "");
     }
   }
+  // 시험지 분석 리포트의 '마크가 없습니다' 안내도 함께 맞춘다(trend.js는 이 파일 뒤에 로드된다)
+  if (typeof trendSyncBrandHint === "function") trendSyncBrandHint();
 }
 
 if (brandNameEl) {
@@ -2632,21 +2634,28 @@ const sharedPassagePanel = document.querySelector(".passage-panel");
 const brandPanelEl = document.querySelector(".brand-panel");
 const brandHomeEl = $("brandHome");
 
-function moveBrandPanel(intoExam) {
+// slot이 있으면 그리로, 없으면 원래 자리로
+function moveBrandPanel(slot) {
   if (!brandPanelEl || !brandHomeEl) return;
-  const slot = $("examBrandSlot");
-  if (intoExam && slot) slot.appendChild(brandPanelEl);
+  if (slot) slot.appendChild(brandPanelEl);
   else brandHomeEl.parentNode.insertBefore(brandPanelEl, brandHomeEl);
 }
 
 function syncTabChrome(tab) {
   const onExam = tab === "exam";
-  // 시험지 분석 리포트도 공용 지문칸·학원 마크를 쓰지 않는다
+  // 시험지 분석 리포트는 공용 지문칸을 쓰지 않는다
   const onTrend = tab === "trend";
   if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || tab === "vocab" || tab === "students";
-  // 기출 탭에서는 분석이 끝나 시험지 칸이 열렸을 때만 마크 칸을 보여 준다
-  moveBrandPanel(onExam && !examPaperPanelEl.hidden);
-  if (brandPanelEl) brandPanelEl.hidden = (onExam && examPaperPanelEl.hidden) || onTrend;
+  /* 기출 탭에서는 분석이 끝나 시험지 칸이 열렸을 때만 마크 칸을 보여 준다.
+     시험지 분석 리포트는 보고서가 나온 뒤 인쇄 단추 위(#trendBrandSlot, trendRender가 그린다)로
+     옮긴다 — 보고서에도 학원 마크를 넣게 되면서(2026-09-29) 칸이 이 탭에서 안 보여 어디서
+     넣는지 몰랐다. 보고서가 아직 없으면 감춘다. */
+  const examSlot = onExam && !examPaperPanelEl.hidden ? $("examBrandSlot") : null;
+  const trendSlot = onTrend ? $("trendBrandSlot") : null;
+  moveBrandPanel(examSlot || trendSlot);
+  if (brandPanelEl) brandPanelEl.hidden = (onExam && !examSlot) || (onTrend && !trendSlot);
+  // 워터마크 칸은 시험지 분석 리포트에서만 쓴다(trend.js trendWmImg)
+  ["brandWmField", "brandWmPreview"].forEach((id) => { if ($(id)) $(id).style.display = onTrend ? "" : "none"; });
 }
 
 function hideExamTab() {
