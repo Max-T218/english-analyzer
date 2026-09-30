@@ -27,6 +27,34 @@ let trendAi = null;     // AI가 쓴 글 {overview, strategies, caution}. 분석
    값이 또 나간다. 다시 쓸지는 선생님이 정한다. */
 let trendAiStale = false;
 let trendBusy = false;
+/* 시험지 차례 — 보고서의 '시험지별 유형 변화'는 앞 시험 → 뒤 시험 차례로 증감을 센다. 올린 차례
+   그대로 두었더니, 먼저 분석한 2학기 시험 뒤에 [➕ 저장한 분석 더하기]로 1학기 시험을 붙인 보고서가
+   시간을 거슬러 '빈칸 추론이 늘었다'고 정반대로 적었다(2026-09-30 진안제일고). 그래서 부 이름에서
+   학년도·학기·차수(중간=1차, 기말=2차)를 읽어 오래된 시험부터 놓는다. 이름을 하나라도 못 읽으면
+   건드리지 않는다(섞어 정렬하면 오히려 엉뚱해진다). 선생님이 ↑↓로 차례를 고치면 그 뒤로는
+   자동 정렬을 끈다(trendOrderManual — 저장본에 함께 담긴다). */
+let trendOrderManual = false;
+function trendTimeKey(name) {
+  const s = String(name || "");
+  const term = /([12])\s*학기/.exec(s);
+  const seq = /([1-4])\s*차/.exec(s) || (/중간/.test(s) ? [0, "1"] : /기말/.test(s) ? [0, "2"] : null);
+  if (!term || !seq) return null;
+  const year = /(20\d{2})\s*(?:학년도|년)?/.exec(s);
+  return { year: year ? Number(year[1]) : null, key: Number(term[1]) * 10 + Number(seq[1]) };
+}
+function trendAutoSort() {
+  if (trendOrderManual || trendBusy || trendDocs.length < 2) return;
+  const keys = trendDocs.map((d) => trendTimeKey(d.name));
+  if (keys.some((k) => !k)) return;
+  // 학년도는 모두 있거나 모두 없을 때만 쓴다 — 한쪽만 있으면 견줄 수 없다
+  const useYear = keys.every((k) => k.year) ? true : keys.every((k) => !k.year) ? false : null;
+  if (useYear === null) return;
+  const order = trendDocs.map((d, i) => ({ d, i, k: (useYear ? keys[i].year * 100 : 0) + keys[i].key }))
+    .sort((a, b) => a.k - b.k || a.i - b.i);
+  if (order.every((o, j) => o.i === j)) return;
+  trendDocs = order.map((o) => o.d);
+  if (trendAi) trendAiStale = true;   // 총평은 옛 차례로 쓴 것이다
+}
 let trendLoadMode = "replace";   // 저장본을 불러올 때 지금 것을 갈아 끼울지("replace") 이어 붙일지("append")
 
 const trendDropEl = $("trendDrop");
@@ -75,6 +103,15 @@ const TREND_CSS = `
 .trend-report .tag{display:inline-block;padding:0 7px;border-radius:9px;font-size:11px;background:#e6ecf7;color:#2c4a86}
 .trend-report .tag.every{background:#dff3e6;color:#1d6b3c}
 .trend-report .tag.once{background:#fdeed9;color:#8a5a12}
+/* 시험지별 유형 출제 현황 표 — 쪽 사이에서 잘리면 한눈에 안 보인다(2026-09-30 사용자). 통째로 한 쪽에
+   두고(앞 쪽에 자리가 모자라면 표째 다음 쪽으로), 이름·구분이 두 줄로 꺾여 줄 높이가 두 배가 되던 것을
+   한 줄로 편다 — 유형 24가지도 한 쪽에 든다. */
+.trend-report .rp-keep{break-inside:avoid}
+.trend-report table.rp-types{font-size:12px}
+.trend-report table.rp-types th,.trend-report table.rp-types td{padding:3px 6px;line-height:1.4}
+.trend-report table.rp-types td.tk,.trend-report table.rp-types .tag{white-space:nowrap}
+.trend-report table.rp-types th{font-size:11.5px}
+.trend-report table.rp-types td.tbarcell{width:22%}
 .trend-report ul{margin:4px 0 0;padding-left:20px;font-size:14px}
 .trend-report li{margin:4px 0}
 .trend-report .trend-caution{margin-top:10px;font-size:12px;color:#5b6473}
@@ -189,6 +226,8 @@ const TREND_CSS = `
 .trend-doc-state{font-size:13px;color:#5b6473}
 .trend-doc-state.ok{color:#1d6b3c}
 .trend-doc-state.bad{color:#c0392b}
+.trend-doc-mv{padding:2px 8px;min-width:0}
+.trend-order-note{margin:6px 0 2px;font-size:12.5px}
 .trend-tools{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
 
 @media print{.trend-tools{display:none !important;}}`;
@@ -271,12 +310,18 @@ function trendDocState(d) {
 }
 
 function trendRenderDocs() {
-  trendDocsEl.innerHTML = trendDocs.map((d, i) => {
+  const note = trendDocs.length > 1
+    ? `<p class="hint trend-order-note">${trendOrderManual
+      ? "차례를 직접 정했습니다 — 보고서는 이 차례(위가 이른 시험)로 변화를 셉니다."
+      : "위에서부터 <b>이른 시험 → 나중 시험</b> 차례입니다. 이름에 학기·차수(예: 2026학년도 1학기 2차)가 있으면 저절로 맞춥니다. 틀렸으면 ↑↓로 고치세요."}</p>` : "";
+  trendDocsEl.innerHTML = note + trendDocs.map((d, i) => {
     const [txt, cls] = trendDocState(d);
     return `<div class="trend-doc" data-i="${i}">
       <input type="text" class="trend-doc-name" value="${esc(d.name)}" maxlength="40"
              aria-label="${i + 1}부 이름" title="보고서에 찍힐 이름입니다. 고쳐도 됩니다.">
       <span class="trend-doc-state ${cls}">${esc(txt)}</span>
+      <button type="button" class="btn ghost small trend-doc-mv" data-d="-1" title="앞으로 (더 이른 시험)" ${i ? "" : "disabled"}>↑</button>
+      <button type="button" class="btn ghost small trend-doc-mv" data-d="1" title="뒤로 (더 나중 시험)" ${i < trendDocs.length - 1 ? "" : "disabled"}>↓</button>
       <button type="button" class="btn ghost small trend-doc-del" title="이 부를 뺍니다">✕</button>
     </div>`;
   }).join("");
@@ -291,6 +336,7 @@ function trendPending() {
 }
 
 function trendSync() {
+  trendAutoSort();
   trendRenderDocs();
   const pending = trendPending().filter((d) => d.pages && d.pages.length);
   trendRunBtn.disabled = trendBusy || !pending.length;
@@ -313,6 +359,16 @@ trendDocsEl.addEventListener("change", (e) => {
   trendRender();
 });
 trendDocsEl.addEventListener("click", (e) => {
+  const mv = e.target.closest(".trend-doc-mv");
+  if (mv && !trendBusy) {
+    const i = Number(mv.closest(".trend-doc").dataset.i), j = i + Number(mv.dataset.d);
+    if (j < 0 || j >= trendDocs.length) return;
+    [trendDocs[i], trendDocs[j]] = [trendDocs[j], trendDocs[i]];
+    trendOrderManual = true;
+    if (trendAi) trendAiStale = true;
+    trendSync();
+    return;
+  }
   const del = e.target.closest(".trend-doc-del");
   if (!del || trendBusy) return;
   const i = Number(del.closest(".trend-doc").dataset.i);
@@ -941,9 +997,13 @@ function trendCoverageHtml(cv) {
     const kinds = [...new Set(hits.flatMap((h) => h.kinds))];
     return `<td class="hit tk"><b>${nos}번</b>${kinds.length ? ` <span class="qk">· ${kinds.map(esc).join(", ")}</span>` : ""}</td>`;
   };
+  /* 출제 지문을 읽지 않은 시험은 칸을 두지 않는다 — 줄마다 "—"만 채워 표만 넓혔다(2026-09-30
+     진안제일고: 범위를 넣은 시험 1부 + 범위 없이 붙인 2부). 요약 줄에 어느 시험인지 적는다. */
+  const cols_i = cv.names.map((_n, i) => i).filter((i) => cv.read[i]);
+  const readN = cols_i.length;
   const covShort = trendShortNames(cv.names);
-  const heads = cv.names.map((nm, i) => `<th title="${esc(nm)}">${esc(covShort[i].length > 18 ? covShort[i].slice(0, 17) + "…" : covShort[i])}</th>`).join("");
-  const cols = 1 + cv.names.length + (docs > 1 ? 1 : 0);
+  const heads = cols_i.map((i) => `<th title="${esc(cv.names[i])}">${esc(covShort[i].length > 18 ? covShort[i].slice(0, 17) + "…" : covShort[i])}</th>`).join("");
+  const cols = 1 + readN + (readN > 1 ? 1 : 0);
 
   /* 표에는 출제된 지문만 싣는다. 안 나온 지문은 표 아래에 범위별로 한 줄씩 모은다 —
      안 나온 지문까지 줄을 차지하면 표가 두 배로 길어지고, 정작 보려는 '어디서 나왔나'가
@@ -962,8 +1022,8 @@ function trendCoverageHtml(cv) {
     return `${head}
     <tr>
       <td class="tk">${esc(rowName(r))}</td>
-      ${r.hits.map((h, i) => cell(h, cv.read[i])).join("")}
-      ${docs > 1 ? `<td><b>${r.count}</b></td>` : ""}
+      ${cols_i.map((i) => cell(r.hits[i], true)).join("")}
+      ${readN > 1 ? `<td><b>${r.count}</b></td>` : ""}
     </tr>`;
   }).join("");
 
@@ -986,11 +1046,11 @@ function trendCoverageHtml(cv) {
     <div class="trend-summary">
       시험 범위 지문 <b>${cv.rows.length}개</b> 중 <b>${used}개</b>가 출제됐고, <b>${cv.rows.length - used}개</b>는 나오지 않았습니다.
       ${outN ? `시험지 지문 중 <b>${outN}개</b>는 범위에서 찾지 못했습니다(범위 밖 지문이거나 많이 바뀐 지문).` : ""}
-      ${unread.length ? `<br><span class="trend-sub">출제 지문을 읽지 않은 부: ${unread.map(esc).join(", ")} — 표에 “—”로 나옵니다.</span>` : ""}
+      ${unread.length ? `<br><span class="trend-sub">출제 지문을 읽지 않은 시험(${unread.map(esc).join(", ")})은 대조하지 않아 표에서 뺐습니다.</span>` : ""}
       <br><span class="trend-sub">글자 겹침으로 짝을 지은 결과입니다. 지문을 크게 바꿔 낸 문항은 못 찾을 수 있으니 확인해 주세요.</span>
     </div>
     ${shown.length ? `<div style="overflow-x:auto"><table class="trend-cov">
-      <thead><tr><th>출제된 범위 지문</th>${heads}${docs > 1 ? "<th>출제 횟수</th>" : ""}</tr></thead>
+      <thead><tr><th>출제된 범위 지문</th>${heads}${readN > 1 ? "<th>출제 횟수</th>" : ""}</tr></thead>
       <tbody>${body}</tbody>
     </table></div>` : ""}
     ${missingHtml}
@@ -1144,11 +1204,11 @@ function trendHtml(st, ai) {
       })()}
       ${st.docs > 1 ? `<div class="trend-pg">
       <h4 class="sec">시험지별 유형 변화</h4>${trendChangeHtml(st)}
-      <h4 class="sec">시험지별 유형 출제 현황</h4>
-      <div style="overflow-x:auto"><table>
+      <div class="rp-keep"><h4 class="sec">시험지별 유형 출제 현황</h4>
+      <div style="overflow-x:auto"><table class="rp-types">
         <thead><tr><th>유형</th>${heads}<th>합계</th><th>비율</th><th>비중</th><th>구분</th></tr></thead>
         <tbody>${body}</tbody>
-      </table></div></div>` : ""}
+      </table></div></div></div>` : ""}
       ${trendCoverageHtml(cv)}
       <div class="rp-note"><b>유의 사항</b>
         <p>이 보고서의 문항 유형 분류와 시험 범위 지문 대조는 AI가 시험지 이미지를 읽어 만든 결과이므로 일부 오류가 있을 수 있습니다. 중요한 판단에는 원본 시험지와 함께 확인해 주십시오.</p>
@@ -1403,6 +1463,7 @@ const trendHasWork = () => trendDocs.length > 0;
 
 function trendReset() {
   trendDocs = [];
+  trendOrderManual = false;
   trendAi = null;
   trendErrorEl.textContent = "";
   delete LOADED_SAVED.trend;   // 새로 시작했으니 이전 저장본을 고치는 중이 아니다
@@ -1444,6 +1505,7 @@ TAB_SAVE.trend = {
       .map((d) => ({ name: d.name, questions: d.questions, passages: d.passages || null })),
     range: trendRangeJobs().map((j) => ({ name: j.name, named: j.named, text: j.text })),
     ai: trendAi,
+    manualOrder: trendOrderManual,   // 선생님이 ↑↓로 차례를 정했으면 불러와도 그 차례를 지킨다
   }),
   // loadSavedItem이 탭을 바꾸기 전에 부른다 — false면 불러오기를 멈춘다
   beforeLoad: () => {
@@ -1472,6 +1534,7 @@ TAB_SAVE.trend = {
       setTimeout(() => { delete LOADED_SAVED.trend; }, 0);
     } else {
       trendDocs = incoming.slice(0, TREND_MAX_DOCS);
+      trendOrderManual = !!payload.manualOrder;
       if (trendSchoolEl) trendSchoolEl.value = String(payload.school || "");
       if (trendSubjectEl) trendSubjectEl.value = String(payload.subject || "");
       // 범위가 없는 저장본이면 지금 칸을 그대로 둔다(범위만 따로 넣어 둔 경우를 지우지 않는다)
@@ -1493,12 +1556,12 @@ HOWTO.trend = {
   lead: "기출 시험지의 문항 유형을 읽어 출제경향 보고서로 만듭니다. 동형 모의고사 탭과는 따로 움직입니다. 시험지 분석에는 포인트가 들지 않고, 시험지 분석 총평을 쓸 때 보고서 1건당 값이 매겨집니다(금액은 [분석하기] 옆에 나옵니다).",
   steps: [
     "<b>학교 이름</b>과 <b>학년·과목</b>을 적습니다 — 보고서 제목에 찍힙니다(예: 전주제일고등학교 출제경향 분석 보고서 · 2학년 영어Ⅱ).",
-    "기출 시험지 <b>PDF·사진</b>을 끌어다 놓습니다. <b>PDF 한 파일이 한 부</b>입니다 — 해마다의 경향을 보려면 여러 부를 올리세요. 부 이름은 칸에서 고칠 수 있고(예: 2024 1학기 중간), <b>✕</b>로 뺄 수 있습니다.",
+    "기출 시험지 <b>PDF·사진</b>을 끌어다 놓습니다. <b>PDF 한 파일이 한 부</b>입니다 — 해마다의 경향을 보려면 여러 부를 올리세요. 부 이름은 칸에서 고칠 수 있고(예: 2024 1학기 중간), <b>✕</b>로 뺄 수 있습니다. 부는 <b>위에서부터 이른 시험 → 나중 시험</b> 차례로 놓입니다 — 이름에 학기·차수(예: 2026학년도 1학기 2차, 중간·기말)가 있으면 저절로 맞추고, 틀렸으면 <b>↑↓</b>로 고치세요. 보고서의 '시험지별 유형 변화'가 이 차례로 늘고 준 것을 셉니다.",
     "(선택) <b>시험 범위 지문</b>을 넣습니다 — 다른 탭과 같은 지문 칸에 붙여넣거나 <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b>로 채웁니다. 저장함에서 가져오면 <b>저장본 제목이 이름 앞에 붙어</b>(예: 공통영어2 비상(홍) 1단원 본문 · 본문1) 보고서에 <b>범위(저장본)별로 몇 개 중 몇 개가 나왔는지</b>도 묶여 나옵니다. 이름은 칸에서 고칠 수 있고, <b>[💾 지문 저장]</b>으로 이름째 저장해 둘 수 있습니다. 넣어 두면 보고서에 <b>범위의 어느 지문이 몇 번 문항으로 나왔는지</b>가 나옵니다. 분석한 뒤에 넣어도 됩니다.",
     "<b>[분석하기]</b>를 누르면 AI가 부마다 문항 유형을 읽습니다. <b>시험 범위 지문을 넣어 두었을 때만</b> 시험지의 지문도 옮겨 적어 범위와 대조합니다 — 범위를 비워 두면 유형만 읽어 훨씬 빠릅니다. 여러 해 시험지를 모아 경향만 볼 때는 범위를 비워 두세요. 시험지 한 부에 몇 분 걸립니다. 못 읽은 것이 있으면 다시 누르세요 — 못 읽은 것만 다시 읽습니다.",
     "분석이 끝나면 아래에 <b>보고서</b>가 나옵니다 — 요약, 부별 유형 표, 비중 그래프, 그리고 <b>매회 출제 / 가끔 출제 / 한 번만</b> 구분이 들어 있습니다.",
     "분석이 끝나면 <b>시험지 분석 총평과 유형별 대비 전략</b>까지 이어서 자동으로 씁니다. 시험 범위를 나중에 바꿔도 총평은 지워지지 않고 '예전 범위 기준'이라는 안내만 뜹니다 — 새로 쓰려면 <b>[✨ 총평 다시 쓰기]</b>를 누르세요(다시 쓸 때도 값이 매겨집니다).",
-    "<b>[🖨 인쇄 / PDF 저장]</b>은 보고서만 새 창에 담아 인쇄합니다 — 1쪽 그래프(한눈에 보는 출제 현황), 2쪽 핵심 요약·총평·대비 전략, 3쪽부터 시험 범위 지문별 출제 현황입니다. 팝업이 막혀 있으면 이 사이트의 팝업을 허용하세요.",
+    "<b>[🖨 인쇄 / PDF 저장]</b>은 보고서만 새 창에 담아 인쇄합니다 — 1쪽 그래프(한눈에 보는 출제 현황), 2쪽 핵심 요약·총평·대비 전략, 시험지가 둘 이상이면 이어서 시험지별 유형 변화와 유형 출제 현황 표, 끝으로 시험 범위 지문별 출제 현황입니다. 팝업이 막혀 있으면 이 사이트의 팝업을 허용하세요.",
     "<b>[💾 분석 저장]</b>으로 분석 결과를 저장해 두면, 다음에는 시험지를 다시 올리지 않고 <b>[📂 저장한 분석 불러오기]</b>로 바로 열 수 있습니다. <b>[➕ 저장한 분석 더하기]</b>는 지금 화면에 다른 저장본을 이어 붙여 한 보고서로 합칩니다(시험지만 합치고 시험 범위는 가져오지 않습니다). 합친 뒤 <b>[✨ 시험지 분석 총평 쓰기]</b>로 총평을 새로 쓰세요.",
   ],
   tip: "유형은 중·고등 내신에 두루 쓰는 이름(대화문 내용 파악, 영영풀이, 서술형 영작 등)으로 모든 문항을 셉니다 — 중학교 시험지도 됩니다. 범위 대조는 글자 겹침으로 짝을 짓기 때문에, 지문을 크게 바꿔 낸 문항은 '범위에서 찾지 못한 지문'으로 나올 수 있습니다. 저장본에는 시험지 그림이 들어가지 않습니다 — 그래서 지문을 읽지 않고 저장한 분석은 나중에 지문을 다시 읽을 수 없습니다.",
