@@ -1210,7 +1210,7 @@ function trendHtml(st, ai) {
         <tbody>${body}</tbody>
       </table></div></div></div>` : ""}
       ${trendCoverageHtml(cv)}
-      <div class="rp-note"><b>유의 사항</b>
+      <div class="rp-note"><b>유의 사항 <small style="font-weight:400;color:#898781">(화면에만 보이고 인쇄에는 나오지 않습니다)</small></b>
         <p>이 보고서의 문항 유형 분류와 시험 범위 지문 대조는 AI가 시험지 이미지를 읽어 만든 결과이므로 일부 오류가 있을 수 있습니다. 중요한 판단에는 원본 시험지와 함께 확인해 주십시오.</p>
         ${ai && ai.caution ? `<p>${esc(ai.caution)}</p>` : ""}
       </div>
@@ -1351,6 +1351,9 @@ function trendPrint() {
     .trend-report{-webkit-print-color-adjust:exact;print-color-adjust:exact}
     .trend-report tr{break-inside:avoid}.trend-report h4{break-after:avoid}
     .trend-pg{break-before:page}
+    /* 유의 사항은 화면에만 둔다 — 받는 사람은 이제 AI로 만든 자료인 줄 알고, 인쇄물 끝에 '오류가
+       있을 수 있습니다'가 붙으면 자료를 스스로 깎아내린다(2026-09-30 사용자). 선생님은 화면에서 본다. */
+    .rp-note{display:none}
     /* 한 장에 들어가도록 잰 값이다(2026-09-29, A4 폭 687px에서 1쪽 약 940 · 2쪽 약 960 / 한 장 1017).
        키우면 2쪽이 넘쳐 그래프가 두 장으로 갈린다 — 바꾸면 다시 잴 것. */
     .trend-dash{padding:16px 20px}
