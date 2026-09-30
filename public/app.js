@@ -8726,7 +8726,7 @@ const HOWTO = {
       "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b>로 채울 수도 있고, 기출 속 지문을 쓰려면 <b>[📄 지문도 가져오기]</b>를 누르세요.",
       "(선택) 목표 어법 · 출제 순서 · 몇 부(1부 / A형·B형) · 시험지 머리글(학교 이름·고사 이름 등) · 표지 제목을 정합니다.",
       "<b>[📝 문제 제작]</b>을 누릅니다.",
-      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b> — 사이트 저장은 만든 시험지를 저장하고, 기출 구성 저장과는 따로 쌓입니다. 저장한 시험지는 맨 위 <b>[📂 저장한 시험지 불러오기]</b>로 되불러옵니다.",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b> — 사이트 저장은 만든 시험지를 저장하고, 기출 구성 저장과는 따로 쌓입니다. 저장한 시험지는 맨 위 <b>[📂 저장한 시험지 불러오기]</b>로 되불러옵니다. 불러온 시험지 말고 <b>새 시험지를 따로</b> 만들려면 <b>[🧹 만든 시험지 비우기]</b>를 누른 뒤 만드세요 — 안 비우면 새 시험지가 불러온 것 뒤에 붙습니다. 비워도 저장해 둔 것은 지워지지 않고, 새 시험지는 비운 시험지와 겹치지 않게 만들어집니다.",
       "다른 시험지를 만들려면 맨 위 <b>[🔄 새로 시작하기]</b>를 누릅니다 — 올린 기출·분석표·시험 범위 지문·만든 시험지를 모두 비우고, 학교 이름 같은 머리글은 남깁니다. 필요한 것은 먼저 저장해 두세요.",
     ],
     tip: "이벤트 기간에는 [📝 문제 제작] 한 번에(A형·B형 포함) 드는 포인트에 상한이 있습니다 — 상한과 기간은 문제 제작 단추 위 예상 비용 옆에 표시됩니다. 목표 어법도 이 탭의 칸을 씁니다 — 지문 칸이 따로이므로 위 공용 칸의 값은 여기에 쓰이지 않습니다. 시험 범위 지문은 <b>[💾 지문 저장]</b>으로 남겨 두면 학기 내내 되불러 쓸 수 있습니다.",
@@ -10536,6 +10536,11 @@ const examIncludeSimilar = () => !examSimilarEl || examSimilarEl.checked;
 
 let examScanNow = null;   // 지금 화면에 떠 있는 기출 분석 (저장하지 않는다)
 let examPlanNow = null;   // 방금 계산한 배분 (생성이 끝나면 비운다)
+/* [🧹 만든 시험지 비우기]로 화면에서 치운 시험지들이 쓴 (지문, 유형) 조합. 시험지를 불러와 새로
+   만들면 새 시험지가 불러온 것 뒤에 붙어 한 문서가 됐다(2026-09-30 사용자) — 비우기로 따로 만들게
+   하되, 새 시험지가 비운 것과 겹치지 않도록(대원칙 2) 조합만은 여기 남겨 둔다.
+   이 탭을 새로 시작하거나 다른 저장본을 불러오면(clearExamTab) 함께 비운다. */
+let examAvoidPairs = new Set();
 let examPaperSets = [];   // 완성된 부 [{label, questions, plan}]
 let examPaperBusy = false;
 
@@ -10748,7 +10753,7 @@ function runExamPaperFlow() {
 // 이미 만들어 둔 부들이 쓴 (지문, 유형) — 대원칙 2의 근거가 되는 값이다.
 // 저장물을 불러오면 그 배분표가 여기 들어와, 나중에 B형을 따로 만들어도 겹치지 않는다.
 function examUsedPairs() {
-  const out = new Set();
+  const out = new Set(examAvoidPairs);
   examPaperSets.forEach((set) => {
     (set.plan || []).forEach((r) => out.add(`${r.passageNo}|${r.type}`));
   });
@@ -10955,6 +10960,7 @@ function renderExamPaperSets() {
     $("examPaperPrintBtn").style.display = on ? "inline-flex" : "none";
     $("examPaperSaveBtn").style.display = on ? "inline-flex" : "none";
     $("examPaperDocxBtn").style.display = on ? "inline-flex" : "none";
+    $("examPaperClearBtn").style.display = on ? "inline-flex" : "none";
   };
   if (!examPaperSets.length) {
     examPaperResultEl.innerHTML = "";
@@ -11275,6 +11281,7 @@ function clearExamTab() {
   examScanNow = null;
   examPlanNow = null;
   examPaperSets = [];
+  examAvoidPairs = new Set();
   examPaperMgr.setJobs([]);
   examGrammarEl.value = "";
   if (examPassageStatusEl) examPassageStatusEl.textContent = "";
@@ -11290,6 +11297,26 @@ function clearExamTab() {
   syncTabChrome("exam");
 }
 $("examResetBtn").addEventListener("click", resetExamTab);
+
+// 만든(불러온) 시험지만 화면에서 치운다 — 기출 구성·시험 범위 지문·머리글은 그대로 둔다
+function clearExamPapers() {
+  if (examPaperBusy || !examPaperSets.length) return;
+  if (!confirm(
+    `화면의 시험지 ${examPaperSets.length}부를 비웁니다.\n` +
+    "저장해 둔 시험지는 지워지지 않습니다.\n" +
+    "이어서 만드는 시험지는 비운 시험지와 같은 지문·유형 조합을 피해 만듭니다.\n\n비울까요?"
+  )) return;
+  examUsedPairs().forEach((k) => examAvoidPairs.add(k));
+  examPaperSets = [];
+  examPlanNow = null;
+  // 불러온 저장본을 고치던 중이 아니게 된다 — 새로 만든 것을 저장할 때 덮어쓰기를 권하면 안 된다
+  delete LOADED_SAVED.exam;
+  examPaperErrorEl.textContent = "";
+  renderExamPaperSets();
+  updateExamPaperCost();
+  syncTabChrome("exam");
+}
+$("examPaperClearBtn").addEventListener("click", clearExamPapers);
 
 // 이 두 탭은 TAB_SAVE를 훑어 저장 단추를 다는 곳보다 뒤에 등록되므로 여기서 직접 단다
 $("examPaperSaveBtn").addEventListener("click", () => openSaveDialog("exam"));
