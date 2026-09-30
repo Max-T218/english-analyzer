@@ -90,6 +90,8 @@ const TREND_CSS = `
 .trend-etc table{width:100%;border-collapse:collapse;font-size:12.5px}
 .trend-etc th,.trend-etc td{border-bottom:1px solid #eee3cc;padding:4px 6px;text-align:left}
 .trend-etc select{font-size:12.5px;padding:2px 4px;max-width:180px}
+.trend-etc-img{display:block;margin-top:5px;max-height:120px;max-width:100%;border:1px solid #e1d6bd;border-radius:4px;cursor:zoom-in;background:#fff}
+.trend-etc-img.big{max-height:none;cursor:zoom-out}
 .trend-report{font-family:"Malgun Gothic","맑은 고딕",sans-serif;color:#1a1f2b;line-height:1.6}
 .trend-report h3{margin:0 0 4px;font-size:20px}
 .trend-report h4{margin:18px 0 6px;font-size:15px;border-left:4px solid #4d94ec;padding-left:8px}
@@ -550,9 +552,15 @@ async function trendRun() {
           const key = String(q.no || "").trim();
           if (key && seen.has(key)) continue;   // 쪽 경계에 걸친 문항이 겹쳐 오면 먼저 읽은 것을 남긴다
           if (key) seen.add(key);
-          // 저장본을 가볍게 — 보고서에 쓰는 것만 남긴다(발문은 짧게 자른다)
-          acc.push({ no: q.no, format: q.format, category: q.category, kind: q.kind, engine: q.engine, fit: q.fit,
-                     prompt: String(q.prompt || "").slice(0, 60) });
+          // 저장본을 가볍게 — 보고서에 쓰는 것만 남긴다(발문은 짧게 자른다).
+          // category_raw는 목록 밖 유형 이름(trendCat이 되살린다), pg·box는 이 문항이 몇째 쪽의 어디에
+          // 있는지다 — '기타' 문항을 잘라 보여 줄 때 쓴다(trendCropOf). page는 이번 요청 안에서 몇째 그림인지라
+          // 부 전체의 쪽 번호로 바꿔 둔다.
+          const pg = q.page >= 1 && q.page <= idx.length ? idx[q.page - 1] : -1;
+          acc.push({ no: q.no, format: q.format, category: q.category, category_raw: q.category_raw || "",
+                     kind: q.kind, engine: q.engine, fit: q.fit,
+                     prompt: String(q.prompt || "").slice(0, 60),
+                     pg, box: Array.isArray(q.box) && q.box.length === 4 ? q.box : null });
         }
       };
       for (let j = 0; j < jobs.length; j++) {
@@ -679,7 +687,8 @@ const TREND_CAT_RULES = [
   [/목적/, "글의 목적"],
   [/심경|분위기|태도|어조|심정|성격/, "심경·분위기"],
   [/의미|뜻하는|함축|의도/, "함축 의미"],
-  [/일치|언급|알\s*수\s*(있|없)|답할\s*수|도표|그래프|안내|내용과/, "내용 일치·불일치"],
+  // "…한 이유로 가장 적절한 것" — 글의 세부 내용을 묻는다(2026-09-30 진안제일고 2학기 3번)
+  [/일치|언급|알\s*수\s*(있|없)|답할\s*수|도표|그래프|안내|내용과|이유|까닭|원인/, "내용 일치·불일치"],
   [/해석|우리말|영어\s*표현/, "영어 표현 고르기"],
 ];
 function trendCatGuess(text, fmt) {
@@ -1368,6 +1377,48 @@ function trendBrandOptsHtml() {
   return `<div id="trendBrandSlot" class="trend-brand-slot"></div>`;
 }
 
+/* 기타 문항 그림 — 분석할 때 받은 위치(box)대로 쪽 그림에서 문항만 잘라 낸다. 선생님이 발문 한 줄만
+   보고는 무슨 문항인지 알 수 없어 분류를 고르기 어렵다(2026-09-30 사용자). 쪽 그림은 저장본에 담지
+   않으므로 이 그림(작은 JPEG)만 q.crop에 담아 둔다 — 저장할 때도 기타 문항 것만 남긴다
+   (TREND_CROP_MAX장까지 — Firestore 문서 하나가 1MB라서). 쪽 그림이 없는 것(저장본에서 불러온 부,
+   통째 PDF로 보낸 부)은 자를 수 없다. */
+const TREND_CROP_W = 640;
+const TREND_CROP_MAX = 8;
+const trendIsEtc = (q) => { const c = trendCat(q); return c === "기타" || c === "분류 못 함"; };
+function trendCropOf(d, q) {
+  if (q.crop || q._cropTried) return Promise.resolve(q.crop || "");
+  q._cropTried = true;
+  const page = d.pages && q.pg >= 0 ? d.pages[q.pg] : null;
+  if (!page || !/^image\//.test(page.mime || "") || !q.box) return Promise.resolve("");
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const W = img.naturalWidth, H = img.naturalHeight;
+      const [y0, x0, y1, x1] = q.box;
+      const padY = H * 0.015, padX = W * 0.015;   // 위치가 조금 어긋나도 글자가 잘리지 않게 넉넉히
+      const sx = Math.max(0, x0 / 1000 * W - padX), sy = Math.max(0, y0 / 1000 * H - padY);
+      const sw = Math.min(W - sx, (x1 - x0) / 1000 * W + padX * 2), sh = Math.min(H - sy, (y1 - y0) / 1000 * H + padY * 2);
+      if (sw < 20 || sh < 20) return resolve("");
+      const scale = Math.min(1, TREND_CROP_W / sw);
+      const c = document.createElement("canvas");
+      c.width = Math.round(sw * scale); c.height = Math.round(sh * scale);
+      c.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+      try { q.crop = c.toDataURL("image/jpeg", 0.72); } catch (_) { q.crop = ""; }
+      resolve(q.crop);
+    };
+    img.onerror = () => resolve("");
+    img.src = `data:${page.mime};base64,${page.data}`;
+  });
+}
+// 화면을 그린 뒤, 그림이 아직 없는 기타 문항을 잘라 다시 그린다(한 번만 시도한다)
+function trendCropPending() {
+  const jobs = [];
+  trendDocs.forEach((d) => (d.questions || []).forEach((q) => {
+    if (trendIsEtc(q) && !q.crop && !q._cropTried && q.box && d.pages) jobs.push(trendCropOf(d, q));
+  }));
+  if (jobs.length) Promise.all(jobs).then((r) => { if (r.some(Boolean)) trendRender(); });
+}
+
 /* 기타로 남은 문항 — 화면에만(인쇄 창에는 trendHtml만 들어간다). 문항마다 분류를 고르면
    q.category에 적고 catManual을 켠다 — 저장본에 그대로 담겨 다음에 불러와도 남는다. */
 function trendEtcHtml() {
@@ -1376,16 +1427,18 @@ function trendEtcHtml() {
   const rows = [];
   src.forEach((d, di) => d.questions.forEach((q, qi) => {
     const c = trendCat(q);
-    if (c === "기타" || c === "분류 못 함") rows.push({ di, qi, q });
+    if (c === "기타" || c === "분류 못 함") rows.push({ di, qi, q, d });
   }));
   if (!rows.length) return "";
   const opts = [...trendCatNames()].filter((n) => n !== "기타");
   return `<div class="trend-etc">
-    <h5>기타로 분류된 문항 ${rows.length}개 <small>(화면에만 보입니다 — 분류를 고르면 보고서에 바로 반영되고, [💾 분석 저장]으로 남습니다)</small></h5>
+    <h5>기타로 분류된 문항 ${rows.length}개 <small>(화면에만 보입니다 — 분류를 고르면 보고서에 바로 반영되고, [💾 분석 저장]으로 남습니다. 문항 그림은 새로 분석한 시험지에만 나오고, 누르면 크게 봅니다)</small></h5>
     <table><thead><tr><th>시험지</th><th>번호</th><th>발문</th><th>분류</th></tr></thead><tbody>
     ${rows.map((r) => `<tr>
       <td>${esc(src.length > 1 ? short[r.di] : src[r.di].name)}</td><td>${esc(r.q.no || "")}</td>
-      <td class="tk">${esc(r.q.prompt || "(발문 없음)")}</td>
+      <td class="tk">${esc(r.q.prompt || "(발문 없음)")}${r.q.crop
+        ? `<br><img class="trend-etc-img" src="${esc(r.q.crop)}" alt="${esc(r.q.no || "")}번 문항" title="누르면 크게 봅니다">`
+        : r.q.box && r.d.pages ? `<br><span class="trend-sub">문항 그림을 잘라 오는 중…</span>` : ""}</td>
       <td><select class="trend-etc-sel" data-d="${trendDocs.indexOf(src[r.di])}" data-q="${r.qi}">
         <option value="">기타 (그대로)</option>${opts.map((n) => `<option>${esc(n)}</option>`).join("")}
       </select></td></tr>`).join("")}
@@ -1411,6 +1464,8 @@ function trendRender() {
       </div>
     </section>`;
   $("trendAiBtn").addEventListener("click", () => trendRunAi(false));
+  trendResultEl.querySelectorAll(".trend-etc-img").forEach((im) => im.addEventListener("click", () => im.classList.toggle("big")));
+  trendCropPending();
   trendResultEl.querySelectorAll(".trend-etc-sel").forEach((sel) => sel.addEventListener("change", () => {
     const d = trendDocs[Number(sel.dataset.d)], q = d && d.questions[Number(sel.dataset.q)];
     if (!q || !sel.value) return;
@@ -1667,8 +1722,17 @@ TAB_SAVE.trend = {
     v: 2,
     school: trendSchool(),
     subject: trendSubject(),
-    docs: trendDocs.filter((d) => d.questions)
-      .map((d) => ({ name: d.name, questions: d.questions, passages: d.passages || null })),
+    docs: (() => {
+      let crops = 0;
+      return trendDocs.filter((d) => d.questions).map((d) => ({
+        name: d.name, passages: d.passages || null,
+        questions: d.questions.map((q) => {
+          const { crop, _cropTried, ...rest } = q;
+          if (crop && trendIsEtc(q) && crops < TREND_CROP_MAX) { crops++; return { ...rest, crop }; }
+          return rest;
+        }),
+      }));
+    })(),
     range: trendRangeJobs().map((j) => ({ name: j.name, named: j.named, text: j.text })),
     ai: trendAi,
     manualOrder: trendOrderManual,   // 선생님이 ↑↓로 차례를 정했으면 불러와도 그 차례를 지킨다

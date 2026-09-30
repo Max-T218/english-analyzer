@@ -4468,10 +4468,15 @@ EXAM_SCAN_SCHEMA = {
                     "kind": {"type": "STRING"},
                     "fit": {"type": "STRING"},
                     "note": {"type": "STRING"},
+                    # 문항이 몇째 그림의 어디에 있는지 — 시험지 분석 리포트가 '기타' 문항을
+                    # 잘라 보여 준다(2026-09-30). box는 [ymin, xmin, ymax, xmax], 0~1000 비율.
+                    "page": {"type": "INTEGER"},
+                    "box": {"type": "ARRAY", "items": {"type": "INTEGER"}},
                 },
-                "required": ["no", "group", "format", "prompt", "category", "kind", "fit", "note"],
+                "required": ["no", "group", "format", "prompt", "category", "kind", "fit", "note",
+                             "page", "box"],
                 "propertyOrdering": ["no", "group", "format", "prompt", "category",
-                                     "kind", "fit", "note"],
+                                     "kind", "fit", "note", "page", "box"],
             },
         },
         "note": {"type": "STRING"},
@@ -4560,6 +4565,12 @@ irrelevant here and copying them wastes the whole output. Read the Korean questi
     · 우리말 해석이 틀린/옳은 것 고르기(선택형) → 영어 표현 고르기
     · 서답형 우리말 해석 쓰기, 영어 질문에 답 쓰기, 요지를 한국어로 쓰기 → 서술형: 내용 서술
   기타 is the LAST resort — use it only when the 발문 truly matches none of these.
+- `page`: which image in THIS request the question's number and 발문 are on — 1 for the first
+  image you were sent, 2 for the second, and so on (NOT the page number printed on the paper).
+- `box`: where the question sits on that image, as [ymin, xmin, ymax, xmax] scaled 0–1000
+  (0,0 = top-left of the image as you see it, even if the page is rotated). Cover the question
+  number, the 발문 and its answer choices / answer space. Do NOT include a reading passage shared
+  with other questions. If unsure, make the box a little larger rather than smaller.
 - `kind`: the closest type from the ALLOWED LIST given in the user message, copied EXACTLY.
   Use "" when nothing on the list is close.
   The list has three groups (객관식 / 주관식 / 워크북). Korean 내신 서답형 — 영작, 우리말
@@ -4896,6 +4907,27 @@ def normalize_exam_ocr(result):
 _EXAM_FITS = ("같음", "비슷함", "없음")
 
 
+def _exam_int(v, lo, hi):
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return 0
+    return n if lo <= n <= hi else 0
+
+
+def _exam_box(v):
+    """[ymin, xmin, ymax, xmax] 0~1000 — 모양이 틀리면 빈 목록(화면이 자르지 않는다)."""
+    if not isinstance(v, (list, tuple)) or len(v) != 4:
+        return []
+    try:
+        y0, x0, y1, x1 = (max(0, min(1000, int(n))) for n in v)
+    except (TypeError, ValueError):
+        return []
+    if y1 - y0 < 10 or x1 - x0 < 10:
+        return []
+    return [y0, x0, y1, x1]
+
+
 def normalize_exam_scan(result):
     """모델 응답을 화면이 믿고 쓸 수 있는 모양으로 정리한다.
 
@@ -4961,6 +4993,8 @@ def normalize_exam_scan(result):
             "prompt": sanitize_inline(str(raw.get("prompt") or "")),
             "category": category,
             "category_raw": category_raw,
+            "page": _exam_int(raw.get("page"), 1, 64),
+            "box": _exam_box(raw.get("box")),
             "kind": kind,
             "engine": engine,
             "fit": fit,
@@ -9079,6 +9113,14 @@ CHANGELOG = [
         "items": [
             "시험지 분석 리포트 — '기타'로 빠지던 문항을 발문으로 다시 가려 제 유형에 넣습니다(저장해 둔 "
             "분석에도 적용). 그래도 기타로 남은 문항은 보고서 아래에서 직접 유형을 골라 줄 수 있습니다.",
+        ],
+    },
+    {
+        "version": 56,
+        "date": "2026-09-30",
+        "items": [
+            "시험지 분석 리포트 — '기타로 분류된 문항' 칸에 그 문항 부분만 잘라 낸 시험지 그림이 함께 "
+            "나옵니다(새로 분석한 시험지부터). 저장하면 기타 문항 그림도 함께 남습니다.",
         ],
     },
 ]
