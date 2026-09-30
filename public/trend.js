@@ -67,7 +67,10 @@ const TREND_CSS = `
 .trend-report th{background:#eaeff8}
 .trend-report td.tk{text-align:left}
 .trend-report td.zero{color:#aab2c0}
-.trend-report .tbar{display:block;height:12px;background:#4d94ec;border-radius:2px;min-width:2px}
+/* 표의 비중 막대 — 1쪽 '유형별 문항 수'와 같은 유형 색·광택(2026-09-30 사용자). 색은 background-color로 준다 */
+.trend-report .tbar{display:block;height:12px;background-color:#4d94ec;border-radius:0 4px 4px 0;min-width:2px;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.55) 0,rgba(255,255,255,.12) 45%,rgba(0,0,0,.06) 100%);
+  box-shadow:0 1px 2px rgba(26,31,43,.22),inset 0 -1px 0 rgba(0,0,0,.08)}
 .trend-report td.tbarcell{width:26%;text-align:left}
 .trend-report .tag{display:inline-block;padding:0 7px;border-radius:9px;font-size:11px;background:#e6ecf7;color:#2c4a86}
 .trend-report .tag.every{background:#dff3e6;color:#1d6b3c}
@@ -134,6 +137,20 @@ const TREND_CSS = `
 .tv-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:#52514e;margin-bottom:4px}
 .tv-legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:5px;vertical-align:3px}
 .tv-line{display:block;max-width:100%;height:auto}
+.tv-pair-legend{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12px;color:#52514e;margin:0 0 8px}
+.tv-pair-legend i{display:inline-block;width:16px;height:10px;border-radius:2px;background:#52514e;margin-right:5px;vertical-align:-1px}
+.tv-pair{display:grid;grid-template-columns:minmax(110px,max-content) 1fr 64px;gap:7px 10px;align-items:center;font-size:12.5px}
+.tv-pair-l{color:#0b0b0b;font-weight:600;white-space:nowrap}.tv-pair-l.same{color:#898781;font-weight:400}
+.tv-pair-bars{display:flex;flex-direction:column;gap:2px;border-left:1px solid #c3c2b7;padding-left:1px}
+.tv-pair-b{display:flex;align-items:center;gap:5px;height:11px}
+.tv-pair-b span{display:block;height:100%;border-radius:0 4px 4px 0;min-width:1px;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.55) 0,rgba(255,255,255,.12) 45%,rgba(0,0,0,.06) 100%);
+  box-shadow:0 1px 2px rgba(26,31,43,.22),inset 0 -1px 0 rgba(0,0,0,.08)}
+.tv-pair-b em{font-style:normal;font-size:10.5px;color:#52514e;line-height:1}
+.tv-pair.thin{gap:5px 10px}.tv-pair.thin .tv-pair-b{height:7px}.tv-pair.thin .tv-pair-b em{font-size:9.5px}
+.tv-pair.xthin{gap:4px 10px;font-size:12px}.tv-pair.xthin .tv-pair-bars{gap:1px}.tv-pair.xthin .tv-pair-b{height:5px}.tv-pair.xthin .tv-pair-b em{font-size:8.5px}
+.tv-pair-d{text-align:right;white-space:nowrap}
+.tv-pair-d .up,.tv-pair-d .down{color:#0b0b0b}.tv-pair-d .eq{color:#898781;font-size:11px}
 .trend-dash h5 small{font-weight:400;color:#898781;font-size:11.5px}
 .tv-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 28px;align-items:start}
 .tv-ph{display:flex;align-items:center;gap:6px;font-size:12.5px;color:#52514e;margin-bottom:8px}
@@ -679,43 +696,75 @@ function trendGroupStats(cv) {
    많아야 24가지라 한 줄 17px로 그리면 A4 한 장에 다른 그래프와 함께 들어간다. 서술형 유형은
    색을 달리해 선택형과 한눈에 갈리게 했다. */
 
-/* 시험지별 유형 변화 꺾은선 — 시험지가 두 부 이상일 때만 뜻이 있다(한 부면 점 하나라 선이
-   안 된다). 많이 나온 유형 셋만 그린다: 선이 넷을 넘으면 서로 엉켜 읽히지 않고, 참조
-   팔레트도 '셋까지는 어느 둘이 만나도 색맹 기준을 통과'한다고 검증해 두었다. */
-function trendLineSvg(st) {
+/* 시험지 이름이 길고 앞뒤가 같아("2026학년도 1학기 1차고사 영어1" / "… 2차고사 …") 잘라 쓰면
+   둘이 같아 보인다(2026-09-30 진안제일고 보고서) — 이름들에 공통인 앞·뒤 낱말을 떼고 다른 부분만
+   남긴다. 떼고 나면 빈 이름이 생기면 원래 이름을 쓴다. */
+function trendShortNames(names) {
+  if (!names || names.length < 2) return names || [];
+  const toks = names.map((n) => String(n).trim().split(/\s+/));
+  let pre = 0;
+  while (toks.every((t) => t.length > pre + 1 && t[pre] === toks[0][pre])) pre++;
+  let suf = 0;
+  while (toks.every((t) => t.length > pre + suf + 1 && t[t.length - 1 - suf] === toks[0][toks[0].length - 1 - suf])) suf++;
+  const out = toks.map((t) => t.slice(pre, t.length - suf).join(" "));
+  return out.every(Boolean) && new Set(out).size === out.length ? out : names.map(String);
+}
+
+/* 시험지별 유형 변화 — 유형마다 한 줄에 시험지별 막대를 위아래로 겹쳐 놓는다.
+   처음엔 모든 유형을 꺾은선으로 그렸는데, 선 열세 개가 엇갈려 어느 선이 어느 유형인지 따라갈 수
+   없었다(2026-09-30 사용자: "지저분해서 뭐 알아보겠냐"). 그 전엔 많이 나온 3가지만 그려 '분석하다
+   만 느낌'이었다. 줄마다 막대를 두면 유형이 몇 개든 서로 엉키지 않는다.
+   막대 색은 **시험지마다 하나**다(TREND_EXAM_COLORS — 첫 시험 빨강, 둘째 파랑, 셋째 초록…). 처음엔 유형
+   색을 쓰고 시험지를 진하기로 갈랐는데, 범례(회색 네모)와 막대 색이 달라 어느 막대가 어느 시험인지
+   헷갈렸다(2026-09-30 사용자). 유형은 줄 이름이 알려 준다. 증감(▲/▼)은 시험지 색과 섞이지 않게 검정으로 쓴다. 오른쪽 끝에 처음→마지막 증감(▲/▼)을 적는다. 같은 눈금이라 줄끼리 견줄 수 있다.
+   시험지가 두 부 이상일 때만 뜻이 있다. */
+// 시험지 색 — 이웃한 둘이 뚜렷이 갈리도록 색상환을 크게 건너뛴다. 시험지는 TREND_MAX_DOCS(12)부까지라 12색
+const TREND_EXAM_COLORS = ["#ef5350", "#3f7fe8", "#26b57a", "#ff9a3c", "#9b6cf0", "#1fb5c9",
+  "#e05fc4", "#9ccc3d", "#8d6e63", "#5d6ff0", "#e6b800", "#607d8b"];
+function trendChangeBarsHtml(st) {
   if (st.docs < 2) return "";
-  const series = st.list.slice(0, 3);
-  // 막대의 파랑(선택형)·주황(서술형)과 뜻이 겹치지 않게 다른 색을 쓴다. 참조 팔레트의 보라·청록·노랑 —
-  // validate_palette.js(--pairs all)로 세 쌍 모두 색맹 기준 ΔE 9.1 이상을 통과함을 확인했다(2026-09-29).
-  // 밝은 두 색은 바탕 대비가 3:1 아래라, 선 끝 이름표·범례·표가 이름을 함께 싣는다.
-  const colors = ["#7c6cf0", "#2fd197", "#ffc02e"];
-  const W = 660, H = 210, L = 64, R = 170, T = 14, B = 34;
-  const maxY = Math.max(1, ...series.flatMap((r) => r.per));
-  const x = (i) => L + (st.docs === 1 ? 0 : (i * (W - L - R)) / (st.docs - 1));
-  const y = (v) => T + (H - T - B) * (1 - v / maxY);
-  const step = maxY <= 6 ? 1 : Math.ceil(maxY / 5);
-  let grid = "";
-  for (let v = 0; v <= maxY; v += step) {
-    grid += `<line x1="${L}" x2="${W - R + 8}" y1="${y(v)}" y2="${y(v)}" stroke="${v ? "#e1e0d9" : "#c3c2b7"}" stroke-width="1"/>
-      <text x="${L - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#898781">${v}</text>`;
-  }
-  const xl = st.names.map((nm, i) => `<text x="${x(i)}" y="${H - 12}" text-anchor="middle" font-size="11" fill="#52514e">${esc(nm.length > 14 ? nm.slice(0, 13) + "…" : nm)}</text>`).join("");
-  // 끝 이름표가 겹치면 조금씩 벌린다(12px 간격)
-  const ends = series.map((r, k) => ({ k, y: y(r.per[r.per.length - 1]) })).sort((a, b) => a.y - b.y);
-  for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 13) ends[i].y = ends[i - 1].y + 13;
-  const endY = {}; ends.forEach((e) => { endY[e.k] = e.y; });
-  const lines = series.map((r, k) => {
-    const pts = r.per.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-    const dots = r.per.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="4.5" fill="${colors[k]}" stroke="#fcfcfb" stroke-width="2"><title>${esc(r.label)} · ${esc(st.names[i])} ${v}문항</title></circle>`).join("");
-    const last = st.docs - 1;
-    return `<polyline points="${pts}" fill="none" stroke="${colors[k]}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${dots}
-      <line x1="${x(last) + 6}" y1="${y(r.per[last])}" x2="${x(last) + 14}" y2="${endY[k]}" stroke="#c3c2b7" stroke-width="1"/>
-      <text x="${x(last) + 17}" y="${endY[k] + 4}" font-size="11.5" fill="#0b0b0b">${esc(r.label.length > 15 ? r.label.slice(0, 14) + "…" : r.label)}</text>`;
+  const last = st.docs - 1;
+  const max = Math.max(1, ...st.list.flatMap((r) => r.per));
+  const ec = (i) => TREND_EXAM_COLORS[i % TREND_EXAM_COLORS.length];
+  const short = trendShortNames(st.names);
+  /* 줄 수 × 시험지 수가 많으면 막대를 가늘게 한다 — 한 쪽(A4)에 들도록 잰 값(2026-09-30, 폭 687px:
+     24유형·4부가 보통 굵기로 1075px라 한 장 1017을 넘었다) */
+  const cells = st.list.length * st.docs;
+  const thin = cells > 60 ? " xthin" : st.docs > 2 || st.list.length > 16 ? " thin" : "";
+  const rows = st.list.map((r) => {
+    const d = r.per[last] - r.per[0];
+    // 처음과 끝이 같아도 가운데 시험에서 달랐으면 '변화 없음'이 아니다(시험지가 셋 이상일 때)
+    const varied = new Set(r.per).size > 1;
+    const badge = d > 0 ? `<b class="up">▲${d}</b>` : d < 0 ? `<b class="down">▼${-d}</b>`
+      : `<span class="eq">${varied ? "오르내림" : "변화 없음"}</span>`;
+    const bars = r.per.map((v, i) => `<div class="tv-pair-b"><span style="width:${(v / max) * 100}%;background-color:${ec(i)}"></span><em>${v}</em></div>`).join("");
+    return `<div class="tv-pair-l${varied ? "" : " same"}">${esc(r.label)}</div><div class="tv-pair-bars">${bars}</div><div class="tv-pair-d">${badge}</div>`;
   }).join("");
-  const legend = series.map((r, k) => `<span><i style="background:${colors[k]}"></i>${esc(r.label)}</span>`).join("");
-  return `<h5>시험지별 유형 변화 <small>(많이 나온 유형 3가지)</small></h5>
-    <div class="tv-legend">${legend}</div>
-    <svg class="tv-line" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="시험지별 유형 문항 수 변화">${grid}${xl}${lines}</svg>`;
+  const legend = short.map((nm, i) => `<span><i style="background:${ec(i)}"></i>${esc(nm)}</span>`).join("");
+  return `<div class="tv-pair-legend">${legend}</div>
+    <div class="tv-pair${thin}">${rows}</div>`;
+}
+
+/* 변화 한눈에 — 처음 시험지와 마지막 시험지를 견줘 늘어난·줄어든·그대로인 유형을 나눈다.
+   시험지가 셋 이상이면 가운데 시험지는 그래프로 본다(여기서는 처음과 끝만 견준다). */
+function trendChangeSummary(st) {
+  const last = st.docs - 1;
+  const rows = st.list.map((r) => ({ label: r.label, a: r.per[0], b: r.per[last], d: r.per[last] - r.per[0] }));
+  return {
+    up: rows.filter((r) => r.d > 0).sort((x, y) => y.d - x.d || y.b - x.b),
+    down: rows.filter((r) => r.d < 0).sort((x, y) => x.d - y.d || y.a - x.a),
+    same: rows.filter((r) => r.d === 0).sort((x, y) => y.b - x.b),
+  };
+}
+/* 막대 줄마다 증감(▲/▼)이 붙어 있어 '늘어난·줄어든·그대로' 상자는 따로 두지 않는다 — 같은 내용이
+   두 번 나오고, 유형이 많으면 이 쪽이 A4 한 장을 넘었다(22유형·3부에서 1187/1017). 묶은 요약은
+   핵심 요약의 한 줄(trendChangeSummary)이 맡는다. */
+function trendChangeHtml(st) {
+  if (st.docs < 2) return "";
+  return `<div class="trend-dash">
+    <h5 style="margin-top:0">유형별 문항 수 <small>(막대 색 = 시험지 · 오른쪽은 처음 대비 증감)</small></h5>
+    ${trendChangeBarsHtml(st)}
+  </div>`;
 }
 
 /* ── 영역 색(영역 도넛·서술형 영역 등) ──
@@ -862,13 +911,11 @@ function trendDashExtraHtml(st, cv) {
       <div class="tv-cl">${esc(name)}</div>
       <div class="tv-track"><div class="tv-fill" style="width:${pct(g.used, g.total)}%"></div></div>
       <div class="tv-v">${g.used}/${g.total}개<small> · ${pct(g.used, g.total)}%</small></div>`).join("");
-  const line = trendLineSvg(st);
-  if (!cov && !line) return "";
+  if (!cov) return "";
   return `
     <div class="trend-dash">
-      ${cov ? `<h5 style="margin-top:0">범위별 출제된 지문</h5>
-      <div class="tv-cov">${cov}</div>` : ""}
-      ${line}
+      <h5 style="margin-top:0">범위별 출제된 지문</h5>
+      <div class="tv-cov">${cov}</div>
     </div>`;
 }
 
@@ -894,7 +941,8 @@ function trendCoverageHtml(cv) {
     const kinds = [...new Set(hits.flatMap((h) => h.kinds))];
     return `<td class="hit tk"><b>${nos}번</b>${kinds.length ? ` <span class="qk">· ${kinds.map(esc).join(", ")}</span>` : ""}</td>`;
   };
-  const heads = cv.names.map((nm) => `<th title="${esc(nm)}">${esc(nm.length > 18 ? nm.slice(0, 17) + "…" : nm)}</th>`).join("");
+  const covShort = trendShortNames(cv.names);
+  const heads = cv.names.map((nm, i) => `<th title="${esc(nm)}">${esc(covShort[i].length > 18 ? covShort[i].slice(0, 17) + "…" : covShort[i])}</th>`).join("");
   const cols = 1 + cv.names.length + (docs > 1 ? 1 : 0);
 
   /* 표에는 출제된 지문만 싣는다. 안 나온 지문은 표 아래에 범위별로 한 줄씩 모은다 —
@@ -1013,6 +1061,11 @@ function trendKeyFindings(st, cv) {
   if (st.docs > 1) {
     const every = st.list.filter((r) => r.cls === "every");
     out.push(`시험지 ${st.docs}부에 <b>모두 출제된 유형은 ${every.length}가지</b>${every.length ? `(${every.slice(0, 4).map((r) => esc(r.label)).join(", ")}${every.length > 4 ? " 등" : ""})` : ""}입니다.`);
+    const ch = trendChangeSummary(st), sn = trendShortNames(st.names);
+    const nm = (list) => list.slice(0, 3).map((r) => `${esc(r.label)} ${r.a}→${r.b}`).join(", ") + (list.length > 3 ? " 등" : "");
+    out.push(ch.up.length || ch.down.length
+      ? `${esc(sn[0])} 대비 ${esc(sn[st.docs - 1])}에서 ${ch.up.length ? `<b>늘어난 유형</b>은 ${nm(ch.up)}` : "늘어난 유형은 없고"}${ch.down.length ? `, <b>줄어든 유형</b>은 ${nm(ch.down)}` : ", 줄어든 유형은 없"}입니다.`
+      : `처음과 마지막 시험지의 유형별 문항 수가 같습니다.`);
   }
   return out;
 }
@@ -1024,8 +1077,9 @@ function trendHtml(st, ai) {
   const pct = (v) => `${(v * 100).toFixed(v >= 0.1 ? 0 : 1)}%`;
   const maxShare = Math.max(...st.list.map((r) => r.share)) || 1;
   const tagLabel = { every: "매회 출제", some: "가끔 출제", once: "한 번만" };
+  const shortNames = trendShortNames(st.names);
   const heads = st.names
-    .map((nm) => `<th title="${esc(nm)}">${esc(nm.length > 12 ? nm.slice(0, 11) + "…" : nm)}</th>`)
+    .map((nm, i) => `<th title="${esc(nm)}">${esc(shortNames[i].length > 12 ? shortNames[i].slice(0, 11) + "…" : shortNames[i])}</th>`)
     .join("");
   const body = st.list.map((r) => `
     <tr>
@@ -1033,7 +1087,7 @@ function trendHtml(st, ai) {
       ${r.per.map((v) => `<td class="${v ? "" : "zero"}">${v || "·"}</td>`).join("")}
       <td><b>${r.total}</b></td>
       <td>${pct(r.share)}</td>
-      <td class="tbarcell"><span class="tbar" style="width:${Math.max(2, Math.round((r.share / maxShare) * 100))}%"></span></td>
+      <td class="tbarcell"><span class="tbar" style="width:${Math.max(2, Math.round((r.share / maxShare) * 100))}%;background-color:${trendColorOf(r.label)}"></span></td>
       <td>${r.cls ? `<span class="tag ${r.cls}">${tagLabel[r.cls]}</span>` : ""}</td>
     </tr>`).join("");
   const cv = trendCoverage();
@@ -1078,19 +1132,23 @@ function trendHtml(st, ai) {
       ${(() => {
         /* 1쪽은 표지와 그래프만 — 그림이 먼저 눈에 들어오게(2026-09-29 사용자 요청).
            핵심 요약까지 1쪽에 넣으면 A4를 약 100px 넘겨(실측 1117/1017) 2쪽 머리로 보낸다.
-           2쪽: 핵심 요약 → 지문 출처와 변화(범위 게이지·해마다의 꺾은선) → 총평 → 대비 전략. */
+           2쪽: 핵심 요약 → 지문 출처(범위 게이지) → 총평 → 대비 전략.
+           시험지가 둘 이상이면 다음 쪽이 '시험지별 유형 변화'(모든 유형의 꺾은선 + 늘고 준 유형)와
+           유형 출제 현황 표다(2026-09-30 — 꺾은선을 2쪽에서 이 쪽으로 옮겼다). */
         const extra = trendDashExtraHtml(st, cv);
         return `<div class="trend-pg">
           ${findings}
-          ${extra ? `<h4 class="sec">지문 출처와 변화</h4>${extra}` : ""}
+          ${extra ? `<h4 class="sec">지문 출처</h4>${extra}` : ""}
           ${aiHtml}
         </div>`;
       })()}
-      ${st.docs > 1 ? `<h4 class="sec">시험지별 유형 출제 현황</h4>
+      ${st.docs > 1 ? `<div class="trend-pg">
+      <h4 class="sec">시험지별 유형 변화</h4>${trendChangeHtml(st)}
+      <h4 class="sec">시험지별 유형 출제 현황</h4>
       <div style="overflow-x:auto"><table>
         <thead><tr><th>유형</th>${heads}<th>합계</th><th>비율</th><th>비중</th><th>구분</th></tr></thead>
         <tbody>${body}</tbody>
-      </table></div>` : ""}
+      </table></div></div>` : ""}
       ${trendCoverageHtml(cv)}
       <div class="rp-note"><b>유의 사항</b>
         <p>이 보고서의 문항 유형 분류와 시험 범위 지문 대조는 AI가 시험지 이미지를 읽어 만든 결과이므로 일부 오류가 있을 수 있습니다. 중요한 판단에는 원본 시험지와 함께 확인해 주십시오.</p>
