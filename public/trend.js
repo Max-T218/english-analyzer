@@ -174,6 +174,23 @@ const TREND_CSS = `
 .tv-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:#52514e;margin-bottom:4px}
 .tv-legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:5px;vertical-align:3px}
 .tv-line{display:block;max-width:100%;height:auto}
+.tv-exams{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:10px;margin:8px 0 6px}
+.tv-ex{border:1px solid rgba(11,11,11,.10);border-top:5px solid var(--ec);border-radius:10px;padding:8px 10px 7px;background:#fff;
+  box-shadow:0 2px 6px rgba(26,31,43,.10);break-inside:avoid;min-width:0}
+.tv-ex-h{font-weight:700;font-size:13.5px;color:#0b0b0b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tv-ex-sum{font-size:14px;font-weight:700;color:#0b0b0b;margin:1px 0 4px;white-space:nowrap}.tv-ex-sum small{font-size:10.5px;font-weight:400;color:#6b6a65}
+.tv-ex-dom{display:flex;align-items:center;gap:8px;margin-bottom:5px}.tv-ex-dom .tv-ring{flex:none}
+.tv-ex-leg{display:grid;grid-template-columns:repeat(2,max-content);gap:0 8px;font-size:10.5px;line-height:1.5;color:#52514e;min-width:0}
+.tv-ex-leg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:0}
+.tv-ex-leg b{color:#0b0b0b}
+.tv-ex-bars{display:grid;grid-template-columns:max-content minmax(0,1fr) 16px;gap:1px 6px;align-items:center;font-size:10.5px;line-height:1.35}
+.tv-ex-l{color:#1a1f2b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:92px}
+.tv-ex-b{height:8px}.tv-ex-b span{display:block;height:100%;min-width:2px;border-radius:0 4px 4px 0;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.55) 0,rgba(255,255,255,.12) 45%,rgba(0,0,0,.06) 100%);
+  box-shadow:0 1px 2px rgba(26,31,43,.2)}
+.tv-ex-n{text-align:right;color:#52514e;font-weight:600}
+.tv-ex-only{margin-top:5px;padding-top:4px;border-top:1px dashed #d9d8d0;font-size:11px;color:#52514e;line-height:1.5}
+.tv-ex-only b{color:#b25a12;margin-right:4px}
 .tv-pair-legend{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12px;color:#52514e;margin:0 0 8px}
 .tv-pair-legend i{display:inline-block;width:16px;height:10px;border-radius:2px;background:#52514e;margin-right:5px;vertical-align:-1px}
 .tv-pair{display:grid;grid-template-columns:minmax(110px,max-content) 1fr 64px;gap:7px 10px;align-items:center;font-size:12.5px}
@@ -823,6 +840,46 @@ function trendChangeHtml(st) {
   </div>`;
 }
 
+/* ── 시험지별 분석 — 시험지마다 카드 하나 ──
+   1쪽의 숫자·그래프는 모든 시험지를 더한 값이라 '이번 시험은 어땠나'가 따로 안 보였다(2026-09-30
+   사용자: "3개 모두 합치면 자세하지 않다"). 시험지마다 문항 수·선다/서답·영역 도넛·유형 막대를 한 장씩
+   그리고, 그 시험에서만 나온 유형을 짚는다. 머리 띠 색은 변화 그래프의 시험지 색(TREND_EXAM_COLORS)과
+   같다. 막대는 모든 카드가 같은 눈금을 써 카드끼리 견줄 수 있다. 3부까지는 한 줄에 나란히, 4부부터는
+   두 칸씩 놓고 카드는 쪽 사이에서 쪼개지지 않는다. 시험지가 두 부 이상일 때만 뜻이 있다. */
+function trendPerExamHtml(st) {
+  if (st.docs < 2) return "";
+  const src = trendSourceNow();
+  const short = trendShortNames(st.names);
+  const max = Math.max(1, ...st.list.flatMap((r) => r.per));
+  const cols = st.docs <= 3 ? st.docs : 2;
+  const cards = st.names.map((nm, i) => {
+    const total = st.perDocTotal[i] || 0;
+    const sub = src.questions.filter((q) => q.doc === i && q.format === "서답형").length;
+    const rows = st.list.filter((r) => r.per[i] > 0).sort((a, b) => b.per[i] - a.per[i] || b.total - a.total);
+    // 영역 비중
+    const dom = new Map();
+    rows.forEach((r) => { const d = trendDomainOf(r.label); dom.set(d, (dom.get(d) || 0) + r.per[i]); });
+    const order = [...TREND_DOMAINS.map(([n]) => n), "서술형", "기타"];
+    const doms = order.filter((d) => dom.get(d)).map((d) => ({ name: d, v: dom.get(d) }));
+    const ring = trendRingSvg(doms.map((d) => ({ v: d.v, color: TREND_DOMAIN_COLOR[d.name], label: d.name })), 60, 11, `${total}`, "");
+    // 카드가 좁아 영역 이름은 앞 두 글자로 줄인다(색은 1쪽 영역 도넛과 같다)
+    const legend = doms.map((d) => `<span title="${esc(d.name)}"><i style="background:${TREND_DOMAIN_COLOR[d.name]}"></i>${esc(d.name.replace(/[\s·].*$/, "").slice(0, 2))} <b>${d.v}</b></span>`).join("");
+    const bars = rows.map((r) => `
+      <div class="tv-ex-l" title="${esc(r.label)}">${esc(r.label.replace(/^서술형:\s*/, "서술 "))}</div>
+      <div class="tv-ex-b"><span style="width:${(r.per[i] / max) * 100}%;background-color:${trendColorOf(r.label)}"></span></div>
+      <div class="tv-ex-n">${r.per[i]}</div>`).join("");
+    const only = rows.filter((r) => r.per.filter((v) => v > 0).length === 1).map((r) => esc(r.label));
+    return `<div class="tv-ex" style="--ec:${TREND_EXAM_COLORS[i % TREND_EXAM_COLORS.length]}">
+      <div class="tv-ex-h" title="${esc(nm)}">${esc(short[i])}</div>
+      <div class="tv-ex-sum">${total}문항 <small>· 선다 ${total - sub} · 서답 ${sub} · ${rows.length}유형</small></div>
+      <div class="tv-ex-dom">${ring}<div class="tv-ex-leg">${legend}</div></div>
+      <div class="tv-ex-bars">${bars}</div>
+      ${only.length ? `<div class="tv-ex-only"><b>이 시험에서만</b> ${only.join(", ")}</div>` : ""}
+    </div>`;
+  }).join("");
+  return `<div class="tv-exams" style="--n:${cols}">${cards}</div>`;
+}
+
 /* ── 영역 색(영역 도넛·서술형 영역 등) ──
    파랑 한 가지로는 눈에 들어오지 않아(2026-09-29 사용자) 영역마다 색을 준다. 유형 막대는
    아래 TREND_KIND_SHADE가 유형마다 따로 칠한다. 색은 dataviz 참조 팔레트의 1~5번 차례(파랑·주황·청록·노랑·분홍 — 이웃한 둘이 잘
@@ -1203,12 +1260,13 @@ function trendHtml(st, ai) {
         </div>`;
       })()}
       ${st.docs > 1 ? `<div class="trend-pg">
-      <h4 class="sec">시험지별 유형 변화</h4>${trendChangeHtml(st)}
+      <h4 class="sec">시험지별 분석</h4>${trendPerExamHtml(st)}
       <div class="rp-keep"><h4 class="sec">시험지별 유형 출제 현황</h4>
       <div style="overflow-x:auto"><table class="rp-types">
         <thead><tr><th>유형</th>${heads}<th>합계</th><th>비율</th><th>비중</th><th>구분</th></tr></thead>
         <tbody>${body}</tbody>
-      </table></div></div></div>` : ""}
+      </table></div></div></div>
+      <div class="rp-keep"><h4 class="sec">시험지별 유형 변화</h4>${trendChangeHtml(st)}</div>` : ""}
       ${trendCoverageHtml(cv)}
       <div class="rp-note"><b>유의 사항 <small style="font-weight:400;color:#898781">(화면에만 보이고 인쇄에는 나오지 않습니다)</small></b>
         <p>이 보고서의 문항 유형 분류와 시험 범위 지문 대조는 AI가 시험지 이미지를 읽어 만든 결과이므로 일부 오류가 있을 수 있습니다. 중요한 판단에는 원본 시험지와 함께 확인해 주십시오.</p>
@@ -1564,7 +1622,7 @@ HOWTO.trend = {
     "<b>[분석하기]</b>를 누르면 AI가 부마다 문항 유형을 읽습니다. <b>시험 범위 지문을 넣어 두었을 때만</b> 시험지의 지문도 옮겨 적어 범위와 대조합니다 — 범위를 비워 두면 유형만 읽어 훨씬 빠릅니다. 여러 해 시험지를 모아 경향만 볼 때는 범위를 비워 두세요. 시험지 한 부에 몇 분 걸립니다. 못 읽은 것이 있으면 다시 누르세요 — 못 읽은 것만 다시 읽습니다.",
     "분석이 끝나면 아래에 <b>보고서</b>가 나옵니다 — 요약, 부별 유형 표, 비중 그래프, 그리고 <b>매회 출제 / 가끔 출제 / 한 번만</b> 구분이 들어 있습니다.",
     "분석이 끝나면 <b>시험지 분석 총평과 유형별 대비 전략</b>까지 이어서 자동으로 씁니다. 시험 범위를 나중에 바꿔도 총평은 지워지지 않고 '예전 범위 기준'이라는 안내만 뜹니다 — 새로 쓰려면 <b>[✨ 총평 다시 쓰기]</b>를 누르세요(다시 쓸 때도 값이 매겨집니다).",
-    "<b>[🖨 인쇄 / PDF 저장]</b>은 보고서만 새 창에 담아 인쇄합니다 — 1쪽 그래프(한눈에 보는 출제 현황), 2쪽 핵심 요약·총평·대비 전략, 시험지가 둘 이상이면 이어서 시험지별 유형 변화와 유형 출제 현황 표, 끝으로 시험 범위 지문별 출제 현황입니다. 팝업이 막혀 있으면 이 사이트의 팝업을 허용하세요.",
+    "<b>[🖨 인쇄 / PDF 저장]</b>은 보고서만 새 창에 담아 인쇄합니다 — 1쪽 그래프(한눈에 보는 출제 현황), 2쪽 핵심 요약·총평·대비 전략, 시험지가 둘 이상이면 이어서 시험지별 분석(시험지마다 카드 한 장 — 문항 수·영역·유형·그 시험에서만 나온 유형)과 유형 출제 현황 표, 시험지별 유형 변화, 끝으로 시험 범위 지문별 출제 현황입니다. 팝업이 막혀 있으면 이 사이트의 팝업을 허용하세요.",
     "<b>[💾 분석 저장]</b>으로 분석 결과를 저장해 두면, 다음에는 시험지를 다시 올리지 않고 <b>[📂 저장한 분석 불러오기]</b>로 바로 열 수 있습니다. <b>[➕ 저장한 분석 더하기]</b>는 지금 화면에 다른 저장본을 이어 붙여 한 보고서로 합칩니다(시험지만 합치고 시험 범위는 가져오지 않습니다). 합친 뒤 <b>[✨ 시험지 분석 총평 쓰기]</b>로 총평을 새로 쓰세요.",
   ],
   tip: "유형은 중·고등 내신에 두루 쓰는 이름(대화문 내용 파악, 영영풀이, 서술형 영작 등)으로 모든 문항을 셉니다 — 중학교 시험지도 됩니다. 범위 대조는 글자 겹침으로 짝을 짓기 때문에, 지문을 크게 바꿔 낸 문항은 '범위에서 찾지 못한 지문'으로 나올 수 있습니다. 저장본에는 시험지 그림이 들어가지 않습니다 — 그래서 지문을 읽지 않고 저장한 분석은 나중에 지문을 다시 읽을 수 없습니다.",
