@@ -4549,7 +4549,17 @@ irrelevant here and copying them wastes the whole output. Read the Korean questi
   copied EXACTLY. EVERY question gets one — this is independent of `kind`/`fit`: a question the
   app cannot reproduce still has a category. Choose by what the student does (read the 발문
   and the choices): a dialogue-based 일치 question is 대화문 내용 파악, not 내용 일치·불일치;
-  "어법상 올바른 문장의 개수" is 어법. Use 기타 only when nothing fits.
+  "어법상 올바른 문장의 개수" is 어법. Copy the name EXACTLY as listed — "내용 일치" or "어휘"
+  instead of "내용 일치·불일치" / "어휘·낱말 쓰임" is thrown away as 기타.
+  Common 내신 items that belong to an existing name (do NOT call these 기타):
+    · 밑줄 친 말의 쓰임·용법이 같은/다른 것, 문장 전환·같은 뜻 문장, (A)(B)(C) 네모 어법 → 어법
+    · (A)(B)(C) 네모 안 낱말, 영어 뜻풀이가 틀린 것 → 어휘·낱말 쓰임
+    · 도표·그래프·안내문·광고문과 일치/불일치, 언급되지 않은 것, 글을 읽고 답할 수 없는 질문 → 내용 일치·불일치
+    · 필자의 태도·어조, 인물의 성격 → 심경·분위기
+    · 밑줄 친 문장·구가 의미하는 것, 비유가 뜻하는 것 → 함축 의미
+    · 우리말 해석이 틀린/옳은 것 고르기(선택형) → 영어 표현 고르기
+    · 서답형 우리말 해석 쓰기, 영어 질문에 답 쓰기, 요지를 한국어로 쓰기 → 서술형: 내용 서술
+  기타 is the LAST resort — use it only when the 발문 truly matches none of these.
 - `kind`: the closest type from the ALLOWED LIST given in the user message, copied EXACTLY.
   Use "" when nothing on the list is close.
   The list has three groups (객관식 / 주관식 / 워크북). Korean 내신 서답형 — 영작, 우리말
@@ -4907,9 +4917,13 @@ def normalize_exam_scan(result):
 
         fmt = "서답형" if str(raw.get("format") or "").strip() == "서답형" else "선다형"
         note = sanitize_inline(str(raw.get("note") or ""))
-        # 보고서용 유형 — 목록 밖의 이름은 받지 않는다(보고서에서 줄이 제멋대로 갈린다)
+        # 보고서용 유형 — 목록 밖의 이름은 받지 않는다(보고서에서 줄이 제멋대로 갈린다).
+        # 다만 모델이 적은 이름은 category_raw로 남긴다 — "내용 일치"처럼 한 글자만 달라도
+        # 기타로 떨어졌는데, 원래 이름이 있으면 화면(trend.js trendCat)이 가까운 유형으로 되살린다.
         category = str(raw.get("category") or "").strip()
+        category_raw = ""
         if category not in EXAM_REPORT_CATEGORY_NAMES:
+            category_raw = sanitize_inline(category)[:30]
             category = "기타"
 
         # 어느 탭에서 만드는지는 모델에게 묻지 않고 이름으로 정한다 — 이름이 어느
@@ -4946,6 +4960,7 @@ def normalize_exam_scan(result):
             "format": fmt,
             "prompt": sanitize_inline(str(raw.get("prompt") or "")),
             "category": category,
+            "category_raw": category_raw,
             "kind": kind,
             "engine": engine,
             "fit": fit,
@@ -9056,6 +9071,14 @@ CHANGELOG = [
         "items": [
             "시험지 분석 리포트 — 시험지를 두 부 이상 분석하면 '시험지별 분석' 쪽에 시험지마다 카드가 "
             "한 장씩 나옵니다. 문항 수, 영역 비중, 유형별 문항 수, 그 시험에서만 나온 유형을 따로 볼 수 있습니다.",
+        ],
+    },
+    {
+        "version": 55,
+        "date": "2026-09-30",
+        "items": [
+            "시험지 분석 리포트 — '기타'로 빠지던 문항을 발문으로 다시 가려 제 유형에 넣습니다(저장해 둔 "
+            "분석에도 적용). 그래도 기타로 남은 문항은 보고서 아래에서 직접 유형을 골라 줄 수 있습니다.",
         ],
     },
 ]

@@ -85,6 +85,11 @@ const newTrendDoc = (name) => ({ name, pages: [], questions: null, failedIdx: []
 /* ── 보고서 CSS: 화면과 인쇄 창이 같은 한 벌을 쓴다 ── */
 const TREND_CSS = `
 .trend-brand-slot{margin-top:14px}
+.trend-etc{margin:14px 0 4px;padding:10px 12px;border:1px dashed #d9a441;border-radius:10px;background:#fffaf0}
+.trend-etc h5{margin:0 0 6px;font-size:13.5px}.trend-etc h5 small{font-weight:400;color:#8a5a12}
+.trend-etc table{width:100%;border-collapse:collapse;font-size:12.5px}
+.trend-etc th,.trend-etc td{border-bottom:1px solid #eee3cc;padding:4px 6px;text-align:left}
+.trend-etc select{font-size:12.5px;padding:2px 4px;max-width:180px}
 .trend-report{font-family:"Malgun Gothic","맑은 고딕",sans-serif;color:#1a1f2b;line-height:1.6}
 .trend-report h3{margin:0 0 4px;font-size:20px}
 .trend-report h4{margin:18px 0 6px;font-size:15px;border-left:4px solid #4d94ec;padding-left:8px}
@@ -638,7 +643,69 @@ function trendSourceNow() {
    EXAM_REPORT_CATEGORIES)을 쓴다. 이 앱으로 만들 수 있는지(kind)와 상관없이 모든 문항이
    하나씩 갖는다 — 그래서 중학교 시험지의 대화문·영영풀이 문항도 빠지지 않고 세어진다.
    category가 없는 것(이 기능 전에 읽은 분석)은 kind로, 그것도 없으면 '분류 못 함'으로 센다. */
-const trendCat = (q) => q.category || q.kind || "분류 못 함";
+/* '기타'를 줄인다(2026-09-30 사용자: "시험지 분석인데 자세히 해야지").
+   ① 선생님이 고른 분류(catManual)가 있으면 그것.
+   ② 목록 이름 그대로면 그것.
+   ③ 모델이 목록 밖 이름을 적었으면(서버가 category_raw로 남긴다 — "내용 일치"처럼 한 글자만 달라도
+      기타로 떨어졌다) 가까운 이름으로 되살린다.
+   ④ 그래도 기타면 발문(prompt — 저장본에 들어 있다)의 낱말로 짐작한다. 내신 발문은 틀이 뻔해
+      ("어법상 틀린 것은?", "글의 주제로 가장 적절한 것은?") 낱말만으로도 잘 갈린다.
+   고친 결과는 저장본에 쓰지 않고 볼 때마다 계산한다 — 규칙을 고치면 옛 저장본에도 곧바로 반영된다.
+   선생님이 [기타로 분류된 문항]에서 고른 것만 저장본에 남는다(catManual). */
+function trendCatNames() {
+  return new Set([...Object.keys(TREND_KIND_SHADE), ...Object.keys(TREND_SUB_SHADE), "기타"]);
+}
+// 낱말 → 유형. 위에서부터 먼저 맞는 것을 쓴다(구체적인 것을 앞에)
+const TREND_CAT_RULES_SUB = [
+  [/고쳐|바르게\s*고/, "서술형: 어법 고쳐 쓰기"],
+  [/배열|영작|영어로\s*(옮|쓰|바꾸)|조건에\s*맞게|문장을\s*완성/, "서술형: 영작·배열"],
+  [/빈칸|찾아\s*쓰|단어를\s*쓰|알맞은\s*(말|단어|형태)|요약문|변형/, "서술형: 빈칸·단어 쓰기"],
+  [/.*/, "서술형: 내용 서술"],
+];
+const TREND_CAT_RULES = [
+  [/대화/, null],   // 대화문은 아래에서 따로 가른다
+  [/어법|문법|쓰임이\s*(같|다른)|용법|같은\s*뜻/, "어법"],
+  [/영영|뜻풀이|영어\s*뜻|단어의\s*뜻|접두사|합성어/, "단어 뜻·영영풀이"],
+  [/낱말|어휘|문맥상/, "어휘·낱말 쓰임"],
+  [/요약/, "요약문 완성"],
+  [/연결어|연결사|접속/, "연결어"],
+  [/들어가기에|들어갈\s*위치|주어진\s*문장/, "문장 삽입"],
+  [/순서/, "순서 배열"],
+  [/무관|관계\s*없는|흐름.*(어색|관계)/, "무관한 문장"],
+  [/빈칸/, "빈칸 추론"],
+  [/가리키/, "지칭 대상"],
+  [/제목|주제/, "주제·제목"],
+  [/요지|주장|강조/, "요지·주장"],
+  [/목적/, "글의 목적"],
+  [/심경|분위기|태도|어조|심정|성격/, "심경·분위기"],
+  [/의미|뜻하는|함축|의도/, "함축 의미"],
+  [/일치|언급|알\s*수\s*(있|없)|답할\s*수|도표|그래프|안내|내용과/, "내용 일치·불일치"],
+  [/해석|우리말|영어\s*표현/, "영어 표현 고르기"],
+];
+function trendCatGuess(text, fmt) {
+  const t = String(text || "");
+  if (!t.trim()) return "";
+  if (fmt === "서답형" || /^서술형/.test(t)) {
+    const body = t.replace(/^서술형:?\s*/, "");
+    return TREND_CAT_RULES_SUB.find(([re]) => re.test(body))[1];
+  }
+  if (/대화/.test(t)) {
+    return /순서|흐름|응답|이어질|빈칸|어색/.test(t) ? "대화 흐름·응답" : "대화문 내용 파악";
+  }
+  const hit = TREND_CAT_RULES.find(([re, v]) => v && re.test(t));
+  return hit ? hit[1] : "";
+}
+function trendCat(q) {
+  const names = trendCatNames();
+  const cat = q.category || "";
+  if (q.catManual && names.has(cat)) return cat;
+  if (cat && cat !== "기타" && names.has(cat)) return cat;
+  const fromRaw = trendCatGuess(q.category_raw || (!names.has(cat) ? cat : ""), q.format);
+  if (fromRaw) return fromRaw;
+  const fromPrompt = trendCatGuess(q.prompt, q.format);
+  if (fromPrompt) return fromPrompt;
+  return cat ? "기타" : (q.kind || "분류 못 함");
+}
 
 // 유형별로 부마다 몇 문항 나왔는지 센다
 function trendStats() {
@@ -1301,6 +1368,30 @@ function trendBrandOptsHtml() {
   return `<div id="trendBrandSlot" class="trend-brand-slot"></div>`;
 }
 
+/* 기타로 남은 문항 — 화면에만(인쇄 창에는 trendHtml만 들어간다). 문항마다 분류를 고르면
+   q.category에 적고 catManual을 켠다 — 저장본에 그대로 담겨 다음에 불러와도 남는다. */
+function trendEtcHtml() {
+  const src = trendDocs.filter((d) => d.questions && d.questions.length);
+  const short = trendShortNames(src.map((d) => d.name));
+  const rows = [];
+  src.forEach((d, di) => d.questions.forEach((q, qi) => {
+    const c = trendCat(q);
+    if (c === "기타" || c === "분류 못 함") rows.push({ di, qi, q });
+  }));
+  if (!rows.length) return "";
+  const opts = [...trendCatNames()].filter((n) => n !== "기타");
+  return `<div class="trend-etc">
+    <h5>기타로 분류된 문항 ${rows.length}개 <small>(화면에만 보입니다 — 분류를 고르면 보고서에 바로 반영되고, [💾 분석 저장]으로 남습니다)</small></h5>
+    <table><thead><tr><th>시험지</th><th>번호</th><th>발문</th><th>분류</th></tr></thead><tbody>
+    ${rows.map((r) => `<tr>
+      <td>${esc(src.length > 1 ? short[r.di] : src[r.di].name)}</td><td>${esc(r.q.no || "")}</td>
+      <td class="tk">${esc(r.q.prompt || "(발문 없음)")}</td>
+      <td><select class="trend-etc-sel" data-d="${trendDocs.indexOf(src[r.di])}" data-q="${r.qi}">
+        <option value="">기타 (그대로)</option>${opts.map((n) => `<option>${esc(n)}</option>`).join("")}
+      </select></td></tr>`).join("")}
+    </tbody></table></div>`;
+}
+
 function trendRender() {
   const st = trendStats();
   moveBrandPanel(null);   // 학원 마크 칸을 보고서 밖으로 꺼내 둔다(다시 그리면 지워지므로)
@@ -1311,6 +1402,7 @@ function trendRender() {
       ${trendHtml(st, trendAi)}
       ${trendAi && trendAiStale ? `<p class="hint" style="color:#8a5a12">⚠️ 총평을 쓴 뒤에 시험지나 시험 범위가 바뀌었습니다 — 총평은 예전 내용을 기준으로 쓴 것입니다. 새로 쓰려면 [✨ 총평 다시 쓰기]를 누르세요.</p>` : ""}
       <p class="hint" id="trendAiErr" style="color:#c0392b"></p>
+      ${trendEtcHtml()}
       ${trendBrandOptsHtml()}
       <div class="trend-tools">
         <button type="button" class="btn small" id="trendAiBtn">${trendAi ? "✨ 총평 다시 쓰기" : "✨ 시험지 분석 총평 쓰기"}</button>
@@ -1319,6 +1411,14 @@ function trendRender() {
       </div>
     </section>`;
   $("trendAiBtn").addEventListener("click", () => trendRunAi(false));
+  trendResultEl.querySelectorAll(".trend-etc-sel").forEach((sel) => sel.addEventListener("change", () => {
+    const d = trendDocs[Number(sel.dataset.d)], q = d && d.questions[Number(sel.dataset.q)];
+    if (!q || !sel.value) return;
+    q.category = sel.value;
+    q.catManual = true;
+    if (trendAi) trendAiStale = true;   // 총평은 고치기 전 분류로 쓴 것이다
+    trendRender();
+  }));
   onTrend();
   $("trendPrintBtn").addEventListener("click", trendPrint);
   $("trendSaveBtn").addEventListener("click", () => openSaveDialog("trend"));
@@ -1630,5 +1730,5 @@ HOWTO.trend = {
     "<b>[🖨 인쇄 / PDF 저장]</b>은 보고서만 새 창에 담아 인쇄합니다 — 1쪽 그래프(한눈에 보는 출제 현황), 2쪽 핵심 요약·총평·대비 전략, 끝으로 시험 범위 지문별 출제 현황입니다. 시험지가 둘 이상이면 합친 그래프 대신 <b>시험지별 분석</b>(시험지마다 카드 한 장 — 문항 수·영역·유형·그 시험에서만 나온 유형) → 시험지별 유형 변화 → 시험지별 유형 출제 현황 표가 앞에 오고, 요약·총평은 그 뒤 새 쪽에 나옵니다. 팝업이 막혀 있으면 이 사이트의 팝업을 허용하세요.",
     "<b>[💾 분석 저장]</b>으로 분석 결과를 저장해 두면, 다음에는 시험지를 다시 올리지 않고 <b>[📂 저장한 분석 불러오기]</b>로 바로 열 수 있습니다. <b>[➕ 저장한 분석 더하기]</b>는 지금 화면에 다른 저장본을 이어 붙여 한 보고서로 합칩니다(시험지만 합치고 시험 범위는 가져오지 않습니다). 합친 뒤 <b>[✨ 시험지 분석 총평 쓰기]</b>로 총평을 새로 쓰세요.",
   ],
-  tip: "유형은 중·고등 내신에 두루 쓰는 이름(대화문 내용 파악, 영영풀이, 서술형 영작 등)으로 모든 문항을 셉니다 — 중학교 시험지도 됩니다. 범위 대조는 글자 겹침으로 짝을 짓기 때문에, 지문을 크게 바꿔 낸 문항은 '범위에서 찾지 못한 지문'으로 나올 수 있습니다. 저장본에는 시험지 그림이 들어가지 않습니다 — 그래서 지문을 읽지 않고 저장한 분석은 나중에 지문을 다시 읽을 수 없습니다.",
+  tip: "유형은 중·고등 내신에 두루 쓰는 이름(대화문 내용 파악, 영영풀이, 서술형 영작 등)으로 모든 문항을 셉니다 — 중학교 시험지도 됩니다. 그래도 '기타'로 남은 문항은 보고서 아래 <b>기타로 분류된 문항</b> 칸에 발문과 함께 나옵니다 — 분류를 골라 주면 보고서에 바로 반영되고, [💾 분석 저장]으로 남습니다(이 칸은 인쇄에 나오지 않습니다). 범위 대조는 글자 겹침으로 짝을 짓기 때문에, 지문을 크게 바꿔 낸 문항은 '범위에서 찾지 못한 지문'으로 나올 수 있습니다. 저장본에는 시험지 그림이 들어가지 않습니다 — 그래서 지문을 읽지 않고 저장한 분석은 나중에 지문을 다시 읽을 수 없습니다.",
 };
