@@ -10435,7 +10435,9 @@ let examPlanDeadline = Infinity;   // planExamPaper가 정하는 마감 시각(p
      mix:   지문을 고치는 유형(빈칸·어휘·어법…)도 한 지문을 함께 쓴다 — 대원칙 1을 푸는 것이라
             runExamPaperFlow가 '답이 비칠 수 있는 곳'을 세어 알린다
      pairs: 앞선 부(A형)가 쓴 (지문, 유형) 조합도 쓴다 — 되도록 피할 뿐이다(대원칙 2를 푼다)
-     fit:   문장 수·같은 낱말 조건을 80자 이상으로만 본다(대화 유형은 그대로 대화문에만) */
+     fit:   문장 수·같은 낱말 조건을 80자 이상으로만 본다(대화 유형은 그대로 대화문에만)
+     dup:   같은 지문에 같은 유형·같은 묶음(EXAM_FAMILY)을 또 붙인다 — 지문 6개 · 26문항에서 내용 일치 계열이
+            일곱 문항이면 이 규칙만으로 짜일 수가 없었다(2026-10-04). 되도록 피할 뿐이다(preferred) */
 function examEligibleLoose(type, p) {
   if (EXAM_DIALOGUE_TYPES.has(type)) return examEligible(type, p);
   if (p.dialogue && !examTypeOkOnDialogue(type)) return false;
@@ -10491,8 +10493,8 @@ function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mo
       const fam = EXAM_FAMILY[s.type];
       return eligible[i].filter((no) => {
         const n = uses.get(no) || 0;
-        if ((!rx.pairs && taken.has(key(no, s.type))) || takenHere.has(key(no, s.type))) return false;
-        if (fam && fams.get(no) && fams.get(no).has(fam)) return false;   // 사실상 같은 문제
+        if ((!rx.pairs && taken.has(key(no, s.type))) || (!rx.dup && takenHere.has(key(no, s.type)))) return false;
+        if (!rx.dup && fam && fams.get(no) && fams.get(no).has(fam)) return false;   // 사실상 같은 문제
         // 기출의 대화/본문 비율은 지킨다 — 본문 기반 문항은 본문에만, 대화 기반 문항은 대화문에만 붙인다.
         // 선호로만 두었더니 본문이 모자랄 때 조용히 대화문으로 넘어가 대화 15 : 본문 8이 됐다(기출은 5 : 19, 2026-10-02 사용자)
         const want = examSlotWantsDlg(s);
@@ -10506,6 +10508,8 @@ function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mo
         return (rx.mix && !isDlg.get(no)) || (plain && plainOnly.get(no));
       });
     };
+    const dupOf = (no, s) => (takenHere.has(key(no, s.type)) ? 2 : 0) +
+      (EXAM_FAMILY[s.type] && fams.get(no) && fams.get(no).has(EXAM_FAMILY[s.type]) ? 1 : 0);
     const preferred = (i, cands) => {
       const s = slots[i];
       const plain = examIsPlainType(s.type);
@@ -10518,6 +10522,8 @@ function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mo
         (a, b) =>
           // 지문을 고치는 유형끼리도 나눠 쓸 때(mix)는 문항을 고르게 퍼뜨리는 것이 먼저다 — 한 지문에 몰릴수록
           // 답이 비치는 곳이 는다. 대화문/본문 선호는 그다음이다(본문 7 · 대화문 5에서 대화문이 거의 놀았다)
+          // dup를 풀었어도 같은 유형·같은 묶음이 이미 붙은 지문은 마지막에 고른다
+          (rx.dup ? dupOf(a, s) - dupOf(b, s) : 0) ||
           (rx.mix ? (uses.get(a) || 0) - (uses.get(b) || 0) : 0) ||
           ((isDlg.get(a) ? 1 : 0) - (isDlg.get(b) ? 1 : 0)) * (wantDlg ? -1 : 1) ||
           // 이은 지문은 원래 지문으로 안 될 때만
@@ -10559,6 +10565,7 @@ function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mo
           if (!fams.has(pick)) fams.set(pick, new Set());
           fams.get(pick).add(EXAM_FAMILY[s.type]);
         }
+        const hadKey = takenHere.has(key(pick, s.type));   // dup면 이미 있을 수 있다 — 물릴 때 지우지 않는다
         takenHere.add(key(pick, s.type));
         const claimed = memOf(pick).filter((m) => !occ.has(m));
         claimed.forEach((m) => occ.set(m, pick));
@@ -10568,7 +10575,7 @@ function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mo
         // 물리기
         rows[best] = null;
         done[best] = false;
-        takenHere.delete(key(pick, s.type));
+        if (!hadKey) takenHere.delete(key(pick, s.type));
         claimed.forEach((m) => occ.delete(m));
         if (EXAM_FAMILY[s.type] && !hadFam) fams.get(pick).delete(EXAM_FAMILY[s.type]);
         uses.set(pick, n0);
@@ -11104,8 +11111,13 @@ function runExamPaperFlow() {
       [reuse, { basis: true, mix: true }],
       [reuse, { basis: true, mix: true, pairs: true }],
       [reuse + 1, { basis: true, mix: true, pairs: true, fit: true }],
+      [reuse + 2, { basis: true, mix: true, pairs: true, fit: true, dup: true }],
     ];
-    for (const [mu, rx] of tiers) {
+    /* 같은 유형(또는 같은 묶음)이 지문 수보다 많으면 dup 없이는 셈부터 안 맞는다 — 앞 단계들이 실패하며 몇 초를
+       잡아먹으므로(지문 6개 · 26문항에서 2초) 바로 dup 단계로 간다 */
+    const most = (f) => Math.max(0, ...Object.values(slots.reduce((m, x) => { const k = f(x); if (k) m[k] = (m[k] || 0) + 1; return m; }, {})));
+    const needDup = most((x) => x.type) > jobs.length || most((x) => EXAM_FAMILY[x.type]) > jobs.length;
+    for (const [mu, rx] of tiers.filter(([, r]) => !needDup || r.dup)) {
       const r = planExamPaper(slots, jobs, copies, examUsedPairs(), seed, mu, rx, 800);
       if (r && r.ok) { res = r; planJobs = jobs; relaxed = rx; mergeNote = ""; break; }
       if (!res) res = r;
@@ -11167,8 +11179,9 @@ function examRelaxNote(rx, plans, slots) {
   if (leak) parts.push(`그중 <b>${leak}군데</b>는 빈칸·어법·어휘처럼 지문을 고치는 문항이 같은 지문에 함께 있어, ` +
     `<b>한 문항의 지문에 다른 문항의 답이 보일 수 있습니다</b> — 만든 뒤 꼭 확인하세요.`);
   if (onDlg) parts.push(`본문 기반 문항 ${onDlg}개를 대화문에 붙였습니다.`);
-  if (rx.pairs) parts.push("A형·B형이 같은 지문의 같은 유형을 쓴 곳이 있을 수 있습니다.");
+  if (rx.pairs && plans.length > 1) parts.push("A형·B형이 같은 지문의 같은 유형을 쓴 곳이 있을 수 있습니다.");
   if (rx.fit) parts.push("짧은 지문에도 순서·문장삽입 같은 유형을 붙였을 수 있습니다.");
+  if (rx.dup) parts.push("같은 지문에 같은 유형(또는 내용 일치·불일치처럼 비슷한 유형)을 두 번 낸 곳이 있을 수 있습니다.");
   parts.push("지문을 더 넣으면 문항마다 다른 지문을 씁니다.");
   return parts.join(" ");
 }
