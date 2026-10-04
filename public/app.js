@@ -8775,7 +8775,7 @@ const HOWTO = {
       "기출을 <b>여러 부</b> 쓰려면 다음 시험지를 이어서 올리세요 — 곧바로 이어서 분석하고, 한 구성으로 합칩니다. <b>한 번이라도 나온 유형은 1문항씩</b> 깔고 남는 자리를 자주 나온 유형에 더 줍니다.",
       "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손봅니다 — 고친 숫자는 누를 것 없이 <b>바로</b> 아래 제작 칸에 반영됩니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 따로 남겨 둘 수 있습니다 — 시험지를 만든 뒤에도 누를 수 있습니다. <b>불러온 구성도</b> 같은 표가 떠서 개수를 고칠 수 있습니다.",
       "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b> · <b>[📷 사진에서 가져오기]</b>로 채울 수도 있고(캡처한 그림은 지문 칸에 <b>Ctrl+V</b>로 붙여넣어도 됩니다), 기출 속 지문을 쓰려면 <b>[📄 지문도 가져오기]</b>를 누르세요.",
-      "(선택) 목표 어법 · 출제 순서 · <b>학교급</b>(중학교면 보기·오답을 중학생 수준으로, 지문이 모자라면 <b>주제·제목·내용 일치처럼 지문을 안 고치는 유형</b>은 한 지문으로 최대 3문항까지 냅니다. 그래도 모자라거나 본문이 짧으면 <b>같은 과의 이웃한 본문을 이어</b> 실제 시험처럼 긴 지문으로 씁니다 — 지문 이름을 “5과 본문 (1)”, “(2)”처럼 번호만 다르게 달아 두면 같은 과로 알아봅니다) · 몇 부(1부 / A형·B형) · 시험지 머리글(학교 이름·고사 이름 등) · 표지 제목을 정합니다. 중학교 기출의 <b>대화문 문항</b>은 시험 범위 칸에 넣은 <b>대화문</b>(줄마다 \"A:\", \"B:\")으로만 만듭니다.",
+      "(선택) 목표 어법 · 출제 순서 · <b>학교급</b>(중학교면 보기·오답을 중학생 수준으로, 지문이 모자라면 <b>주제·제목·내용 일치처럼 지문을 안 고치는 유형</b>은 한 지문으로 최대 3문항까지 냅니다. 그래도 모자라거나 본문이 짧으면 <b>같은 과의 이웃한 본문을 이어</b> 실제 시험처럼 긴 지문으로 씁니다 — 지문 이름을 “5과 본문 (1)”, “(2)”처럼 번호만 다르게 달아 두면 같은 과로 알아봅니다) — <b>지문이 그래도 모자라면 멈추지 않고 넣은 지문 안에서</b> 한 지문을 여러 문항에 나눠 씁니다(고등학교도 같습니다). 이때는 빈칸 문항의 답이 같은 지문의 다른 문항에 보일 수 있어, 어디를 확인할지 시험 범위 칸 아래에 알려 드립니다 · 몇 부(1부 / A형·B형) · 시험지 머리글(학교 이름·고사 이름 등) · 표지 제목을 정합니다. 중학교 기출의 <b>대화문 문항</b>은 시험 범위 칸에 넣은 <b>대화문</b>(줄마다 \"A:\", \"B:\")으로만 만듭니다.",
       "<b>[📝 문제 제작]</b>을 누릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b> — 사이트 저장은 만든 시험지를 저장하고, 기출 구성 저장과는 따로 쌓입니다. 저장한 시험지는 맨 위 <b>[📂 저장한 시험지 불러오기]</b>로 되불러옵니다. 불러온 시험지 말고 <b>새 시험지를 따로</b> 만들려면 <b>[🧹 만든 시험지 비우기]</b>를 누른 뒤 만드세요 — 안 비우면 새 시험지가 불러온 것 뒤에 붙습니다. 비워도 저장해 둔 것은 지워지지 않고, 새 시험지는 비운 시험지와 겹치지 않게 만들어집니다.",
       "다른 시험지를 만들려면 맨 위 <b>[🔄 새로 시작하기]</b>를 누릅니다 — 올린 기출·분석표·시험 범위 지문·만든 시험지를 모두 비우고, 학교 이름 같은 머리글은 남깁니다. 필요한 것은 먼저 저장해 두세요.",
@@ -10409,14 +10409,25 @@ function examPaperSlots(questions, includeSimilar) {
    먼저 지문을 퍼뜨리는 배분(maxUses=1)을 시도하고, 모자라서 실패할 때만 이 재사용 배분을 쓴다
    (runExamPaperFlow) — 지문이 넉넉하면 중학교도 문항마다 다른 지문이다. */
 let examPlanDeadline = Infinity;   // planExamPaper가 정하는 마감 시각(performance.now) — 해가 없을 때 오래 매달리지 않는다
-function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mode = 0) {
+/* rx — 지문이 모자랄 때 차례로 푸는 규칙(2026-10-04 사용자: "입력한 지문 내에서 해결하도록"). 셋 다 끄면 예전 그대로다.
+     basis: 기출의 대화/본문 비율을 '선호'로만 둔다(본문 문항이 대화문에 붙을 수 있다)
+     mix:   지문을 고치는 유형(빈칸·어휘·어법…)도 한 지문을 함께 쓴다 — 대원칙 1을 푸는 것이라
+            runExamPaperFlow가 '답이 비칠 수 있는 곳'을 세어 알린다
+     pairs: 앞선 부(A형)가 쓴 (지문, 유형) 조합도 쓴다 — 되도록 피할 뿐이다(대원칙 2를 푼다)
+     fit:   문장 수·같은 낱말 조건을 80자 이상으로만 본다(대화 유형은 그대로 대화문에만) */
+function examEligibleLoose(type, p) {
+  if (EXAM_DIALOGUE_TYPES.has(type)) return examEligible(type, p);
+  return p.text.length >= 80;
+}
+function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mode = 0, rx = {}) {
   const profiles = jobs.map(examProfile);
-  const eligible = slots.map((s) => profiles.filter((p) => examEligible(s.type, p)).map((p) => p.no));
+  const fitOk = (type, p) => examEligible(type, p) || (!!rx.fit && examEligibleLoose(type, p));
+  const eligible = slots.map((s) => profiles.filter((p) => fitOk(s.type, p)).map((p) => p.no));
 
   // 지문이 감당하는 유형 가짓수 — 적을수록 먼저 쓴다
   const breadth = new Map();
   profiles.forEach((p) => {
-    breadth.set(p.no, slots.reduce((n, s) => n + (examEligible(s.type, p) ? 1 : 0), 0));
+    breadth.set(p.no, slots.reduce((n, s) => n + (fitOk(s.type, p) ? 1 : 0), 0));
   });
 
   const key = (no, type) => `${no}|${type}`;
@@ -10458,16 +10469,17 @@ function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mo
       const fam = EXAM_FAMILY[s.type];
       return eligible[i].filter((no) => {
         const n = uses.get(no) || 0;
-        if (taken.has(key(no, s.type)) || takenHere.has(key(no, s.type))) return false;
+        if ((!rx.pairs && taken.has(key(no, s.type))) || takenHere.has(key(no, s.type))) return false;
         if (fam && fams.get(no) && fams.get(no).has(fam)) return false;   // 사실상 같은 문제
         // 기출의 대화/본문 비율은 지킨다 — 본문 기반 문항은 본문에만, 대화 기반 문항은 대화문에만 붙인다.
         // 선호로만 두었더니 본문이 모자랄 때 조용히 대화문으로 넘어가 대화 15 : 본문 8이 됐다(기출은 5 : 19, 2026-10-02 사용자)
         const want = examSlotWantsDlg(s);
-        if (want !== null && isDlg.get(no) !== want) return false;
+        if (!rx.basis && want !== null && isDlg.get(no) !== want) return false;
         // 원래 지문이 다른 후보(이은 지문 또는 원래 지문)에 이미 쓰였으면 못 쓴다
         if (!memOf(no).every((m) => !occ.has(m) || occ.get(m) === no)) return false;
         if (n === 0) return true;
-        return n < maxUses && plain && plainOnly.get(no);   // 재사용은 지문을 안 고치는 유형끼리만
+        if (n >= maxUses) return false;
+        return rx.mix || (plain && plainOnly.get(no));   // 재사용은 지문을 안 고치는 유형끼리만(mix면 풀린다)
       });
     };
     const preferred = (i, cands) => {
@@ -10480,6 +10492,9 @@ function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mo
       const wantDlg = EXAM_DIALOGUE_TYPES.has(s.type) || s.basis === "대화";
       return list.sort(
         (a, b) =>
+          // 지문을 고치는 유형끼리도 나눠 쓸 때(mix)는 문항을 고르게 퍼뜨리는 것이 먼저다 — 한 지문에 몰릴수록
+          // 답이 비치는 곳이 는다. 대화문/본문 선호는 그다음이다(본문 7 · 대화문 5에서 대화문이 거의 놀았다)
+          (rx.mix ? (uses.get(a) || 0) - (uses.get(b) || 0) : 0) ||
           ((isDlg.get(a) ? 1 : 0) - (isDlg.get(b) ? 1 : 0)) * (wantDlg ? -1 : 1) ||
           // 이은 지문은 원래 지문으로 안 될 때만
           ((jobById.get(a) || {}).merged ? 1 : 0) - ((jobById.get(b) || {}).merged ? 1 : 0) ||
@@ -10487,6 +10502,8 @@ function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mo
           // 안 쓴 지문을 지문을 고치는 문항(빈칸·어휘…)을 위해 남겨 둔다
           (maxUses > 1 && plain ? ((uses.get(a) || 0) > 0 && plainOnly.get(a) ? 0 : 1) - ((uses.get(b) || 0) > 0 && plainOnly.get(b) ? 0 : 1) : 0) ||
           (uses.get(a) || 0) - (uses.get(b) || 0) ||
+          // pairs를 풀었어도 앞선 부가 쓴 (지문, 유형)은 되도록 피한다
+          (taken.has(key(a, s.type)) ? 1 : 0) - (taken.has(key(b, s.type)) ? 1 : 0) ||
           (usedBefore.has(a) ? 1 : 0) - (usedBefore.has(b) ? 1 : 0) ||
           (breadth.get(a) || 0) - (breadth.get(b) || 0)
       );
@@ -10579,12 +10596,12 @@ ${String(b.text).trim()}`, members: [a.no, b.no], merged: true });
 /* 배분 — 순서와 씨앗을 바꿔 가며 여러 번 짠다. 한 번 짜서 안 되면 바로 포기했더니, 지문이 모자라지 않은데도
    (21개 · 24문항) 순서가 나빠 '지문이 떨어졌다'가 떴다(2026-10-02). 두 가지 순서(mode)를 번갈아 가며
    씨앗만 바꿔 짜 보고(각 시도가 되돌아가며 찾는다), 그래도 안 될 때만 마지막 실패를 돌려준다. AI 호출이 없어 비용은 0이다. */
-function planExamPaper(slots, jobs, copies, usedPairs, seed, maxUses = 1) {
+function planExamPaper(slots, jobs, copies, usedPairs, seed, maxUses = 1, rx = {}, budgetMs = 1200) {
   let last = null;
-  examPlanDeadline = performance.now() + 1200;   // 전체 1.2초 안에 못 찾으면 실패로 본다
+  examPlanDeadline = performance.now() + budgetMs;   // 이 안에 못 찾으면 실패로 본다
   for (let k = 0; k < 6; k++) {
     if (k > 0 && performance.now() > examPlanDeadline) break;
-    const r = planExamPaperOnce(slots, jobs, copies, usedPairs, seed + k * 7919, maxUses, k % 2);
+    const r = planExamPaperOnce(slots, jobs, copies, usedPairs, seed + k * 7919, maxUses, k % 2, rx);
     if (r.ok) return r;
     last = r;
   }
@@ -10922,13 +10939,12 @@ function updateExamPaperCost() {
     );
   }
   const needPass = examPassagesNeeded(slots);
-  if (jobs.length < needPass) {
-    const per = examPassageUses();
+  // 모자라도 만들 수는 있다 — 넣은 지문 안에서 한 지문을 여러 문항에 나눠 쓴다(runExamPaperFlow의 rx)
+  if (jobs.length && jobs.length < needPass) {
     parts.push(
-      `<b class="no">— 지문이 ${needPass - jobs.length}개 모자랍니다</b>` +
-      (per > 1
-        ? ` (중학교는 지문을 안 고치는 유형에 한해 한 지문으로 최대 ${per}문항까지 낼 수 있습니다 — 빈칸·어휘·어법 같은 유형은 지문 하나에 한 문항이라 지문 ${needPass}개 이상 필요합니다)`
-        : ` (한 부 안에서 같은 지문을 두 번 쓰지 않으므로 문항 수만큼 필요합니다)`)
+      `<span class="hint">— 지문 ${jobs.length}개로 만듭니다. 문항마다 다른 지문을 쓰려면 ${needPass}개가 필요해, ` +
+      `<b>한 지문을 여러 문항에 나눠 씁니다</b>(같은 지문의 다른 문항에 답이 보일 수 있어 만든 뒤 확인하세요. ` +
+      `지문을 ${needPass - jobs.length}개 더 넣으면 이렇게 하지 않습니다)</span>`
     );
   }
   examPaperCostHintEl.innerHTML = parts.join(" ");
@@ -11005,42 +11021,28 @@ function runExamPaperFlow() {
     return;
   }
   const needPass = examPassagesNeeded(slots), per = examPassageUses();
-  // 지문이 필요한 수보다 적으면 곧바로 알린다(재사용해도 못 만든다). 그 이상이면 배분을 해 본다
-  if (jobs.length < needPass) {
+  if (!jobs.length) {
     dropExamPlan();
-    examPaperErrorEl.textContent =
-      `지문이 모자랍니다 — ${slots.length}문항을 만들려면 지문이 ${needPass}개 이상 필요합니다` +
-      ` (지금 ${jobs.length}개). ` +
-      (per > 1 ? `중학교는 지문을 안 고치는 유형(주제·제목·내용 일치 등)에 한해 한 지문으로 최대 ${per}문항까지 낼 수 있습니다 — 빈칸·어휘·어법 같은 유형은 지문 하나에 한 문항입니다.`
-               : "한 부 안에서 같은 지문을 두 번 쓰지 않기 때문입니다.");
+    examPaperErrorEl.textContent = "시험 범위 지문을 먼저 넣어 주세요.";
     return;
   }
-  // 기출의 대화/본문 비율을 지키므로 본문·대화문을 따로 센다 — 모자라면 대화문으로 메우지 않고 알린다
-  const dlgSlots = slots.filter((s) => examSlotWantsDlg(s) === true);
-  const bodySlots = slots.filter((s) => examSlotWantsDlg(s) === false);
-  const dlgJobs = jobs.filter((j) => isDialogueText(j.text)).length;
-  const bodyJobs = jobs.length - dlgJobs;
-  const needDlg = examPassagesNeeded(dlgSlots), needBody = examPassagesNeeded(bodySlots);
-  if (dlgJobs < needDlg || bodyJobs < needBody) {
-    dropExamPlan();
-    const lack = [];
-    if (bodyJobs < needBody) lack.push(`<b>교과서 본문 ${needBody - bodyJobs}개</b>`);
-    if (dlgJobs < needDlg) lack.push(`<b>대화문 ${needDlg - dlgJobs}개</b>`);
-    examPaperErrorEl.innerHTML =
-      `기출 비율대로 본문 기반 ${bodySlots.length}문항 · 대화 기반 ${dlgSlots.length}문항을 만들려면 ` +
-      `본문 지문 ${needBody}개 · 대화문 ${needDlg}개 이상이 필요합니다(지금 본문 ${bodyJobs}개 · 대화문 ${dlgJobs}개). ` +
-      `시험 범위에 ${lack.join(" · ")}를 더 넣어 주세요.` +
-      (per > 1 ? `<br><small>본문은 문단별로 나눠 넣으면 개수가 늘어납니다. 주제·제목·내용 일치처럼 지문을 안 고치는 유형만 한 지문으로 최대 ${per}문항까지 냅니다.</small>` : "");
-    return;
-  }
-
+  /* 지문이 모자라도 여기서 멈추지 않는다(2026-10-04 사용자: "입력한 지문 내에서 해결하도록"). 예전엔
+     '지문 24개 필요(지금 12개)'·'본문 N개 더'로 멈췄다. 지금은 아래에서 규칙을 차례로 풀어(rx) 넣은 지문 안에서
+     짜고, 무엇을 풀었는지 알린다. */
   const copies = examCopies();
   // 이미 만들어 둔 부(또는 저장에서 불러온 부)가 쓴 조합은 피한다 — 대원칙 2.
   // 씨앗을 매번 새로 뽑으므로 같은 입력으로 다시 눌러도 배분이 달라진다.
   const seed = Math.floor(Math.random() * 1e9);
-  let res = jobs.length >= slots.length ? planExamPaper(slots, jobs, copies, examUsedPairs(), seed, 1) : null;
+  /* 규칙을 그대로 두고는 셈부터 안 맞는 경우(지문 수·본문 수·대화문 수가 모자람) — 엄격한 배분은 해 봐야 실패만
+     하며 몇 초를 잡아먹으므로 건너뛰고 아래의 '넣은 지문 안에서 해결'로 바로 간다 */
+  const dlgSlotsN = slots.filter((s) => examSlotWantsDlg(s) === true);
+  const bodySlotsN = slots.filter((s) => examSlotWantsDlg(s) === false);
+  const dlgJobsN = jobs.filter((j) => isDialogueText(j.text)).length;
+  const short = jobs.length < needPass ||
+    dlgJobsN < examPassagesNeeded(dlgSlotsN) || jobs.length - dlgJobsN < examPassagesNeeded(bodySlotsN);
+  let res = !short && jobs.length >= slots.length ? planExamPaper(slots, jobs, copies, examUsedPairs(), seed, 1) : null;
   // 지문이 모자라거나 퍼뜨리는 배분이 실패하면 중학교는 지문 재사용 배분으로 다시 짠다
-  if ((!res || !res.ok) && per > 1) res = planExamPaper(slots, jobs, copies, examUsedPairs(), seed, per);
+  if (!short && (!res || !res.ok) && per > 1) res = planExamPaper(slots, jobs, copies, examUsedPairs(), seed, per);
   /* 그래도 안 되면 같은 과의 이웃한 짧은 본문을 이은 지문을 후보에 더해 다시 짜고, 더 나은 쪽을 쓴다(무조건 잇지
      않는다). 대화/본문 비율은 이제 배분이 지키므로 mismatch는 basis를 모르는 옛 구성에서만 0이 아닐 수 있다. */
   const mismatch = (r, js) => !r || !r.ok ? Infinity : r.plans.flat().reduce((n, row) => {
@@ -11050,7 +11052,7 @@ function runExamPaperFlow() {
     return n + (j && isDialogueText(j.text) !== wantDlg ? 1 : 0);
   }, 0);
   let planJobs = jobs, mergeNote = "";
-  if (!res || !res.ok || mismatch(res, jobs) > 0) {
+  if (!short && (!res || !res.ok || mismatch(res, jobs) > 0)) {
     const more = examMergedJobs(jobs);
     if (more.length > jobs.length) {
       let r2 = planExamPaper(slots, more, copies, examUsedPairs(), seed, 1);
@@ -11068,9 +11070,34 @@ function runExamPaperFlow() {
     }
   }
 
+  /* 그래도 안 되면 넣은 지문 안에서 해결한다 — 규칙을 하나씩 더 풀어 가며 짠다. 먼저 대화/본문 비율,
+     다음 지문을 고치는 유형끼리도 한 지문 함께 쓰기, 다음 A형·B형의 (지문, 유형) 겹침, 끝으로 문장 수 조건. */
+  let relaxed = null;
+  if (!res || !res.ok) {
+    const reuse = Math.max(per, Math.ceil(slots.length / jobs.length) + 1);
+    const tiers = [
+      ...(jobs.length >= needPass ? [[per, { basis: true }]] : []),   // 지문 수가 모자라면 이것만으로는 안 된다
+      [reuse, { basis: true, mix: true }],
+      [reuse, { basis: true, mix: true, pairs: true }],
+      [reuse + 1, { basis: true, mix: true, pairs: true, fit: true }],
+    ];
+    for (const [mu, rx] of tiers) {
+      const r = planExamPaper(slots, jobs, copies, examUsedPairs(), seed, mu, rx, 800);
+      if (r && r.ok) { res = r; planJobs = jobs; relaxed = rx; mergeNote = ""; break; }
+      if (!res) res = r;
+    }
+  }
+
   if (!res.ok) {
     const f = res.fail;
     dropExamPlan();
+    // 대화 유형인데 범위에 대화문이 하나도 없으면 지문 수 이야기는 엉뚱하다 — 까닭을 바로 말한다
+    if (EXAM_DIALOGUE_TYPES.has(f.type) && !jobs.some((j) => isDialogueText(j.text))) {
+      examPaperErrorEl.innerHTML =
+        `시험 범위에 <b>대화문이 없어</b> <b>${esc(f.type)}</b> 문항을 만들 수 없습니다 — ` +
+        `대화문(줄마다 "A:", "B:"처럼 말하는 사람이 적힌 글)을 넣거나, 구성표에서 그 유형을 0으로 줄여 주세요.`;
+      return;
+    }
     examPaperErrorEl.innerHTML =
       `<b>${esc(f.type)}</b> 문항에 지문을 붙이지 못했습니다` +
       (copies > 1 ? ` (${f.copy}부째)` : "") +
@@ -11084,8 +11111,42 @@ function runExamPaperFlow() {
 
   examPlanNow = { slots, jobs: planJobs, copies, plans: res.plans };
   // 제작이 시작되면 오류 칸은 비워지므로 시험 범위 칸 아래 상태 줄에 알린다
-  if (mergeNote) examPassageStatus(mergeNote, "ok");
+  if (relaxed) examPassageStatus(examRelaxNote(relaxed, res.plans, slots), "warn");
+  else if (mergeNote) examPassageStatus(mergeNote, "ok");
   runExamPaper();
+}
+
+/* 규칙을 풀어 짰을 때의 안내 — 무엇을 풀었는지, 그래서 무엇을 확인해야 하는지.
+   '답이 비칠 수 있는 곳'은 한 부 안에서 한 지문에 문항이 둘 이상 붙었고 그중 지문을 고치는 유형이 있는 지문이다
+   (문항마다 지문을 따로 싣기 때문에, 빈칸 문항의 정답 낱말이 같은 지문의 다른 문항에는 그대로 보인다). */
+function examRelaxNote(rx, plans, slots) {
+  const parts = [`시험 범위 지문이 넉넉하지 않아 <b>넣은 지문 안에서</b> 짰습니다.`];
+  let shared = 0, leak = 0, onDlg = 0;
+  plans.forEach((rows) => {
+    const by = new Map();
+    rows.forEach((r) => { if (!by.has(r.passageNo)) by.set(r.passageNo, []); by.get(r.passageNo).push(r.type); });
+    by.forEach((types) => {
+      if (types.length < 2) return;
+      shared++;
+      if (types.some((t) => !examIsPlainType(t))) leak++;
+    });
+  });
+  if (rx.basis) {
+    const jobsNow = examPaperMgr.getJobs();
+    plans.flat().forEach((r) => {
+      const sl = slots.find((x) => x.q === r.q) || {};
+      const j = jobsNow.find((x) => x.no === r.passageNo);
+      if (j && examSlotWantsDlg(sl) === false && isDialogueText(j.text)) onDlg++;
+    });
+  }
+  if (shared) parts.push(`한 지문으로 여러 문항을 낸 곳이 ${shared}군데입니다.`);
+  if (leak) parts.push(`그중 <b>${leak}군데</b>는 빈칸·어법·어휘처럼 지문을 고치는 문항이 같은 지문에 함께 있어, ` +
+    `<b>한 문항의 지문에 다른 문항의 답이 보일 수 있습니다</b> — 만든 뒤 꼭 확인하세요.`);
+  if (onDlg) parts.push(`본문 기반 문항 ${onDlg}개를 대화문에 붙였습니다.`);
+  if (rx.pairs) parts.push("A형·B형이 같은 지문의 같은 유형을 쓴 곳이 있을 수 있습니다.");
+  if (rx.fit) parts.push("짧은 지문에도 순서·문장삽입 같은 유형을 붙였을 수 있습니다.");
+  parts.push("지문을 더 넣으면 문항마다 다른 지문을 씁니다.");
+  return parts.join(" ");
 }
 
 // 이미 만들어 둔 부들이 쓴 (지문, 유형) — 대원칙 2의 근거가 되는 값이다.
