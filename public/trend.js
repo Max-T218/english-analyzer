@@ -1821,6 +1821,8 @@ const trendRangeMgr = createPassageManager(
 trendRangeMgr.addRow(false);
 // PDF를 칸에 끌어다 놓으면 지문을 꺼내 넣는다(사진은 받지 않는다 — 위 시험지 칸과 헷갈린다)
 wirePassageDrop(trendRangePanelEl, trendRangeMgr, trendRangeStatus);
+// 캡처를 칸에 붙여넣으면(Ctrl+V) 이 칸으로 읽어 넣는다 — 진행 상황도 이 칸 아래에 쓴다
+trendRangeMgr.ocrSay = trendRangeStatus;
 
 // 보고서에 쓰는 범위 지문 — 너무 짧은 칸(쓰다 만 것)은 대조에서 뺀다
 const trendRangeJobs = () => trendRangeMgr.getJobs().filter((j) => j.text.length >= 40);

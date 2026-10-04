@@ -1581,7 +1581,9 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
       const shots = [...((e.clipboardData && e.clipboardData.files) || [])].filter(isPhoto);
       if (shots.length) {
         e.preventDefault(); // 이미지가 파일명 같은 텍스트로 새어 들어가는 것을 막는다
-        runOcr(shots);
+        // 붙여넣은 그 칸으로 보낸다 — 예전엔 언제나 공용 칸을 채워, 동형 모의고사 시험 범위 칸에
+        // 캡처를 붙여넣으면 위쪽 공용 칸이 채워지고 정작 이 칸은 비어 있었다(2026-10-04)
+        runOcr(shots, self, self.ocrSay || ocrStatus);
         return;
       }
       /* 동료 선생님이 '📋 지문 전체 복사'로 보낸 글인지 본다. 맞아도 바로 나누지는
@@ -1905,7 +1907,10 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
     return true;
   }
 
-  return { addRow, getJobs, setJobs, appendJobs, renumber, clearAll, fillText };
+  /* ocrSay — 이 칸에 캡처 이미지를 붙여넣었을 때 진행 상황을 쓸 곳. 비어 있으면 공용 칸의 상태 줄.
+     붙여넣은 사진은 언제나 '붙여넣은 그 칸'으로 들어간다(아래 paste 처리) */
+  const self = { addRow, getJobs, setJobs, appendJobs, renumber, clearAll, fillText, ocrSay: null };
+  return self;
 }
 
 // 모든 탭이 공유하는 지문 입력 (탭 밖 공통 패널) — 별도 저장소 없이 화면 하나로 공유
@@ -2571,9 +2576,9 @@ examPdfFileEl.addEventListener("change", () => {
    공용 지문 패널과 시험지 제작 탭의 '시험 범위 지문'이 같은 배선을 나눠 쓴다 —
    버튼(📄 PDF에서 가져오기)은 두 곳 다 있는데 끌어다 놓기는 공용 칸에만 있어서,
    같은 칸인 줄 알고 놓았다가 아무 일도 안 일어나는 일이 있었다.
-   ocr 옵션: 사진(OCR)은 공용 칸에만 있다. runOcr이 공용 지문칸을 직접 채우도록
-   되어 있어, 시험 범위 칸에 사진을 놓으면 엉뚱한 칸이 채워지기 때문이다.
-   그래서 거기서는 조용히 무시하지 않고 어디에 놓아야 하는지 알려 준다. */
+   ocr 옵션: 사진(OCR)을 받는 칸인가. runOcr에 이 칸(mgr)을 목적지로 넘기므로 놓은 칸이
+   채워진다(2026-10-04 — 전에는 runOcr이 공용 칸만 채워서 시험 범위 칸은 사진을 거절했다).
+   ocr이 없는 칸은 조용히 무시하지 않고 어디에 놓아야 하는지 알려 준다. */
 function wirePassageDrop(panelEl, mgr, statusFn, opts) {
   if (!panelEl) return;
   const withOcr = !!(opts && opts.ocr);
@@ -2599,7 +2604,7 @@ function wirePassageDrop(panelEl, mgr, statusFn, opts) {
     const shots = [...files].filter((f) => !isPdf(f));
     if (pdfs.length) runPdfImport(pdfs, mgr, statusFn);
     if (!shots.length) return;
-    if (withOcr) runOcr(shots);
+    if (withOcr) runOcr(shots, mgr, statusFn);
     else
       statusFn(
         "여기에는 <b>PDF</b>만 놓을 수 있습니다. 사진에서 지문을 가져오려면 " +
@@ -8769,7 +8774,7 @@ const HOWTO = {
       "기출 시험지 <b>PDF·사진</b>을 끌어다 놓으면 바로 <b>유형 분석</b>을 시작합니다. 한 번 분석해 저장해 둔 구성이 있으면 <b>[📂 저장한 구성 불러오기]</b>로, 시험지 분석 리포트에서 분석해 저장해 둔 기출이면 <b>[📂 분석 리포트에서 불러오기]</b>로 건너뛰어도 됩니다.",
       "기출을 <b>여러 부</b> 쓰려면 다음 시험지를 이어서 올리세요 — 곧바로 이어서 분석하고, 한 구성으로 합칩니다. <b>한 번이라도 나온 유형은 1문항씩</b> 깔고 남는 자리를 자주 나온 유형에 더 줍니다.",
       "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손봅니다 — 고친 숫자는 누를 것 없이 <b>바로</b> 아래 제작 칸에 반영됩니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 따로 남겨 둘 수 있습니다 — 시험지를 만든 뒤에도 누를 수 있습니다. <b>불러온 구성도</b> 같은 표가 떠서 개수를 고칠 수 있습니다.",
-      "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b> · <b>[📷 사진에서 가져오기]</b>로 채울 수도 있고, 기출 속 지문을 쓰려면 <b>[📄 지문도 가져오기]</b>를 누르세요.",
+      "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b> · <b>[📷 사진에서 가져오기]</b>로 채울 수도 있고(캡처한 그림은 지문 칸에 <b>Ctrl+V</b>로 붙여넣어도 됩니다), 기출 속 지문을 쓰려면 <b>[📄 지문도 가져오기]</b>를 누르세요.",
       "(선택) 목표 어법 · 출제 순서 · <b>학교급</b>(중학교면 보기·오답을 중학생 수준으로, 지문이 모자라면 <b>주제·제목·내용 일치처럼 지문을 안 고치는 유형</b>은 한 지문으로 최대 3문항까지 냅니다. 그래도 모자라거나 본문이 짧으면 <b>같은 과의 이웃한 본문을 이어</b> 실제 시험처럼 긴 지문으로 씁니다 — 지문 이름을 “5과 본문 (1)”, “(2)”처럼 번호만 다르게 달아 두면 같은 과로 알아봅니다) · 몇 부(1부 / A형·B형) · 시험지 머리글(학교 이름·고사 이름 등) · 표지 제목을 정합니다. 중학교 기출의 <b>대화문 문항</b>은 시험 범위 칸에 넣은 <b>대화문</b>(줄마다 \"A:\", \"B:\")으로만 만듭니다.",
       "<b>[📝 문제 제작]</b>을 누릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b> — 사이트 저장은 만든 시험지를 저장하고, 기출 구성 저장과는 따로 쌓입니다. 저장한 시험지는 맨 위 <b>[📂 저장한 시험지 불러오기]</b>로 되불러옵니다. 불러온 시험지 말고 <b>새 시험지를 따로</b> 만들려면 <b>[🧹 만든 시험지 비우기]</b>를 누른 뒤 만드세요 — 안 비우면 새 시험지가 불러온 것 뒤에 붙습니다. 비워도 저장해 둔 것은 지워지지 않고, 새 시험지는 비운 시험지와 겹치지 않게 만들어집니다.",
@@ -10810,7 +10815,9 @@ const examPaperMgr = createPassageManager(
 examPaperMgr.addRow(false);
 // 공용 지문칸과 똑같이 PDF를 끌어다 놓을 수 있게 한다.
 // 대상은 패널 전체다 — 지문칸만 받으면 칸이 하나뿐일 때 놓을 자리가 너무 좁다.
-wirePassageDrop(examPaperPanelEl, examPaperMgr, examPassageStatus);
+// 사진도 받는다 — 교과서 본문 캡처를 끌어다 놓거나 칸에 붙여넣으면(Ctrl+V) 이 칸이 채워진다
+wirePassageDrop(examPaperPanelEl, examPaperMgr, examPassageStatus, { ocr: true });
+examPaperMgr.ocrSay = examPassageStatus;
 
 /* 시험 범위 칸의 지문을 "지문 저장본"으로 저장한다. 담을 칸만 바꾸고 저장 창·
    저장함·덮어쓰기 배선은 공용 것을 그대로 탄다(passageSaveFrom 참고).
