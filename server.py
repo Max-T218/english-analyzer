@@ -399,6 +399,7 @@ MCQ_ONLY_TYPES = {
     "대화 순서", "어색한 응답", "대화 빈칸", "대화 내용 일치",
     "대화 내용 불일치", "답할 수 없는 질문",
     "문법 쓰임 같은 것", "문법 쓰임 다른 것", "다의어 같은 뜻", "짝지어진 대화",
+    "대화 어법·어휘 선택", "짝지어진 대화 어법", "대화 상황 파악",
 }
 
 
@@ -1314,6 +1315,10 @@ QUIZ_TYPE_LABELS = [
     # 중학교 내신의 낱말·문법 쓰임 유형(2026-10-01, 전주호성중 3학년 기출 6·7·13·17·5번).
     # 지문의 한 낱말을 짚고 보기 문장을 새로 지어 '같은 쓰임/같은 뜻'을 고르게 한다.
     "문법 쓰임 같은 것", "문법 쓰임 다른 것", "다의어 같은 뜻", "짝지어진 대화",
+    # 중학교 기출에서 본 대화문 유형(2026-10-04, 동중 2022·2024 네 부 · 호성중 · 아중중).
+    # 대화문으로 어법을 물을 때 학교는 밑줄 ①~⑤가 아니라 대화 속 네모 (A)(B)(C) 고르기(동중 2024 2차 4번)나
+    # 짝지어진 대화의 '흐름 및 어법'(동중 2024 1차 12번)으로 냈다. 대화 후 할 일·두 사람의 관계·심경도 자주 나왔다.
+    "대화 어법·어휘 선택", "짝지어진 대화 어법", "대화 상황 파악",
 ]
 
 # 지문을 '가공 없이 통째로' 보여 주는 유형 — 빈칸·밑줄·블록 분할이 전혀 없다.
@@ -1332,7 +1337,7 @@ QUIZ_PLAIN_PASSAGE_TYPES = {
     # ("요약문 완성"은 요약 문장 안에 빈칸을 뚫으므로 여기 없다).
     "요약문 완전구성형",
     # 대화를 그대로 보여 주고 보기만 짓는다
-    "대화 내용 일치", "대화 내용 불일치", "답할 수 없는 질문",
+    "대화 내용 일치", "대화 내용 불일치", "답할 수 없는 질문", "대화 상황 파악",
 }
 
 # '목표 어법'(화면의 targetGrammar)이 걸리는 유형.
@@ -1450,6 +1455,12 @@ QUIZ_TYPE_MAX = {
     "다의어 같은 뜻": 2,
     # 대화문에서 뽑을 의사소통 기능 표현 수에 묶인다
     "짝지어진 대화": 2,
+    # 대화 하나에 네모 세 곳 — 같은 대화에 두 벌을 내면 네모 자리가 겹친다
+    "대화 어법·어휘 선택": 1,
+    # 짝 다섯 개를 새로 짓지만, 두 문항이면 문법 포인트가 겹친다
+    "짝지어진 대화 어법": 1,
+    # 할 일·관계·장소·심경 중 서로 다른 것을 묻는다
+    "대화 상황 파악": 2,
 }
 # 한 번의 /api/quiz 호출에 넣을 수 있는 총 문항 수 상한.
 # 화면은 문항 수로 끊어 보내므로(app.js의 QUIZ_QUESTIONS_PER_CALL=6, 한 유형이 그보다
@@ -1547,9 +1558,11 @@ in every other question.
   types you MUST OMIT `passageHtml` entirely — the app inserts the passage itself. Copying the
   passage out again wastes output and risks it drifting from what other questions show.
   Every OTHER type still requires `passageHtml`, because its passage is genuinely modified.
-  If the passage is a DIALOGUE (each turn starts with a speaker such as "B", "G", "W", "A:", "Minho:"),
-  then for EVERY type keep each speaker label exactly as given at the start of its turn and put each
-  turn on its own line (<br>) — never drop the labels or run the turns together into one paragraph.
+  If the passage is a DIALOGUE (each turn starts with a speaker such as "B:", "G:", "W:", "A:", "Minho:"),
+  then for EVERY type keep each speaker label at the start of its turn, written WITH a colon ("B:",
+  "Minho:") as on real 내신 papers, and put each turn on its own line (<br>) — never drop the labels
+  or run the turns together into one paragraph. In the `instruction` call it a 대화, not a 글:
+  "다음 대화의 …", "위 대화의 …" (real papers never say "다음 글" for a dialogue).
 - `choices`: for "mc", EXACTLY 5 short strings — do NOT prefix them with ①②③④⑤ (the app adds
   those). The one exception is "문장삽입", which has 3~5 (see its rule below).
   For "write" and "tf", set `choices` to an empty array [].
@@ -1814,18 +1827,21 @@ the passage in full.
   dialogues, each "A: …<br>B: …", short and natural; FOUR responses fit, ONE response does not
   fit A's line (wrong function or meaning) while staying grammatical. answer = the awkward one.
 - DIALOGUE TYPES (중학교 내신) — "대화 순서", "어색한 응답", "대화 빈칸", "대화 내용 일치",
-  "대화 내용 불일치", "답할 수 없는 질문".
+  "대화 내용 불일치", "답할 수 없는 질문", "대화 상황 파악", "대화 어법·어휘 선택".
   The passage is a DIALOGUE: each turn begins with the speaker ("A:", "B:", "Minho:", "G:" — or
   just the letter without a colon, as copied from a textbook: "B How often…", "G I play…").
-  Keep the speaker labels exactly as given (do not add or remove colons) and put every turn on
-  its own line (<br>).
+  Write every speaker label WITH a colon ("B:", "Minho:") and put every turn on its own line (<br>).
   Build ONLY from the dialogue; never turn it into a narrative.
-- "대화 순서" — instruction "주어진 말에 이어질 대화의 순서로 가장 적절한 것은?".
-  passageHtml = ONE given opening turn, then <br><br>, then the NEXT three turns as blocks
-  <b>(A)</b>, <b>(B)</b>, <b>(C)</b> (each on its own line, speaker label kept) in a SCRAMBLED
-  (non-original) order. Use four consecutive turns of the dialogue; if it is longer, pick the
-  stretch where the order is decided by meaning (질문→대답, 제안→수락/거절→이유), not by
-  guesswork. choices = 5 orderings like "(B)-(A)-(C)", exactly one matching the dialogue.
+- "대화 순서" — the shape real 내신 papers use (동중 2022·2024, 아중중): FOUR turns scrambled.
+  instruction "주어진 말에 이어질 대화의 순서로 가장 적절한 것은?" (or, when turns are kept after
+  the blocks, "다음 대화가 자연스럽게 이어지도록 (A)~(D)를 바르게 배열한 것은?").
+  passageHtml = the turn(s) BEFORE the stretch as given context (at least one), then <br><br>, then
+  the next FOUR consecutive turns as blocks <b>(A)</b> … <b>(D)</b> (each on its own line, speaker
+  label kept) in a SCRAMBLED (non-original) order; if the dialogue goes on after them, you may add
+  <br><br> and the remaining turns as fixed context after the blocks. Pick the stretch where the
+  order is decided by meaning (질문→대답, 제안→수락/거절→이유, 설명 요청→설명), not by guesswork.
+  choices = 5 orderings like "(B)-(D)-(A)-(C)", exactly one matching the dialogue. A dialogue with
+  fewer than five turns may use three blocks (A)~(C) instead.
 - "어색한 응답" — instruction "다음 대화의 밑줄 친 부분 중, 흐름상 어색한 것은?".
   passageHtml = the dialogue with FIVE turns (or the key sentence of a turn) underlined and
   numbered ①<u>…</u> … ⑤<u>…</u> in order. Rewrite EXACTLY ONE of them so it no longer fits
@@ -1839,12 +1855,37 @@ the passage in full.
   four wrong ones are natural English but clash with what comes before or after
   (다른 기능의 말, 반대 대답 등). answer = the fitting one.
 - "대화 내용 일치" — instruction "위 대화의 내용과 일치하는 것은?". The dialogue is shown
-  unchanged (지문 재사용형). choices = 5 KOREAN statements about the dialogue (누가, 무엇을,
-  언제, 왜); EXACTLY ONE is true and the other four contradict it by a concrete fact
-  (사람·시간·장소·이유를 바꾸기). answer = the true one.
+  unchanged (지문 재사용형). choices = 5 short ENGLISH statements about the dialogue (who, what,
+  when, why — e.g. "Jaden is good at sports.") — most 내신 papers write these in English (7 of 9
+  in the 기출 we checked). EXACTLY ONE is true and the other four contradict it by a concrete
+  fact (사람·시간·장소·이유를 바꾸기). answer = the true one.
 - "대화 내용 불일치" — instruction "위 대화의 내용과 일치하지 않는 것은?". Same as
-  "대화 내용 일치" but FOUR Korean statements are true and ONE contradicts the dialogue by a
+  "대화 내용 일치" but FOUR English statements are true and ONE contradicts the dialogue by a
   concrete fact. answer = the false one.
+- "대화 상황 파악" — a question about the SITUATION of the dialogue, as on real papers. Choose
+  ONE angle the dialogue clearly fixes, in this order of preference:
+    · "대화 직후 남자(여자/소녀/소년)가 할 일로 가장 적절한 것은?" — choices 5 short English
+      sentences "He will …" (동중 2024 1차 2번·2차 3번);
+    · "대화하는 두 사람의 관계로 가장 적절한 것은?" — choices 5 pairs like "clerk - customer";
+    · "대화가 이루어지는 장소로 가장 적절한 것은?" — choices 5 English places;
+    · "대화 후 X의 심경으로 가장 적절한 것은?" — choices 5 English feeling words.
+  The dialogue is shown unchanged (지문 재사용형). The answer must be stated or directly implied
+  by the dialogue; wrong choices reuse things mentioned in the dialogue but not as the answer.
+- "대화 어법·어휘 선택" — instruction "위 대화의 (A), (B), (C)에 들어갈 말로 알맞은 것은?"
+  (동중 2024 2차 4번). passageHtml = the dialogue with THREE spots, each turned into a box
+  "<b>(A)</b> [that's why / that's because]" — one correct form and one wrong form side by side.
+  Mix grammar boxes (형태·구문: that's why/because, 동명사/to부정사, 시제, 관계사, 비교급) with
+  word boxes (better/worse, full/rich) — at least ONE grammar box. Each box's answer must be
+  decided by the dialogue around it. choices = 5 strings "(A) - (B) - (C)" like
+  "that's why - worse - rich", exactly one all-correct. Do NOT underline ①~⑤ in a dialogue for
+  grammar — school papers do not test dialogues that way.
+- "짝지어진 대화 어법" — instruction "다음 중 대화의 흐름 및 어법이 모두 자연스러운 것은?"
+  (동중 2024 1차 12번). passageHtml = "" (the pairs stand alone). choices = 5 mini-dialogues
+  "A: …<br>B: …", built on the passage's 의사소통 기능 and the lesson grammar (target grammar
+  if given; else what the passage uses — It is ~ that 강조, 관계대명사, 간접의문문 …). EXACTLY ONE
+  pair is natural in BOTH flow and grammar; each of the other four has ONE clear fault — either a
+  grammar error in B's line or a response that does not fit A. Mix the two kinds of fault.
+  In the explanation, name each wrong pair's fault.
 - "답할 수 없는 질문" — instruction "위 대화를 읽고 답할 수 없는 질문은?". The dialogue is shown
   unchanged. choices = 5 short ENGLISH questions (Who/What/When/Where/Why/How …?). FOUR are
   answered by a specific line of the dialogue (each from a different part); ONE asks about
@@ -2263,7 +2304,8 @@ def insertion_issue(q, k):
 
 
 QUIZ_DIALOGUE_TYPES = {"대화 순서", "어색한 응답", "대화 빈칸", "대화 내용 일치",
-                       "대화 내용 불일치", "답할 수 없는 질문", "짝지어진 대화"}
+                       "대화 내용 불일치", "답할 수 없는 질문", "짝지어진 대화",
+                       "대화 어법·어휘 선택", "짝지어진 대화 어법", "대화 상황 파악"}
 # 말하는 사람 표시 — "A:", "Minho :", "G:", "민호:" 처럼 줄 첫머리의 짧은 이름 + 쌍점.
 # 쌍점이 없는 표시도 받는다 — 교과서에서 복사하면 "B How often…"·"G I play…"처럼 온다(2026-10-02 호성중
 # 5·6과 대화문 21개가 전부 대화문이 아니라고 판정됐다). 쌍점 없이는 B·G·W·M·S·T 한 글자만 인정한다 —
@@ -2279,6 +2321,18 @@ def is_dialogue(passage):
     쌍점이라 대화문으로 잡혔다(2026-10-04). 대화는 같은 사람이 되풀이해 말하고, 안내문 항목은 한 번씩이다."""
     labels = [(a or b).strip() for a, b in _DIALOGUE_TURN_RE.findall(passage or "")]
     return sum(1 for x in labels if labels.count(x) >= 2) >= 4
+
+
+# 교과서에서 복사한 대화는 "B How often…"처럼 쌍점이 없는데, 학교 시험지는 모두 "B:"로 찍는다(기출 6부 확인,
+# 2026-10-04). 대화문일 때만 한 글자 표시 뒤에 쌍점을 붙인다 — 지문을 그대로 싣는 유형(내용 일치 등)은
+# 서버가 이 지문을 그대로 넣으므로 여기서 고쳐야 시험지에 쌍점이 찍힌다.
+_BARE_SPEAKER_RE = re.compile(r"^(\s*)([BGWMST])[ \t]+(?=\S)", re.M)
+
+
+def with_dialogue_colons(passage):
+    if not passage or not is_dialogue(passage):
+        return passage
+    return _BARE_SPEAKER_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}: ", passage)
 
 
 def fit_quiz_items(raw_types, passage):
@@ -2487,6 +2541,7 @@ QUIZ_ANSWER_PLAN_TYPES = {
     "요약문", "연결어 2빈칸 추론", "어법 분석",
     "대화 순서", "대화 빈칸", "대화 내용 일치", "대화 내용 불일치", "답할 수 없는 질문",
     "문법 쓰임 같은 것", "문법 쓰임 다른 것", "다의어 같은 뜻", "짝지어진 대화",
+    "대화 어법·어휘 선택", "짝지어진 대화 어법", "대화 상황 파악",
 }
 # 정답을 ①에 두지 말라는 규칙이 따로 있는 유형(프롬프트의 해당 유형 설명 참고)
 QUIZ_ANSWER_NOT_FIRST = {"요약문", "연결어 2빈칸 추론"}
@@ -4742,6 +4797,13 @@ irrelevant here and copying them wastes the whole output. Read the Korean questi
   The list has three groups (객관식 / 주관식 / 워크북). Korean 내신 서답형 — 영작, 우리말
   해석 쓰기, 동사 형태 고쳐 쓰기, 어법 틀린 곳 찾아 고쳐 쓰기, 단어 배열 — is almost always
   a 워크북 entry, not a 객관식 one. Look there before giving up and writing "".
+  A question whose basis is 대화 (객관식) belongs to the DIALOGUE entries, not to the reading-passage
+  ones: 내용 일치/불일치 → "대화 내용 일치"/"대화 내용 불일치"; 답할 수 없는 질문 → "답할 수 없는 질문";
+  순서 배열 → "대화 순서"; 밑줄 중 흐름상 어색한 것 → "어색한 응답"; 빈칸 → "대화 빈칸";
+  짝지어진 대화 중 어색한 것 → "짝지어진 대화"; 짝지어진 대화의 흐름 및 어법 → "짝지어진 대화 어법";
+  대화 속 네모 (A)(B)(C) 고르기(어법·어휘) → "대화 어법·어휘 선택"; 대화 후 할 일·두 사람의 관계·
+  장소·대화 후 심경 → "대화 상황 파악". (서답형 on a dialogue — 요약문 빈칸, 영작, 문장 전환 — keep the
+  usual 주관식/워크북 entries.)
   Judge by WHAT THE STUDENT DOES, not by the page layout: a 워크북 entry prints as a
   worksheet covering the whole passage rather than one numbered exam item, and that
   difference alone does NOT make the fit worse.
@@ -9302,6 +9364,17 @@ CHANGELOG = [
             "시험지 분석 리포트 — [📰 카드뉴스 만들기]로 분석 결과를 정사각형 그림 카드로 내려받을 수 있습니다.",
         ],
     },
+    {
+        "version": 58,
+        "date": "2026-10-04",
+        "items": [
+            "대화문 문제를 실제 중학교 시험지 모양으로 바꿨습니다 — 대화 순서는 네 덩이 (A)~(D), 대화 내용 "
+            "일치 보기는 영어, 발문은 '다음 대화', 말하는 사람 뒤에 쌍점(B:)을 붙입니다. 객관식에 '대화 어법·어휘 "
+            "선택'(대화 속 네모 고르기), '짝지어진 대화 어법', '대화 상황 파악'(할 일·관계·장소·심경)이 더해졌습니다.",
+            "동형 모의고사 — 대화문에는 대화문 유형과 내용 일치·요약·영작 같은 문제만 붙이고, 밑줄 어법·문장 삽입처럼 "
+            "본문용 문제는 붙이지 않습니다. 같은 대화로 답이 보이는 두 문제를 함께 내지 않습니다.",
+        ],
+    },
 ]
 
 
@@ -12728,7 +12801,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/quiz":
-            passage = (req.get("passage") or "").strip()
+            passage = with_dialogue_colons((req.get("passage") or "").strip())
             if len(passage) < 20:
                 self._send_json({"error": "문제를 만들 영어 지문을 입력하세요 (20자 이상)."}, 400)
                 return

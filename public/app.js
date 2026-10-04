@@ -4500,6 +4500,10 @@ const MCQ_TYPES = [
   // 중학교 내신의 낱말·문법 쓰임 유형 — 지문의 낱말 하나를 짚고 보기 문장을 새로 짓는다
   { id: "문법 쓰임 같은 것", def: false }, { id: "문법 쓰임 다른 것", def: false },
   { id: "다의어 같은 뜻", def: false }, { id: "짝지어진 대화", def: false },
+  // 중학교 기출(동중 2022·2024 · 호성중 · 아중중)에서 본 대화문 유형 — 대화문 어법은 밑줄 ①~⑤가 아니라
+  // 대화 속 네모 고르기·짝지어진 대화의 흐름 및 어법으로 나왔다. 대화 후 할 일·관계·심경도 자주 나왔다
+  { id: "대화 어법·어휘 선택", def: false }, { id: "짝지어진 대화 어법", def: false },
+  { id: "대화 상황 파악", def: false },
 ];
 // 주관식(서술형·단답형) 유형
 const SAQ_TYPES = [
@@ -4621,6 +4625,7 @@ const TYPE_MAX = {
   "대화 순서": 1, "어색한 응답": 2, "대화 빈칸": 2,
   "대화 내용 일치": 3, "대화 내용 불일치": 3, "답할 수 없는 질문": 2,
   "문법 쓰임 같은 것": 2, "문법 쓰임 다른 것": 2, "다의어 같은 뜻": 2, "짝지어진 대화": 2,
+  "대화 어법·어휘 선택": 1, "짝지어진 대화 어법": 1, "대화 상황 파악": 2,
 };
 // +버튼이 막혔을 때 왜 막혔는지 알려 준다 — 유형마다 상한이 다른 이유가 다르다.
 const TYPE_MAX_REASON = {
@@ -4662,6 +4667,9 @@ const TYPE_MAX_REASON = {
   "문법 쓰임 다른 것": "쓰임이 여럿으로 갈리는 기능어(that·as·it…) 수 때문에",
   "다의어 같은 뜻": "여러 뜻을 가진 낱말 수 때문에",
   "짝지어진 대화": "대화문에서 뽑을 표현 수 때문에",
+  "대화 어법·어휘 선택": "대화 하나에 네모 세 곳이라 두 벌이면 자리가 겹쳐",
+  "짝지어진 대화 어법": "두 문항이면 문법 포인트가 겹쳐",
+  "대화 상황 파악": "대화에서 물을 수 있는 상황(할 일·관계·장소·심경)이 몇 가지뿐이라",
 };
 function typeMaxNote(id) {
   const max = TYPE_MAX[id] || 1;
@@ -4796,6 +4804,8 @@ const MCQ_TRANSFORM_TYPES = new Set([
   "대화 순서", "어색한 응답", "대화 빈칸",
   // 지문에 밑줄을 긋고 보기 문장을 새로 짓는다(짝지어진 대화는 보기만 짓는다)
   "문법 쓰임 같은 것", "문법 쓰임 다른 것", "다의어 같은 뜻", "짝지어진 대화",
+  // 대화에 네모를 넣는다 · 짝 다섯 개를 새로 짓는다
+  "대화 어법·어휘 선택", "짝지어진 대화 어법",
 ]);
 
 /* 유형을 호출 묶음으로 나눈다. 규칙 세 가지:
@@ -8703,7 +8713,7 @@ const HOWTO = {
     lead: "지문 하나로 수능·내신 어투의 5지선다 문항을 만듭니다.",
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. (선택) <b>목표 어법</b>을 적으면 어법 문항의 정답 자리를 그 문법으로 냅니다.",
-      "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추). 중학교 내신 유형 — <b>문법 쓰임 같은 것·다른 것</b>(that·as 등의 쓰임), <b>다의어 같은 뜻</b>은 아무 지문에서나 만들고, 대화문 유형(<b>대화 순서·어색한 응답·대화 빈칸·대화 내용 일치·대화 내용 불일치·답할 수 없는 질문·짝지어진 대화</b>)은 줄마다 \"A:\", \"B:\"처럼 말하는 사람이 적힌 <b>대화문</b>을 넣었을 때만 만들어집니다 — 대화문이 아니면 빼고 값도 받지 않습니다.",
+      "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추). 중학교 내신 유형 — <b>문법 쓰임 같은 것·다른 것</b>(that·as 등의 쓰임), <b>다의어 같은 뜻</b>은 아무 지문에서나 만들고, 대화문 유형(<b>대화 순서·어색한 응답·대화 빈칸·대화 내용 일치·대화 내용 불일치·답할 수 없는 질문·짝지어진 대화·대화 어법·어휘 선택·짝지어진 대화 어법·대화 상황 파악</b> — 실제 중학교 시험지의 대화문 문제 모양을 따랐습니다)은 줄마다 \"A:\", \"B:\"처럼 말하는 사람이 적힌 <b>대화문</b>을 넣었을 때만 만들어집니다 — 대화문이 아니면 빼고 값도 받지 않습니다.",
       "<b>학교급</b>을 고릅니다 — <b>중학교</b>를 고르면 보기·오답·문법 포인트를 중학생 수준으로 쉽게 만듭니다. 요금은 같습니다.",
       "<b>난이도</b>를 고릅니다 — 보기를 얼마나 까다롭게 만들지 정합니다. 둘의 요금은 같고, <b>둘 다 고르면</b> 같은 지문으로 기본 한 벌·고난도 한 벌이 나옵니다(요금도 두 벌).<br>" +
         "· <b>기본</b>: 정답은 지문의 표현을 <b>살려</b> 쓰고, 오답은 지문 내용과 <b>뚜렷이 어긋나게</b> 만듭니다. 지문 내용을 알면 고를 수 있습니다.<br>" +
@@ -10339,7 +10349,17 @@ const isDialogueText = (text) => {
   return labels.filter((x) => labels.indexOf(x) !== labels.lastIndexOf(x)).length >= 4;
 };
 const EXAM_DIALOGUE_TYPES = new Set(["대화 순서", "어색한 응답", "대화 빈칸", "대화 내용 일치",
-  "대화 내용 불일치", "답할 수 없는 질문", "짝지어진 대화"]);
+  "대화 내용 불일치", "답할 수 없는 질문", "짝지어진 대화",
+  "대화 어법·어휘 선택", "짝지어진 대화 어법", "대화 상황 파악"]);
+/* 대화문에 붙여도 되는 대화 유형 밖의 유형 — 중학교 기출 6부(동중 2022·2024 네 부 · 호성중 · 아중중,
+   2026-10-04)에서 대화문으로 낸 것만 둔다. 내용 일치·심경 같은 객관식과, 요약문 빈칸·영작·문장 전환 같은
+   서답형이다. 어법(밑줄 ①~⑤)·무관한 문장·문장 삽입·함축 의미·주제처럼 본문용 유형은 대화문에 붙이지 않는다 —
+   지문이 모자랄 때 본문 문항이 대화문으로 넘어가 동중 동형 A형에 대화문 어법 문제가 셋이나 나왔는데,
+   기출 6부 어디에도 그런 문제는 없었다. */
+const EXAM_DIALOGUE_OK = new Set(["내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)", "심경",
+  "요약문 완성", "조건 영작", "문장 전환", "동사형 쓰기", "빈칸 쓰기", "표현 찾아 쓰기", "질문에 답하기",
+  "서술형배열"]);
+const examTypeOkOnDialogue = (type) => EXAM_DIALOGUE_TYPES.has(type) || EXAM_DIALOGUE_OK.has(type);
 
 // 지문 하나에 배분 판정용 값을 미리 붙여 둔다 (문장 수를 문항마다 다시 세지 않도록)
 function examProfile(job) {
@@ -10356,6 +10376,7 @@ function examEligible(type, p) {
   const rule = EXAM_FIT_RULES[type] || {};
   // 대화 유형은 대화문에만 — 대화문이 아니면 서버가 그 유형을 빼 버려 문항이 비게 된다
   if (EXAM_DIALOGUE_TYPES.has(type)) return p.dialogue && p.text.length >= 80;
+  if (p.dialogue && !examTypeOkOnDialogue(type)) return false;
   if (p.sentences < (rule.minSent || EXAM_FIT_MIN_SENT)) return false;
   if (p.text.length < EXAM_FIT_MIN_CHARS) return false;
   if (rule.repeatWord && !p.repeatWord) return false;
@@ -10417,6 +10438,7 @@ let examPlanDeadline = Infinity;   // planExamPaper가 정하는 마감 시각(p
      fit:   문장 수·같은 낱말 조건을 80자 이상으로만 본다(대화 유형은 그대로 대화문에만) */
 function examEligibleLoose(type, p) {
   if (EXAM_DIALOGUE_TYPES.has(type)) return examEligible(type, p);
+  if (p.dialogue && !examTypeOkOnDialogue(type)) return false;
   return p.text.length >= 80;
 }
 function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mode = 0, rx = {}) {
@@ -10479,7 +10501,9 @@ function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mo
         if (!memOf(no).every((m) => !occ.has(m) || occ.get(m) === no)) return false;
         if (n === 0) return true;
         if (n >= maxUses) return false;
-        return rx.mix || (plain && plainOnly.get(no));   // 재사용은 지문을 안 고치는 유형끼리만(mix면 풀린다)
+        // 재사용은 지문을 안 고치는 유형끼리만. mix면 본문은 풀리지만 대화문은 풀지 않는다 — 대화는 짧아
+        // 한 문항의 지문에 다른 문항의 답이 그대로 보였다(동중 동형 A형 10번 문장 삽입 ↔ 26번 내용 일치)
+        return (rx.mix && !isDlg.get(no)) || (plain && plainOnly.get(no));
       });
     };
     const preferred = (i, cands) => {
