@@ -396,6 +396,9 @@ MCQ_ONLY_TYPES = {
     "목적", "심경", "지칭 추론",
     "어법 분석", "옳은 문장 찾기", "영영풀이 오류 찾기",
     "연결어 2빈칸 추론",
+    "대화 순서", "어색한 응답", "대화 빈칸", "대화 내용 일치",
+    "대화 내용 불일치", "답할 수 없는 질문",
+    "문법 쓰임 같은 것", "문법 쓰임 다른 것", "다의어 같은 뜻", "짝지어진 대화",
 }
 
 
@@ -1304,6 +1307,13 @@ QUIZ_TYPE_LABELS = [
     "목적", "심경", "지칭 추론",
     "어법 분석", "옳은 문장 찾기", "영영풀이 오류 찾기",
     "요약문 완전구성형", "연결어 2빈칸 추론", "다의어 문맥의미 매칭형",
+    # 중학교 내신의 대화문 유형(2026-10-01). 대화문(말하는 사람이 표시된 지문)에서만 만든다 —
+    # 대화문이 아니면 fit_quiz_items가 빼고 요금도 매기지 않는다.
+    "대화 순서", "어색한 응답", "대화 빈칸", "대화 내용 일치",
+    "대화 내용 불일치", "답할 수 없는 질문",
+    # 중학교 내신의 낱말·문법 쓰임 유형(2026-10-01, 전주호성중 3학년 기출 6·7·13·17·5번).
+    # 지문의 한 낱말을 짚고 보기 문장을 새로 지어 '같은 쓰임/같은 뜻'을 고르게 한다.
+    "문법 쓰임 같은 것", "문법 쓰임 다른 것", "다의어 같은 뜻", "짝지어진 대화",
 ]
 
 # 지문을 '가공 없이 통째로' 보여 주는 유형 — 빈칸·밑줄·블록 분할이 전혀 없다.
@@ -1321,6 +1331,8 @@ QUIZ_PLAIN_PASSAGE_TYPES = {
     # 요약 문장을 통째로 새로 짓는 유형이라 지문 자체는 건드리지 않는다
     # ("요약문 완성"은 요약 문장 안에 빈칸을 뚫으므로 여기 없다).
     "요약문 완전구성형",
+    # 대화를 그대로 보여 주고 보기만 짓는다
+    "대화 내용 일치", "대화 내용 불일치", "답할 수 없는 질문",
 }
 
 # '목표 어법'(화면의 targetGrammar)이 걸리는 유형.
@@ -1421,6 +1433,23 @@ QUIZ_TYPE_MAX = {
     # 같은 낱말이 서로 다른 뜻으로 3번 이상 쓰인 경우 자체가 드물다 — 지문 하나에
     # 그런 낱말이 두 개 있기는 더 어렵다.
     "다의어 문맥의미 매칭형": 1,
+    # 대화 하나에 이어지는 흐름은 하나뿐이라 순서는 한 문항 — 순서·문장삽입과 같은 까닭.
+    "대화 순서": 1,
+    # 대화의 턴 수에 묶인다 — 어색한 말·빈칸 자리가 서로 겹치지 않아야 한다.
+    "어색한 응답": 2,
+    "대화 빈칸": 2,
+    # 대화에서 서로 다른 사실을 짚을 수 있는 만큼 — 내용일치보다 대화가 짧아 낮게 잡는다.
+    "대화 내용 일치": 3,
+    "대화 내용 불일치": 3,
+    # 대화에서 답이 있는 질문 넷을 서로 다른 대목에서 뽑아야 한다
+    "답할 수 없는 질문": 2,
+    # 지문에 두 가지 이상 쓰임으로 갈리는 기능어(that·as·it·to부정사…)가 여럿 있기 어렵다
+    "문법 쓰임 같은 것": 2,
+    "문법 쓰임 다른 것": 2,
+    # 여러 뜻을 가진 낱말이 지문에 몇 개 없다
+    "다의어 같은 뜻": 2,
+    # 대화문에서 뽑을 의사소통 기능 표현 수에 묶인다
+    "짝지어진 대화": 2,
 }
 # 한 번의 /api/quiz 호출에 넣을 수 있는 총 문항 수 상한.
 # 화면은 문항 수로 끊어 보내므로(app.js의 QUIZ_QUESTIONS_PER_CALL=6, 한 유형이 그보다
@@ -1518,6 +1547,9 @@ in every other question.
   types you MUST OMIT `passageHtml` entirely — the app inserts the passage itself. Copying the
   passage out again wastes output and risks it drifting from what other questions show.
   Every OTHER type still requires `passageHtml`, because its passage is genuinely modified.
+  If the passage is a DIALOGUE (each turn starts with a speaker such as "B", "G", "W", "A:", "Minho:"),
+  then for EVERY type keep each speaker label exactly as given at the start of its turn and put each
+  turn on its own line (<br>) — never drop the labels or run the turns together into one paragraph.
 - `choices`: for "mc", EXACTLY 5 short strings — do NOT prefix them with ①②③④⑤ (the app adds
   those). The one exception is "문장삽입", which has 3~5 (see its rule below).
   For "write" and "tf", set `choices` to an empty array [].
@@ -1757,6 +1789,68 @@ the passage in full.
   · 정의에는 그 낱말 자체나 같은 어근을 쓰지 마라(영영풀이 유형과 같은 규칙).
   choices = ["①","②","③","④","⑤"] in that literal order; answer = 정의가 틀린
   것의 위치.
+- WORD / GRAMMAR-USAGE TYPES (중학교 내신) — "문법 쓰임 같은 것", "문법 쓰임 다른 것",
+  "다의어 같은 뜻", "짝지어진 대화". The five choices are NEW short sentences (or mini-dialogues)
+  you write; each choice may contain <u>…</u> around the target word and <br> for line breaks.
+  Keep choice sentences short and at the passage's level.
+- "문법 쓰임 같은 것" — pick ONE function word in the passage whose grammatical role has clearly
+  different uses (that: 관계대명사 / 접속사(명사절) / 지시형용사·지시대명사 / 가주어-진주어;
+  as: ~로서 / ~할 때 / ~때문에 / ~처럼 / as~as; it: 가주어 / 비인칭 / 대명사; to부정사:
+  명사·형용사·부사적 용법; -ing: 동명사 / 현재분사; 등). instruction "윗글의 밑줄 친 X와
+  쓰임이 같은 것은?" (X = the word). passageHtml = the passage unchanged except that the ONE
+  occurrence is wrapped in <u>. choices = 5 new sentences, each with that word underlined
+  (<u>that</u>); EXACTLY ONE uses it in the same role as the passage, the other four in clearly
+  different roles. Name the role of every choice in the explanation.
+- "문법 쓰임 다른 것" — the same, but instruction "윗글의 밑줄 친 X와 쓰임이 다른 것은?" and
+  FOUR choices share the passage's role while ONE differs. answer = the different one.
+- "다의어 같은 뜻" — pick ONE word in the passage that has several common meanings (save, run,
+  break, take, miss, light, change, kind…). instruction "윗글의 밑줄 친 X와 같은 의미로 쓰인 것은?".
+  passageHtml = the passage with that one occurrence wrapped in <u>. choices = 5 new sentences
+  each using the word (any form) underlined; EXACTLY ONE has the passage's meaning, the other
+  four use other meanings. In the explanation give each choice's meaning in Korean.
+- "짝지어진 대화" — instruction "짝지어진 대화 중 어색한 것은?". The passage is a dialogue; take
+  its 의사소통 기능 표현 (제안·요청·허락·감사·사과·걱정·축하·의견 묻기 등) as material.
+  passageHtml = "" (empty — the pairs stand alone, as on real 내신 papers). choices = 5 mini-
+  dialogues, each "A: …<br>B: …", short and natural; FOUR responses fit, ONE response does not
+  fit A's line (wrong function or meaning) while staying grammatical. answer = the awkward one.
+- DIALOGUE TYPES (중학교 내신) — "대화 순서", "어색한 응답", "대화 빈칸", "대화 내용 일치",
+  "대화 내용 불일치", "답할 수 없는 질문".
+  The passage is a DIALOGUE: each turn begins with the speaker ("A:", "B:", "Minho:", "G:" — or
+  just the letter without a colon, as copied from a textbook: "B How often…", "G I play…").
+  Keep the speaker labels exactly as given (do not add or remove colons) and put every turn on
+  its own line (<br>).
+  Build ONLY from the dialogue; never turn it into a narrative.
+- "대화 순서" — instruction "주어진 말에 이어질 대화의 순서로 가장 적절한 것은?".
+  passageHtml = ONE given opening turn, then <br><br>, then the NEXT three turns as blocks
+  <b>(A)</b>, <b>(B)</b>, <b>(C)</b> (each on its own line, speaker label kept) in a SCRAMBLED
+  (non-original) order. Use four consecutive turns of the dialogue; if it is longer, pick the
+  stretch where the order is decided by meaning (질문→대답, 제안→수락/거절→이유), not by
+  guesswork. choices = 5 orderings like "(B)-(A)-(C)", exactly one matching the dialogue.
+- "어색한 응답" — instruction "다음 대화의 밑줄 친 부분 중, 흐름상 어색한 것은?".
+  passageHtml = the dialogue with FIVE turns (or the key sentence of a turn) underlined and
+  numbered ①<u>…</u> … ⑤<u>…</u> in order. Rewrite EXACTLY ONE of them so it no longer fits
+  the turn before it (대답이 질문과 맞지 않음, 사과에 "You're welcome", 거절해 놓고 이유가
+  수락인 말 등) — it must be clearly wrong in context, yet grammatical. The other four stay as in
+  the original. choices = ["①","②","③","④","⑤"]; answer = the rewritten one.
+- "대화 빈칸" — instruction "대화의 빈칸에 들어갈 말로 가장 적절한 것은?".
+  passageHtml = the dialogue with ONE turn (or the key expression of a turn) replaced by
+  "__________". Prefer a 의사소통 기능 표현 (제안·허락 구하기·의견 묻기·감정 표현·당부 등)
+  whose answer is fixed by the turns around it. choices = 5 short English expressions; the
+  four wrong ones are natural English but clash with what comes before or after
+  (다른 기능의 말, 반대 대답 등). answer = the fitting one.
+- "대화 내용 일치" — instruction "위 대화의 내용과 일치하는 것은?". The dialogue is shown
+  unchanged (지문 재사용형). choices = 5 KOREAN statements about the dialogue (누가, 무엇을,
+  언제, 왜); EXACTLY ONE is true and the other four contradict it by a concrete fact
+  (사람·시간·장소·이유를 바꾸기). answer = the true one.
+- "대화 내용 불일치" — instruction "위 대화의 내용과 일치하지 않는 것은?". Same as
+  "대화 내용 일치" but FOUR Korean statements are true and ONE contradicts the dialogue by a
+  concrete fact. answer = the false one.
+- "답할 수 없는 질문" — instruction "위 대화를 읽고 답할 수 없는 질문은?". The dialogue is shown
+  unchanged. choices = 5 short ENGLISH questions (Who/What/When/Where/Why/How …?). FOUR are
+  answered by a specific line of the dialogue (each from a different part); ONE asks about
+  something related but never stated (the reason, a time, a place the speakers do not
+  mention). answer = the unanswerable one. In the explanation, quote the line that answers
+  each of the four.
 - "내용일치(영)" — instruction "다음 글의 내용과 일치하는 것은?". passageHtml = 지문 전문.
   choices = 5 ENGLISH statements about the passage; EXACTLY ONE is true to the
   passage, the other 4 must CONTRADICT it (not merely be unmentioned). answer = the true one.
@@ -2168,6 +2262,25 @@ def insertion_issue(q, k):
     return why
 
 
+QUIZ_DIALOGUE_TYPES = {"대화 순서", "어색한 응답", "대화 빈칸", "대화 내용 일치",
+                       "대화 내용 불일치", "답할 수 없는 질문", "짝지어진 대화"}
+# 말하는 사람 표시 — "A:", "Minho :", "G:", "민호:" 처럼 줄 첫머리의 짧은 이름 + 쌍점.
+# 쌍점이 없는 표시도 받는다 — 교과서에서 복사하면 "B How often…"·"G I play…"처럼 온다(2026-10-02 호성중
+# 5·6과 대화문 21개가 전부 대화문이 아니라고 판정됐다). 쌍점 없이는 B·G·W·M·S·T 한 글자만 인정한다 —
+# "I"·"A"는 영어 낱말이고 "Mom bought…" 같은 문장도 있어, 쌍점 없는 긴 이름은 받지 않는다.
+_DIALOGUE_TURN_RE = re.compile(
+    r"^\s*(?:([A-Z][A-Za-z.' ]{0,14}|[가-힣]{1,6})\s*[:：]|([BGWMST])(?=\s))\s*\S", re.M)
+
+
+def is_dialogue(passage):
+    """말하는 사람이 표시된 줄이 넷 이상이면 대화문으로 본다(public/app.js isDialogueText와 같은 기준).
+
+    두 번 이상 말한 사람의 줄만 센다 — 안내문의 "Date: / Time: / Place: / Fee:"도 줄 첫머리 이름 +
+    쌍점이라 대화문으로 잡혔다(2026-10-04). 대화는 같은 사람이 되풀이해 말하고, 안내문 항목은 한 번씩이다."""
+    labels = [(a or b).strip() for a, b in _DIALOGUE_TURN_RE.findall(passage or "")]
+    return sum(1 for x in labels if labels.count(x) >= 2) >= 4
+
+
 def fit_quiz_items(raw_types, passage):
     """parse_quiz_items + 지문 길이로 낼 수 없는 유형 빼기. (items, 뺀 유형 안내 목록).
 
@@ -2181,6 +2294,13 @@ def fit_quiz_items(raw_types, passage):
             f"문장삽입은 지문에 문장이 {INSERTION_MIN_CHOICES + 1}개 이상 있어야 만들 수 있어 "
             "뺐습니다(주어진 문장을 빼고도 넣을 자리가 3곳은 있어야 합니다). 이 유형 요금은 "
             "나가지 않았습니다."
+        )
+    if any(t in QUIZ_DIALOGUE_TYPES for t, _ in items) and not is_dialogue(passage):
+        dropped = [t for t, _ in items if t in QUIZ_DIALOGUE_TYPES]
+        items = [(t, n) for t, n in items if t not in QUIZ_DIALOGUE_TYPES]
+        skipped.append(
+            f"{'·'.join(dropped)}은(는) 대화문(줄마다 \"A:\", \"B:\"처럼 말하는 사람이 표시된 지문)에서만 "
+            "만들 수 있어 뺐습니다. 이 유형 요금은 나가지 않았습니다."
         )
     return items, skipped
 
@@ -2229,6 +2349,28 @@ OX_FALSE_WEIGHTS = (2, 5, 5, 5, 5, 2)
 # (이 지문에서는 failure·familiar) 빈칸에 넣어도 지문으로 옹호가 됐다. 금지 낱말을 예로
 # 들어 못 박아도 세 번의 시험에서 계속 다시 넣었다. 다시 넣으려면 함정 규칙부터 빼고
 # 시험할 것 — 요약문을 다른 말로 쓰는 것만으로도 어려움은 생긴다.
+# 학교급 '중학교'(2026-10-01). 문제 생성은 고등학교·수능 말투가 기본이라, 교과서 지문이 쉬워도
+# 영어 보기·오답이 중학생에게 어려웠다. 화면에서 중학교를 고르면 지시문 뒤에 덧붙인다.
+# 모델·요금은 그대로다(난이도 '고난도'와 겹쳐 고를 수 있다 — 그때는 중학생 기준 안에서 까다롭게).
+QUIZ_MIDDLE_RULES = r"""
+
+## 학교급: 중학교 (MIDDLE SCHOOL) — these rules override the 수능 defaults above
+The students are Korean MIDDLE-school students (중1~중3). Write every question for them:
+- Choices: short and plain. English choices use 중학 교육과정 수준의 쉬운 낱말 and stay under
+  about 10 words; avoid abstract academic paraphrase ("the significance of…", "the necessity
+  of…"). A choice should be checkable by reading the passage once, carefully.
+- Wrong choices are clearly wrong on a careful reading — a concrete fact flip or an obviously
+  different topic. Do NOT build subtle 수능-style traps (half-true statements, scope tricks).
+- Grammar points (어법·어법 선택형·틀린 어법 찾기·동사형 쓰기 등): choose from 중학 문법 — 시제,
+  현재완료, 수동태, to부정사·동명사, 관계대명사 who/which/that, 비교급·최상급, 접속사,
+  조동사, 간접의문문, 감탄문 — unless the passage or the 목표 어법 says otherwise. Do not test
+  분사구문·도치·가정법 과거완료 unless the passage is built on them.
+- Vocabulary items test words a middle-school student learns from THIS passage, not rare words.
+- Explanations: 쉬운 한국어로, 짧게. 어려운 문법 용어는 풀어서 쓴다.
+- If the 고난도 rules are also present, make the question harder WITHIN these limits
+  (헷갈리는 오답을 하나 더 그럴듯하게) — never above middle-school level.
+"""
+
 QUIZ_HARD_RULES = r"""
 
 ## 난이도: 고난도 — THESE RULES OVERRIDE THE ABOVE WHERE THEY CONFLICT
@@ -2343,6 +2485,8 @@ QUIZ_ANSWER_PLAN_TYPES = {
     "주제", "제목", "요지", "목적", "심경", "빈칸", "순서", "함축의미", "영영풀이",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
     "요약문", "연결어 2빈칸 추론", "어법 분석",
+    "대화 순서", "대화 빈칸", "대화 내용 일치", "대화 내용 불일치", "답할 수 없는 질문",
+    "문법 쓰임 같은 것", "문법 쓰임 다른 것", "다의어 같은 뜻", "짝지어진 대화",
 }
 # 정답을 ①에 두지 말라는 규칙이 따로 있는 유형(프롬프트의 해당 유형 설명 참고)
 QUIZ_ANSWER_NOT_FIRST = {"요약문", "연결어 2빈칸 추론"}
@@ -2561,6 +2705,19 @@ _QUIZ_ALLOWED_TAGS = {"br", "u", "b"}
 _QUIZ_ANY_TAG_RE = re.compile(r"</?([a-zA-Z0-9]+)([^>]*)>")
 
 
+_CIRCLED_NUMS = "①②③④⑤⑥⑦⑧⑨⑩"
+
+
+def _strip_own_marker(text, idx):
+    """보기 i번 글이 자기 번호와 같은 동그라미 숫자로 시작하면 뗀다 — 화면이 번호를 붙이므로
+    "①①how often…"처럼 겹쳐 찍힌다(2026-10-02 어법 분석). 다른 번호나 ["①","②"…]처럼
+    번호만 있는 보기는 건드리지 않는다."""
+    m = re.match(r"^\s*([①-⑩])\s*(\S.*)$", text or "", re.S)
+    if m and _CIRCLED_NUMS.index(m.group(1)) == idx:
+        return m.group(2)
+    return text
+
+
 def sanitize_quiz_html(html):
     """문제 지문 HTML에서 <br>/<u>/<b> 만 남기고 나머지 태그는 제거한다."""
     if not html:
@@ -2642,7 +2799,7 @@ def _check_ox_plan(result, ox_plan):
 
 def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
                       explain_hint=None, variation="verbatim", target_grammar="",
-                      insert_hint=None, difficulty="normal"):
+                      insert_hint=None, difficulty="normal", level="high"):
     """items = [(유형, 문항수)]. 개수 상한은 parse_quiz_items가 이미 적용해 둔다.
     difficulty="hard"면 QUIZ_HARD_RULES를 지시문 뒤에 덧붙인다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -2668,7 +2825,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
     payload = {
         "systemInstruction": {"parts": [{"text": QUIZ_SYSTEM_PROMPT + (
             QUIZ_HARD_RULES if difficulty == "hard" else ""
-        )}]},
+        ) + (QUIZ_MIDDLE_RULES if level == "middle" else "")}]},
         "contents": [
             {"role": "user", "parts": [
                 {"text": build_quiz_user_prompt(
@@ -2711,7 +2868,10 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
             q["passageHtml"] = fix_underline_bounds(q["passageHtml"])
         choices = q.get("choices")
         if isinstance(choices, list):
-            q["choices"] = [sanitize_quiz_html(c) if isinstance(c, str) else c for c in choices]
+            q["choices"] = [
+                _strip_own_marker(sanitize_quiz_html(c), i) if isinstance(c, str) else c
+                for i, c in enumerate(choices)
+            ]
         items = q.get("tfItems")
         if isinstance(items, list):
             for it in items:
@@ -4472,11 +4632,13 @@ EXAM_SCAN_SCHEMA = {
                     # 잘라 보여 준다(2026-09-30). box는 [ymin, xmin, ymax, xmax], 0~1000 비율.
                     "page": {"type": "INTEGER"},
                     "box": {"type": "ARRAY", "items": {"type": "INTEGER"}},
+                    # 대화문 기반인가 본문 기반인가 — 동형 모의고사가 기출의 대화/본문 비율을 그대로 따른다
+                    "basis": {"type": "STRING"},
                 },
                 "required": ["no", "group", "format", "prompt", "category", "kind", "fit", "note",
-                             "page", "box"],
+                             "page", "box", "basis"],
                 "propertyOrdering": ["no", "group", "format", "prompt", "category",
-                                     "kind", "fit", "note", "page", "box"],
+                                     "kind", "fit", "note", "page", "box", "basis"],
             },
         },
         "note": {"type": "STRING"},
@@ -4571,6 +4733,10 @@ irrelevant here and copying them wastes the whole output. Read the Korean questi
   (0,0 = top-left of the image as you see it, even if the page is rotated). Cover the question
   number, the 발문 and its answer choices / answer space. Do NOT include a reading passage shared
   with other questions. If unsure, make the box a little larger rather than smaller.
+- `basis`: "대화" when the question is built on a DIALOGUE — the material is speaker-labelled turns
+  ("B …/G …", "A:/B:", "Minho: …"), a set of short A/B exchanges (짝지어진 대화), or the 발문 says
+  대화 — otherwise "본문" (a reading passage, a graph/notice text, or a sentence-rewriting item).
+  Judge by the material the student reads for THAT question, not by the exam as a whole.
 - `kind`: the closest type from the ALLOWED LIST given in the user message, copied EXACTLY.
   Use "" when nothing on the list is close.
   The list has three groups (객관식 / 주관식 / 워크북). Korean 내신 서답형 — 영작, 우리말
@@ -4993,6 +5159,7 @@ def normalize_exam_scan(result):
             "prompt": sanitize_inline(str(raw.get("prompt") or "")),
             "category": category,
             "category_raw": category_raw,
+            "basis": (str(raw.get("basis") or "").strip() if str(raw.get("basis") or "").strip() in ("대화", "본문") else ""),
             "page": _exam_int(raw.get("page"), 1, 64),
             "box": _exam_box(raw.get("box")),
             "kind": kind,
@@ -9123,6 +9290,18 @@ CHANGELOG = [
             "나옵니다(새로 분석한 시험지부터). 저장하면 기타 문항 그림도 함께 남습니다.",
         ],
     },
+    {
+        "version": 57,
+        "date": "2026-10-04",
+        "items": [
+            "객관식·주관식·동형 모의고사 — '학교급'에서 중학교를 고르면 보기·오답·문법 포인트를 "
+            "중학생 수준으로 만듭니다. 객관식에 중학교 내신 유형 10가지(대화 순서·어색한 응답·대화 빈칸·"
+            "짝지어진 대화·문법 쓰임 같은 것 등)가 더해졌습니다 — 대화문 유형은 대화문을 넣었을 때만 만듭니다.",
+            "동형 모의고사 — 기출의 대화문/본문 문항 비율대로 지문을 붙이고, 시험 범위 지문을 "
+            "[📷 사진에서 가져오기]로 교과서 사진에서 바로 넣을 수 있습니다.",
+            "시험지 분석 리포트 — [📰 카드뉴스 만들기]로 분석 결과를 정사각형 그림 카드로 내려받을 수 있습니다.",
+        ],
+    },
 ]
 
 
@@ -12580,6 +12759,8 @@ class Handler(BaseHTTPRequestHandler):
             # 값은 그대로 받는다 — 원가가 유형 하나에 20~30원 오르지만 정찰가(250원)
             # 안에서 감당된다(2026-09-27 계산). 모르는 값은 기본으로 본다.
             difficulty = "hard" if req.get("difficulty") == "hard" else "normal"
+            # 학교급 — 모르는 값은 고등학교로 본다
+            level = "middle" if req.get("school") == "middle" else "high"
             model = MODEL_PRO if difficulty == "hard" or any(
                 t not in QUIZ_PLAIN_PASSAGE_TYPES for t, _ in items
             ) else MODEL
@@ -12590,7 +12771,7 @@ class Handler(BaseHTTPRequestHandler):
             t0 = time.monotonic()
             try:
                 result = call_gemini_quiz(passage, items, api_key, model, variation=variation,
-                                          target_grammar=quiz_grammar, difficulty=difficulty)
+                                          target_grammar=quiz_grammar, difficulty=difficulty, level=level)
                 # 문항 누락 방어 — 요청한 개수보다 적게 오면 한 번 더 요청해 채운다
                 want = sum(n for _, n in items)
                 for _ in range(2):
@@ -12608,7 +12789,7 @@ class Handler(BaseHTTPRequestHandler):
                     retry = call_gemini_quiz(
                         passage, items, api_key, model,
                         short_hint=(missing or got), variation=variation,
-                        target_grammar=quiz_grammar, difficulty=difficulty,
+                        target_grammar=quiz_grammar, difficulty=difficulty, level=level,
                     )
                     # 더 많이 만들어 온 결과만 채택 (재시도가 더 나쁘면 기존 유지)
                     if len(retry.get("questions", [])) > got:
@@ -12624,7 +12805,7 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     retry = call_gemini_quiz(
                         passage, items, api_key, model, explain_hint=missing, variation=variation,
-                        target_grammar=quiz_grammar, difficulty=difficulty,
+                        target_grammar=quiz_grammar, difficulty=difficulty, level=level,
                     )
                     # 문항 수가 줄지 않고 해설이 더 잘 채워진 결과만 채택
                     if (
@@ -12647,7 +12828,7 @@ class Handler(BaseHTTPRequestHandler):
                             retry = call_gemini_quiz(
                                 passage, items, api_key, model, variation=variation,
                                 target_grammar=quiz_grammar, insert_hint=bad,
-                                difficulty=difficulty,
+                                difficulty=difficulty, level=level,
                             )
                         except Exception:
                             break

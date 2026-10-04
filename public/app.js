@@ -2022,6 +2022,8 @@ TAB_SAVE.passage = {
    분석·문제 전체를 오염시키므로 검토 단계를 건너뛰지 않는다. */
 const ocrBtn = $("ocrBtn");
 const ocrFileEl = $("ocrFile");
+const examOcrPhotoBtn = $("examOcrPhotoBtn");   // 동형 모의고사 시험 범위 칸의 사진 단추
+const examOcrFileEl = $("examOcrFile");
 const ocrStatusEl = $("ocrStatus");
 
 // 업로드 전 축소 — 긴 변 1600px면 지문 글자를 읽기에 충분하고,
@@ -2175,15 +2177,17 @@ async function ocrBySlices(file, who, onProgress) {
 
 let ocrBusy = false;
 
-async function runOcr(fileList) {
+/* mgr·status — 어느 지문 칸에 넣고 어디에 진행 상황을 쓸지. 기본은 공용 지문칸이다. 동형 모의고사의
+   '시험 범위 지문' 칸도 같은 길로 채운다(2026-10-02 — 시험 범위를 교과서 사진으로 넣는 쓰임). */
+async function runOcr(fileList, mgr = passageMgr, say = ocrStatus) {
   const files = [...fileList].filter((f) => f && isPhoto(f));
   if (!files.length) {
-    ocrStatus("사진(JPG·PNG·WEBP)만 올릴 수 있습니다.", "warn");
+    say("사진(JPG·PNG·WEBP)만 올릴 수 있습니다.", "warn");
     return;
   }
   if (ocrBusy) return;
   ocrBusy = true;
-  ocrBtn.disabled = true;
+  [ocrBtn, examOcrPhotoBtn].forEach((b) => b && (b.disabled = true));
 
   let added = 0;
   const notes = [];
@@ -2192,7 +2196,7 @@ async function runOcr(fileList) {
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     const who = file.name || `사진 ${i + 1}`;
-    ocrStatus(
+    say(
       `<span class="spinner"></span> ${esc(who)} 읽는 중… (${i + 1}/${files.length})`
     );
     try {
@@ -2213,12 +2217,12 @@ async function runOcr(fileList) {
         if (!isRecitationError(err)) throw err;
         // 널리 공개된 지문이라 통째로는 막혔다 — 사진을 잘라 조각별로 읽어 이어 붙인다
         data = await ocrBySlices(file, who, (msg) =>
-          ocrStatus(`<span class="spinner"></span> ${esc(who)} ${msg}`)
+          say(`<span class="spinner"></span> ${esc(who)} ${msg}`)
         );
         notes.push(`${who}: 널리 공개된 지문이라 사진을 나눠 읽었습니다. 문장이 이어지는지 특히 잘 확인하세요.`);
       }
       if (data.note) notes.push(`${who}: ${data.note}`);
-      if (passageMgr.fillText(data.text)) added++;
+      if (mgr.fillText(data.text)) added++;
       else fails.push(`${who} — 지문 칸이 가득 차 더 넣지 못했습니다.`);
     } catch (err) {
       const msg = err.message || String(err);
@@ -2242,11 +2246,12 @@ async function runOcr(fileList) {
   notes.forEach((n) => parts.push(`⚠️ ${esc(n)}`));
   fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
   if (!parts.length) parts.push("옮길 지문을 찾지 못했습니다.");
-  ocrStatus(parts.join("<br>"), added ? (fails.length ? "warn" : "ok") : "warn");
+  say(parts.join("<br>"), added ? (fails.length ? "warn" : "ok") : "warn");
 
   ocrBusy = false;
-  ocrBtn.disabled = false;
+  [ocrBtn, examOcrPhotoBtn].forEach((b) => b && (b.disabled = false));
   ocrFileEl.value = ""; // 같은 파일을 다시 골라도 change가 나도록 비운다
+  if (examOcrFileEl) examOcrFileEl.value = "";
   refreshTokenDisplay();
 }
 
@@ -2548,6 +2553,13 @@ pdfFileEl.addEventListener("change", () => {
 });
 // 시험지 제작 탭의 '시험 범위 지문'도 같은 길로 채운다 — 시험 범위 전체를 넣는 칸이라
 // PDF 한 부를 통째로 담는 쓰임이 가장 잦은 곳이다.
+// 사진도 같다 — 교과서 본문을 찍어 시험 범위에 넣는다(runOcr에 시험 범위 칸을 목적지로 넘긴다)
+if (examOcrPhotoBtn) {
+  examOcrPhotoBtn.addEventListener("click", () => examOcrFileEl.click());
+  examOcrFileEl.addEventListener("change", () => {
+    if (examOcrFileEl.files && examOcrFileEl.files.length) runOcr(examOcrFileEl.files, examPaperMgr, examPassageStatus);
+  });
+}
 examPdfBtn.addEventListener("click", () => examPdfFileEl.click());
 examPdfFileEl.addEventListener("change", () => {
   if (examPdfFileEl.files && examPdfFileEl.files.length) {
@@ -4476,6 +4488,13 @@ const MCQ_TYPES = [
   { id: "어법 분석", def: false }, { id: "옳은 문장 찾기", def: false },
   { id: "영영풀이 오류 찾기", def: false },
   { id: "연결어 2빈칸 추론", def: false },
+  // 중학교 내신 대화문 유형 — 대화문(말하는 사람이 표시된 지문)에서만 만든다(server.py fit_quiz_items)
+  { id: "대화 순서", def: false }, { id: "어색한 응답", def: false }, { id: "대화 빈칸", def: false },
+  { id: "대화 내용 일치", def: false }, { id: "대화 내용 불일치", def: false },
+  { id: "답할 수 없는 질문", def: false },
+  // 중학교 내신의 낱말·문법 쓰임 유형 — 지문의 낱말 하나를 짚고 보기 문장을 새로 짓는다
+  { id: "문법 쓰임 같은 것", def: false }, { id: "문법 쓰임 다른 것", def: false },
+  { id: "다의어 같은 뜻", def: false }, { id: "짝지어진 대화", def: false },
 ];
 // 주관식(서술형·단답형) 유형
 const SAQ_TYPES = [
@@ -4594,6 +4613,9 @@ const TYPE_MAX = {
   목적: 5, 심경: 2, "지칭 추론": 2,
   "어법 분석": 3, "옳은 문장 찾기": 3, "영영풀이 오류 찾기": 5,
   "연결어 2빈칸 추론": 2, "다의어 문맥의미 매칭형": 1, "요약문 완전구성형": 1,
+  "대화 순서": 1, "어색한 응답": 2, "대화 빈칸": 2,
+  "대화 내용 일치": 3, "대화 내용 불일치": 3, "답할 수 없는 질문": 2,
+  "문법 쓰임 같은 것": 2, "문법 쓰임 다른 것": 2, "다의어 같은 뜻": 2, "짝지어진 대화": 2,
 };
 // +버튼이 막혔을 때 왜 막혔는지 알려 준다 — 유형마다 상한이 다른 이유가 다르다.
 const TYPE_MAX_REASON = {
@@ -4625,6 +4647,16 @@ const TYPE_MAX_REASON = {
   "연결어 2빈칸 추론": "자연스러운 담화 전환점 수 때문에",
   "다의어 문맥의미 매칭형": "같은 낱말이 다른 뜻으로 여러 번 쓰인 경우 자체가 드물어",
   "요약문 완전구성형": "글 하나를 요약한 문장이 하나뿐이라",
+  "대화 순서": "대화 하나에 이어지는 흐름이 하나뿐이라",
+  "어색한 응답": "대화의 주고받는 말 수 때문에",
+  "대화 빈칸": "대화의 주고받는 말 수 때문에",
+  "대화 내용 일치": "대화가 짧아 짚을 수 있는 사실 수 때문에",
+  "대화 내용 불일치": "대화가 짧아 짚을 수 있는 사실 수 때문에",
+  "답할 수 없는 질문": "답이 있는 질문을 서로 다른 대목에서 뽑아야 해서",
+  "문법 쓰임 같은 것": "쓰임이 여럿으로 갈리는 기능어(that·as·it…) 수 때문에",
+  "문법 쓰임 다른 것": "쓰임이 여럿으로 갈리는 기능어(that·as·it…) 수 때문에",
+  "다의어 같은 뜻": "여러 뜻을 가진 낱말 수 때문에",
+  "짝지어진 대화": "대화문에서 뽑을 표현 수 때문에",
 };
 function typeMaxNote(id) {
   const max = TYPE_MAX[id] || 1;
@@ -4755,6 +4787,10 @@ function askBigRun(info) {
 const MCQ_TRANSFORM_TYPES = new Set([
   "빈칸", "어휘", "어법", "순서", "문장삽입", "무관한 문장", "요약문", "함축의미",
   "지칭 추론", "어법 분석", "옳은 문장 찾기", "영영풀이 오류 찾기", "연결어 2빈칸 추론",
+  // 대화문을 뒤섞고(순서)·고쳐 쓰고(어색한 응답)·빈칸을 뚫는다(대화 빈칸)
+  "대화 순서", "어색한 응답", "대화 빈칸",
+  // 지문에 밑줄을 긋고 보기 문장을 새로 짓는다(짝지어진 대화는 보기만 짓는다)
+  "문법 쓰임 같은 것", "문법 쓰임 다른 것", "다의어 같은 뜻", "짝지어진 대화",
 ]);
 
 /* 유형을 호출 묶음으로 나눈다. 규칙 세 가지:
@@ -4856,6 +4892,11 @@ function setupQuizTab({ prefix, types, footer }) {
   // 한다. 서버가 QUIZ_HARD_RULES를 덧붙이고 Pro로 만든다. 값은 기본과 같다.
   // 지문 변형처럼 둘 다 고를 수 있다 — 고르면 같은 지문으로 기본 한 벌·고난도 한 벌이
   // 나온다(수업용·시험용을 한 번에 뽑는 쓰임). 세트가 늘어나는 만큼 값도 는다.
+  // 학교급 — 중학교면 서버가 QUIZ_MIDDLE_RULES를 덧붙인다(모델·요금은 그대로)
+  const schoolEl = radioGroup(prefix + "School");
+  const school = () => (schoolEl && schoolEl.value === "middle" ? "middle" : "high");
+  // 고른 칸에 강조 표시(.picked)를 처음부터 달고, 바꿀 때마다 옮긴다(radioGroup이 change에서 맞춘다)
+  if (schoolEl) { syncPicked(prefix + "School"); schoolEl.addEventListener("change", () => {}); }
   const levelEl = checkGroup(prefix + "Level");
   const levelHintEl = $(prefix + "LevelHint");
   const LEVEL_STORE = "gemini_" + prefix + "_level";
@@ -5468,6 +5509,7 @@ function setupQuizTab({ prefix, types, footer }) {
                     // AI가 지문에 맞춰 알아서 문법 포인트를 고른다.
                     targetGrammar: grammarEl.value,
                     difficulty,
+                    school: school(),
                   },
                   "문제 생성에 실패했습니다."
                 );
@@ -6009,7 +6051,8 @@ function quizBodyHtml(q) {
           않았다. 지금은 아예 주지 않으므로 밑줄만 그린다.
           (힌트 자리가 비어 있지 않은 예전 저장물은 그 글자를 밑줄 앞에 그대로 보여 준다) */
     const answers = [];
-    const html = esc(q.passageHtml || "").replace(
+    // esc가 <br>을 글자 그대로 찍어 시험지에 "<br>"이 보였다(대화문 지문) — 줄바꿈 표시를 지켰다가 되살린다
+    const html = esc(String(q.passageHtml || "").replace(/<br\s*\/?>/gi, "\u0001")).replace(/\u0001/g, "<br>").replace(
       /\(([^()|]*)\|([^()|]*)\)/g,
       (_, hint, ans) => {
         answers.push(ans.trim());
@@ -6108,8 +6151,9 @@ function quizBodyHtml(q) {
       <li><span class="qz-num">${CIRCLED[i] || i + 1}</span><span class="qz-choice-text">${safeHTML(c)}</span></li>`
     )
     .join("");
+  // 짝지어진 대화처럼 지문 없이 보기만 있는 문항은 빈 지문 상자를 그리지 않는다
   return `
-    <div class="qz-passage">${safeHTML(q.passageHtml)}</div>
+    ${String(q.passageHtml || "").trim() ? `<div class="qz-passage">${safeHTML(q.passageHtml)}</div>` : ""}
     <ul class="qz-choices">${choicesHtml}</ul>`;
 }
 
@@ -8654,7 +8698,8 @@ const HOWTO = {
     lead: "지문 하나로 수능·내신 어투의 5지선다 문항을 만듭니다.",
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. (선택) <b>목표 어법</b>을 적으면 어법 문항의 정답 자리를 그 문법으로 냅니다.",
-      "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추).",
+      "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추). 중학교 내신 유형 — <b>문법 쓰임 같은 것·다른 것</b>(that·as 등의 쓰임), <b>다의어 같은 뜻</b>은 아무 지문에서나 만들고, 대화문 유형(<b>대화 순서·어색한 응답·대화 빈칸·대화 내용 일치·대화 내용 불일치·답할 수 없는 질문·짝지어진 대화</b>)은 줄마다 \"A:\", \"B:\"처럼 말하는 사람이 적힌 <b>대화문</b>을 넣었을 때만 만들어집니다 — 대화문이 아니면 빼고 값도 받지 않습니다.",
+      "<b>학교급</b>을 고릅니다 — <b>중학교</b>를 고르면 보기·오답·문법 포인트를 중학생 수준으로 쉽게 만듭니다. 요금은 같습니다.",
       "<b>난이도</b>를 고릅니다 — 보기를 얼마나 까다롭게 만들지 정합니다. 둘의 요금은 같고, <b>둘 다 고르면</b> 같은 지문으로 기본 한 벌·고난도 한 벌이 나옵니다(요금도 두 벌).<br>" +
         "· <b>기본</b>: 정답은 지문의 표현을 <b>살려</b> 쓰고, 오답은 지문 내용과 <b>뚜렷이 어긋나게</b> 만듭니다. 지문 내용을 알면 고를 수 있습니다.<br>" +
         "· <b>고난도</b>: 정답은 지문의 표현을 <b>다른 말로 바꿔</b> 쓰고, 오답에 지문 속 낱말을 <b>그대로 넣은 함정</b>을 섞습니다. 눈에 익은 낱말로는 못 고르고 글의 논리를 이해해야 맞힙니다. 해설에 어느 보기가 함정이었는지도 적습니다.",
@@ -8675,6 +8720,7 @@ const HOWTO = {
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "(선택) <b>목표 어법</b>을 적으면 어법 선택형·틀린 어법 찾기·동사형 쓰기의 정답 자리를 그 문법으로 내고, <b>서술형배열·조건 영작·문장 전환</b>은 그 문법이 쓰인 문장을 골라 출제합니다.",
       "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다.",
+      "<b>학교급</b>을 고릅니다 — <b>중학교</b>를 고르면 묻는 말·문법 포인트를 중학생 수준으로 만듭니다. 요금은 같습니다.",
       "<b>난이도</b>를 고릅니다 — 묻는 말을 얼마나 까다롭게 만들지 정합니다. 둘의 요금은 같고, <b>둘 다 고르면</b> 기본 한 벌·고난도 한 벌이 나옵니다.<br>" +
         "· <b>기본</b>: 진술·질문·뜻풀이에 지문의 표현을 살려 씁니다. 지문 내용을 알면 풀 수 있습니다.<br>" +
         "· <b>고난도</b>: 묻는 말을 지문과 다른 말로 바꾸고, OX는 한 군데만 살짝 틀리게, 질문은 두 대목을 이어야 답이 나오게, 조건 영작은 원문과 다른 구조로 쓰게 합니다.<br>" +
@@ -8723,8 +8769,8 @@ const HOWTO = {
       "기출 시험지 <b>PDF·사진</b>을 끌어다 놓으면 바로 <b>유형 분석</b>을 시작합니다. 한 번 분석해 저장해 둔 구성이 있으면 <b>[📂 저장한 구성 불러오기]</b>로, 시험지 분석 리포트에서 분석해 저장해 둔 기출이면 <b>[📂 분석 리포트에서 불러오기]</b>로 건너뛰어도 됩니다.",
       "기출을 <b>여러 부</b> 쓰려면 다음 시험지를 이어서 올리세요 — 곧바로 이어서 분석하고, 한 구성으로 합칩니다. <b>한 번이라도 나온 유형은 1문항씩</b> 깔고 남는 자리를 자주 나온 유형에 더 줍니다.",
       "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손봅니다 — 고친 숫자는 누를 것 없이 <b>바로</b> 아래 제작 칸에 반영됩니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 따로 남겨 둘 수 있습니다 — 시험지를 만든 뒤에도 누를 수 있습니다. <b>불러온 구성도</b> 같은 표가 떠서 개수를 고칠 수 있습니다.",
-      "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b>로 채울 수도 있고, 기출 속 지문을 쓰려면 <b>[📄 지문도 가져오기]</b>를 누르세요.",
-      "(선택) 목표 어법 · 출제 순서 · 몇 부(1부 / A형·B형) · 시험지 머리글(학교 이름·고사 이름 등) · 표지 제목을 정합니다.",
+      "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b> · <b>[📷 사진에서 가져오기]</b>로 채울 수도 있고, 기출 속 지문을 쓰려면 <b>[📄 지문도 가져오기]</b>를 누르세요.",
+      "(선택) 목표 어법 · 출제 순서 · <b>학교급</b>(중학교면 보기·오답을 중학생 수준으로, 지문이 모자라면 <b>주제·제목·내용 일치처럼 지문을 안 고치는 유형</b>은 한 지문으로 최대 3문항까지 냅니다. 그래도 모자라거나 본문이 짧으면 <b>같은 과의 이웃한 본문을 이어</b> 실제 시험처럼 긴 지문으로 씁니다 — 지문 이름을 “5과 본문 (1)”, “(2)”처럼 번호만 다르게 달아 두면 같은 과로 알아봅니다) · 몇 부(1부 / A형·B형) · 시험지 머리글(학교 이름·고사 이름 등) · 표지 제목을 정합니다. 중학교 기출의 <b>대화문 문항</b>은 시험 범위 칸에 넣은 <b>대화문</b>(줄마다 \"A:\", \"B:\")으로만 만듭니다.",
       "<b>[📝 문제 제작]</b>을 누릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b> — 사이트 저장은 만든 시험지를 저장하고, 기출 구성 저장과는 따로 쌓입니다. 저장한 시험지는 맨 위 <b>[📂 저장한 시험지 불러오기]</b>로 되불러옵니다. 불러온 시험지 말고 <b>새 시험지를 따로</b> 만들려면 <b>[🧹 만든 시험지 비우기]</b>를 누른 뒤 만드세요 — 안 비우면 새 시험지가 불러온 것 뒤에 붙습니다. 비워도 저장해 둔 것은 지워지지 않고, 새 시험지는 비운 시험지와 겹치지 않게 만들어집니다.",
       "다른 시험지를 만들려면 맨 위 <b>[🔄 새로 시작하기]</b>를 누릅니다 — 올린 기출·분석표·시험 범위 지문·만든 시험지를 모두 비우고, 학교 이름 같은 머리글은 남깁니다. 필요한 것은 먼저 저장해 두세요.",
@@ -9496,13 +9542,14 @@ function buildExamMergeRows(questions, docs) {
     let row = map.get(key);
     if (!row) {
       row = { kind: q.kind, engine: q.engine || "", format: q.format || "",
-              fit: q.fit, per: new Array(docs).fill(0), want: 0 };
+              fit: q.fit, per: new Array(docs).fill(0), want: 0, dlg: 0 };
       map.set(key, row);
     }
     // 한 부에서라도 '같음'이면 같음으로 본다 — 비슷함만 모인 유형은 비슷함으로 남아
     // 화면의 '비슷한 것도 포함' 체크가 그대로 뜻을 갖는다
     if (q.fit === "같음") row.fit = "같음";
     row.per[q.doc || 0] += 1;
+    if (examQBasis(q) === "대화") row.dlg += 1;   // 이 유형 문항 중 대화 기반이 몇 개였나 — 만들 때 같은 비율로 나눈다
   });
 
   const rows = [...map.values()];
@@ -9590,9 +9637,14 @@ function allocateExamMerge(rows, total) {
 function examMergeToQuestions(rows) {
   const out = [];
   rows.forEach((r) => {
+    // 이 유형이 기출에서 대화 기반이던 비율대로 나눈다(앞에서부터 대화). 대화 유형은 늘 대화다.
+    const total = (r.per || []).reduce((a, b) => a + b, 0);
+    const nDlg = EXAM_DIALOGUE_TYPES.has(r.kind) ? r.want
+      : total ? Math.round((r.want * (r.dlg || 0)) / total) : 0;
     for (let i = 0; i < r.want; i++) {
       out.push({ no: "", group: "", prompt: "", note: "",
-                 format: r.format, fit: r.fit, kind: r.kind, engine: r.engine });
+                 format: r.format, fit: r.fit, kind: r.kind, engine: r.engine,
+                 basis: i < nDlg ? "대화" : "본문" });
     }
   });
   return out;
@@ -10168,6 +10220,7 @@ examBtn.addEventListener("click", runExamScan);
        가질 '풀'이다. 40지문을 넣어도 문항은 30개, 요금도 30문항어치다.
 
    ── 대원칙 1. 한 부 안에서 같은 지문을 두 번 쓰지 않는다 ──
+   (중학교는 예외 — 지문을 가공 없이 싣는 유형끼리 3문항까지. planExamPaper의 maxUses·examIsPlainType 참고)
    이 앱은 문항마다 지문을 따로 싣는다(실제 시험지의 "[3~4] 다음 글을 읽고 물음에
    답하시오" 식 묶음이 아니다). 그래서 한 지문으로 빈칸 문제와 주제 문제를 같이 내면,
    주제 문제에 가공 없이 실린 지문이 빈칸의 정답을 그대로 보여 준다. 지문을 겹치지 않게
@@ -10249,18 +10302,55 @@ function hasRepeatedWord(text) {
   return false;
 }
 
+/* 같은 지문에 둘 다 붙으면 사실상 같은 문제가 되는 유형끼리의 묶음. (지문, 유형) 검사는 이름이 같은 것만
+   막아서, 같은 대화에 '내용불일치(영)'과 '대화 내용 불일치'가 함께 붙었다(2026-10-02 호성중 1·4번 —
+   두 문제가 사실상 같았다). 한 묶음은 지문 하나에 한 번만 붙는다. */
+const EXAM_FAMILY = {
+  "내용일치(영)": "일치", "내용일치(한)": "일치", "내용불일치(영)": "일치", "내용불일치(한)": "일치",
+  "대화 내용 일치": "일치", "대화 내용 불일치": "일치", "답할 수 없는 질문": "일치",
+  "주제": "주제", "제목": "주제", "요지": "주제", "목적": "주제",
+  "영영풀이": "영영풀이", "영영풀이 오류 찾기": "영영풀이", "영영풀이 쓰기": "영영풀이",
+};
+
+// 지문을 가공 없이 싣는 객관식 유형인가 — 중학교에서 한 지문을 여러 문항에 쓸 수 있는 유형
+const examIsPlainType = (type) => !MCQ_TRANSFORM_TYPES.has(type) && MCQ_TYPES.some((t) => t.id === type);
+
+/* 기출 문항이 대화문 기반인가 본문 기반인가("대화" | "본문"). 서버가 읽어 준 basis가 있으면 그것을 쓰고,
+   없으면(basis를 읽기 전에 분석·저장한 것) 유형·보고서 분류·발문으로 짐작한다. 동형 모의고사는 이 비율을
+   그대로 따라 지문을 붙인다(2026-10-02 사용자 — 기출은 대화 기반이 21%인데 만든 시험지는 70%였다). */
+function examQBasis(q) {
+  if (q && (q.basis === "대화" || q.basis === "본문")) return q.basis;
+  if (!q) return "본문";
+  if (EXAM_DIALOGUE_TYPES.has(q.kind)) return "대화";
+  if (q.category === "대화문 내용 파악" || q.category === "대화 흐름·응답") return "대화";
+  return /대화|A의 응답|B의 마지막/.test(q.prompt || "") ? "대화" : "본문";
+}
+
+// 대화문인가 — 줄 첫머리에 말하는 사람("A:", "Minho:", "민호:")이 넷 이상. server.py is_dialogue와 같은 기준
+// 두 번 이상 말한 사람의 줄만 센다 — 안내문의 "Date: / Time: / Place:"가 대화문으로 잡혔다(2026-10-04)
+const DIALOGUE_TURN_RE = /^\s*(?:([A-Z][A-Za-z.' ]{0,14}|[가-힣]{1,6})\s*[:：]|([BGWMST])(?=\s))\s*\S/gm;
+const isDialogueText = (text) => {
+  const labels = [...String(text || "").matchAll(DIALOGUE_TURN_RE)].map((m) => (m[1] || m[2]).trim());
+  return labels.filter((x) => labels.indexOf(x) !== labels.lastIndexOf(x)).length >= 4;
+};
+const EXAM_DIALOGUE_TYPES = new Set(["대화 순서", "어색한 응답", "대화 빈칸", "대화 내용 일치",
+  "대화 내용 불일치", "답할 수 없는 질문", "짝지어진 대화"]);
+
 // 지문 하나에 배분 판정용 값을 미리 붙여 둔다 (문장 수를 문항마다 다시 세지 않도록)
 function examProfile(job) {
   return {
     ...job,
     sentences: countSentences(job.text),
     repeatWord: hasRepeatedWord(job.text),
+    dialogue: isDialogueText(job.text),
   };
 }
 
 // 이 지문으로 이 유형을 낼 수 있는가
 function examEligible(type, p) {
   const rule = EXAM_FIT_RULES[type] || {};
+  // 대화 유형은 대화문에만 — 대화문이 아니면 서버가 그 유형을 빼 버려 문항이 비게 된다
+  if (EXAM_DIALOGUE_TYPES.has(type)) return p.dialogue && p.text.length >= 80;
   if (p.sentences < (rule.minSent || EXAM_FIT_MIN_SENT)) return false;
   if (p.text.length < EXAM_FIT_MIN_CHARS) return false;
   if (rule.repeatWord && !p.repeatWord) return false;
@@ -10269,6 +10359,7 @@ function examEligible(type, p) {
 
 // 조건을 사람 말로 — 배분이 실패했을 때 무엇을 더 넣어야 하는지 알려 준다
 function examFitReason(type) {
+  if (EXAM_DIALOGUE_TYPES.has(type)) return "대화문(줄마다 \"A:\", \"B:\"나 \"B How…\", \"G I…\"처럼 말하는 사람이 표시된 지문)";
   const rule = EXAM_FIT_RULES[type] || {};
   const parts = [];
   if (rule.minSent) parts.push(`문장 ${rule.minSent}개 이상`);
@@ -10287,12 +10378,12 @@ function examPaperSlots(questions, includeSimilar) {
     if (!q.kind || q.fit === "없음") return;
     if (q.fit === "비슷함" && !includeSimilar) return;
     if (q.engine === "워크북") return;
-    picked.push({ type: q.kind, engine: q.engine, format: q.format });
+    picked.push({ type: q.kind, engine: q.engine, format: q.format, basis: examQBasis(q) });
   });
   return picked
     .map((s, i) => ({ ...s, seq: i }))
     .sort((a, b) => (a.engine === "객관식" ? 0 : 1) - (b.engine === "객관식" ? 0 : 1) || a.seq - b.seq)
-    .map((s, i) => ({ type: s.type, engine: s.engine, format: s.format, q: i + 1 }));
+    .map((s, i) => ({ type: s.type, engine: s.engine, format: s.format, basis: s.basis, q: i + 1 }));
 }
 
 /* 배분 — 문항마다 지문 하나를 붙인다. AI 호출 0회.
@@ -10306,7 +10397,14 @@ function examPaperSlots(questions, includeSimilar) {
    usedPairs: 이미 만들어 둔 부들이 쓴 "지문번호|유형" 집합 (대원칙 2).
    실패하면 어느 유형에서 후보가 떨어졌는지 그대로 돌려준다 — 사용자가 무엇을 더 넣어야
    하는지 알아야 하기 때문이다. */
-function planExamPaper(slots, jobs, copies, usedPairs, seed) {
+/* maxUses > 1(중학교)이면 지문 하나로 여러 문항을 낸다 — 단, 대원칙 1이 막으려던 사고(한 문항의 지문이
+   다른 문항의 정답을 보여 줌)가 없는 조합만: 같은 지문에 두 번째로 붙는 문항은 '지문을 가공 없이 싣는'
+   유형(isPlain)이어야 하고, 그 지문의 앞선 문항도 모두 그런 유형이어야 한다. 빈칸·어휘·어법처럼 지문을
+   고치는 유형이 한 번이라도 붙은 지문은 그 한 문항에만 쓴다.
+   먼저 지문을 퍼뜨리는 배분(maxUses=1)을 시도하고, 모자라서 실패할 때만 이 재사용 배분을 쓴다
+   (runExamPaperFlow) — 지문이 넉넉하면 중학교도 문항마다 다른 지문이다. */
+let examPlanDeadline = Infinity;   // planExamPaper가 정하는 마감 시각(performance.now) — 해가 없을 때 오래 매달리지 않는다
+function planExamPaperOnce(slots, jobs, copies, usedPairs, seed, maxUses = 1, mode = 0) {
   const profiles = jobs.map(examProfile);
   const eligible = slots.map((s) => profiles.filter((p) => examEligible(s.type, p)).map((p) => p.no));
 
@@ -10318,6 +10416,10 @@ function planExamPaper(slots, jobs, copies, usedPairs, seed) {
 
   const key = (no, type) => `${no}|${type}`;
   const taken = new Set(usedPairs || []);
+  const jobById = new Map(jobs.map((j) => [j.no, j]));
+  // 대화문 지문 — 대화 유형이 아닌 문항은 본문에 먼저 붙인다(아래 정렬). 안 그러면 대화 21개·본문 몇 개인
+  // 범위에서 문항의 70%가 대화문 기반이 됐다(실제 중학교 시험은 대화 기반이 20%쯤이다)
+  const isDlg = new Map(profiles.map((p) => [p.no, !!p.dialogue]));
   const plans = [];
   // 앞선 부(이미 만든 부 포함)가 쓴 지문 — 다음 부는 되도록 안 쓴 지문부터 고른다.
   // 대원칙 2는 (지문, 유형) 조합만 막아서, 지문이 넉넉해도 A형과 B형이 같은 지문을
@@ -10327,37 +10429,161 @@ function planExamPaper(slots, jobs, copies, usedPairs, seed) {
 
   for (let c = 0; c < copies; c++) {
     const usedHere = new Set();          // 대원칙 1 — 이 부 안에서 쓴 지문
+    const uses = new Map();              // 지문마다 이 부에서 몇 문항에 썼나(maxUses까지)
+    const plainOnly = new Map();         // 지문에 붙은 문항이 전부 '지문 그대로' 유형인가
+    const fams = new Map();              // 지문마다 이미 붙은 유형 묶음(EXAM_FAMILY)
     const rows = new Array(slots.length).fill(null);
-    const order = slots
-      .map((s, i) => i)
-      .sort((a, b) => eligible[a].length - eligible[b].length || a - b);
+    /* 되돌아가며 찾는다(백트래킹). 문항을 하나씩 정하는 욕심쟁이 방식은 지문이 딱 맞는 시험지(21개 ·
+       24문항, 지문을 고치는 유형 16문항)에서 한 번 잘못 고르면 끝까지 막혔다. 지금은 매 걸음마다 '고를 수 있는
+       지문이 가장 적은 문항'을 먼저 정하고, 막히면 직전 선택을 물러 다른 지문을 고른다. 고르는 순서(선호)는
+       예전과 같다 — 기출의 대화/본문 비율, 재사용 묶기, 안 쓴 지문부터. 해가 있으면 찾는다. 걸음 수에
+       한도를 두어(NODE_LIMIT) 해가 없을 때 오래 매달리지 않는다. */
+    const takenHere = new Set();
+    // 원래 지문 번호 → 그 지문을 차지한 후보(자기 자신 또는 그 지문을 품은 이은 지문)
+    const occ = new Map();
+    const memOf = (no) => (jobById.get(no) && jobById.get(no).members) || [no];
+    const NODE_LIMIT = 6000;
+    let nodes = 0;
+    let firstDead = null;                // 처음으로 후보가 0이 된 문항 — 실패했을 때 무엇이 모자랐는지 알린다
+    const done = new Array(slots.length).fill(false);
 
-    for (const i of order) {
+    const validCands = (i) => {
       const s = slots[i];
-      let cands = eligible[i].filter((no) => !usedHere.has(no) && !taken.has(key(no, s.type)));
-      if (!cands.length) {
-        return {
-          ok: false,
-          fail: { type: s.type, copy: c + 1, pool: eligible[i].length, need: examFitReason(s.type) },
-        };
-      }
-      // 먼저 섞고 나서 breadth로 정렬한다 — 정렬이 안정적이라 같은 값끼리는 섞인
-      // 순서가 남고, [다시 배분]이 다른 표를 내놓는다.
-      cands = seededShuffle(cands, seed + c * 977 + i);
-      cands.sort(
+      const plain = examIsPlainType(s.type);
+      const fam = EXAM_FAMILY[s.type];
+      return eligible[i].filter((no) => {
+        const n = uses.get(no) || 0;
+        if (taken.has(key(no, s.type)) || takenHere.has(key(no, s.type))) return false;
+        if (fam && fams.get(no) && fams.get(no).has(fam)) return false;   // 사실상 같은 문제
+        // 기출의 대화/본문 비율은 지킨다 — 본문 기반 문항은 본문에만, 대화 기반 문항은 대화문에만 붙인다.
+        // 선호로만 두었더니 본문이 모자랄 때 조용히 대화문으로 넘어가 대화 15 : 본문 8이 됐다(기출은 5 : 19, 2026-10-02 사용자)
+        const want = examSlotWantsDlg(s);
+        if (want !== null && isDlg.get(no) !== want) return false;
+        // 원래 지문이 다른 후보(이은 지문 또는 원래 지문)에 이미 쓰였으면 못 쓴다
+        if (!memOf(no).every((m) => !occ.has(m) || occ.get(m) === no)) return false;
+        if (n === 0) return true;
+        return n < maxUses && plain && plainOnly.get(no);   // 재사용은 지문을 안 고치는 유형끼리만
+      });
+    };
+    const preferred = (i, cands) => {
+      const s = slots[i];
+      const plain = examIsPlainType(s.type);
+      // 먼저 섞고 나서 정렬한다 — 정렬이 안정적이라 같은 값끼리는 섞인 순서가 남고, [다시 배분]이 다른 표를 낸다.
+      const list = seededShuffle(cands, seed + c * 977 + i);
+      // 기출 문항이 대화 기반이면 대화문부터, 본문 기반이면 본문부터 — 기출의 대화/본문 비율을 따른다.
+      // basis를 모르는 옛 구성은 대화 유형이 아니면 본문부터 붙인다.
+      const wantDlg = EXAM_DIALOGUE_TYPES.has(s.type) || s.basis === "대화";
+      return list.sort(
         (a, b) =>
+          ((isDlg.get(a) ? 1 : 0) - (isDlg.get(b) ? 1 : 0)) * (wantDlg ? -1 : 1) ||
+          // 이은 지문은 원래 지문으로 안 될 때만
+          ((jobById.get(a) || {}).merged ? 1 : 0) - ((jobById.get(b) || {}).merged ? 1 : 0) ||
+          // 재사용 배분에서 지문을 안 고치는 문항은 이미 그런 문항이 붙은 지문에 먼저 얹는다 —
+          // 안 쓴 지문을 지문을 고치는 문항(빈칸·어휘…)을 위해 남겨 둔다
+          (maxUses > 1 && plain ? ((uses.get(a) || 0) > 0 && plainOnly.get(a) ? 0 : 1) - ((uses.get(b) || 0) > 0 && plainOnly.get(b) ? 0 : 1) : 0) ||
+          (uses.get(a) || 0) - (uses.get(b) || 0) ||
           (usedBefore.has(a) ? 1 : 0) - (usedBefore.has(b) ? 1 : 0) ||
           (breadth.get(a) || 0) - (breadth.get(b) || 0)
       );
-      const pick = cands[0];
-      usedHere.add(pick);
-      taken.add(key(pick, s.type));
-      rows[i] = { q: s.q, type: s.type, engine: s.engine, passageNo: pick };
+    };
+    const dfs = (left) => {
+      if (!left) return true;
+      if (++nodes > NODE_LIMIT || (nodes % 128 === 0 && performance.now() > examPlanDeadline)) { nodes = NODE_LIMIT + 1; return false; }
+      // 후보가 가장 적은 문항부터(동률이면 지문을 고치는 유형, 그다음 번호 순)
+      let best = -1, bestC = null;
+      for (let i = 0; i < slots.length; i++) {
+        if (done[i]) continue;
+        const cs = validCands(i);
+        if (!cs.length) { if (!firstDead) firstDead = { i }; return false; }
+        if (best < 0 || cs.length < bestC.length ||
+            (cs.length === bestC.length && mode === 1 && !examIsPlainType(slots[i].type) && examIsPlainType(slots[best].type))) {
+          best = i; bestC = cs;
+        }
+      }
+      const s = slots[best];
+      const plain = examIsPlainType(s.type);
+      for (const pick of preferred(best, bestC)) {
+        const n0 = uses.get(pick) || 0;
+        const po0 = plainOnly.get(pick);
+        const hadFam = EXAM_FAMILY[s.type] && fams.get(pick) && fams.get(pick).has(EXAM_FAMILY[s.type]);
+        // 선택
+        plainOnly.set(pick, n0 === 0 ? plain : po0 && plain);
+        uses.set(pick, n0 + 1);
+        if (EXAM_FAMILY[s.type]) {
+          if (!fams.has(pick)) fams.set(pick, new Set());
+          fams.get(pick).add(EXAM_FAMILY[s.type]);
+        }
+        takenHere.add(key(pick, s.type));
+        const claimed = memOf(pick).filter((m) => !occ.has(m));
+        claimed.forEach((m) => occ.set(m, pick));
+        done[best] = true;
+        rows[best] = { q: s.q, type: s.type, engine: s.engine, passageNo: pick };
+        if (dfs(left - 1)) return true;
+        // 물리기
+        rows[best] = null;
+        done[best] = false;
+        takenHere.delete(key(pick, s.type));
+        claimed.forEach((m) => occ.delete(m));
+        if (EXAM_FAMILY[s.type] && !hadFam) fams.get(pick).delete(EXAM_FAMILY[s.type]);
+        uses.set(pick, n0);
+        if (po0 === undefined) plainOnly.delete(pick); else plainOnly.set(pick, po0);
+        if (nodes > NODE_LIMIT) return false;
+      }
+      return false;
+    };
+    if (!dfs(slots.length)) {
+      const i = firstDead ? firstDead.i : 0;
+      return {
+        ok: false,
+        fail: { type: slots[i].type, copy: c + 1, pool: eligible[i].length, need: examFitReason(slots[i].type) },
+      };
     }
+    rows.forEach((r) => { usedHere.add(r.passageNo); taken.add(key(r.passageNo, r.type)); });
     usedHere.forEach((no) => usedBefore.add(no));
     plans.push(rows);
   }
   return { ok: true, plans };
+}
+
+/* 지문이 모자라 배분이 안 될 때만 쓰는 '이어 붙인 지문'. 중학교 교과서 본문 토막은 40~115단어인데 실제
+   시험 지문은 대개 100~170단어로, 이웃한 토막 2~3개를 이어 한 지문으로 낸다(호성중 [12-13] hurricane+
+   hamburger, 기출 94부 실측 — 2026-10-02 사용자). 그대로 짜 보고 안 되면 같은 과의 이웃한 짧은 본문 둘을
+   이은 가상 지문을 후보에 더해 다시 짠다. 가상 지문은 원래 지문 둘을 차지하므로(members) 한 부 안에서
+   원래 지문과 함께 쓰이지 않는다(planExamPaperOnce의 occ). 대화문은 잇지 않는다. */
+const EXAM_MERGE_MAX_WORDS = 230;   // 이은 지문의 상한 — 기출 지문의 긴 쪽
+const EXAM_MERGE_SHORT_WORDS = 110; // 둘 중 하나는 이보다 짧아야 잇는다(긴 지문끼리는 잇지 않는다)
+const examWords = (t) => (String(t || "").match(/[A-Za-z']+/g) || []).length;
+// 같은 과인지 — 이름 끝의 번호를 뗀 앞부분이 같은가("5과 본문 (1)" · "5과 본문 (2)" → "5과 본문")
+const examLessonKey = (name) => String(name || "").replace(/[\s(（\[]*\d+[)）\]]?\s*$/, "").trim();
+function examMergedJobs(jobs) {
+  const out = jobs.slice();
+  for (let i = 0; i + 1 < jobs.length; i++) {
+    const a = jobs[i], b = jobs[i + 1];
+    if (isDialogueText(a.text) || isDialogueText(b.text)) continue;
+    if (examLessonKey(a.name) !== examLessonKey(b.name)) continue;
+    const wa = examWords(a.text), wb = examWords(b.text);
+    if (wa + wb > EXAM_MERGE_MAX_WORDS || Math.min(wa, wb) >= EXAM_MERGE_SHORT_WORDS) continue;
+    out.push({ no: 10000 + a.no, name: `${a.name} + ${b.name}`, named: true,
+               text: `${String(a.text).trim()}
+
+${String(b.text).trim()}`, members: [a.no, b.no], merged: true });
+  }
+  return out;
+}
+
+/* 배분 — 순서와 씨앗을 바꿔 가며 여러 번 짠다. 한 번 짜서 안 되면 바로 포기했더니, 지문이 모자라지 않은데도
+   (21개 · 24문항) 순서가 나빠 '지문이 떨어졌다'가 떴다(2026-10-02). 두 가지 순서(mode)를 번갈아 가며
+   씨앗만 바꿔 짜 보고(각 시도가 되돌아가며 찾는다), 그래도 안 될 때만 마지막 실패를 돌려준다. AI 호출이 없어 비용은 0이다. */
+function planExamPaper(slots, jobs, copies, usedPairs, seed, maxUses = 1) {
+  let last = null;
+  examPlanDeadline = performance.now() + 1200;   // 전체 1.2초 안에 못 찾으면 실패로 본다
+  for (let k = 0; k < 6; k++) {
+    if (k > 0 && performance.now() > examPlanDeadline) break;
+    const r = planExamPaperOnce(slots, jobs, copies, usedPairs, seed + k * 7919, maxUses, k % 2);
+    if (r.ok) return r;
+    last = r;
+  }
+  return last;
 }
 
 // 배분표 한 부를 표로 — 화면 미리보기와 인쇄물이 같은 함수를 쓴다
@@ -10510,6 +10736,35 @@ function clearDocTitles() {
 // 목표 어법 — 이 탭은 지문칸이 따로라 공용 칸(grammarEl)과 별개로 받는다
 const examGrammarEl = $("examTargetGrammar");
 const examCopiesEl = radioGroup("examCopies");
+// 학교급 — 중학교면 /api/quiz에 school:"middle"을 실어 서버가 중학생 수준 지시를 붙인다
+const examSchoolEl = radioGroup("examSchoolLv");
+/* 한 지문으로 낼 수 있는 문항 수 — 고등학교는 1(한 부 안에서 같은 지문을 두 번 쓰지 않는다, 대원칙 1).
+   중학교 시험은 지문 하나로 여러 문항을 내는 것이 보통이라([12-13]·[15-18] 묶음) 3까지 허용한다
+   (2026-10-02 사용자). 같은 지문에는 서로 다른 유형만 붙는다 — taken의 (지문, 유형) 검사가 그대로다. */
+const EXAM_MIDDLE_PASSAGE_USES = 3;
+const examPassageUses = () => (examSchoolEl && examSchoolEl.value === "middle" ? EXAM_MIDDLE_PASSAGE_USES : 1);
+// 이 문항들에 필요한 지문 수의 하한 — 지문을 고치는 유형은 지문 하나에 한 문항, 안 고치는 유형만 묶인다
+/* 문항이 대화문에 붙어야 하나(true) 본문에 붙어야 하나(false) — 대화 유형은 늘 대화문, 그 밖에는 기출이 읽어 준
+   basis를 따른다. basis를 모르는 옛 구성은 null(어느 쪽이든 된다 — 배분이 본문부터 고를 뿐이다). */
+function examSlotWantsDlg(s) {
+  if (EXAM_DIALOGUE_TYPES.has(s.type)) return true;
+  if (s.basis === "대화") return true;
+  if (s.basis === "본문") return false;
+  return null;
+}
+
+function examPassagesNeeded(slots) {
+  const per = examPassageUses();
+  if (per <= 1) return slots.length;
+  const plainSlots = slots.filter((x) => examIsPlainType(x.type));
+  const fam = new Map();
+  plainSlots.forEach((x) => { const f = EXAM_FAMILY[x.type]; if (f) fam.set(f, (fam.get(f) || 0) + 1); });
+  const plainPass = Math.max(Math.ceil(plainSlots.length / per), ...fam.values(), 0);
+  return slots.length - plainSlots.length + plainPass;
+}
+if (examSchoolEl) { syncPicked("examSchoolLv"); examSchoolEl.addEventListener("change", () => {}); }
+// 처음 보일 때도 고른 칸이 강조되게(전에는 한 번 눌러야 표시됐다)
+if (examCopiesEl) syncPicked("examCopies");
 const examSimilarEl = $("examIncludeSimilar");
 
 /* 출제 순서 — "type"(기출 순서대로) / "random"(무작위로 섞기)
@@ -10645,10 +10900,28 @@ function updateExamPaperCost() {
   }
   // 대원칙 1이 곧 '문항 수 ≤ 지문 수'다. 지문이 모자라면 배분 자체가 성립하지 않으므로
   // 제작 버튼을 누르기 전에 먼저 알려 준다.
-  if (jobs.length < slots.length) {
+  // 지문 구성 — 기출의 대화/본문 비율을 따른다. 시험 범위에 대화문이나 본문이 모자라면 미리 알린다
+  if (jobs.length) {
+    const dlgN = jobs.filter((j) => isDialogueText(j.text)).length, txtN = jobs.length - dlgN;
+    const wantD = slots.filter((x) => EXAM_DIALOGUE_TYPES.has(x.type) || x.basis === "대화").length;
+    const wantT = slots.length - wantD;
+    const short = [];
+    if (wantD > 0 && dlgN === 0) short.push("대화문이 없어 대화 기반 문항을 만들 수 없습니다");
+    else if (wantD > dlgN * examPassageUses()) short.push("대화문이 모자라 본문에도 붙습니다");
+    if (wantT > txtN * examPassageUses()) short.push("본문이 모자라 대화문에도 붙습니다");
     parts.push(
-      `<b class="no">— 지문이 ${slots.length - jobs.length}개 모자랍니다</b>` +
-      ` (한 부 안에서 같은 지문을 두 번 쓰지 않으므로 문항 수만큼 필요합니다)`
+      `<span class="hint">기출 비율: 대화 기반 ${wantD}문항 · 본문 기반 ${wantT}문항 — 이 비율대로 지문을 붙입니다 ` +
+      `(범위: 대화문 ${dlgN}개 · 본문 ${txtN}개${short.length ? " — " + short.join(", ") : ""})</span>`
+    );
+  }
+  const needPass = examPassagesNeeded(slots);
+  if (jobs.length < needPass) {
+    const per = examPassageUses();
+    parts.push(
+      `<b class="no">— 지문이 ${needPass - jobs.length}개 모자랍니다</b>` +
+      (per > 1
+        ? ` (중학교는 지문을 안 고치는 유형에 한해 한 지문으로 최대 ${per}문항까지 낼 수 있습니다 — 빈칸·어휘·어법 같은 유형은 지문 하나에 한 문항이라 지문 ${needPass}개 이상 필요합니다)`
+        : ` (한 부 안에서 같은 지문을 두 번 쓰지 않으므로 문항 수만큼 필요합니다)`)
     );
   }
   examPaperCostHintEl.innerHTML = parts.join(" ");
@@ -10664,6 +10937,8 @@ function examInputChanged() {
   updateExamPaperCost();
 }
 if (examCopiesEl) examCopiesEl.addEventListener("change", examInputChanged);
+// 학교급을 바꾸면 '지문이 모자랍니다' 안내도 다시 계산한다(중학교는 한 지문 3문항까지)
+if (examSchoolEl) examSchoolEl.addEventListener("change", examInputChanged);
 if (examSimilarEl) examSimilarEl.addEventListener("change", examInputChanged);
 $("examPassageList").addEventListener("input", examInputChanged);
 // 지문 삭제는 input을 일으키지 않는다. 캡처 단계에서 받는 이유는 삭제 처리가 그 행을
@@ -10722,31 +10997,87 @@ function runExamPaperFlow() {
       "이 시험지로 만들 수 있는 문항이 없습니다. '비슷한 것도 포함'을 켜 보세요.";
     return;
   }
-  if (jobs.length < slots.length) {
+  const needPass = examPassagesNeeded(slots), per = examPassageUses();
+  // 지문이 필요한 수보다 적으면 곧바로 알린다(재사용해도 못 만든다). 그 이상이면 배분을 해 본다
+  if (jobs.length < needPass) {
     dropExamPlan();
     examPaperErrorEl.textContent =
-      `지문이 모자랍니다 — ${slots.length}문항을 만들려면 지문이 ${slots.length}개 이상 필요합니다` +
-      ` (지금 ${jobs.length}개). 한 부 안에서 같은 지문을 두 번 쓰지 않기 때문입니다.`;
+      `지문이 모자랍니다 — ${slots.length}문항을 만들려면 지문이 ${needPass}개 이상 필요합니다` +
+      ` (지금 ${jobs.length}개). ` +
+      (per > 1 ? `중학교는 지문을 안 고치는 유형(주제·제목·내용 일치 등)에 한해 한 지문으로 최대 ${per}문항까지 낼 수 있습니다 — 빈칸·어휘·어법 같은 유형은 지문 하나에 한 문항입니다.`
+               : "한 부 안에서 같은 지문을 두 번 쓰지 않기 때문입니다.");
+    return;
+  }
+  // 기출의 대화/본문 비율을 지키므로 본문·대화문을 따로 센다 — 모자라면 대화문으로 메우지 않고 알린다
+  const dlgSlots = slots.filter((s) => examSlotWantsDlg(s) === true);
+  const bodySlots = slots.filter((s) => examSlotWantsDlg(s) === false);
+  const dlgJobs = jobs.filter((j) => isDialogueText(j.text)).length;
+  const bodyJobs = jobs.length - dlgJobs;
+  const needDlg = examPassagesNeeded(dlgSlots), needBody = examPassagesNeeded(bodySlots);
+  if (dlgJobs < needDlg || bodyJobs < needBody) {
+    dropExamPlan();
+    const lack = [];
+    if (bodyJobs < needBody) lack.push(`<b>교과서 본문 ${needBody - bodyJobs}개</b>`);
+    if (dlgJobs < needDlg) lack.push(`<b>대화문 ${needDlg - dlgJobs}개</b>`);
+    examPaperErrorEl.innerHTML =
+      `기출 비율대로 본문 기반 ${bodySlots.length}문항 · 대화 기반 ${dlgSlots.length}문항을 만들려면 ` +
+      `본문 지문 ${needBody}개 · 대화문 ${needDlg}개 이상이 필요합니다(지금 본문 ${bodyJobs}개 · 대화문 ${dlgJobs}개). ` +
+      `시험 범위에 ${lack.join(" · ")}를 더 넣어 주세요.` +
+      (per > 1 ? `<br><small>본문은 문단별로 나눠 넣으면 개수가 늘어납니다. 주제·제목·내용 일치처럼 지문을 안 고치는 유형만 한 지문으로 최대 ${per}문항까지 냅니다.</small>` : "");
     return;
   }
 
   const copies = examCopies();
   // 이미 만들어 둔 부(또는 저장에서 불러온 부)가 쓴 조합은 피한다 — 대원칙 2.
   // 씨앗을 매번 새로 뽑으므로 같은 입력으로 다시 눌러도 배분이 달라진다.
-  const res = planExamPaper(slots, jobs, copies, examUsedPairs(), Math.floor(Math.random() * 1e9));
+  const seed = Math.floor(Math.random() * 1e9);
+  let res = jobs.length >= slots.length ? planExamPaper(slots, jobs, copies, examUsedPairs(), seed, 1) : null;
+  // 지문이 모자라거나 퍼뜨리는 배분이 실패하면 중학교는 지문 재사용 배분으로 다시 짠다
+  if ((!res || !res.ok) && per > 1) res = planExamPaper(slots, jobs, copies, examUsedPairs(), seed, per);
+  /* 그래도 안 되면 같은 과의 이웃한 짧은 본문을 이은 지문을 후보에 더해 다시 짜고, 더 나은 쪽을 쓴다(무조건 잇지
+     않는다). 대화/본문 비율은 이제 배분이 지키므로 mismatch는 basis를 모르는 옛 구성에서만 0이 아닐 수 있다. */
+  const mismatch = (r, js) => !r || !r.ok ? Infinity : r.plans.flat().reduce((n, row) => {
+    const sl = slots.find((x) => x.q === row.q) || {};
+    const j = js.find((x) => x.no === row.passageNo);
+    const wantDlg = EXAM_DIALOGUE_TYPES.has(row.type) || sl.basis === "대화";
+    return n + (j && isDialogueText(j.text) !== wantDlg ? 1 : 0);
+  }, 0);
+  let planJobs = jobs, mergeNote = "";
+  if (!res || !res.ok || mismatch(res, jobs) > 0) {
+    const more = examMergedJobs(jobs);
+    if (more.length > jobs.length) {
+      let r2 = planExamPaper(slots, more, copies, examUsedPairs(), seed, 1);
+      if (!r2.ok && per > 1) r2 = planExamPaper(slots, more, copies, examUsedPairs(), seed, per);
+      if (r2.ok && mismatch(r2, more) < mismatch(res, jobs)) {
+        res = r2;
+        planJobs = more;
+        const usedMerged = new Set(r2.plans.flat().map((r) => r.passageNo).filter((no) => no >= 10000));
+        mergeNote = usedMerged.size
+          ? `본문이 짧거나 모자라 같은 과의 이웃한 본문 ${usedMerged.size}쌍을 이어 한 지문으로 썼습니다(실제 시험처럼). 쓴 지문 목록에서 확인하세요.`
+          : "";
+      } else if (!res) {
+        res = r2;
+      }
+    }
+  }
 
   if (!res.ok) {
     const f = res.fail;
     dropExamPlan();
     examPaperErrorEl.innerHTML =
-      `<b>${esc(f.type)}</b> 문항에 쓸 지문이 떨어졌습니다` +
+      `<b>${esc(f.type)}</b> 문항에 지문을 붙이지 못했습니다` +
       (copies > 1 ? ` (${f.copy}부째)` : "") +
-      ` — 조건에 맞는 지문이 ${f.pool}개뿐입니다. 필요한 조건: <b>${esc(f.need)}</b>.<br>` +
-      `그런 지문을 더 넣거나, 부수를 줄여 보세요.`;
+      ` — 이 구성은 지문이 최소 <b>${needPass}개</b> 필요한데(지금 ${jobs.length}개), ` +
+      `문항마다 조건이 달라 지문이 딱 맞으면 짜이지 않을 때가 있습니다. ` +
+      `지문을 ${Math.max(1, needPass + 3 - jobs.length)}개쯤 더 넣거나(<b>${needPass + 3}개</b> 안팎이면 안정적입니다), ` +
+      `문항 수·부수를 줄여 보세요.<br>` +
+      `<small>이 유형의 필요한 조건: ${esc(f.need)}${copies > 1 ? " · 2부째는 첫 부와 (지문, 유형)이 겹치면 안 되므로 지문이 더 필요합니다" : ""}</small>`;
     return;
   }
 
-  examPlanNow = { slots, jobs, copies, plans: res.plans };
+  examPlanNow = { slots, jobs: planJobs, copies, plans: res.plans };
+  // 제작이 시작되면 오류 칸은 비워지므로 시험 범위 칸 아래 상태 줄에 알린다
+  if (mergeNote) examPassageStatus(mergeNote, "ok");
   runExamPaper();
 }
 
@@ -10813,6 +11144,7 @@ async function runExamPaper() {
             // 이 탭은 지문칸이 따로이므로 목표 어법도 이 탭 칸의 값을 쓴다
             targetGrammar: examGrammarEl.value,
             examRun,
+            school: examSchoolEl && examSchoolEl.value === "middle" ? "middle" : "high",
           },
           "문제 생성에 실패했습니다."
         );
@@ -11081,6 +11413,7 @@ function examSpecFromScan(scan) {
       fit: q.fit,
       kind: q.kind,
       engine: q.engine,
+      basis: examQBasis(q),
     })),
   };
 }
@@ -11105,6 +11438,7 @@ function examSpecToScan(spec) {
       fit: raw.fit || "없음",
       kind: raw.kind || "",
       engine: raw.engine || "",
+      basis: raw.basis === "대화" || raw.basis === "본문" ? raw.basis : "",
     };
     if (q.kind && q.engine !== "워크북" && !EXAM_KNOWN_KINDS.has(q.kind)) {
       stale.push(q.kind);

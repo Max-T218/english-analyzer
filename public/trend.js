@@ -558,7 +558,7 @@ async function trendRun() {
           // 부 전체의 쪽 번호로 바꿔 둔다.
           const pg = q.page >= 1 && q.page <= idx.length ? idx[q.page - 1] : -1;
           acc.push({ no: q.no, format: q.format, category: q.category, category_raw: q.category_raw || "",
-                     kind: q.kind, engine: q.engine, fit: q.fit,
+                     kind: q.kind, engine: q.engine, fit: q.fit, basis: q.basis || "",
                      prompt: String(q.prompt || "").slice(0, 60),
                      pg, box: Array.isArray(q.box) && q.box.length === 4 ? q.box : null });
         }
@@ -670,25 +670,30 @@ const TREND_CAT_RULES_SUB = [
   [/빈칸|찾아\s*쓰|단어를\s*쓰|알맞은\s*(말|단어|형태)|요약문|변형/, "서술형: 빈칸·단어 쓰기"],
   [/.*/, "서술형: 내용 서술"],
 ];
+/* 중학교 기출 11부(273문항)의 발문으로 규칙을 다듬었다(2026-10-01) — 규칙만으로 기타가 35개(13%)
+   남던 것을 잡는다("ⓐ에 들어갈 말", "답을 할 수 없는 질문", "지시하는", "괄호 안 문맥에 맞는 말",
+   "역할이 같은 것", "반의어", "영어로 옮긴 것" 등). 위에서부터 먼저 맞는 것을 쓴다. */
 const TREND_CAT_RULES = [
   [/대화/, null],   // 대화문은 아래에서 따로 가른다
-  [/어법|문법|쓰임이\s*(같|다른)|용법|같은\s*뜻/, "어법"],
-  [/영영|뜻풀이|영어\s*뜻|단어의\s*뜻|접두사|합성어/, "단어 뜻·영영풀이"],
-  [/낱말|어휘|문맥상/, "어휘·낱말 쓰임"],
+  [/이어질\s*(대답|응답|말)|대답으로|응답으로/, "대화 흐름·응답"],
+  [/어법|문법|쓰임이\s*(같|다른)|용법|같은\s*뜻|역할이\s*같|한\s*문장으로\s*합/, "어법"],
+  [/영영|뜻풀이|영어\s*뜻|단어의\s*뜻|접두사|합성어|반의어|동의어|설명하는\s*단어/, "단어 뜻·영영풀이"],
+  [/영어로\s*(바르게\s*)?옮긴/, "영어 표현 고르기"],
+  [/낱말|어휘|문맥상|문맥에\s*맞는|쓰임이\s*(옳|어색|바른|적절)|단어가\s*바르게|바꿔\s*쓰|바꾸\s*쓸|바꿔\s*쓸|바꿔쓰기/, "어휘·낱말 쓰임"],
   [/요약/, "요약문 완성"],
   [/연결어|연결사|접속/, "연결어"],
-  [/들어가기에|들어갈\s*위치|주어진\s*문장/, "문장 삽입"],
+  [/들어가기에|들어갈\s*위치|들어갈\s*(가장\s*)?(적절한|알맞은)\s*곳|주어진\s*문장/, "문장 삽입"],
   [/순서/, "순서 배열"],
   [/무관|관계\s*없는|흐름.*(어색|관계)/, "무관한 문장"],
-  [/빈칸/, "빈칸 추론"],
-  [/가리키/, "지칭 대상"],
+  [/빈칸|들어갈\s*(말|단어|표현)/, "빈칸 추론"],
+  [/가리키|지시하는|지칭하는/, "지칭 대상"],
   [/제목|주제/, "주제·제목"],
-  [/요지|주장|강조/, "요지·주장"],
+  [/요지|주장|강조|속담|교훈/, "요지·주장"],
   [/목적/, "글의 목적"],
   [/심경|분위기|태도|어조|심정|성격/, "심경·분위기"],
   [/의미|뜻하는|함축|의도/, "함축 의미"],
   // "…한 이유로 가장 적절한 것" — 글의 세부 내용을 묻는다(2026-09-30 진안제일고 2학기 3번)
-  [/일치|언급|알\s*수\s*(있|없)|답할\s*수|도표|그래프|안내|내용과|이유|까닭|원인/, "내용 일치·불일치"],
+  [/일치|언급|알\s*수\s*(있|없)|답(을)?\s*할\s*수|도표|그래프|안내|내용과|이유|까닭|원인|이해한|관련이\s*없|관계가\s*깊|거리가\s*먼|조언|생각으로|구체적|질문에\s*대한\s*답/, "내용 일치·불일치"],
   [/해석|우리말|영어\s*표현/, "영어 표현 고르기"],
 ];
 function trendCatGuess(text, fmt) {
@@ -1460,6 +1465,7 @@ function trendRender() {
       <div class="trend-tools">
         <button type="button" class="btn small" id="trendAiBtn">${trendAi ? "✨ 총평 다시 쓰기" : "✨ 시험지 분석 총평 쓰기"}</button>
         <button type="button" class="btn ghost small" id="trendPrintBtn">🖨 인쇄 / PDF 저장</button>
+        <button type="button" class="btn ghost small" id="trendCardsBtn">📰 카드뉴스 만들기</button>
         <button type="button" class="btn ghost small" id="trendSaveBtn">💾 분석 저장</button>
       </div>
     </section>`;
@@ -1476,7 +1482,205 @@ function trendRender() {
   }));
   onTrend();
   $("trendPrintBtn").addEventListener("click", trendPrint);
+  $("trendCardsBtn").addEventListener("click", trendCardsOpen);
   $("trendSaveBtn").addEventListener("click", () => openSaveDialog("trend"));
+}
+
+/* ── 카드뉴스(초안) ──
+   분석 집계(trendStats/trendCoverage)만으로 정사각형 1080×1080 카드를 canvas에 그려 PNG로 내려받는다.
+   AI를 부르지 않으므로 요금이 없다. 학부모 단톡·인스타·블로그에 그대로 올리려는 용도.
+   카드: 표지 → 많이 나온 유형 TOP5 → 영역별 비중 → 선다/서답 → (여러 부) 늘고 준 유형 → (범위 있으면) 출제율 → 마무리. */
+const TREND_CARD = 1080;
+const TREND_CARD_FONT = '"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif';
+
+function trendCardBase(title, no, total) {
+  const c = document.createElement("canvas");
+  c.width = c.height = TREND_CARD;
+  const g = c.getContext("2d");
+  g.fillStyle = "#f4f7ff"; g.fillRect(0, 0, TREND_CARD, TREND_CARD);
+  g.fillStyle = "#2f5fd0"; g.fillRect(0, 0, TREND_CARD, 18);
+  g.textBaseline = "alphabetic";
+  if (title) {
+    g.fillStyle = "#1c2a4a"; g.font = `800 64px ${TREND_CARD_FONT}`;
+    g.fillText(title, 80, 170);
+    g.fillStyle = "#2f5fd0"; g.fillRect(80, 200, 120, 8);
+  }
+  g.fillStyle = "#8a97b0"; g.font = `600 28px ${TREND_CARD_FONT}`;
+  const b = trendBrand();
+  g.fillText(b.name || "출제경향 분석", 80, 1020);
+  g.textAlign = "right"; g.fillText(`${no} / ${total}`, 1000, 1020); g.textAlign = "left";
+  return { c, g };
+}
+
+// 줄바꿈이 필요한 글을 폭에 맞춰 찍는다. 다음에 찍을 y를 돌려준다.
+function trendCardWrap(g, text, x, y, maxW, lh) {
+  let line = "";
+  for (const ch of String(text)) {
+    if (g.measureText(line + ch).width > maxW && line) { g.fillText(line, x, y); y += lh; line = ch; }
+    else line += ch;
+  }
+  if (line) { g.fillText(line, x, y); y += lh; }
+  return y;
+}
+
+// 가로 막대 목록 — rows: [{label, value, text, color}]
+function trendCardBars(g, rows, y0, max) {
+  const rowH = 128;
+  rows.forEach((r, i) => {
+    const y = y0 + i * rowH;
+    g.fillStyle = "#1c2a4a"; g.font = `700 38px ${TREND_CARD_FONT}`;
+    g.fillText(r.label, 80, y + 36);
+    g.fillStyle = "#e1e8f8"; g.fillRect(80, y + 54, 920, 34);
+    g.fillStyle = r.color || "#3f7fe8";
+    g.fillRect(80, y + 54, Math.max(8, 920 * (r.value / (max || 1))), 34);
+    g.fillStyle = "#1c2a4a"; g.font = `800 38px ${TREND_CARD_FONT}`;
+    g.textAlign = "right"; g.fillText(r.text, 1000, y + 36); g.textAlign = "left";
+  });
+}
+
+function trendCardsBuild() {
+  const st = trendStats();
+  if (!st || !st.list.length) return [];
+  const cv = trendCoverage();
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const mk = [];   // 카드 그리는 함수들 — 번호(x / N)를 나중에 붙이려고 모아 둔다
+
+  mk.push((no, n) => {
+    const { c, g } = trendCardBase("", no, n);
+    g.fillStyle = "#2f5fd0"; g.fillRect(0, 0, TREND_CARD, TREND_CARD);
+    g.fillStyle = "#fff"; g.font = `600 36px ${TREND_CARD_FONT}`;
+    g.fillText("내신 영어 출제경향 분석", 80, 300);
+    g.font = `800 92px ${TREND_CARD_FONT}`;
+    let y = 430;
+    y = trendCardWrap(g, trendSchool() || "시험지 분석", 80, y, 920, 112);
+    if (trendSubject()) { g.font = `700 52px ${TREND_CARD_FONT}`; y = trendCardWrap(g, trendSubject(), 80, y + 10, 920, 70); }
+    g.font = `600 40px ${TREND_CARD_FONT}`;
+    g.fillText(`시험지 ${st.docs}부 · 총 ${st.grand}문항을 분석했습니다`, 80, 880);
+    const b = trendBrand();
+    g.font = `600 30px ${TREND_CARD_FONT}`; g.fillText(b.name || "", 80, 1020);
+    return c;
+  });
+
+  mk.push((no, n) => {
+    const { c, g } = trendCardBase("가장 많이 나온 유형 TOP 5", no, n);
+    const top = st.list.slice(0, 5);
+    trendCardBars(g, top.map((r) => ({
+      label: `${top.indexOf(r) + 1}. ${r.label.replace(/^서술형:\s*/, "서술형 · ")}`,
+      value: r.total, text: `${r.total}문항 · ${pct(r.total, st.grand)}%`,
+      color: TREND_DOMAIN_COLOR[trendDomainOf(r.label)] || "#3f7fe8",
+    })), 270, top[0].total);
+    return c;
+  });
+
+  mk.push((no, n) => {
+    const { c, g } = trendCardBase("영역별 출제 비중", no, n);
+    const doms = trendDomains(st).sort((a, b) => b.total - a.total).slice(0, 6);
+    trendCardBars(g, doms.map((d) => ({
+      label: d.name, value: d.total, text: `${pct(d.total, st.grand)}%`,
+      color: TREND_DOMAIN_COLOR[d.name] || "#9a9890",
+    })), 270, doms[0].total);
+    return c;
+  });
+
+  mk.push((no, n) => {
+    const { c, g } = trendCardBase("선다형 vs 서답형", no, n);
+    const mc = st.grand - st.subTotal;
+    const big = (x, label, val, color) => {
+      g.fillStyle = color; g.fillRect(x, 300, 440, 440);
+      g.fillStyle = "#fff"; g.textAlign = "center";
+      g.font = `800 150px ${TREND_CARD_FONT}`; g.fillText(String(val), x + 220, 520);
+      g.font = `700 44px ${TREND_CARD_FONT}`; g.fillText(label, x + 220, 600);
+      g.font = `600 36px ${TREND_CARD_FONT}`; g.fillText(`${pct(val, st.grand)}%`, x + 220, 670);
+      g.textAlign = "left";
+    };
+    big(80, "선다형", mc, "#3f7fe8");
+    big(560, "서답형", st.subTotal, "#ff8a4c");
+    g.fillStyle = "#1c2a4a"; g.font = `600 36px ${TREND_CARD_FONT}`;
+    g.fillText(st.subTotal ? "서술형 대비가 점수를 가릅니다." : "이번 시험은 서답형 없이 선다형으로만 출제됐습니다.", 80, 840);
+    return c;
+  });
+
+  if (st.docs > 1) {
+    const ch = trendChangeSummary(st), sn = trendShortNames(st.names);
+    if (ch.up.length || ch.down.length) mk.push((no, n) => {
+      const { c, g } = trendCardBase("출제 유형, 이렇게 달라졌어요", no, n);
+      g.fillStyle = "#1c2a4a"; g.font = `600 32px ${TREND_CARD_FONT}`;
+      g.fillText(`${sn[0]} → ${sn[st.docs - 1]}`, 80, 262);
+      const block = (title, list, color, y0) => {
+        g.fillStyle = color; g.font = `800 44px ${TREND_CARD_FONT}`; g.fillText(title, 80, y0);
+        g.fillStyle = "#1c2a4a"; g.font = `600 38px ${TREND_CARD_FONT}`;
+        const rows = list.slice(0, 4);
+        if (!rows.length) g.fillText("없음", 80, y0 + 62);
+        rows.forEach((r, i) => g.fillText(`${r.label}  ${r.a} → ${r.b}문항`, 80, y0 + 62 + i * 58));
+        return y0 + 62 + Math.max(1, rows.length) * 58 + 50;
+      };
+      const y = block("▲ 늘어난 유형", ch.up, "#d6453d", 370);
+      block("▼ 줄어든 유형", ch.down, "#2f6fd6", y + 20);
+      return c;
+    });
+  }
+
+  if (cv && cv.rows.length) mk.push((no, n) => {
+    const { c, g } = trendCardBase("시험 범위, 얼마나 나왔을까", no, n);
+    const used = cv.rows.filter((r) => r.count > 0).length;
+    g.fillStyle = "#2f5fd0"; g.textAlign = "center"; g.font = `800 220px ${TREND_CARD_FONT}`;
+    g.fillText(`${pct(used, cv.rows.length)}%`, 540, 560);
+    g.fillStyle = "#1c2a4a"; g.font = `600 44px ${TREND_CARD_FONT}`;
+    g.fillText(`범위 지문 ${cv.rows.length}개 중 ${used}개가 출제`, 540, 680);
+    g.textAlign = "left";
+    return c;
+  });
+
+  mk.push((no, n) => {
+    const { c, g } = trendCardBase("한 줄 정리", no, n);
+    const top = st.list[0];
+    g.fillStyle = "#1c2a4a"; g.font = `700 46px ${TREND_CARD_FONT}`;
+    let y = 330;
+    [`가장 많이 나온 유형은 '${top.label.replace(/^서술형:\s*/, "")}'(${top.total}문항)`,
+     `상위 3개 유형이 전체의 ${pct(st.list.slice(0, 3).reduce((a, r) => a + r.total, 0), st.grand)}%`,
+     "자주 나오는 유형부터 집중 대비하세요"].forEach((t) => { y = trendCardWrap(g, "✔ " + t, 80, y, 920, 64) + 40; });
+    const b = trendBrand();
+    if (b.name) { g.fillStyle = "#2f5fd0"; g.font = `800 48px ${TREND_CARD_FONT}`; g.fillText(b.name, 80, 900); }
+    return c;
+  });
+
+  return mk.map((f, i) => f(i + 1, mk.length));
+}
+
+function trendCardsOpen() {
+  const cards = trendCardsBuild();
+  if (!cards.length) return;
+  const old = document.getElementById("trendCardsModal");
+  if (old) old.remove();
+  const name = sanitizeFilename([trendSchool(), trendSubject(), "카드뉴스"].filter(Boolean).join("_"));
+  const m = document.createElement("div");
+  m.id = "trendCardsModal";
+  m.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(15,20,40,.72);overflow:auto;padding:24px";
+  m.innerHTML = `<div style="max-width:980px;margin:0 auto;background:#fff;border-radius:14px;padding:20px">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <b style="flex:1">📰 카드뉴스 (${cards.length}장 · 1080×1080)</b>
+      <button type="button" class="btn small" id="trendCardsAll">⬇ 전체 내려받기</button>
+      <button type="button" class="btn ghost small" id="trendCardsClose">닫기</button>
+    </div>
+    <div id="trendCardsGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>
+  </div>`;
+  document.body.appendChild(m);
+  const grid = m.querySelector("#trendCardsGrid");
+  const save = (c, i) => {
+    const a = document.createElement("a");
+    a.href = c.toDataURL("image/png"); a.download = `${name}_${i + 1}.png`; a.click();
+  };
+  cards.forEach((c, i) => {
+    const cell = document.createElement("div");
+    c.style.cssText = "width:100%;height:auto;border:1px solid #dde3f0;border-radius:8px;cursor:pointer";
+    c.title = "눌러서 이 장만 내려받기";
+    c.addEventListener("click", () => save(c, i));
+    cell.appendChild(c);
+    grid.appendChild(cell);
+  });
+  m.querySelector("#trendCardsAll").addEventListener("click", () => cards.forEach((c, i) => setTimeout(() => save(c, i), i * 300)));
+  m.querySelector("#trendCardsClose").addEventListener("click", () => m.remove());
+  m.addEventListener("click", (e) => { if (e.target === m) m.remove(); });
 }
 
 /* ── AI 글 ── */
@@ -1792,6 +1996,7 @@ HOWTO.trend = {
     "분석이 끝나면 아래에 <b>보고서</b>가 나옵니다 — 요약, 부별 유형 표, 비중 그래프, 그리고 <b>매회 출제 / 가끔 출제 / 한 번만</b> 구분이 들어 있습니다.",
     "분석이 끝나면 <b>시험지 분석 총평과 유형별 대비 전략</b>까지 이어서 자동으로 씁니다. 시험 범위를 나중에 바꿔도 총평은 지워지지 않고 '예전 범위 기준'이라는 안내만 뜹니다 — 새로 쓰려면 <b>[✨ 총평 다시 쓰기]</b>를 누르세요(다시 쓸 때도 값이 매겨집니다).",
     "<b>[🖨 인쇄 / PDF 저장]</b>은 보고서만 새 창에 담아 인쇄합니다 — 1쪽 그래프(한눈에 보는 출제 현황), 2쪽 핵심 요약·총평·대비 전략, 끝으로 시험 범위 지문별 출제 현황입니다. 시험지가 둘 이상이면 합친 그래프 대신 <b>시험지별 분석</b>(시험지마다 카드 한 장 — 문항 수·영역·유형·그 시험에서만 나온 유형) → 시험지별 유형 변화 → 시험지별 유형 출제 현황 표가 앞에 오고, 요약·총평은 그 뒤 새 쪽에 나옵니다. 팝업이 막혀 있으면 이 사이트의 팝업을 허용하세요.",
+    "<b>[📰 카드뉴스 만들기]</b>는 분석 결과를 정사각형(1080×1080) 그림 여러 장으로 만듭니다 — 표지, 많이 나온 유형, 영역별 비중, 선다형·서답형, (시험지가 둘 이상이면) 늘고 준 유형, (시험 범위를 넣었으면) 범위 출제율, 한 줄 정리 순입니다. 그림을 눌러 한 장씩, <b>[⬇ 전체 내려받기]</b>로 모두 내려받아 학부모 단톡방·블로그에 올리세요. 요금은 없습니다. 학원 마크 칸에 학원명을 적어 두면 카드 아래에 찍힙니다.",
     "<b>[💾 분석 저장]</b>으로 분석 결과를 저장해 두면, 다음에는 시험지를 다시 올리지 않고 <b>[📂 저장한 분석 불러오기]</b>로 바로 열 수 있습니다. <b>[➕ 저장한 분석 더하기]</b>는 지금 화면에 다른 저장본을 이어 붙여 한 보고서로 합칩니다(시험지만 합치고 시험 범위는 가져오지 않습니다). 합친 뒤 <b>[✨ 시험지 분석 총평 쓰기]</b>로 총평을 새로 쓰세요.",
   ],
   tip: "유형은 중·고등 내신에 두루 쓰는 이름(대화문 내용 파악, 영영풀이, 서술형 영작 등)으로 모든 문항을 셉니다 — 중학교 시험지도 됩니다. 그래도 '기타'로 남은 문항은 보고서 아래 <b>기타로 분류된 문항</b> 칸에 발문과 함께 나옵니다 — 분류를 골라 주면 보고서에 바로 반영되고, [💾 분석 저장]으로 남습니다(이 칸은 인쇄에 나오지 않습니다). 범위 대조는 글자 겹침으로 짝을 짓기 때문에, 지문을 크게 바꿔 낸 문항은 '범위에서 찾지 못한 지문'으로 나올 수 있습니다. 저장본에는 시험지 그림이 들어가지 않습니다 — 그래서 지문을 읽지 않고 저장한 분석은 나중에 지문을 다시 읽을 수 없습니다.",

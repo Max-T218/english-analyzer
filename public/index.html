@@ -1189,6 +1189,12 @@
           <div class="quiz-type-grid" id="mcqTypeGrid"></div>
           <div class="hint cost-hint" id="mcqCostHint" role="status" aria-live="polite"></div>
 
+<label class="group-label">학교급 <span class="group-note">(중학교를 고르면 보기·오답·문법 포인트를 중학생 수준으로 만듭니다)</span></label>
+          <div class="quiz-type-grid radio-grid">
+            <label><input type="radio" name="mcqSchool" value="high" checked> 고등학교</label>
+            <label><input type="radio" name="mcqSchool" value="middle"> 중학교</label>
+          </div>
+
           <label class="group-label">난이도 <span class="group-note">(보기를 얼마나 까다롭게 만들지 고릅니다 — 둘 다 고르면 두 벌이 나옵니다)</span></label>
           <div class="quiz-type-grid radio-grid">
             <label><input type="checkbox" name="mcqLevel" value="normal" checked> 기본</label>
@@ -1265,6 +1271,12 @@
           </div>
           <div class="quiz-type-grid" id="saqTypeGrid"></div>
           <div class="hint cost-hint" id="saqCostHint" role="status" aria-live="polite"></div>
+
+<label class="group-label">학교급 <span class="group-note">(중학교를 고르면 묻는 말·문법 포인트를 중학생 수준으로 만듭니다)</span></label>
+          <div class="quiz-type-grid radio-grid">
+            <label><input type="radio" name="saqSchool" value="high" checked> 고등학교</label>
+            <label><input type="radio" name="saqSchool" value="middle"> 중학교</label>
+          </div>
 
           <label class="group-label">난이도 <span class="group-note">(묻는 말을 얼마나 까다롭게 만들지 고릅니다 — 둘 다 고르면 두 벌이 나옵니다)</span></label>
           <div class="quiz-type-grid radio-grid">
@@ -1587,6 +1599,7 @@
              그래야 바로 옆 '저장함에서 가져오기'로 되불러오고, 다른 탭에서도 쓸 수 있다. -->
         <button type="button" class="btn ghost small" id="examPassageSaveBtn">💾 지문 저장</button>
         <button type="button" class="btn ghost small" id="examSavedBtn">📄 저장함에서 가져오기</button>
+        <button type="button" class="btn ghost small" id="examOcrPhotoBtn">📷 사진에서 가져오기</button>
         <button type="button" class="btn ghost small" id="examPdfBtn">📄 PDF에서 가져오기</button>
         <button type="button" class="btn ghost small danger" id="examClearPassagesBtn">🗑️ 지문 전체 지우기</button>
         <span class="passage-max-note" id="examPassageMaxNote" role="status" aria-live="polite"></span>
@@ -1597,6 +1610,7 @@
         저작권이 있는 교재·시험지 지문은 <b>변형할 권리가 있는지 확인한 뒤</b> 넣어 주세요.
       </p>
       <input type="file" id="examPdfFile" accept="application/pdf" multiple hidden>
+      <input type="file" id="examOcrFile" accept="image/*" multiple hidden>
       <div class="ocr-hint">
         교과서·모의고사 <b>PDF</b>를 이 칸에 <b>끌어다 놓아도</b> 됩니다 —
         <b>문단(또는 문항)마다 지문 1개</b>로 나눠 한 번에 채웁니다.
@@ -1623,6 +1637,12 @@
         <label><input type="radio" name="examOrder" value="random"> 무작위로 섞기</label>
       </div>
       <div class="hint type-order-hint" id="examOrderHint"></div>
+
+      <label class="group-label">학교급 <span class="group-note">(중학교를 고르면 보기·오답·문법 포인트를 중학생 수준으로 만듭니다)</span></label>
+      <div class="quiz-type-grid radio-grid">
+        <label><input type="radio" name="examSchoolLv" value="high" checked> 고등학교</label>
+        <label><input type="radio" name="examSchoolLv" value="middle"> 중학교</label>
+      </div>
 
       <label class="group-label">몇 부를 만들까요</label>
       <div class="quiz-type-grid radio-grid">
