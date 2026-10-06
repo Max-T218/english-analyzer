@@ -1924,7 +1924,7 @@ const passageMgr = createPassageManager(
 // Ctrl+Enter는 현재 열려 있는 탭의 실행 버튼을 누른다
 function runActiveTab() {
   const active = document.querySelector(".tab-page.active");
-  const btn = active && active.querySelector("#analyzeBtn, #mcqBtn, #saqBtn, #wbBtn");
+  const btn = active && active.querySelector("#analyzeBtn, #mcqBtn, #saqBtn, #mixBtn, #wbBtn");
   if (btn && !btn.disabled) btn.click();
 }
 
@@ -2628,7 +2628,7 @@ function syncFloatPrint() {
   const btn =
     active &&
     active.querySelector(
-      "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
+      "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #mixPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
     );
   // 묶음은 페이지 이동 버튼도 담고 있으므로 통째로 감추지 않고 인쇄 버튼만 여닫는다
   floatPrintBtn.hidden = !(btn && btn.style.display !== "none");
@@ -2643,7 +2643,7 @@ function activeSectionBtn(selector) {
 }
 floatPrintBtn.addEventListener("click", () => {
   const b = activeSectionBtn(
-    "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
+    "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #mixPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
   );
   if (b) b.click();
 });
@@ -3689,10 +3689,19 @@ function safeHTML(s) {
 // label: 지문 변형 세트 이름 ("원문" / "5개 내외 변형" …). 변형을 하나만 골랐으면 빈 값.
 // what: 실패한 작업 이름 (기본 "분석" — 문제 제작 탭에서는 "문제 제작")
 function buildErrorHtml(job, total, msg, label, kind) {
-  const what = kind === "mcq" || kind === "saq" ? "문제 제작" : "분석";
+  const what = kind === "mcq" || kind === "saq" || kind === "mix" ? "문제 제작" : "분석";
   const named = total > 1 || job.named || label;
   const who = [named ? job.name : "", label].filter(Boolean).join(" · ");
   const head = who ? `${who} ${what} 실패` : `${what} 실패`;
+  return `<section class="passage-block"><div class="passage-error"><b>${esc(head)}</b>${esc(msg)}</div></section>`;
+}
+
+// 실패는 아니지만 알려야 하는 것(서버가 낼 수 없는 유형을 뺀 경우 — 요금도 안 나갔다).
+// buildErrorHtml과 같은 상자를 쓰되 '실패'라고 적지 않고 유형 이름도 앞에 붙이지 않는다.
+function buildNoticeHtml(job, total, msg, label) {
+  const named = total > 1 || job.named || label;
+  const who = [named ? job.name : "", label].filter(Boolean).join(" · ");
+  const head = who ? `${who} 안내` : "안내";
   return `<section class="passage-block"><div class="passage-error"><b>${esc(head)}</b>${esc(msg)}</div></section>`;
 }
 
@@ -4834,6 +4843,22 @@ const SAQ_HARD_TYPES = new Set([
   "표현 찾아 쓰기", "영영풀이 쓰기", "조건 영작",
 ]);
 
+/* 혼합 탭 — 객관식·주관식 유형을 한 목록으로 이어 붙인다. 서버는 유형 이름만 보고
+   요금·모델·문항 모양을 정하므로(QUIZ_TYPE_LABELS · MCQ_ONLY_TYPES) 요청 모양은 두 탭과
+   같다. 두 목록의 유형 이름은 겹치지 않는다 — 겹치면 TYPE_MAX·요금 조회가 어긋난다.
+   주관식 쪽은 칸 이름을 줄이지 않는다(label 제거): 객관식 '무관한 문장'과 주관식
+   '무관한 문장 쓰기'가 같은 이름으로 보이면 어느 쪽인지 가릴 수 없다.
+   처음 켜 둘 것은 객관식·주관식 하나씩만 — 8개가 한꺼번에 켜져 있으면 섞는 맛을 보기 전에
+   요금부터 부풀어 보인다. */
+const MCQ_ID_SET = new Set(MCQ_TYPES.map((t) => t.id));
+const MIX_DEFAULT_ON = new Set(["빈칸", "서술형배열"]);
+const MIX_TYPES = [
+  ...MCQ_TYPES.map((t) => ({ id: t.id, def: MIX_DEFAULT_ON.has(t.id), group: "객관식 (5지선다)" })),
+  ...SAQ_TYPES.map((t) => ({ id: t.id, def: MIX_DEFAULT_ON.has(t.id), group: "주관식 (서술형·단답형)" })),
+];
+// 고난도가 되는 유형 — 객관식은 전부, 주관식은 SAQ_HARD_TYPES만(탭 둘의 규칙을 그대로 합친다)
+const MIX_HARD_TYPES = new Set([...MCQ_ID_SET, ...SAQ_HARD_TYPES]);
+
 function chunkTypes(items, size = QUIZ_QUESTIONS_PER_CALL) {
   const out = [];
   const pack = (list) => {
@@ -4884,7 +4909,9 @@ function setupQuizTab({ prefix, types, footer }) {
      화면 어디에도 없었다. 그래서 늘 보이는 칸을 하나 두고 셋을 같은 값으로 묶었다. */
   let sheetTitle = "";
   const titleEl = $(prefix + "Title");
-  const docName = prefix === "mcq" ? "객관식문제" : "주관식문제";
+  // 혼합 탭 — 객관식·주관식 유형이 한 목록에 들어 있다. 요금·고난도 가능 여부는 유형마다 가린다.
+  const isMix = prefix === "mix";
+  const docName = isMix ? "혼합문제" : prefix === "mcq" ? "객관식문제" : "주관식문제";
   const errorEl = $(prefix + "Error");
   const loadingEl = $(prefix + "Loading");
   const loadingTextEl = $(prefix + "LoadingText");
@@ -4921,7 +4948,8 @@ function setupQuizTab({ prefix, types, footer }) {
     return on.length ? on : ["normal"];
   };
   // 고난도로 만들 수 있는 유형인가 — 주관식만 가린다(객관식은 전부 된다)
-  const HARD_OK = prefix === "saq" ? SAQ_HARD_TYPES : null;
+  // 혼합: 객관식은 전부 고난도가 되고, 주관식은 SAQ_HARD_TYPES만 된다
+  const HARD_OK = prefix === "saq" ? SAQ_HARD_TYPES : isMix ? MIX_HARD_TYPES : null;
   const hardOk = (id) => !HARD_OK || HARD_OK.has(id);
   const hardOnly = () => {
     const lv = levels();
@@ -4955,8 +4983,16 @@ function setupQuizTab({ prefix, types, footer }) {
   /* 유형 칩 생성 — 체크박스(선택)와 스테퍼(문항 수)를 형제로 둔다.
      스테퍼를 <label> 안에 넣으면 +/− 를 누를 때마다 라벨이 체크박스를 토글해 버리므로,
      라벨은 '체크박스 + 유형 이름'까지만 감싼다. */
+  let lastGroup = null;
   types.forEach((t) => {
     const max = TYPE_MAX[t.id] || 1;
+    if (t.group && t.group !== lastGroup) {
+      lastGroup = t.group;
+      const head = document.createElement("div");
+      head.className = "type-group-head";
+      head.textContent = t.group;
+      gridEl.appendChild(head);
+    }
     const chip = document.createElement("div");
     chip.className = "type-chip";
     chip.dataset.id = t.id;
@@ -5079,7 +5115,7 @@ function setupQuizTab({ prefix, types, footer }) {
     const extra = PRICING.extraQuestion || 0;
     return items.reduce((sum, it) => {
       const base =
-        prefix === "mcq"
+        prefix === "mcq" || (isMix && MCQ_ID_SET.has(it.id))
           ? MCQ_TRANSFORM_TYPES.has(it.id)
             ? PRICING.mcqTransform
             : PRICING.mcqPlain
@@ -5163,6 +5199,18 @@ function setupQuizTab({ prefix, types, footer }) {
       ? "<br>고난도로 만들 수 없는 유형은 고를 수 없게 막아 두었습니다(" +
         types.filter((t) => !hardOk(t.id)).map((t) => t.label || t.id).join(", ") + ")."
       : "";
+    if (isMix) {
+      levelHintEl.innerHTML =
+        (on.length > 1
+          ? "<b>기본 + 고난도</b> — 같은 지문으로 <b>두 벌</b>을 따로 만듭니다. 객관식은 보기를, 주관식은 묻는 말을 고난도로 바꿉니다."
+          : on[0] === "hard"
+          ? "<b>고난도</b> — 지문을 외운 것만으로는 못 풀게 만듭니다.<br>" +
+            "· <b>객관식</b>: 정답은 지문과 다른 말로, 오답에는 지문 낱말을 그대로 넣은 함정을 섞습니다.<br>" +
+            "· <b>주관식</b>: 묻는 말을 지문과 다른 말로 바꿉니다. 고난도가 되는 주관식은 OX진위·질문에 답하기·표현 찾아 쓰기·영영풀이 쓰기·조건 영작뿐입니다."
+          : "<b>기본</b> — 지문의 표현을 살려 묻고, 오답·틀린 진술은 지문과 뚜렷이 어긋나게 만듭니다. 지문 내용을 알면 풀 수 있습니다.") +
+        blockedNote + lockNote;
+      return;
+    }
     if (prefix === "saq") {
       // 주관식은 보기가 없는 유형이 대부분이라 '보기' 대신 '묻는 말'로 설명한다
       levelHintEl.innerHTML =
@@ -5316,14 +5364,40 @@ function setupQuizTab({ prefix, types, footer }) {
     }
     // 난이도 벌마다 무엇을 어떤 난이도로 만들지(levelPlan). 기본 + 고난도에서 고난도가 안
     // 되는 유형만 골랐으면 고난도 벌이 비어 빠진다 — 그 사실은 설명 칸이 이미 알린다.
-    const plan = levelPlan(picked).filter((p) => p.runs.length);
-    // 호출 묶음은 run마다 따로 나눈다 — 한 호출 안의 문항은 난이도가 하나여야 한다.
-    plan.forEach((p) => p.runs.forEach((r) => (r.chunks = chunkTypes(r.items))));
-    const chunksPerVar = plan.reduce((s, p) => s + p.runs.reduce((a, r) => a + r.chunks.length, 0), 0);
-    // 지문 변형은 난이도와 상관없이 한 번만 한다 — 기본·고난도 두 벌이 같은 변형본을 써야
-    // 두 벌을 견줄 수 있다.
-    const perVarQuestions = plan.reduce((s, p) => s + planCount(p), 0);
-    const perVarCost = plan.reduce((s, p) => s + costPerSet(planItems(p)), 0);
+    /* 지문마다 만들 유형이 다를 수 있다 — 대화문 유형(EXAM_DIALOGUE_TYPES)은 대화문 지문에서만
+       만들어진다. 서버가 뒤늦게 빼고 "요금은 안 나갔다"고 알리던 것을, 시작 전에 미리 빼서
+       확인창에 정확한 금액이 뜨게 한다. 문장삽입이 짧은 지문에서 빠지는 것은 그대로
+       서버가 가린다(문장 수를 화면에서 따로 세지 않는다). 지문 변형은 난이도와 상관없이
+       한 번만 한다 — 기본·고난도 두 벌이 같은 변형본을 써야 두 벌을 견줄 수 있다. */
+    const buildJobPlan = (items) => {
+      const pl = levelPlan(items).filter((p) => p.runs.length);
+      // 호출 묶음은 run마다 따로 나눈다 — 한 호출 안의 문항은 난이도가 하나여야 한다.
+      pl.forEach((p) => p.runs.forEach((r) => (r.chunks = chunkTypes(r.items))));
+      return {
+        plan: pl,
+        chunksPerVar: pl.reduce((s, p) => s + p.runs.reduce((a, r) => a + r.chunks.length, 0), 0),
+        perVarQuestions: pl.reduce((s, p) => s + planCount(p), 0),
+        perVarCost: pl.reduce((s, p) => s + costPerSet(planItems(p)), 0),
+      };
+    };
+    const noDlgItems = picked.filter((it) => !EXAM_DIALOGUE_TYPES.has(it.id));
+    const droppedDlg = picked.filter((it) => EXAM_DIALOGUE_TYPES.has(it.id)).map((it) => it.id);
+    const fullPlan = buildJobPlan(picked);
+    const noDlgPlan = droppedDlg.length ? buildJobPlan(noDlgItems) : fullPlan;
+    const jobPlanOf = (job) => (!droppedDlg.length || isDialogueText(job.text) ? fullPlan : noDlgPlan);
+    const plan = fullPlan.plan;
+    const billJobs = jobs.filter((j) => j.text && j.text.length >= 20);
+    const usableJobs = billJobs.filter((j) => jobPlanOf(j).plan.length);
+    if (!usableJobs.length) {
+      errorEl.textContent = billJobs.length
+        ? `고른 유형(${droppedDlg.join("·")})은 대화문(줄마다 "A:", "B:"처럼 말하는 사람이 표시된 지문)에서만 만들 수 있는데, 입력한 지문에 대화문이 없습니다.`
+        : "지문이 너무 짧습니다 (20자 이상 입력).";
+      return;
+    }
+    const noDlgJobs = droppedDlg.length ? billJobs.filter((j) => !isDialogueText(j.text)).length : 0;
+    const dlgNote = noDlgJobs
+      ? `\n(대화문이 아닌 지문 ${noDlgJobs}개에서는 ${droppedDlg.join("·")}을(를) 뺍니다 — 그 값은 받지 않습니다)`
+      : "";
     const setsNote = [
       plan.length > 1 ? `(${plan.map((p) => `${LEVEL_LABELS[p.lv]} ${planCount(p)}`).join(" + ")})문항` : `${perSetQuestions}문항`,
       vars.length > 1 ? `변형 ${vars.length}세트` : "",
@@ -5333,14 +5407,15 @@ function setupQuizTab({ prefix, types, footer }) {
       (plan.length > 1 ? " 난이도를 하나만 고르면 값이 그만큼 내려갑니다." : "");
     // 지문 수까지 곱한 실제 총량을 여기서 확인한다 — 지문은 이 탭 밖에서 바뀌므로
     // 유형 칸의 실시간 요약만으로는 잡히지 않는다.
-    const billable = billableJobCount();
-    const perJobQuestions = perVarQuestions * vars.length; // 지문 1개가 만들어 내는 문항 수
-    const runQuestions = billable * perJobQuestions;
+    const billable = usableJobs.length;
+    const runQuestions = usableJobs.reduce((s, j) => s + jobPlanOf(j).perVarQuestions * vars.length, 0);
+    const perJobQuestions = Math.max(1, Math.round(runQuestions / billable)); // 지문 1개당 평균 문항 수
+    const runQuizCalls = usableJobs.reduce((s, j) => s + jobPlanOf(j).chunksPerVar * vars.length, 0);
     // 유형마다 단가가 갈리고 추가 문항은 따로 매겨진다(costPerSet). 지문변형 세트를
     // 여러 개 고르면 세트 수만큼 문제 생성이 통째로 반복된다.
     const rewordSets = vars.filter((v) => v !== "verbatim").length;
     const cost = PRICING
-      ? billable * (vars.length * perVarCost + rewordSets * PRICING.reword)
+      ? usableJobs.reduce((s, j) => s + vars.length * jobPlanOf(j).perVarCost + rewordSets * PRICING.reword, 0)
       : 0;
     // 한 묶음에 담을 지문 수. 0이면 나누지 않고 지금까지대로 한 번에 간다.
     let batchSize = 0;
@@ -5352,7 +5427,7 @@ function setupQuizTab({ prefix, types, footer }) {
       const perBatch = Math.max(1, Math.floor(QUIZ_MAX_QUESTIONS_PER_RUN / perJobQuestions));
       const choice = await askBigRun({
         questions: runQuestions,
-        quizCalls: billable * vars.length * chunksPerVar,
+        quizCalls: runQuizCalls,
         rewordCalls: billable * rewordSets,
         perBatch,
         batches: Math.ceil(billable / perBatch),
@@ -5363,14 +5438,14 @@ function setupQuizTab({ prefix, types, footer }) {
       // 이 창이 요금·잔액까지 이미 보여 줬으므로 costConfirmed로 다시 묻지는 않는다.
       // 다만 '보여 주는 것'과 '막는 것'은 다르다 — 여기가 가장 크게 나가는 자리라
       // 잔액이 모자라면 반드시 세워야 한다.
-      const bigLabel = `${docName}를 만듭니다. (지문 ${billable}개 · 총 ${runQuestions}문항)`;
+      const bigLabel = `${docName}를 만듭니다. (지문 ${billable}개 · 총 ${runQuestions}문항)${dlgNote}`;
       if (!(await hasEnoughPoints(cost, bigLabel, jobs.length,
         reduceAdvice(jobs.length, "고른 유형 수나 유형별 문항 수를 줄이면") + setsAdvice))) return;
     } else if (PRICING) {
       const label =
         `${docName}를 만듭니다.\n` +
         `지문 ${billable}개 × ` + setsNote.join(" × ") +
-        ` = 총 ${runQuestions}문항`;
+        ` = 총 ${runQuestions}문항` + dlgNote;
       if (!(await costConfirmed(cost, label, jobs.length,
         reduceAdvice(jobs.length, "고른 유형 수나 유형별 문항 수를 줄이면") + setsAdvice))) return;
     }
@@ -5409,7 +5484,7 @@ function setupQuizTab({ prefix, types, footer }) {
 
     const total = jobs.length;
     // 전체 진행 칸 수 = 지문 × 변형 × (난이도 벌마다의 청크 합). 어디까지 왔는지 보여 주기 위한 값.
-    const steps = total * vars.length * chunksPerVar;
+    const steps = runQuizCalls;
     // 유형 칸에 놓인 순서 — 난이도가 섞인 벌(고난도만 + 기본으로 만드는 유형)은 호출이
     // 둘로 갈려 돌아오므로, 문항을 이 순서로 다시 줄 세운다.
     const typeOrder = new Map(picked.map((it, i) => [it.id, i]));
@@ -5457,6 +5532,18 @@ function setupQuizTab({ prefix, types, footer }) {
           continue;
         }
 
+        // 이 지문에서 만들 유형 묶음 — 대화문이 아니면 대화문 유형이 빠진 쪽이다
+        const jp = jobPlanOf(job);
+        const plan = jp.plan;
+        if (jp !== fullPlan) {
+          append(buildNoticeHtml(
+            job, total,
+            `${droppedDlg.join("·")}은(는) 대화문(줄마다 "A:", "B:"처럼 말하는 사람이 표시된 지문)에서만 만들 수 있어 뺐습니다. 이 유형 요금은 나가지 않았습니다.`,
+            ""
+          ));
+        }
+        if (!plan.length) continue;
+
         for (let v = 0; v < vars.length && !stopped; v++) {
           const variation = vars[v];
           const varLabel = vars.length > 1 ? VARIATION_LABELS[variation] : "";
@@ -5488,7 +5575,7 @@ function setupQuizTab({ prefix, types, footer }) {
                 const left = steps - step;
                 if (left > 0) append(quotaStopHtml(left, err, "작업"));
               }
-              step += chunksPerVar;
+              step += jp.chunksPerVar;
               continue;
             }
           }
@@ -5530,8 +5617,9 @@ function setupQuizTab({ prefix, types, footer }) {
                 );
                 noteCallSecs("quiz", (Date.now() - qzStart) / 1000);
                 if (Array.isArray(data.questions)) questions.push(...data.questions);
-                // 지문이 짧아 서버가 뺀 유형(문장삽입) — 요금은 안 나갔지만 빠진 줄은 알려야 한다
-                (data.skipped || []).forEach((msg) => failed.push({ group: [{ id: "문장삽입" }], msg }));
+                // 서버가 뺀 유형(짧은 지문의 문장삽입 · 대화문이 아닌 지문의 대화문 유형) —
+                // 요금은 안 나갔지만 빠진 줄은 알려야 한다. 문구에 유형 이름이 이미 들어 있다.
+                (data.skipped || []).forEach((msg) => failed.push({ notice: msg }));
               } catch (err) {
                 failed.push({ group, msg: err.message || String(err) });
                 // 한도 소진·Pro 불가는 기다려도 안 풀린다 — 남은 작업을 시도하지 않는다
@@ -5586,7 +5674,9 @@ function setupQuizTab({ prefix, types, footer }) {
               okCount++;
             }
             failed.forEach((f) => {
-              append(buildErrorHtml(job, total, `${groupLabel(f.group)} — ${f.msg}`, label, prefix));
+              append(f.notice
+                ? buildNoticeHtml(job, total, f.notice, label)
+                : buildErrorHtml(job, total, `${groupLabel(f.group)} — ${f.msg}`, label, prefix));
             });
             if (stopped && stopErr) {
               const left = steps - step;
@@ -5644,7 +5734,7 @@ function setupQuizTab({ prefix, types, footer }) {
     // 문제 탭에는 '직접 수정'이 없다 — 고칠 곳이 있으면 다시 만들라고 안내한다
     if (okCount) {
       const made = resultEl.querySelectorAll(".qz-card").length;
-      const kind = prefix === "mcq" ? "객관식 문제" : "주관식 문제";
+      const kind = isMix ? "혼합 문제" : prefix === "mcq" ? "객관식 문제" : "주관식 문제";
       showDoneGuide(`${kind} ${made}문항`, false);
     }
   }
@@ -5900,6 +5990,7 @@ function setupQuizTab({ prefix, types, footer }) {
 const QUIZ_TABS = {
   mcq: setupQuizTab({ prefix: "mcq", types: MCQ_TYPES, footer: "수능형 객관식 문제" }),
   saq: setupQuizTab({ prefix: "saq", types: SAQ_TYPES, footer: "서술형·단답형 문제" }),
+  mix: setupQuizTab({ prefix: "mix", types: MIX_TYPES, footer: "객관식·서술형 혼합 문제" }),
 };
 
 // 한 문항의 '정답' 표기를 형식에 맞게 만든다
@@ -8036,6 +8127,7 @@ const TAB_LABELS = {
   brief: "📑 지문 요약분석",
   mcq: "📝 객관식 문제",
   saq: "✍️ 주관식 문제",
+  mix: "🧩 혼합 문제",
   workbook: "📚 워크북",
   vocab: "📒 단어장",
   exam: "🧾 시험지",
@@ -8064,6 +8156,7 @@ const SAVE_TITLE_SUGGEST = {
   // 인쇄창에서 적어 둔 시험지명이 있으면 그것을 먼저 제안한다(저장함에서도 같은 이름)
   mcq: () => (QUIZ_SHEET_TITLE.mcq && QUIZ_SHEET_TITLE.mcq.get()) || passageBasedName("객관식문제"),
   saq: () => (QUIZ_SHEET_TITLE.saq && QUIZ_SHEET_TITLE.saq.get()) || passageBasedName("주관식문제"),
+  mix: () => (QUIZ_SHEET_TITLE.mix && QUIZ_SHEET_TITLE.mix.get()) || passageBasedName("혼합문제"),
   workbook: () => titledName("워크북", "wbTitle"),
   vocab: () => titledName("단어장", "vocabTitle"),
   /* 시험지는 공용 지문칸이 아니라 자기 지문칸을 쓰므로 passageBasedName을 못 쓴다.
@@ -8656,7 +8749,7 @@ savedKindsEl.addEventListener("click", (e) => {
 passageLibraryBtn.addEventListener("click", () => openSavedList("passage"));
 /* 탭마다 '📂 불러오기' — 그 탭에서 저장한 것만 보여 준다. 시험지 탭의 단추는
    자기 자리(examLoadSpecBtn)에 따로 있다. */
-["analyze", "brief", "mcq", "saq", "workbook", "vocab"].forEach((tab) => {
+["analyze", "brief", "mcq", "saq", "mix", "workbook", "vocab"].forEach((tab) => {
   const btn = $(`${tab}LoadBtn`);
   if (btn) btn.addEventListener("click", () => openSavedList("tab", null, tab));
 });
@@ -8748,6 +8841,20 @@ const HOWTO = {
     ],
     tip: "OX 진위형은 한 지문에 최대 5개까지만 만들어집니다. 유형이 하나뿐인데 문항을 많이 잡으면 비슷한 문제가 나오기 때문입니다.",
     sampleHead: "주관식은 이렇게 나옵니다 — 한 지문으로 18가지 유형을 한 문항씩 만든 시험지 중 네 쪽입니다",
+  },
+  mix: {
+    title: "🧩 혼합 문제 만드는 법",
+    lead: "객관식(5지선다)과 주관식(서술형·단답형) 유형을 한 시험지에 섞어 만듭니다. 객관식 탭·주관식 탭을 따로 돌려 두 시험지를 이어 붙일 필요가 없습니다.",
+    steps: [
+      "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. (선택) <b>목표 어법</b>을 적으면 어법 계열 문항이 그 문법으로 나옵니다.",
+      "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추). 칸은 <b>객관식 (5지선다)</b>와 <b>주관식 (서술형·단답형)</b> 두 묶음으로 나뉘어 있고, 두 묶음에서 자유롭게 고르면 됩니다.",
+      "<b>학교급</b>·<b>난이도</b>를 고릅니다. 고난도는 객관식 전 유형과 주관식 중 <b>OX진위·질문에 답하기·표현 찾아 쓰기·영영풀이 쓰기·조건 영작</b>에서만 됩니다 — <b>기본 + 고난도</b>를 같이 고르면 고난도가 안 되는 주관식은 기본 벌에만 들어가고, <b>고난도만</b> 고르면 그 유형은 새로 고를 수 없게 막힙니다.",
+      "<b>출제 순서</b>를 고릅니다 — <b>유형 순서대로</b>는 객관식 → 주관식 순으로 나오고, <b>지문 내 유형 섞기</b>·<b>전체 문항 섞기</b>를 고르면 두 종류가 한 시험지 안에서 뒤섞입니다.",
+      "(선택) <b>지문 변형</b>과 <b>시험지 제목</b>을 정합니다.",
+      "<b>[문제 만들기]</b>를 누릅니다. 요금은 유형마다 객관식·주관식 단가대로 합산되어, 같은 유형을 각 탭에서 따로 만들 때와 같습니다.",
+      "<b>[🔀 문제 섞기]</b>(요금 없음) · <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>. <b>답지에 해설</b>을 끄면 답지에 정답만 나옵니다(객관식·주관식 모두).",
+    ],
+    tip: "주관식 답지는 원래 정답만 싣는데, 혼합 탭에서는 객관식 해설과 함께 한 표에 실립니다 — 해설이 필요 없으면 <b>답지에 해설</b>을 끄세요.",
   },
   workbook: {
     title: "📚 워크북 만드는 법",
@@ -10727,6 +10834,7 @@ const DOC_COVERS = [
   // 문제 제작 둘은 인쇄·저장 때 적는 시험지명을 쓴다(기존 한 줄 띠는 그대로 둔다)
   { host: () => $("mcqResult"), title: () => (QUIZ_SHEET_TITLE.mcq ? QUIZ_SHEET_TITLE.mcq.get() : "") },
   { host: () => $("saqResult"), title: () => (QUIZ_SHEET_TITLE.saq ? QUIZ_SHEET_TITLE.saq.get() : "") },
+  { host: () => $("mixResult"), title: () => (QUIZ_SHEET_TITLE.mix ? QUIZ_SHEET_TITLE.mix.get() : "") },
 ];
 
 function syncDocCovers() {
@@ -10772,6 +10880,7 @@ const DOC_TITLES = {
   exam: titleHandle("examPaperTitle"),
   mcq: quizTitleHandle("mcq"),
   saq: quizTitleHandle("saq"),
+  mix: quizTitleHandle("mix"),
 };
 
 /* 통째로 불러오기 직전에 모든 탭의 제목을 비운다. 안 비우면 앞 자료의 이름이 남아,

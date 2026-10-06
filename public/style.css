@@ -57,7 +57,7 @@
    **@media screen 안에 둔다** — 밖에 두면 인쇄 때 아래 인쇄 색을 덮어써 인쇄물이 바뀐다.
    결과물 칸을 새로 만들면 여기에도 넣을 것. */
 @media screen{
-  #result, #briefDoc, #mcqResult, #saqResult, #workbookDoc, #vocabDoc, #examPaperResult,
+  #result, #briefDoc, #mcqResult, #saqResult, #mixResult, #workbookDoc, #vocabDoc, #examPaperResult,
   .gate-preview, .howto-sample{
     --paper:#ffffff; --card:#ffffff; --ink:#1b2430; --ink-soft:#485463;
     --line:#e3e7ec; --line-soft:#eef1f4; --accent:#1f4e6b; --accent-soft:#e8eef3;
@@ -701,7 +701,10 @@ label.chk-lg{gap:8px; font-size:14.5px;}
    다만 너비 계산은 폰트·화면 배율에 따라 어긋날 수 있다 — 그래서 '이름이 안 잘리게
    넓힌다'만 믿지 않고, 자리가 모자라면 이름이 둘째 줄로 접히게 한다(ellipsis 금지).
    글자가 잘려 무슨 유형인지 못 알아보는 것보다 칩이 한 줄 더 높아지는 쪽이 낫다. */
-#mcqTypeGrid, #saqTypeGrid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));}
+#mcqTypeGrid, #saqTypeGrid, #mixTypeGrid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));}
+/* 혼합 탭에서 객관식·주관식 유형 묶음을 가르는 소제목 — 칩 격자 전체 폭을 쓴다 */
+.type-group-head{grid-column:1 / -1; font-weight:700; font-size:.9em; color:var(--ink-soft); margin-top:6px;}
+.type-group-head:first-child{margin-top:0;}
 .type-chip{
   display:flex; align-items:flex-start; gap:5px;
   background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:4px 6px 4px 9px;

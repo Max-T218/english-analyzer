@@ -203,7 +203,12 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 
 ### `public/index.html`
 
-탭 6개 — `analyze`, `mcq`, `saq`, `workbook`, `vocab`, `exam`.
+탭 7개 — `analyze`, `mcq`, `saq`, `mix`, `workbook`, `vocab`, `exam`.
+`mix`(문제 제작 혼합, 2026-10-06)는 객관식·주관식 유형을 한 시험지에 섞는 탭이다 —
+`setupQuizTab`을 `prefix:"mix"`로 한 번 더 부르는 것뿐이고(`MIX_TYPES` = `MCQ_TYPES` + `SAQ_TYPES`,
+고난도 가능 유형 `MIX_HARD_TYPES`), 서버는 유형 이름만 보고 요금·모델을 정하므로
+**서버 변경은 없다**(`CHANGELOG`만). **`MCQ_TYPES`·`SAQ_TYPES`에 유형을 더하면 혼합 탭에도
+자동으로 들어가지만, 두 목록 사이에 같은 `id`가 생기면 안 된다**(`TYPE_MAX`·요금 조회가 id로 갈린다).
 
 그중 **둘은 서버가 허락해야 보입니다** — `exam`(동형 모의고사 제작,
 `examTabBtn`)과 그 뒤에 붙는 `students`(반/학생 관리, `studentsTabBtn`)입니다.

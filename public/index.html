@@ -933,6 +933,7 @@
     <button type="button" class="tab-btn" data-tab="brief">📑 지문 요약분석</button>
     <button type="button" class="tab-btn" data-tab="mcq">📝 문제 제작 (객관식)</button>
     <button type="button" class="tab-btn" data-tab="saq">✍️ 문제 제작 (주관식)</button>
+    <button type="button" class="tab-btn" data-tab="mix">🧩 문제 제작 (혼합)</button>
     <button type="button" class="tab-btn" data-tab="workbook">📚 워크북 제작</button>
     <button type="button" class="tab-btn" data-tab="vocab">📒 단어장</button>
     <button type="button" class="tab-btn" data-tab="exam" id="examTabBtn" hidden>🧾 동형 모의고사 제작</button>
@@ -1337,6 +1338,86 @@
     </div>
 
     <div id="saqResult" class="qz-result"></div>
+  </section>
+
+  <!-- ══════════ 탭 3-2: 문제 제작 (혼합) — 객관식·주관식 유형을 한 시험지에 섞는다 ══════════ -->
+  <section class="tab-page" id="tab-mix">
+    <section class="panel">
+      <div class="row" style="margin-top:0">
+        <div class="field" style="flex:1 1 100%">
+          <div class="field-head">
+            <label>출제 유형 (객관식 + 주관식 — 한 시험지에 섞입니다)</label>
+            <label class="chk toggle-all"><input type="checkbox" id="mixTypeAll"> 전체 선택 / 해제</label>
+          </div>
+          <div class="quiz-type-grid" id="mixTypeGrid"></div>
+          <div class="hint cost-hint" id="mixCostHint" role="status" aria-live="polite"></div>
+
+<label class="group-label">학교급 <span class="group-note">(중학교를 고르면 보기·오답·문법 포인트를 중학생 수준으로 만듭니다)</span></label>
+          <div class="quiz-type-grid radio-grid">
+            <label><input type="radio" name="mixSchool" value="high" checked> 고등학교</label>
+            <label><input type="radio" name="mixSchool" value="middle"> 중학교</label>
+          </div>
+
+          <label class="group-label">난이도 <span class="group-note">(둘 다 고르면 두 벌이 나옵니다 — 주관식은 일부 유형만 고난도가 됩니다)</span></label>
+          <div class="quiz-type-grid radio-grid">
+            <label><input type="checkbox" name="mixLevel" value="normal" checked> 기본</label>
+            <label><input type="checkbox" name="mixLevel" value="hard"> 고난도</label>
+          </div>
+          <div class="hint type-order-hint" id="mixLevelHint"></div>
+
+          <label class="group-label">출제 순서</label>
+          <div class="quiz-type-grid radio-grid">
+            <label><input type="radio" name="mixOrder" value="type" checked> 유형 순서대로 (객관식 → 주관식)</label>
+            <label><input type="radio" name="mixOrder" value="passage"> 지문 내 유형 섞기</label>
+            <label><input type="radio" name="mixOrder" value="all"> 전체 문항 섞기</label>
+          </div>
+          <div class="hint type-order-hint" id="mixOrderHint"></div>
+
+          <label class="group-label">지문 변형 <span class="group-note">(여러 개 선택 가능 — 고른 만큼 세트가 늘어납니다)</span></label>
+          <div class="quiz-type-grid wide-grid" id="mixVariationGrid">
+            <label><input type="checkbox" name="mixVariation" value="verbatim" checked> 원문 그대로 사용</label>
+            <label><input type="checkbox" name="mixVariation" value="light"> 단어 5개 내외 변형</label>
+            <label><input type="checkbox" name="mixVariation" value="heavy"> 단어 5개 이상 변형</label>
+          </div>
+          <div class="hint type-order-hint" id="mixVariationHint"></div>
+        </div>
+      </div>
+
+      <div class="row cover-row">
+        <div class="field">
+          <label for="mixTitle">시험지 제목 (선택)</label>
+          <input type="text" id="mixTitle">
+          <div class="hint">시험지 맨 위와 정답지에 이 이름이 찍히고, 인쇄·PDF 첫 장에는 제목과 날짜만 담긴 표지가 한 장 붙습니다. 인쇄창·저장창에서 적는 이름과 같은 칸입니다.</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="mixBtn">문제 만들기</button>
+        <button type="button" class="btn ghost" id="mixLoadBtn">📂 불러오기</button>
+        <button class="btn ghost" id="mixPrintBtn" style="display:none"
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
+        <button class="btn ghost" id="mixAnswerPrintBtn" style="display:none"
+                title="문제지는 빼고 뒤쪽 '정답 및 해설'만 지면에 올립니다.">🔑 답지만</button>
+        <button class="btn ghost" id="mixSaveBtn" style="display:none"
+                title="로그인한 계정에 이 문제 세트와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
+        <button class="btn ghost" id="mixDocxBtn" style="display:none"
+                title="워드에서 직접 고칠 수 있는 .docx 파일로 내려받습니다. 문항은 2단, 정답과 해설은 맨 뒤 별지로 들어갑니다.">📝 워드 다운로드</button>
+        <button class="btn ghost" id="mixShuffleBtn" style="display:none"
+                title="지금 만들어진 문항의 순서만 다시 섞습니다. AI를 다시 부르지 않아 요금이 들지 않습니다.">🔀 문제 섞기</button>
+        <label class="chk" id="mixExpWrap" style="display:none"
+               title="끄면 답지에 번호·정답만 실립니다. 해설은 이미 만들어져 있어, 껐다 켜도 요금이 들지 않습니다.">
+          <input type="checkbox" id="mixExpChk" checked> 답지에 해설 <span class="chk-sub">(끄면 정답만)</span>
+        </label>
+        <span class="hint">유형마다 <b>− +</b> 로 문항 수를 정할 수 있습니다. 객관식과 주관식을 함께 고르면 한 시험지에 이어서 실립니다.</span>
+      </div>
+      <div class="error" id="mixError"></div>
+    </section>
+
+    <div class="loading" id="mixLoading">
+      <span class="spinner"></span>
+      <span id="mixLoadingText">AI가 문제를 만들고 있습니다…</span>
+    </div>
+
+    <div id="mixResult" class="qz-result"></div>
   </section>
 
   <!-- ══════════ 탭 3: 워크북 제작 ══════════ -->
