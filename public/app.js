@@ -5364,11 +5364,14 @@ function setupQuizTab({ prefix, types, footer }) {
     }
     // 난이도 벌마다 무엇을 어떤 난이도로 만들지(levelPlan). 기본 + 고난도에서 고난도가 안
     // 되는 유형만 골랐으면 고난도 벌이 비어 빠진다 — 그 사실은 설명 칸이 이미 알린다.
-    /* 지문마다 만들 유형이 다를 수 있다 — 대화문 유형(EXAM_DIALOGUE_TYPES)은 대화문 지문에서만
-       만들어진다. 서버가 뒤늦게 빼고 "요금은 안 나갔다"고 알리던 것을, 시작 전에 미리 빼서
-       확인창에 정확한 금액이 뜨게 한다. 문장삽입이 짧은 지문에서 빠지는 것은 그대로
-       서버가 가린다(문장 수를 화면에서 따로 세지 않는다). 지문 변형은 난이도와 상관없이
-       한 번만 한다 — 기본·고난도 두 벌이 같은 변형본을 써야 두 벌을 견줄 수 있다. */
+    /* 지문마다 만들 유형이 다를 수 있다 — 낼 수 없는 유형을 골랐으면 서버가 뒤늦게 빼고
+       "요금은 안 나갔다"고 알리던 것을, 시작 전에 미리 빼서 확인창에 정확한 금액이 뜨게 한다.
+       빼는 기준은 server.py의 fit_quiz_items와 같아야 한다(둘이 어긋나면 서버가 한 번 더
+       거르므로 요금은 안전하지만 확인창의 금액이 틀린다):
+         · 대화문 유형(EXAM_DIALOGUE_TYPES) — 대화문 지문에서만 (isDialogueText ↔ is_dialogue)
+         · 문장삽입 — 문장이 4개 이상인 지문에서만 (roughSentenceCount ↔ rough_sentence_count)
+       지문 변형은 난이도와 상관없이 한 번만 한다 — 기본·고난도 두 벌이 같은 변형본을 써야
+       두 벌을 견줄 수 있다. */
     const buildJobPlan = (items) => {
       const pl = levelPlan(items).filter((p) => p.runs.length);
       // 호출 묶음은 run마다 따로 나눈다 — 한 호출 안의 문항은 난이도가 하나여야 한다.
@@ -5380,23 +5383,49 @@ function setupQuizTab({ prefix, types, footer }) {
         perVarCost: pl.reduce((s, p) => s + costPerSet(planItems(p)), 0),
       };
     };
-    const noDlgItems = picked.filter((it) => !EXAM_DIALOGUE_TYPES.has(it.id));
-    const droppedDlg = picked.filter((it) => EXAM_DIALOGUE_TYPES.has(it.id)).map((it) => it.id);
-    const fullPlan = buildJobPlan(picked);
-    const noDlgPlan = droppedDlg.length ? buildJobPlan(noDlgItems) : fullPlan;
-    const jobPlanOf = (job) => (!droppedDlg.length || isDialogueText(job.text) ? fullPlan : noDlgPlan);
-    const plan = fullPlan.plan;
+    // 이 지문으로는 못 만드는 유형이면 이유 이름("dlg" | "ins"), 만들 수 있으면 null
+    const dropKind = (job, id) =>
+      EXAM_DIALOGUE_TYPES.has(id) && !isDialogueText(job.text) ? "dlg"
+      : id === "문장삽입" && roughSentenceCount(job.text) - 1 < 3 ? "ins"
+      : null;
+    // 뺀 유형 조합이 같은 지문끼리는 계획을 함께 쓴다(지문이 100개여도 계산은 몇 번뿐)
+    const jobInfoCache = new Map();
+    const jobPlanOf = (job) => {
+      const dropped = picked.filter((it) => dropKind(job, it.id)).map((it) => it.id);
+      const key = dropped.join("|");
+      if (!jobInfoCache.has(key)) {
+        const keep = picked.filter((it) => !dropped.includes(it.id));
+        jobInfoCache.set(key, Object.assign(buildJobPlan(keep), { dropped }));
+      }
+      return jobInfoCache.get(key);
+    };
+    // 뺀 이유를 한 줄로 — 지문 안내와 확인창이 같은 문구를 쓴다
+    const dropSentence = (ids) => {
+      const dlg = ids.filter((id) => EXAM_DIALOGUE_TYPES.has(id));
+      const parts = [];
+      if (dlg.length) {
+        parts.push(`${dlg.join("·")}은(는) 대화문(줄마다 "A:", "B:"처럼 말하는 사람이 표시된 지문)에서만 만들 수 있어 뺐습니다.`);
+      }
+      if (ids.includes("문장삽입")) {
+        parts.push("문장삽입은 지문에 문장이 4개 이상 있어야 만들 수 있어 뺐습니다(주어진 문장을 빼고도 넣을 자리가 3곳은 있어야 합니다).");
+      }
+      return parts.join(" ") + " 이 유형 요금은 나가지 않았습니다.";
+    };
+    const plan = buildJobPlan(picked).plan; // 안내 문구용 — 고른 유형 전부를 만든다고 가정한 난이도 벌
     const billJobs = jobs.filter((j) => j.text && j.text.length >= 20);
     const usableJobs = billJobs.filter((j) => jobPlanOf(j).plan.length);
     if (!usableJobs.length) {
+      const all = [...new Set(billJobs.flatMap((j) => jobPlanOf(j).dropped))];
       errorEl.textContent = billJobs.length
-        ? `고른 유형(${droppedDlg.join("·")})은 대화문(줄마다 "A:", "B:"처럼 말하는 사람이 표시된 지문)에서만 만들 수 있는데, 입력한 지문에 대화문이 없습니다.`
+        ? `고른 유형을 입력한 지문으로는 만들 수 없습니다. ${dropSentence(all).replace(" 이 유형 요금은 나가지 않았습니다.", "")}`
         : "지문이 너무 짧습니다 (20자 이상 입력).";
       return;
     }
-    const noDlgJobs = droppedDlg.length ? billJobs.filter((j) => !isDialogueText(j.text)).length : 0;
-    const dlgNote = noDlgJobs
-      ? `\n(대화문이 아닌 지문 ${noDlgJobs}개에서는 ${droppedDlg.join("·")}을(를) 뺍니다 — 그 값은 받지 않습니다)`
+    // 확인창에 '어느 유형이 몇 개 지문에서 빠지는지'를 알린다 — 값에서도 빠진다
+    const dropCount = new Map();
+    billJobs.forEach((j) => jobPlanOf(j).dropped.forEach((id) => dropCount.set(id, (dropCount.get(id) || 0) + 1)));
+    const dlgNote = dropCount.size
+      ? `\n(만들 수 없는 유형은 뺍니다 — ${[...dropCount].map(([id, n]) => `${id}: 지문 ${n}개`).join(", ")}. 그 값은 받지 않습니다)`
       : "";
     const setsNote = [
       plan.length > 1 ? `(${plan.map((p) => `${LEVEL_LABELS[p.lv]} ${planCount(p)}`).join(" + ")})문항` : `${perSetQuestions}문항`,
@@ -5535,12 +5564,8 @@ function setupQuizTab({ prefix, types, footer }) {
         // 이 지문에서 만들 유형 묶음 — 대화문이 아니면 대화문 유형이 빠진 쪽이다
         const jp = jobPlanOf(job);
         const plan = jp.plan;
-        if (jp !== fullPlan) {
-          append(buildNoticeHtml(
-            job, total,
-            `${droppedDlg.join("·")}은(는) 대화문(줄마다 "A:", "B:"처럼 말하는 사람이 표시된 지문)에서만 만들 수 있어 뺐습니다. 이 유형 요금은 나가지 않았습니다.`,
-            ""
-          ));
+        if (jp.dropped.length) {
+          append(buildNoticeHtml(job, total, dropSentence(jp.dropped), ""));
         }
         if (!plan.length) continue;
 
@@ -10411,6 +10436,18 @@ function countSentences(text) {
   const closed = (s.match(/[^.!?]+[.!?]/g) || []).filter((x) => x.trim().length > 1).length;
   const tail = s.replace(/[\s\S]*[.!?]/, "").trim();
   return closed + (tail.length > 1 ? 1 : 0);
+}
+
+// 문장 수 — server.py의 rough_sentence_count와 같은 규칙이다(소수점·약어·이니셜의 마침표는
+// 문장 끝이 아니다). 문장삽입을 낼 수 있는 지문인지 미리 가르는 데 쓰므로 서버와 어긋나면
+// 확인창의 금액이 틀린다. 위 countSentences는 배분용 대충 센 값이라 일부러 따로 둔다.
+function roughSentenceCount(text) {
+  let t = String(text || "").trim();
+  t = t.replace(/\d\.\d/g, "00");
+  t = t.replace(/\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Mt|Ave|Rd|No|Fig|Inc|Ltd|Co|vs|etc|approx)\./gi, "$1@");
+  t = t.replace(/\b([A-Z])\./g, "$1@");
+  const ends = t.match(/[.!?]+["'”’)\]]?(?=\s+["'“‘(\[]?[A-Z]|\s*$)/g) || [];
+  return Math.max(ends.length, 1);
 }
 
 // 5글자 이상인 낱말이 두 번 이상 나오는가 — '빈칸 쓰기'가 요구하는 조건이다.
