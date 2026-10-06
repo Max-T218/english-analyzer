@@ -204,7 +204,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 ### `public/index.html`
 
 탭 7개 — `analyze`, `mcq`, `saq`, `mix`, `workbook`, `vocab`, `exam`.
-`mix`(문제 제작 혼합, 2026-10-06)는 객관식·주관식 유형을 한 시험지에 섞는 탭이다 —
+사이드바에서는 `mcq`·`saq`·`mix` 셋이 상위 단추 **'📝 문제 제작'**(`quizGroupBtn`) 아래 하위 탭(객관식 / 주관식 / 객관식+주관식)으로 묶여 있다 — 하위 버튼은 그대로 `.tab-btn`+`data-tab`이라 저장함 불러오기 등이 누르는 길은 안 바뀌고, 상위 단추의 켜짐·하위 줄의 보임은 `syncQuizGroup`이 맞춘다. `mix`(객관식+주관식, 2026-10-06)는 두 유형을 한 시험지에 섞는 탭이다 —
 `setupQuizTab`을 `prefix:"mix"`로 한 번 더 부르는 것뿐이고(`MIX_TYPES` = `MCQ_TYPES` + `SAQ_TYPES`,
 고난도 가능 유형 `MIX_HARD_TYPES`), 서버는 유형 이름만 보고 요금·모델을 정하므로
 **서버 변경은 없다**(`CHANGELOG`만). **세 문제 탭 모두** 만들기를 누르면 `generate()`가 지문마다 못 만드는 유형(대화문이 아닌 지문의 대화문 유형 · 문장이 4개 미만인 지문의 문장삽입)을 **시작 전에** 빼고 그 기준으로 금액을 보여 준다(`dropKind`/`jobPlanOf`). 이 기준은 `server.py`의 `fit_quiz_items`와 **한 벌**이다 — 화면의 `roughSentenceCount`·`isDialogueText`는 서버의 `rough_sentence_count`·`is_dialogue`를 옮긴 것이라 한쪽을 고치면 반드시 함께 고칠 것(어긋나도 서버가 한 번 더 거르므로 요금은 안전하지만 확인창 금액이 틀린다). **`MCQ_TYPES`·`SAQ_TYPES`에 유형을 더하면 혼합 탭에도

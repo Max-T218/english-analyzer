@@ -602,13 +602,17 @@ label.chk-lg{gap:8px; font-size:14.5px;}
   margin-bottom:0; border-bottom:none;
   position:sticky; top:16px;
 }
-.tab-btn{
+.tab-btn, .tab-group-btn{
   font:inherit; font-size:14px; font-weight:700; cursor:pointer; color:var(--ink-soft);
   background:transparent; border:none; border-radius:8px;
   padding:10px 12px; text-align:left; transition:color .15s, background .15s, border-color .15s;
 }
-.tab-btn:hover{color:var(--accent); background:var(--line-soft);}
-.tab-btn.active{color:var(--accent); background:var(--card); box-shadow:0 2px 8px rgba(15,40,90,.1);}
+.tab-btn:hover, .tab-group-btn:hover{color:var(--accent); background:var(--line-soft);}
+.tab-btn.active, .tab-group-btn.active{color:var(--accent); background:var(--card); box-shadow:0 2px 8px rgba(15,40,90,.1);}
+/* 문제 제작의 하위 탭 — 상위 단추 바로 아래에 들여써서 한 묶음으로 보이게 한다 */
+.tab-sub{display:flex; flex-direction:column; gap:2px; margin:0 0 2px 14px; padding-left:8px; border-left:2px solid var(--line);}
+.tab-sub[hidden]{display:none;}
+.tab-sub .tab-btn{font-size:13px; padding:7px 10px;}
 .tab-page{display:none;}
 .tab-page.active{display:block;}
 @media print{ .tabs{display:none !important;} }
@@ -665,11 +669,14 @@ label.chk-lg{gap:8px; font-size:14.5px;}
     display:grid; grid-template-columns:repeat(3,1fr); gap:2px 4px;
     width:auto; position:static; margin-bottom:18px; border-bottom:2px solid var(--line);
   }
-  .tab-btn{
+  .tab-btn, .tab-group-btn{
     border-left:none; border-radius:0; border-bottom:3px solid transparent;
     padding:10px 16px; margin-bottom:-2px;
   }
-  .tab-btn.active{background:transparent; box-shadow:none; border-bottom-color:var(--accent);}
+  .tab-btn.active, .tab-group-btn.active{background:transparent; box-shadow:none; border-bottom-color:var(--accent);}
+  /* 가로 탭에서는 하위 탭이 격자 한 줄을 통째로 쓴다 */
+  .tab-sub{grid-column:1 / -1; flex-direction:row; flex-wrap:wrap; margin:0; padding:0; border-left:none;}
+  .tab-sub .tab-btn{font-size:13px; padding:7px 14px;}
 }
 @media (max-width:560px){ .tabs{grid-template-columns:repeat(2,1fr);} }
 

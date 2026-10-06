@@ -2744,10 +2744,31 @@ function hideExamTab() {
   }
 }
 
+/* 문제 제작 상위 탭 — 객관식·주관식·객관식+주관식이 한 묶음이다. 하위 버튼은 그냥 .tab-btn
+   이라 어디서든 data-tab으로 눌러 열 수 있고(저장함 불러오기 등), 여기서는 상위 단추의
+   켜짐과 하위 줄의 보임만 맞춘다. 상위 단추는 마지막에 보던 하위 탭을 다시 연다. */
+const QUIZ_GROUP_TABS = ["mcq", "saq", "mix"];
+const quizGroupBtn = $("quizGroupBtn");
+const quizSubEl = $("quizSub");
+let quizLastTab = "mcq";
+function syncQuizGroup(tab) {
+  const inGroup = QUIZ_GROUP_TABS.includes(tab);
+  if (inGroup) quizLastTab = tab;
+  if (quizGroupBtn) quizGroupBtn.classList.toggle("active", inGroup);
+  if (quizSubEl) quizSubEl.hidden = !inGroup;
+}
+if (quizGroupBtn) {
+  quizGroupBtn.addEventListener("click", () => {
+    const b = document.querySelector(`.tab-btn[data-tab="${quizLastTab}"]`);
+    if (b) b.click();
+  });
+}
+
 tabBtns.forEach((btn) => {
   btn.addEventListener("click", () => {
     tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
     tabPages.forEach((p) => p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
+    syncQuizGroup(btn.dataset.tab);
     syncTabChrome(btn.dataset.tab);
     // 쪽 구성이 보이지 않는 화면에서 켜진 채로 남으면 안 된다 — 단추 글씨가
     // '끝내기'로 남아, 다른 탭에서 눌렀을 때 엉뚱한 화면을 건드린다.
@@ -4911,7 +4932,7 @@ function setupQuizTab({ prefix, types, footer }) {
   const titleEl = $(prefix + "Title");
   // 혼합 탭 — 객관식·주관식 유형이 한 목록에 들어 있다. 요금·고난도 가능 여부는 유형마다 가린다.
   const isMix = prefix === "mix";
-  const docName = isMix ? "혼합문제" : prefix === "mcq" ? "객관식문제" : "주관식문제";
+  const docName = isMix ? "객관식주관식문제" : prefix === "mcq" ? "객관식문제" : "주관식문제";
   const errorEl = $(prefix + "Error");
   const loadingEl = $(prefix + "Loading");
   const loadingTextEl = $(prefix + "LoadingText");
@@ -5759,7 +5780,7 @@ function setupQuizTab({ prefix, types, footer }) {
     // 문제 탭에는 '직접 수정'이 없다 — 고칠 곳이 있으면 다시 만들라고 안내한다
     if (okCount) {
       const made = resultEl.querySelectorAll(".qz-card").length;
-      const kind = isMix ? "혼합 문제" : prefix === "mcq" ? "객관식 문제" : "주관식 문제";
+      const kind = isMix ? "객관식+주관식 문제" : prefix === "mcq" ? "객관식 문제" : "주관식 문제";
       showDoneGuide(`${kind} ${made}문항`, false);
     }
   }
@@ -8152,7 +8173,7 @@ const TAB_LABELS = {
   brief: "📑 지문 요약분석",
   mcq: "📝 객관식 문제",
   saq: "✍️ 주관식 문제",
-  mix: "🧩 혼합 문제",
+  mix: "🧩 객관식+주관식 문제",
   workbook: "📚 워크북",
   vocab: "📒 단어장",
   exam: "🧾 시험지",
@@ -8181,7 +8202,7 @@ const SAVE_TITLE_SUGGEST = {
   // 인쇄창에서 적어 둔 시험지명이 있으면 그것을 먼저 제안한다(저장함에서도 같은 이름)
   mcq: () => (QUIZ_SHEET_TITLE.mcq && QUIZ_SHEET_TITLE.mcq.get()) || passageBasedName("객관식문제"),
   saq: () => (QUIZ_SHEET_TITLE.saq && QUIZ_SHEET_TITLE.saq.get()) || passageBasedName("주관식문제"),
-  mix: () => (QUIZ_SHEET_TITLE.mix && QUIZ_SHEET_TITLE.mix.get()) || passageBasedName("혼합문제"),
+  mix: () => (QUIZ_SHEET_TITLE.mix && QUIZ_SHEET_TITLE.mix.get()) || passageBasedName("객관식주관식문제"),
   workbook: () => titledName("워크북", "wbTitle"),
   vocab: () => titledName("단어장", "vocabTitle"),
   /* 시험지는 공용 지문칸이 아니라 자기 지문칸을 쓰므로 passageBasedName을 못 쓴다.
@@ -8868,7 +8889,7 @@ const HOWTO = {
     sampleHead: "주관식은 이렇게 나옵니다 — 한 지문으로 18가지 유형을 한 문항씩 만든 시험지 중 네 쪽입니다",
   },
   mix: {
-    title: "🧩 혼합 문제 만드는 법",
+    title: "🧩 객관식+주관식 문제 만드는 법",
     lead: "객관식(5지선다)과 주관식(서술형·단답형) 유형을 한 시험지에 섞어 만듭니다. 객관식 탭·주관식 탭을 따로 돌려 두 시험지를 이어 붙일 필요가 없습니다.",
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. (선택) <b>목표 어법</b>을 적으면 어법 계열 문항이 그 문법으로 나옵니다.",
@@ -8879,7 +8900,7 @@ const HOWTO = {
       "<b>[문제 만들기]</b>를 누릅니다. 요금은 유형마다 객관식·주관식 단가대로 합산되어, 같은 유형을 각 탭에서 따로 만들 때와 같습니다.",
       "<b>[🔀 문제 섞기]</b>(요금 없음) · <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>. <b>답지에 해설</b>을 끄면 답지에 정답만 나옵니다(객관식·주관식 모두).",
     ],
-    tip: "주관식 답지는 원래 정답만 싣는데, 혼합 탭에서는 객관식 해설과 함께 한 표에 실립니다 — 해설이 필요 없으면 <b>답지에 해설</b>을 끄세요.",
+    tip: "주관식 답지는 원래 정답만 싣는데, 이 탭에서는 객관식 해설과 함께 한 표에 실립니다 — 해설이 필요 없으면 <b>답지에 해설</b>을 끄세요.",
   },
   workbook: {
     title: "📚 워크북 만드는 법",

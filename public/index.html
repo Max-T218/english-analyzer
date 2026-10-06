@@ -931,9 +931,15 @@
   <nav class="tabs" id="tabNav">
     <button type="button" class="tab-btn active" data-tab="analyze">📖 지문 상세분석</button>
     <button type="button" class="tab-btn" data-tab="brief">📑 지문 요약분석</button>
-    <button type="button" class="tab-btn" data-tab="mcq">📝 문제 제작 (객관식)</button>
-    <button type="button" class="tab-btn" data-tab="saq">✍️ 문제 제작 (주관식)</button>
-    <button type="button" class="tab-btn" data-tab="mix">🧩 문제 제작 (혼합)</button>
+    <!-- 문제 제작은 상위 탭 하나에 하위 셋(객관식·주관식·객관식+주관식)을 둔다. 하위 버튼은
+         그대로 .tab-btn이라 저장함 불러오기 등이 data-tab으로 누르는 길이 바뀌지 않는다.
+         상위 버튼은 탭이 아니라 '마지막에 보던 하위 탭을 여는' 단추다(app.js syncQuizGroup). -->
+    <button type="button" class="tab-group-btn" id="quizGroupBtn">📝 문제 제작</button>
+    <div class="tab-sub" id="quizSub" hidden>
+      <button type="button" class="tab-btn" data-tab="mcq">객관식</button>
+      <button type="button" class="tab-btn" data-tab="saq">주관식</button>
+      <button type="button" class="tab-btn" data-tab="mix">객관식+주관식</button>
+    </div>
     <button type="button" class="tab-btn" data-tab="workbook">📚 워크북 제작</button>
     <button type="button" class="tab-btn" data-tab="vocab">📒 단어장</button>
     <button type="button" class="tab-btn" data-tab="exam" id="examTabBtn" hidden>🧾 동형 모의고사 제작</button>
