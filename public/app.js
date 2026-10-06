@@ -2744,31 +2744,36 @@ function hideExamTab() {
   }
 }
 
-/* 문제 제작 상위 탭 — 객관식·주관식·객관식+주관식이 한 묶음이다. 하위 버튼은 그냥 .tab-btn
-   이라 어디서든 data-tab으로 눌러 열 수 있고(저장함 불러오기 등), 여기서는 상위 단추의
-   켜짐과 하위 줄의 보임만 맞춘다. 상위 단추는 마지막에 보던 하위 탭을 다시 연다. */
-const QUIZ_GROUP_TABS = ["mcq", "saq", "mix"];
-const quizGroupBtn = $("quizGroupBtn");
-const quizSubEl = $("quizSub");
-let quizLastTab = "mcq";
-function syncQuizGroup(tab) {
-  const inGroup = QUIZ_GROUP_TABS.includes(tab);
-  if (inGroup) quizLastTab = tab;
-  if (quizGroupBtn) quizGroupBtn.classList.toggle("active", inGroup);
-  if (quizSubEl) quizSubEl.hidden = !inGroup;
-}
-if (quizGroupBtn) {
-  quizGroupBtn.addEventListener("click", () => {
-    const b = document.querySelector(`.tab-btn[data-tab="${quizLastTab}"]`);
-    if (b) b.click();
+/* 상위 탭 묶음 — 지문 분석(상세·요약)과 문제 제작(객관식·주관식·객관식+주관식). 하위 버튼은
+   그냥 .tab-btn이라 어디서든 data-tab으로 눌러 열 수 있고(저장함 불러오기 등), 여기서는
+   상위 단추의 켜짐과 하위 줄의 보임만 맞춘다. 상위 단추는 마지막에 보던 하위 탭을 다시
+   연다(처음에는 tabs[0]). 새 묶음을 만들려면 index.html에 단추·하위 줄을 두고 여기에 적는다. */
+const TAB_GROUPS = [
+  { btn: $("analysisGroupBtn"), sub: $("analysisSub"), tabs: ["analyze", "brief"], last: "analyze" },
+  { btn: $("quizGroupBtn"), sub: $("quizSub"), tabs: ["mcq", "saq", "mix"], last: "mcq" },
+];
+function syncTabGroups(tab) {
+  TAB_GROUPS.forEach((g) => {
+    const inGroup = g.tabs.includes(tab);
+    if (inGroup) g.last = tab;
+    if (g.btn) g.btn.classList.toggle("active", inGroup);
+    if (g.sub) g.sub.hidden = !inGroup;
   });
 }
+TAB_GROUPS.forEach((g) => {
+  if (!g.btn) return;
+  g.btn.addEventListener("click", () => {
+    const b = document.querySelector(`.tab-btn[data-tab="${g.last}"]`);
+    if (b) b.click();
+  });
+});
+syncTabGroups("analyze"); // 처음 열리는 탭이 상세분석이다
 
 tabBtns.forEach((btn) => {
   btn.addEventListener("click", () => {
     tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
     tabPages.forEach((p) => p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
-    syncQuizGroup(btn.dataset.tab);
+    syncTabGroups(btn.dataset.tab);
     syncTabChrome(btn.dataset.tab);
     // 쪽 구성이 보이지 않는 화면에서 켜진 채로 남으면 안 된다 — 단추 글씨가
     // '끝내기'로 남아, 다른 탭에서 눌렀을 때 엉뚱한 화면을 건드린다.
