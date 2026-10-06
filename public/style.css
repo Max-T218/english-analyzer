@@ -2292,9 +2292,15 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
 .tab-sample .howto-sample{max-height:none; overflow:visible; border:none; background:transparent; padding:12px 0 0; margin:0;}
 .tab-sample .howto-sample.tab-sample-scroll{max-height:520px; overflow:auto; border:1px solid var(--line); border-radius:10px; background:var(--paper); padding:12px; margin-top:12px;}
 /* 결과물 PDF의 쪽 그림은 가로로 늘어놓는다 — 누르면 원본 크기로 열린다 */
-.tab-sample .howto-pages{flex-direction:row; gap:14px; overflow-x:auto; padding-bottom:8px;}
-.tab-sample .howto-page{flex:0 0 230px; margin:0;}
-/* 불러오기 전에도 자리를 잡아 둔다(불러오면 그림의 실제 비율이 쓰인다) — 안 그러면 화면이 덜컥 움직인다 */
-.tab-sample .howto-page img{cursor:zoom-in; aspect-ratio:auto 1 / 1.1;}
+.tab-sample .howto-pages{
+  /* 화면 폭을 남김없이 쓴다(2026-10-07 사용자: "우측 공간까지 확실히") — 카드가 한 줄에 들어가는 만큼
+     늘어나 폭을 채운다(3장이면 3칸, 4장이면 4칸). 좁은 화면에서는 저절로 줄바꿈된다. */
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:16px 14px;
+  align-items:start; padding-bottom:8px;
+}
+/* 한두 장뿐일 때 한 장이 화면 반을 넘게 커지지 않도록 560px에서 멈춘다 */
+.tab-sample .howto-page{margin:0; min-width:0; max-width:560px;}
+/* 불러오기 전에도 자리를 잡아 둔다 — 안 그러면 화면이 덜컥 움직인다 */
+.tab-sample .howto-page img{cursor:zoom-in; min-height:120px;}
 .tab-sample .howto-pages + .howto-pages-note{margin-top:2px;}
 @media print{ .tab-sample{display:none !important;} }

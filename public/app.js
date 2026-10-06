@@ -8843,7 +8843,7 @@ const HOWTO = {
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. 여러 개면 <b>[＋ 지문 추가]</b>로 칸을 늘리세요. 교과서 <b>대화문</b>도 그대로 넣으면 말한 사람을 살려 분석합니다.",
       "(선택) 지문 칸 아래 <b>목표 어법</b>에 문법 이름을 적으면(예: 분사구문) 그 구조가 <b>주황색</b>으로 표시됩니다.",
       "(선택) <b>표지 제목</b>을 적으면 인쇄·PDF 첫 장에 제목과 날짜만 담긴 표지가 붙습니다.",
-      "<b>요약 이미지</b>를 고릅니다 — 한국어＋영어(기본) · 한글요약 · 영어요약. 여럿 고르면 그만큼 장수가 늘고, 필요 없으면 모두 끄세요. 지문당 값이 더 붙습니다.",
+      "<b>요약 이미지</b>를 고릅니다 — 한국어＋영어 · 한글요약 · 영어요약. 여럿 고르면 그만큼 장수가 늘고, 필요 없으면 모두 끄세요. 지문당 값이 더 붙습니다.",
       "<b>[분석하기]</b>를 누르면 지문을 하나씩 차례로 만듭니다.",
       "만든 뒤에 고칠 수 있습니다 — <b>[✏️ 직접 수정]</b>은 글자를, <b>[📄 쪽 구성]</b>은 인쇄될 쪽 경계를 옮깁니다. 빈자리가 많으면 <b>[⤴ 전체 올리기]</b>로 한 번에 채우세요. <b>[↩ 되돌리기]</b>로 한 단계씩 무릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑고, <b>[💾 사이트 저장]</b>으로 남겨 두면 <b>[📂 불러오기]</b>로 지문·설정과 함께 되불러옵니다.",
@@ -9013,32 +9013,34 @@ function sRuby(word, rt, role) {
 /* 본보기 문장 — 청크마다 낱말 뜻(v)·문법 이름(g)을 루비로 얹는다. 실제 산출물에서
    가장 눈에 띄는 것이 이 루비와 오른쪽 해설 칸이라, 예시에도 같은 밀도로 담는다. */
 const S_EN1 =
-  `Many people ${sRuby("believe", "믿다", "v")} ${sRuby("that", "명사절 접속사", "g")} ` +
-  `${sRuby("talent", "재능", "v")} ${sRuby("is fixed", "수동태", "g")},`;
+  `Every year, ${sRuby("thousands of", "수천의", "v")} students ${sRuby("memorize", "암기하다", "v")} ` +
+  `vocabulary lists for exams,`;
 const S_EN2 =
-  `<span class="conj-hl cg1 nobreak">but</span> research ${sRuby("suggests", "시사하다", "v")} ` +
-  `${sRuby("otherwise", "그렇지 않게", "v")}.`;
+  `<span class="conj-hl cg1 nobreak">yet</span> many of them ${sRuby("forget", "잊다", "v")} ` +
+  `the words ${sRuby("within", "~ 이내에", "v")} weeks.`;
 const S_EN3 =
-  `${sRuby("When", "시간 부사절 접속사", "g")} students ${sRuby("are told", "수동태", "gv")} ` +
-  `${sRuby("that", "명사절 접속사", "g")} ${sRuby("intelligence", "지능", "v")} can grow,`;
+  `It is only ${sRuby("when", "시간 부사절 접속사", "g")} we ${sRuby("struggle", "애쓰다", "v")} ` +
+  `to ${sRuby("recall", "회상하다", "v")} something`;
 const S_EN4 =
-  `they ${sRuby("take on", "떠맡다·도전하다", "v")} ${sRuby("harder", "더 어려운", "v")} tasks.`;
+  `${sRuby("that", "강조 구문의 that", "g")} the memory ${sRuby("becomes", "되다", "v")} ` +
+  `${sRuby("durable", "오래가는", "v")}.`;
 const S_EN5 =
-  `Effort, ${sRuby("not", "부정어", "g")} ${sRuby("innate ability", "타고난 능력", "v")}, ` +
-  `${sRuby("shapes", "형성하다", "v")} what ${sRuby("they", "학생들", "ref")} become.`;
+  `<span class="conj-hl cg1 nobreak">But</span> the difficulty is the point: ` +
+  `each ${sRuby("act of retrieval", "인출 행위", "v")} ${sRuby("strengthens", "강화하다", "v")} ` +
+  `the ${sRuby("connection", "연결", "v")}.`;
 
 /* 소책자 — 같은 색·같은 루비를 쓰되 오른쪽 해설 칸이 없고, 해석이 끊어읽기가 아니라
    문장 하나짜리 의역이다. 짧은 문장이 이어지면 한 카드에 최대 세 문장까지 모인다 —
    그 모양을 보여 주려고 둘째 카드에 짧은 문장 둘을 붙여 두었다. */
 const SAMPLE_BRIEF = {
-  englishTitle: "Talent Is Not Fixed",
-  koreanTitle: "재능은 정해져 있지 않다",
+  englishTitle: "Desirable Difficulty: The Secret to Long-Term Memory",
+  koreanTitle: "바람직한 어려움: 장기 기억 형성을 위한 인출의 힘",
   sentences: [
     {
       no: 1,
-      tag: "도입 · 통념 제시",
+      tag: "도입 · 문제 제시",
       chunks: [{ eng: S_EN1 }, { eng: S_EN2 }],
-      ko: "많은 사람들은 재능이 고정되어 있다고 믿지만, 연구 결과는 그렇지 않다는 점을 보여 준다.",
+      ko: "매년 수천 명의 학생들이 시험을 위해 어휘 목록을 암기하지만, 그들 중 다수는 몇 주 안에 그 단어들을 잊어버린다.",
       isTopic: false,
       examTags: [],
       examNote: "",
@@ -9047,7 +9049,7 @@ const SAMPLE_BRIEF = {
       no: 2,
       tag: "전개 · 연구 결과",
       chunks: [{ eng: S_EN3 }, { eng: S_EN4 }],
-      ko: "학생들은 지능이 발달할 수 있다는 말을 들으면 더 어려운 과제에 도전한다.",
+      ko: "기억이 오래 지속되는 것은 오직 우리가 무언가를 회상하려고 애쓸 때뿐이다.",
       isTopic: false,
       examTags: [],
       examNote: "",
@@ -9056,51 +9058,51 @@ const SAMPLE_BRIEF = {
       no: 3,
       tag: "결론 · 주제문",
       chunks: [{ eng: S_EN5 }],
-      ko: "그들이 어떤 사람이 되는지를 만드는 것은 타고난 능력이 아니라 노력이다.",
+      ko: "하지만 그 어려움이 핵심이다. 즉, 인출하는 각각의 행위가 그 연결을 강화한다.",
       isTopic: true,
       examTags: [],
       examNote: "",
     },
   ],
-  /* 소책자 표본. 상세분석 표본(위)과 모양이 다르다 — 축소판이라 한 줄 요약과
+  /* 소책자 표본. 상세분석 표본과 모양이 다르다 — 축소판이라 한 줄 요약과
      흐름도 둘뿐이고, 상자가 문장 번호를 직접 들고 있다. */
   outline: {
-    topicEn: "Talent is not fixed; effort shapes ability.",
-    oneLine: "타고난 재능보다, 얼마나 노력하느냐가 그 사람을 만든다.",
+    topicEn: "Struggling to recall makes memory durable.",
+    oneLine: "쉽게 외우는 것보다, 애써 떠올려 보는 어려움이 기억을 오래가게 만든다.",
     stages: [
       {
-        name: "도입", range: "1", role: "먼저 뒤집을 통념을 꺼낸다",
-        cue: "Many people believe",
-        content: "재능은 정해져 있다는 믿음을 소개하고, 연구는 그렇지 않다고 곧바로 받아친다.",
-        gist: "재능은 정해져 있다는 통념", bridge: "정말 그런가?",
+        name: "도입", range: "1", role: "해결할 문제를 꺼낸다",
+        cue: "Every year",
+        content: "학생들은 어휘를 열심히 외우지만 몇 주 만에 대부분 잊어버린다.",
+        gist: "외워도 금세 잊는다", bridge: "왜 그럴까?",
       },
       {
-        name: "전개", range: "2", role: "연구 결과로 근거를 댄다",
-        cue: "When students are told",
-        content: "지능이 자랄 수 있다고 들은 학생들은 더 어려운 과제를 스스로 택했다.",
-        gist: "믿음이 바뀌면 행동이 바뀐다", bridge: "그래서 사람을 만드는 것은?",
+        name: "전개", range: "2", role: "기억이 남는 조건을 밝힌다",
+        cue: "It is only when",
+        content: "무언가를 떠올리려고 애쓸 때에야 기억이 오래 지속된다.",
+        gist: "애써 떠올릴 때 기억이 남는다", bridge: "그렇다면 어려움은?",
       },
       {
         name: "결론", range: "3", role: "하고 싶은 말을 한 문장으로 못 박는다",
-        cue: "Effort, not innate ability",
-        content: "사람을 만드는 것은 타고난 능력이 아니라 노력이다.",
-        gist: "사람을 만드는 것은 노력이다", bridge: "",
+        cue: "But the difficulty is the point",
+        content: "어려움이 핵심이며, 떠올리는 행위마다 기억의 연결이 강해진다.",
+        gist: "어려움이 곧 기억을 강화한다", bridge: "",
       },
     ],
     keywords: [
-      { en: "fixed", ko: "정해진" },
-      { en: "research", ko: "연구" },
-      { en: "grow", ko: "자라다" },
-      { en: "effort", ko: "노력" },
-      { en: "innate ability", ko: "타고난 능력" },
+      { en: "memorize", ko: "암기하다" },
+      { en: "forget", ko: "잊다" },
+      { en: "struggle", ko: "애쓰다" },
+      { en: "durable", ko: "오래가는" },
+      { en: "retrieval", ko: "인출" },
     ],
-    keywordNote: "‘정해져 있다’ 쪽 낱말과 ‘자란다·노력한다’ 쪽 낱말이 맞서고 있습니다.",
+    keywordNote: "‘외우고 잊는’ 쪽 낱말과 ‘애써 떠올려 남기는’ 쪽 낱말이 맞서고 있습니다.",
   },
 };
 
 const SAMPLE_PASSAGE_HTML =
-  "Many people believe that talent is fixed, but research suggests otherwise. " +
-  "When students are told that intelligence can grow, they take on harder tasks.";
+  "Every year, thousands of students memorize vocabulary lists for exams, yet many of them forget the words within weeks. " +
+  "It is only when we struggle to recall something that the memory becomes durable.";
 
 /* 문제 예시 — 유형 41종을 다 싣지 않고 '그려지는 모양'이 다른 것만 한 벌씩 담는다.
    모양은 서답형 12가지(quizBodyHtml의 format 분기)와 객관식 2가지(보기가 글인 것,
@@ -9120,14 +9122,14 @@ const SAMPLE_MCQ = {
       instruction: "다음 글의 주제로 가장 적절한 것은?",
       passageHtml: SAMPLE_PASSAGE_HTML,
       choices: [
-        "the fixed nature of human talent",
-        "the belief that ability can grow",
-        "the danger of praising students",
-        "the limits of classroom research",
-        "the history of intelligence tests",
+        "the necessity of continuous repetition in language acquisition",
+        "the negative effects of stress on long-term memory formation",
+        "the role of cognitive struggle in building durable memory",
+        "various strategies for memorizing complex mathematical formulas",
+        "the emotional burden students experience during vocabulary tests",
       ],
-      answer: 2,
-      explanation: "재능이 고정되어 있지 않다는 것이 글 전체의 요지이므로 ②가 알맞다.",
+      answer: 3,
+      explanation: "애써 떠올리려는 노력이 기억을 오래가게 만든다는 것이 글의 요지이므로 ③이 알맞다.",
     },
     {
       /* 어법·어휘처럼 '지문의 밑줄 친 곳이 곧 보기'인 유형 — 아래에 ①~⑤를 한 번 더
@@ -9137,11 +9139,11 @@ const SAMPLE_MCQ = {
       format: "mc",
       instruction: "다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?",
       passageHtml:
-        "Many people ①<u>believe</u> that talent ②<u>is fixed</u>, but research ③<u>suggests</u> otherwise. " +
-        "When students ④<u>are told</u> that intelligence can grow, they ⑤<u>takes</u> on harder tasks.",
+        "Every year, thousands of students ①<u>memorize</u> vocabulary lists for exams, yet many of them ②<u>forget</u> the words within weeks. " +
+        "It is only ③<u>when</u> we struggle to recall something ④<u>that</u> the memory ⑤<u>become</u> durable.",
       choices: ["①", "②", "③", "④", "⑤"],
       answer: 5,
-      explanation: "주어 they가 복수이므로 ⑤ takes는 take가 되어야 한다.",
+      explanation: "주어 the memory가 단수이므로 ⑤ become은 becomes가 되어야 한다.",
     },
   ],
 };
@@ -9151,9 +9153,10 @@ const SAMPLE_MCQ = {
    건드려야 한다. 대신 같은 CSS 클래스(table.vocab)로 표 몇 줄만 적어 둔다. */
 function sampleVocabHtml() {
   const rows = [
-    ["talent", "n.", "재능", "gift", "—"],
-    ["fixed", "adj.", "고정된", "settled", "flexible"],
-    ["suggest", "v.", "시사하다", "imply", "—"],
+    ["memorize", "v.", "암기하다", "learn by heart", "—"],
+    ["forget", "v.", "잊다", "lose track of", "remember"],
+    ["struggle", "v.", "애쓰다", "strive", "—"],
+    ["durable", "adj.", "오래가는", "lasting", "temporary"],
   ];
   return `<div class="table-wrap"><table class="vocab">
     <thead><tr><th>단어 / 표현</th><th>품사</th><th>뜻</th><th>유의어</th><th>반의어</th></tr></thead>
@@ -9197,11 +9200,11 @@ function sampleInfographicHtml(prefix, captions) {
 /* 결과물 PDF의 쪽 그림 — 캡션 수만큼 howto-<tab>-1.jpg, -2.jpg …를 붙인다.
    캡션은 그 그림이 실제로 어느 쪽인지와 같아야 한다(그림을 갈면 캡션도 볼 것).
    파일이 없으면 그 장만 스스로 사라진다(openHowto의 error 처리). */
-function samplePagesHtml(tab, captions, note) {
+function samplePagesHtml(tab, captions, note, ext) {
   const shots = captions
     .map(
       (cap, i) => `<figure class="howto-page">
-        <img src="/howto-${tab}-${i + 1}.jpg?v=${window.ASSET_V || ""}" alt="${esc(cap)}" loading="lazy">
+        <img src="/howto-${tab}-${i + 1}.${ext || "jpg"}?v=${window.ASSET_V || ""}" alt="${esc(cap)}" loading="lazy">
         <figcaption>${esc(cap)}</figcaption>
       </figure>`
     )
@@ -9219,9 +9222,13 @@ const HOWTO_SAMPLE = {
       "Ⅱ. 주제 & 흐름 요약",
       "Ⅳ. 한눈에 보는 요약 (한글요약 · 영어요약)",
     ]),
+  // 상세분석과 같은 지문으로 요약분석 결과 화면을 찍은 그림(howto-brief-N.png) (3쪽은 상세분석 4쪽과 같은 그림 — 요약 이미지 한글요약·영어요약). 상세분석과 똑같이 쪽 카드로 보여 준다
   brief: () =>
-    buildBriefHtml(SAMPLE_BRIEF, SAMPLE_JOB, 1, null) +
-    sampleInfographicHtml("sample-brief", ["한글요약", "영어요약"]),
+    samplePagesHtml("brief", [
+      "문장별 해석 — 1~3번 문장",
+      "Ⅱ. 주제 & 흐름 요약",
+      "Ⅳ. 한눈에 보는 요약 (한글요약 · 영어요약)",
+    ], "", "png"),
   mcq: () =>
     samplePagesHtml("mcq", [
       "1~2번 — 주제 · 제목",
@@ -9247,8 +9254,20 @@ const HOWTO_SAMPLE = {
       "STEP 7 순서 배열하기",
     ]),
   vocab: sampleVocabHtml,
-  // 동형 시험지 본문도 문제 탭과 같은 buildQuizHtml이 그린다 — 같은 본보기를 쓴다
-  exam: () => buildQuizHtml(SAMPLE_MCQ, SAMPLE_JOB, 1, "mcq", "", ""),
+  // 동형 모의고사는 기출 시험지를 올려 분석한 '유형별 문항 합치기 표'가 첫 결과다 — 앱이 그리는 그 표를
+  // 헤드리스 크롬으로 찍은 그림(howto-exam-1~2.jpg). 표를 고치면 다시 찍는다
+  exam: () =>
+    samplePagesHtml("exam", [
+      "기출 1부 분석 — 유형별 개수 조절 + 문항별 판정 표",
+      "기출 2부 이상 분석 — 유형별 문항 합치기 표",
+    ], "기출 시험지를 올리면 이런 표가 나오고, 유형마다 넣을 개수를 고친 뒤 문제를 만듭니다 — 예시 숫자는 지어낸 값입니다."),
+  // 시험지 분석 리포트 — 기출 3부를 분석한 보고서(trendHtml을 찍은 그림, howto-trend-N.jpg)
+  trend: () =>
+    samplePagesHtml("trend", [
+      "출제경향 분석 보고서 — 시험지별 분석 · 유형 변화",
+      "유형 출제 현황 · 핵심 요약",
+      "시험지 분석 총평 · 유형별 대비 전략",
+    ], "기출 3부를 분석한 보고서의 일부입니다 — 예시 숫자는 지어낸 값입니다."),
 };
 
 function howtoSampleHtml(tab) {
@@ -9271,7 +9290,7 @@ function howtoSampleHtml(tab) {
    다시 나타난다. 처음 그 탭을 열 때 한 번만 만든다(그림은 loading="lazy"). */
 const TAB_SAMPLE_RESULT = {
   analyze: "result", brief: "briefDoc", mcq: "mcqResult", saq: "saqResult", mix: "mixResult",
-  workbook: "workbookDoc", vocab: "vocabDoc", exam: "examPaperResult",
+  workbook: "workbookDoc", vocab: "vocabDoc", exam: "examPaperResult", trend: "trendResult",
 };
 const tabSampleBuilt = new Set();
 function ensureTabSample(tab) {
@@ -9287,7 +9306,8 @@ function ensureTabSample(tab) {
   const sec = document.createElement("section");
   sec.className = "tab-sample";
   // 쪽 그림 예시는 가로로 늘어놓고, 코드로 그린 예시(요약분석·단어장·시험지)는 높이를 묶어 스크롤한다
-  const body = html.includes("howto-pages") ? "" : " tab-sample-scroll";
+  // 요약분석은 상세분석처럼 스크롤 없이 한 번에 다 보이게 펼친다
+  const body = html.includes("howto-pages") || tab === "brief" ? "" : " tab-sample-scroll";
   sec.innerHTML =
     `<details open><summary>📄 결과물 예시 <span class="tab-sample-sub">${esc(head)}</span></summary>` +
     `<div class="howto-sample tab-sample-body${body}">${html}</div></details>`;
@@ -9319,8 +9339,10 @@ function ensureTabSample(tab) {
     if (img) window.open(img.src, "_blank", "noopener");
   });
   // 결과물이 생기면 예시는 감춘다
-  const sync = () => { sec.hidden = resEl.childElementCount > 0; };
-  new MutationObserver(sync).observe(resEl, { childList: true });
+  // 동형 모의고사는 기출을 분석한 표(examResult)가 먼저 나오므로 그 칸도 함께 본다
+  const watch = [resEl, tab === "exam" ? $("examResult") : null].filter(Boolean);
+  const sync = () => { sec.hidden = watch.some((el) => el.childElementCount > 0); };
+  watch.forEach((el) => new MutationObserver(sync).observe(el, { childList: true }));
   sync();
 }
 

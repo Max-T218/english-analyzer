@@ -897,11 +897,15 @@ def _asset_version():
     빌드 도구가 없으니 파일이 고쳐진 시각(mtime)을 표식으로 쓴다. 읽지 못하면 지금
     시각으로 떨어뜨린다 — 캐시가 덜 되는 쪽이 옛 코드가 도는 쪽보다 안전하다.
 
-    ⚠️ 예시 그림(sample-*.jpg)도 함께 본다. 예전에는 app.js·style.css만 봤는데,
+    ⚠️ 예시 그림(sample-*·howto-*)도 함께 본다. 예전에는 app.js·style.css만 봤는데,
     그림만 갈아 끼우면 표식이 그대로여서 브라우저가 하루(max-age=86400) 동안 옛 그림을
     계속 보여 줬다. 파일 이름이 그대로라 헤더 말고는 새 그림임을 알릴 방법이 없다."""
     stamp = 0.0
-    names = ["app.js", "trend.js", "style.css"] + [p.name for p in sorted(PUBLIC_DIR.glob("sample-*.jpg"))]
+    # 만드는 법·결과물 예시 그림(howto-*)도 본다 — 2026-10-07에 그림만 갈아 끼웠다가 표식이 그대로여서
+    # 옛 그림('홍보용' 제목)이 계속 보였다.
+    names = ["app.js", "trend.js", "style.css"] + [
+        p.name for pat in ("sample-*.jpg", "howto-*.jpg", "howto-*.png") for p in sorted(PUBLIC_DIR.glob(pat))
+    ]
     for name in names:
         try:
             stamp = max(stamp, (PUBLIC_DIR / name).stat().st_mtime)
