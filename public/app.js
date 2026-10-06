@@ -2777,6 +2777,7 @@ tabBtns.forEach((btn) => {
     tabPages.forEach((p) => p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
     syncTabGroups(btn.dataset.tab);
     syncHowtoBtn();
+    ensureTabSample(btn.dataset.tab);
     syncTabChrome(btn.dataset.tab);
     // 쪽 구성이 보이지 않는 화면에서 켜진 채로 남으면 안 된다 — 단추 글씨가
     // '끝내기'로 남아, 다른 탭에서 눌렀을 때 엉뚱한 화면을 건드린다.
@@ -8915,6 +8916,7 @@ const HOWTO = {
       "<b>[문제 만들기]</b>를 누릅니다. 요금은 유형마다 객관식·주관식 단가대로 합산되어, 같은 유형을 각 탭에서 따로 만들 때와 같습니다.",
       "<b>[🔀 문제 섞기]</b>(요금 없음) · <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>. <b>답지에 해설</b>을 끄면 답지에 정답만 나옵니다(객관식·주관식 모두).",
     ],
+    sampleHead: "객관식과 주관식을 한 시험지에 섞으면 두 종류가 이렇게 이어서 나옵니다 — 두 탭 결과물의 일부입니다",
     tip: "주관식 답지는 원래 정답만 싣는데, 이 탭에서는 객관식 해설과 함께 한 표에 실립니다 — 해설이 필요 없으면 <b>답지에 해설</b>을 끄세요.",
   },
   workbook: {
@@ -9233,6 +9235,10 @@ const HOWTO_SAMPLE = {
       "11~13번 — 동사형 쓰기 등",
       "정답",
     ]),
+  // 객관식+주관식 — 두 탭의 실제 결과물 쪽을 이어 붙여 보여 준다(한 시험지에 이어서 실린다)
+  mix: () =>
+    samplePagesHtml("mcq", ["객관식 1~2번 — 주제 · 제목", "객관식 13~14번 — 어법 · 순서"], " ") +
+    samplePagesHtml("saq", ["주관식 1~2번 — 서술형배열 · 조건 영작", "주관식 7~10번 — 어휘·어법 선택형 · 틀린 어휘·어법 찾기"]),
   workbook: () =>
     samplePagesHtml("workbook", [
       "STEP 1 좌지문 우해석",
@@ -9256,6 +9262,66 @@ function howtoSampleHtml(tab) {
     // 예시 하나 때문에 안내 창이 안 뜨면 안 된다 — 조용히 글 안내만 남긴다
     return "";
   }
+}
+
+/* ── 탭 아래의 '결과물 예시' (2026-10-07) ──
+   탭을 눌러 보기 전에는 무엇이 나오는지 알기 어렵다는 말에서 — 실행 버튼 아래에 같은 예시를
+   바로 보여 준다. 만드는 법 창의 예시(HOWTO_SAMPLE)와 **같은 것을 쓴다**: 그림을 갈아 끼우면
+   두 곳이 함께 바뀐다. 결과물이 생기면(결과 칸이 채워지면) 예시는 감추고, 결과를 비우면
+   다시 나타난다. 처음 그 탭을 열 때 한 번만 만든다(그림은 loading="lazy"). */
+const TAB_SAMPLE_RESULT = {
+  analyze: "result", brief: "briefDoc", mcq: "mcqResult", saq: "saqResult", mix: "mixResult",
+  workbook: "workbookDoc", vocab: "vocabDoc", exam: "examPaperResult",
+};
+const tabSampleBuilt = new Set();
+function ensureTabSample(tab) {
+  const resId = TAB_SAMPLE_RESULT[tab];
+  if (!resId || tabSampleBuilt.has(tab)) return;
+  const page = $(`tab-${tab}`);
+  const resEl = $(resId);
+  if (!page || !resEl) return;
+  const html = howtoSampleHtml(tab);
+  if (!html) return;
+  tabSampleBuilt.add(tab);
+  const head = (HOWTO[tab] && HOWTO[tab].sampleHead) || "만들면 이런 자료가 나옵니다";
+  const sec = document.createElement("section");
+  sec.className = "tab-sample";
+  // 쪽 그림 예시는 가로로 늘어놓고, 코드로 그린 예시(요약분석·단어장·시험지)는 높이를 묶어 스크롤한다
+  const body = html.includes("howto-pages") ? "" : " tab-sample-scroll";
+  sec.innerHTML =
+    `<details open><summary>📄 결과물 예시 <span class="tab-sample-sub">${esc(head)}</span></summary>` +
+    `<div class="howto-sample tab-sample-body${body}">${html}</div></details>`;
+  page.appendChild(sec);
+  // 그림 파일이 아직 없으면 그 칸만 스스로 사라진다(openHowto와 같은 처리)
+  sec.querySelectorAll("img.infographic").forEach((img) => {
+    img.addEventListener("error", () => {
+      const block = img.closest("[data-infographic]");
+      const shot = img.closest(".info-shot");
+      if (shot) shot.remove();
+      if (block && !block.querySelector(".info-shot")) block.remove();
+      else if (block) block.classList.toggle("two", block.querySelectorAll(".info-shot").length > 1);
+    });
+  });
+  sec.querySelectorAll(".howto-page img").forEach((img) => {
+    img.addEventListener("error", () => {
+      const box = img.closest(".howto-pages");
+      img.closest(".howto-page").remove();
+      if (box && !box.querySelector(".howto-page")) {
+        box.nextElementSibling?.remove(); // 딸린 안내 문구도 함께
+        box.remove();
+      }
+      if (!sec.querySelector(".howto-page, .tab-sample-body > *")) sec.remove();
+    });
+  });
+  // 쪽 그림을 누르면 원본 크기로 새 창에 연다 — 작게 줄여 놓아 글자가 안 읽힌다
+  sec.addEventListener("click", (e) => {
+    const img = e.target.closest(".howto-page img");
+    if (img) window.open(img.src, "_blank", "noopener");
+  });
+  // 결과물이 생기면 예시는 감춘다
+  const sync = () => { sec.hidden = resEl.childElementCount > 0; };
+  new MutationObserver(sync).observe(resEl, { childList: true });
+  sync();
 }
 
 const howtoGuideEl = $("howtoGuide");
