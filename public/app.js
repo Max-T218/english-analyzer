@@ -2735,12 +2735,12 @@ function hideExamTab() {
   examTabBtn.hidden = true;
   trendTabBtn.hidden = true;
   if (trendTabBtn.classList.contains("active")) {
-    document.querySelector('.tab-btn[data-tab="analyze"]').click();
+    document.querySelector('.tab-btn[data-tab="brief"]').click();
   }
   // 승인이 꺼졌는데 마침 그 탭을 보고 있었다면 첫 탭으로 물러난다 — 단추만 감추면
   // 화면이 그대로 남아 계속 쓸 수 있는 것처럼 보인다.
   if (examTabBtn.classList.contains("active")) {
-    document.querySelector('.tab-btn[data-tab="analyze"]').click();
+    document.querySelector('.tab-btn[data-tab="brief"]').click();
   }
 }
 
@@ -2749,7 +2749,7 @@ function hideExamTab() {
    상위 단추의 켜짐과 하위 줄의 보임만 맞춘다. 상위 단추는 마지막에 보던 하위 탭을 다시
    연다(처음에는 tabs[0]). 새 묶음을 만들려면 index.html에 단추·하위 줄을 두고 여기에 적는다. */
 const TAB_GROUPS = [
-  { btn: $("analysisGroupBtn"), sub: $("analysisSub"), tabs: ["analyze", "brief"], last: "analyze" },
+  { btn: $("analysisGroupBtn"), sub: $("analysisSub"), tabs: ["brief", "analyze"], last: "brief" },
   { btn: $("quizGroupBtn"), sub: $("quizSub"), tabs: ["mcq", "saq", "mix"], last: "mcq" },
 ];
 function syncTabGroups(tab) {
@@ -2767,13 +2767,16 @@ TAB_GROUPS.forEach((g) => {
     if (b) b.click();
   });
 });
-syncTabGroups("analyze"); // 처음 열리는 탭이 상세분석이다
+// 처음에는 열린 탭이 없다 — 지문 입력칸(탭 바깥 공용)만 보이고, 지문을 넣은 뒤 탭을 고른다.
+// index.html의 .active도 모두 빼 두었으니 둘이 같아야 한다.
+syncTabGroups(null);
 
 tabBtns.forEach((btn) => {
   btn.addEventListener("click", () => {
     tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
     tabPages.forEach((p) => p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
     syncTabGroups(btn.dataset.tab);
+    syncHowtoBtn();
     syncTabChrome(btn.dataset.tab);
     // 쪽 구성이 보이지 않는 화면에서 켜진 채로 남으면 안 된다 — 단추 글씨가
     // '끝내기'로 남아, 다른 탭에서 눌렀을 때 엉뚱한 화면을 건드린다.
@@ -2785,6 +2788,13 @@ tabBtns.forEach((btn) => {
     syncFloatPrint();
   });
 });
+
+// 열린 탭이 없는 시작 화면에서는 '만드는 법' 단추가 보여 줄 것이 없다 — 감춘다
+function syncHowtoBtn() {
+  const b = $("howtoBtn");
+  if (b) b.style.display = document.querySelector(".tab-page.active") ? "" : "none";
+}
+syncHowtoBtn();
 
 // 학생 관리 탭 → 단어장 탭으로 바로 이동해 시험 낼 단어장을 만들게 한다
 $("goVocabTabBtn").addEventListener("click", () => {
