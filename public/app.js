@@ -2777,7 +2777,6 @@ tabBtns.forEach((btn) => {
     tabBtns.forEach((b) => b.classList.toggle("active", b === btn));
     tabPages.forEach((p) => p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
     syncTabGroups(btn.dataset.tab);
-    syncHowtoBtn();
     ensureTabSample(btn.dataset.tab);
     syncTabChrome(btn.dataset.tab);
     // 쪽 구성이 보이지 않는 화면에서 켜진 채로 남으면 안 된다 — 단추 글씨가
@@ -2791,12 +2790,8 @@ tabBtns.forEach((btn) => {
   });
 });
 
-// 열린 탭이 없는 시작 화면에서는 '만드는 법' 단추가 보여 줄 것이 없다 — 감춘다
-function syncHowtoBtn() {
-  const b = $("howtoBtn");
-  if (b) b.style.display = document.querySelector(".tab-page.active") ? "" : "none";
-}
-syncHowtoBtn();
+// '만드는 법' 단추는 열린 탭이 없는 시작 화면에서도 늘 보인다(안내가 사라진 줄 알고
+// 찾는 일이 있었다). 탭이 없을 때 누르면 첫 단계(지문 붙여넣기)가 담긴 상세분석 안내를 연다.
 
 // 학생 관리 탭 → 단어장 탭으로 바로 이동해 시험 낼 단어장을 만들게 한다
 $("goVocabTabBtn").addEventListener("click", () => {
@@ -3693,8 +3688,8 @@ function renderAnalyzeEntries(entries) {
   editBtn.style.display = total ? "inline-flex" : "none";
   pageBtn.style.display = total ? "inline-flex" : "none";
   saveBtn.style.display = total ? "inline-flex" : "none";
-  // 그림은 저장함에 담기지 않으므로(1MiB 제한) 불러온 분석본에는 그림이 없다.
-  // 다시 넣으려면 '요약 이미지'를 켜고 분석을 다시 돌려야 한다.
+  // 그림은 여기서 그리지 않는다 — 저장본에 딸린 그림은 loadSavedItem이 afterLoad로 뒤따라 붙인다.
+  // (옛 저장본은 그림 목록이 없어 그림 없이 나온다.)
   resetUndo();
   lastAnalyzeEntries = entries;
   syncFloatPrint();
@@ -9010,7 +9005,7 @@ const HOWTO = {
       "만든 뒤에 고칠 수 있습니다 — <b>[✏️ 직접 수정]</b>은 글자를, <b>[📄 쪽 구성]</b>은 인쇄될 쪽 경계를 옮깁니다. 빈자리가 많으면 <b>[⤴ 전체 올리기]</b>로 한 번에 채우세요. <b>[↩ 되돌리기]</b>로 한 단계씩 무릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑고, <b>[💾 사이트 저장]</b>으로 남겨 두면 <b>[📂 불러오기]</b>로 지문·설정과 함께 되불러옵니다.",
     ],
-    tip: "요약 이미지는 사이트 저장함에 담기지 않습니다. 그림이 필요하시면 인쇄 창에서 PDF로 먼저 저장해 두세요. 지문 칸의 <b>[📋 지문 전체 복사]</b>로 지문 묶음을 카톡·메일로 보내면, 받는 분은 한 번 붙여 넣어 칸마다 나눠 받습니다.",
+    tip: "요약 이미지는 <b>[💾 사이트 저장]</b>을 하면 글과 함께 저장되고, 불러오면 그림까지 그대로 나옵니다. 저장하지 않고 닫으면 사라지니 필요하면 먼저 저장하거나 PDF로 받아 두세요. 지문 칸의 <b>[📋 지문 전체 복사]</b>로 지문 묶음을 카톡·메일로 보내면, 받는 분은 한 번 붙여 넣어 칸마다 나눠 받습니다.",
   },
   brief: {
     title: "📑 지문 요약분석 만드는 법",
@@ -9562,7 +9557,7 @@ function openHowto(tab) {
 // 단추는 사이드바에 하나뿐이고, 어느 탭 안내를 열지는 '지금 열려 있는 탭'으로 정한다
 $("howtoBtn").addEventListener("click", () => {
   const active = document.querySelector(".tab-page.active");
-  if (active) openHowto(active.id.replace(/^tab-/, ""));
+  openHowto(active ? active.id.replace(/^tab-/, "") : "analyze");
 });
 $("howtoClose").addEventListener("click", () => { howtoGuideEl.hidden = true; });
 howtoGuideEl.addEventListener("click", (e) => {
