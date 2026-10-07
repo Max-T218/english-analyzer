@@ -10256,7 +10256,25 @@ def _session_user(handler):
     if datetime.now(timezone.utc) >= expires:
         ref.delete()
         return None
-    return sess.get("user_id")
+    user_id = sess.get("user_id")
+    _touch_active(user_id)
+    return user_id
+
+
+# 오늘(KST) 접속을 이미 적어 둔 회원. 세션은 30일 가므로 로그인 때만 last_login을 적으면
+# 매일 쓰는 회원도 마지막 로그인이 한 달 전에 멈춰 보이고, 휴면(1년 미접속) 판정도 틀어진다.
+# 요청마다 쓰지 않도록 하루 한 번만 적는다 — 서버가 재시작되면 그날 한 번 더 쓸 뿐이다.
+_active_seen = {}
+
+
+def _touch_active(user_id):
+    if not user_id:
+        return
+    today = _kst_date(_now_iso())
+    if _active_seen.get(user_id) == today:
+        return
+    _touch_login(user_id)
+    _active_seen[user_id] = today
 
 
 # --- 관리자 로그인 (일반 회원 로그인과 완전히 별개) ---------------------------
