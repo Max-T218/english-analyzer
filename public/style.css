@@ -1600,6 +1600,14 @@ u{
   box-shadow:0 2px 8px rgba(20,30,45,.16);
 }
 .pg-brk-btn:hover{background:var(--accent-soft); box-shadow:0 4px 12px rgba(20,30,45,.24);}
+/* 구역(주제 & 흐름 요약·핵심 어휘·요약 그림) 통째 삭제 — 쪽 단추와 헷갈리지 않게 빨간 윤곽 */
+.pg-del-btn{
+  font:inherit; font-size:13px; font-weight:800; line-height:1; white-space:nowrap;
+  padding:8px 15px; border-radius:999px; cursor:pointer;
+  border:2px solid #c0392b; background:var(--card); color:#c0392b;
+  box-shadow:0 2px 8px rgba(20,30,45,.16);
+}
+.pg-del-btn:hover{background:#c0392b; color:#fff;}
 /* 새 쪽으로 지정해 둔 덩어리 — 지정한 자리가 한눈에 보이도록 채운 색으로 */
 .pg-blk[data-brk="page"] .pg-brk-btn{background:var(--g); color:#fff; border-color:var(--g);}
 .pg-blk[data-brk="page"] .pg-brk-btn:hover{background:#a81f1f;}

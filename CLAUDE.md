@@ -62,7 +62,7 @@ foreach ($n in 'GEMINI_API_KEY','GOOGLE_APPLICATION_CREDENTIALS_JSON','GOOGLE_CL
 
 dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를 로컬 서버와 배포 서버가
 똑같이 바라봅니다 — 컬렉션은 `users`, `sessions`, `saved_items`, `pending_signups`,
-`deleted_accounts`, `admin_sessions`, `payment_intents`.
+`deleted_accounts`, `admin_sessions`, `payment_intents`, `saved_images`(요약 이미지 — 저장본에 딸린 그림).
 
 따라서 로컬 테스트가 곧 실데이터 조작입니다.
 
@@ -314,6 +314,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `/api/logout` `/api/account/recharge` `/api/account/recharge/confirm` `/api/account/ack-update`
 `/api/portone/webhook`(포트원 → 서버. 로그인·세션이 없는 유일한 POST다)
 `/api/saved` `/api/saved/delete` `/api/saved/rename`(이름만 바꾼다 — `rename_saved_item`)
+`/api/saved-image`(저장본에 딸린 요약 이미지 한 장을 올린다 — 저장본 문서는 1MiB 한도라 그림은 `saved_images` 컬렉션에 한 장에 문서 하나로 따로 담고, 저장본 `payload.images`에는 목록(entry·lang·key)만 둔다. 읽기는 GET `/api/saved-image/<저장본id>/<key>`. 저장본 삭제·덮어쓰기·회원 탈퇴 때 `prune_item_images`/`delete_user_account`가 함께 지운다. 화면은 `public/app.js`의 `uploadInfographics`/`loadInfographics`)
 `/api/admin/login` `/api/admin/logout` `/api/admin/recharge` `/api/admin/approve-classroom`
 `/api/classes` `/api/classes/regenerate-code` `/api/students` `/api/students/delete`
 `/api/vocab-tests` `/api/vocab-tests/delete`(선생님 쪽 — 위 GET들과 경로가 같은 것도 있음,

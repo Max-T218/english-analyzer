@@ -79,8 +79,9 @@ function closePrintGuide() {
   printGuideRun = null;
 }
 /* 지금 인쇄할 화면에 요약 이미지가 붙어 있는가.
-   그림은 사이트 저장함에 담기지 않으므로(Firestore 1MiB 제한) 이 인쇄가 사실상 그림을
-   건질 마지막 기회다. 다시 만들면 요금이 또 나가므로 경고를 띄운다. */
+   그림은 저장하지 않으면 사라진다(저장하면 saved_images에 한 장씩 따로 담긴다 —
+   저장본 문서 하나는 1MiB 한도라 그림을 같이 넣지 못한다). 다시 만들면 요금이 또
+   나가므로 경고를 띄운다. */
 function docHasInfographic() {
   return !!document.querySelector("#result [data-infographic]");
 }
@@ -2915,7 +2916,10 @@ function ensureHandles() {
     bar.contentEditable = "false";
     bar.innerHTML = isPassageHead(blk)
       ? `<span class="pg-tag">지문 시작 · 항상 새 쪽</span>`
-      : `<button type="button" class="pg-brk-btn"></button><span class="pg-note"></span>`;
+      : `<button type="button" class="pg-brk-btn"></button><span class="pg-note"></span>` +
+        (blk.dataset.sec
+          ? `<button type="button" class="pg-del-btn" title="이 구역을 분석본에서 지웁니다. [↩ 되돌리기]로 되살릴 수 있습니다.">🗑 이 구역 삭제</button>`
+          : "");
     blk.prepend(bar);
   });
 }
@@ -3063,6 +3067,61 @@ function pgUndo(fn) {
   if (pgHost === resultEl) fn();
 }
 
+/* 쪽 구성 중에 구역(data-sec: outline · vocab · info)을 통째로 지운다.
+   주제 & 흐름 요약은 덩어리가 둘(앞면·흐름도)이라 같은 data-sec끼리 함께 지운다.
+   저장 데이터에서도 뺀다 — 안 그러면 저장했다 불러올 때 지운 구역이 되살아난다.
+   남은 구역은 번호(Ⅱ·Ⅲ…)를 다시 매긴다. 되돌리기는 화면을 통째로 찍어 두므로
+   화면만 바꾸면 무를 수 있다(저장 데이터는 아래 되돌림 때 syncSectionData가 다시 맞춘다). */
+function deleteSection(blk) {
+  if (!blk || !blk.dataset.sec) return;
+  const sec = blk.closest(".passage-block");
+  if (!sec) return;
+  pgUndo(flushUndo);
+  sec.querySelectorAll(`.pg-blk[data-sec="${blk.dataset.sec}"]`).forEach((n) => n.remove());
+  syncSectionData();
+  renumberSections();
+  layoutPages();
+  pgUndo(pushUndo);
+}
+
+function renumberSections() {
+  resultEl.querySelectorAll(".passage-block").forEach((sec) => {
+    sec.querySelectorAll("h3.section .num").forEach((n, i) => {
+      n.textContent = `${ROMAN[Math.min(i + 1, ROMAN.length - 1)]}.`;
+    });
+  });
+}
+
+// 지운 구역의 원본 — 되돌리기로 화면에 다시 나타나면 데이터도 되살린다 (저장 payload에는 안 섞인다)
+const sectionStash = new WeakMap();
+
+// 저장 데이터를 화면과 맞춘다: 화면에 없는 구역은 비우고, 되살아난 구역은 되채운다.
+// 지문 분석 화면에서만 부른다 (삭제 직후와 저장 직전).
+function syncSectionData() {
+  lastAnalyzeEntries.forEach((entry, idx) => {
+    const sec = resultEl.querySelector(`.passage-block[data-entry="${idx}"]`);
+    if (!sec || !entry || !entry.data) return; // 화면이 이미 바뀌었으면 원본을 그대로 둔다
+    const d = entry.data;
+    const st = sectionStash.get(entry) || {};
+    if (sec.querySelector('.pg-blk[data-sec="outline"]')) {
+      if (st.outline !== undefined && !d.outline) d.outline = st.outline;
+      if (st.summary !== undefined && !d.summary) d.summary = st.summary;
+    } else {
+      if (d.outline) st.outline = d.outline;
+      if (d.summary) st.summary = d.summary;
+      delete d.outline;
+      delete d.summary;
+    }
+    if (sec.querySelector('.pg-blk[data-sec="vocab"]')) {
+      if (st.vocab && !(d.vocab && d.vocab.length)) d.vocab = st.vocab;
+    } else {
+      if (d.vocab && d.vocab.length) st.vocab = d.vocab;
+      d.vocab = [];
+    }
+    sectionStash.set(entry, st);
+  });
+}
+
 function setPagingMode(on, host, ui) {
   const nextHost = on ? host || pgHost || resultEl : pgHost;
   if (!nextHost) return;
@@ -3116,6 +3175,11 @@ Object.entries(PAGING_UI).forEach(([key, ui]) => {
     pgUndo(pushUndo); // 되돌리기 한 단계 — '처음으로'도 무를 수 있어야 한다
   });
   host.addEventListener("click", (e) => {
+    const del = e.target.closest(".pg-del-btn");
+    if (del && pgHost === host) {
+      deleteSection(del.closest(".pg-blk"));
+      return;
+    }
     const btn = e.target.closest(".pg-brk-btn");
     if (!btn || pgHost !== host) return;
     const blk = btn.closest(".pg-blk");
@@ -3268,6 +3332,17 @@ function applyPageBreaks(list) {
   });
 }
 
+/* 상세분석에서 고른 구역 — "outline"(주제 & 흐름 요약), "vocab"(핵심 어휘 & 표현).
+   문장 분석은 늘 만들므로 여기에 없다. 서버에 그대로 보내 안 고른 것은 AI에게 시키지도 않는다. */
+function pickedAnalyzeSections() {
+  const box = $("sectionBox");
+  if (!box) return ["outline", "vocab"];
+  return [...box.querySelectorAll(".sec-pick")].filter((c) => c.checked).map((c) => c.dataset.sec);
+}
+
+// 분석본의 구역 번호(Ⅰ은 문장 분석) — 안 만든 구역이 있어도 번호가 건너뛰지 않게 한다
+const ROMAN = ["Ⅰ", "Ⅱ", "Ⅲ", "Ⅳ", "Ⅴ"];
+
 analyzeBtn.addEventListener("click", analyze);
 printBtn.addEventListener("click", () => printDoc(() => passageBasedName("지문분석")));
 syncFloatPrint(); // 초기 탭(지문 분석) 기준으로 상태 맞춤
@@ -3342,6 +3417,7 @@ async function analyze() {
         {
           passage: job.text,
           targetGrammar: grammarEl.value,
+          sections: pickedAnalyzeSections(),
         },
         "분석에 실패했습니다."
       );
@@ -3448,10 +3524,12 @@ function infographicHost(idx) {
   if (!sec) return null;
   let host = sec.querySelector(`[data-infographic="${idx}"]`);
   if (!host) {
+    // 앞에 어떤 구역이 있는지 세어 번호를 매긴다(문장 분석 Ⅰ 다음부터)
+    const n = Math.min(sec.querySelectorAll("h3.section").length + 1, ROMAN.length - 1);
     sec.insertAdjacentHTML(
       "beforeend",
-      `<div class="pg-blk info-pair" data-brk="page" data-brk-def="page" data-infographic="${idx}">
-        <h3 class="section"><span class="num">Ⅳ.</span> 한눈에 보는 요약</h3>
+      `<div class="pg-blk info-pair" data-sec="info" data-brk="page" data-brk-def="page" data-infographic="${idx}">
+        <h3 class="section"><span class="num">${ROMAN[n]}.</span> 한눈에 보는 요약</h3>
         <div class="info-shots"></div>
         <p class="info-caution">그림 속 글자는 AI가 그린 것이라 '직접 수정'으로 고칠 수 없습니다.
           인쇄하기 전에 오탈자가 없는지 한 번 확인해 주세요.</p>
@@ -3462,12 +3540,12 @@ function infographicHost(idx) {
   return host;
 }
 
-function addInfographic(idx, src, langName) {
+function addInfographic(idx, src, langName, lang) {
   const host = infographicHost(idx);
   if (!host) return false;
   host.querySelector(".info-shots").insertAdjacentHTML(
     "beforeend",
-    `<figure class="info-shot">
+    `<figure class="info-shot" data-lang="${esc(lang || "")}">
       <img class="infographic" src="${src}" alt="지문 요약 인포그래픽">
       ${langName ? `<figcaption>${esc(langName)}</figcaption>` : ""}
     </figure>`
@@ -3580,7 +3658,7 @@ async function makeInfographics(todo) {
         );
         const src = b64ToBlobUrl(data.image, data.mime || "image/jpeg");
         // 두 종 이상 만들면 어느 판인지 적어 준다 — 안 적으면 인쇄한 뒤 구별이 안 된다
-        if (addInfographic(idx, src, langs.length > 1 ? IMG_LANG_NAME[lang] : "")) okCount++;
+        if (addInfographic(idx, src, langs.length > 1 ? IMG_LANG_NAME[lang] : "", lang)) okCount++;
       } catch (err) {
         // 한 장이 실패해도 나머지는 계속 만든다. 다만 한도 소진은 기다려도 안 풀린다.
         errorEl.textContent = `${job.name}${what}: ${err.message || String(err)}`;
@@ -3640,6 +3718,7 @@ function editedCopy(el) {
 }
 
 function collectAnalysisEdits() {
+  syncSectionData(); // 지웠다가 되돌린 구역까지 화면 그대로 저장한다
   lastAnalyzeEntries.forEach((entry, idx) => {
     const block = resultEl.querySelector(`.passage-block[data-entry="${idx}"]`);
     if (!block || !entry || !entry.data) return; // 화면이 이미 바뀌었으면 원본을 그대로 둔다
@@ -3681,6 +3760,81 @@ function collectAnalysisEdits() {
   return lastAnalyzeEntries;
 }
 
+/* ── 요약 이미지 저장·불러오기 ──
+   저장본 문서에는 그림을 못 넣는다(Firestore 문서 1MiB). 그래서 저장본에는 어느 그림이
+   있는지 목록(entry·lang·key)만 담고, 그림 본체는 저장이 끝난 뒤 한 장씩 따로 올린다
+   (서버 saved_images). 불러올 때는 글을 먼저 그리고 그림은 뒤따라 받아 붙인다. */
+function collectInfographicMeta() {
+  const out = [];
+  resultEl.querySelectorAll(".passage-block[data-entry]").forEach((sec) => {
+    const entry = Number(sec.dataset.entry);
+    sec.querySelectorAll(".info-shot[data-lang]").forEach((fig) => {
+      const lang = fig.dataset.lang;
+      if (lang && fig.querySelector("img.infographic")) {
+        out.push({ entry, lang, key: `${entry}_${lang}` });
+      }
+    });
+  });
+  return out;
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result).split(",")[1] || "");
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+
+// 저장본이 만들어진 뒤 그림을 한 장씩 올린다. 실패한 장수만 알려 주려고 오류는 모아서 던진다.
+async function uploadInfographics(itemId, metas) {
+  let failed = 0;
+  for (const m of metas) {
+    const img = resultEl.querySelector(
+      `.passage-block[data-entry="${m.entry}"] .info-shot[data-lang="${m.lang}"] img.infographic`
+    );
+    try {
+      if (!img) throw new Error("그림을 찾지 못했습니다.");
+      const blob = await fetch(img.src).then((r) => r.blob());
+      await postJson(
+        "/api/saved-image",
+        { id: itemId, key: m.key, mime: blob.type || "image/jpeg", image: await blobToBase64(blob) },
+        "그림 저장에 실패했습니다."
+      );
+    } catch (_e) {
+      failed++;
+    }
+  }
+  if (failed) {
+    throw new Error(`글은 저장됐지만 요약 이미지 ${failed}장은 저장하지 못했습니다. 다시 저장해 보세요.`);
+  }
+}
+
+// 불러온 저장본에 딸린 그림을 받아 붙인다. 없거나 못 받은 그림은 건너뛴다(글은 이미 떠 있다).
+async function loadInfographics(itemId, payload) {
+  const metas = Array.isArray(payload.images) ? payload.images : [];
+  if (!metas.length) return;
+  let added = 0;
+  for (const m of metas) {
+    try {
+      const d = await getJson(
+        `/api/saved-image/${encodeURIComponent(itemId)}/${encodeURIComponent(m.key)}`, ""
+      );
+      if (d && d.image && resultEl.querySelector(`.passage-block[data-entry="${m.entry}"]`)) {
+        const src = b64ToBlobUrl(d.image, d.mime || "image/jpeg");
+        const names = metas.filter((x) => x.entry === m.entry).length > 1;
+        if (addInfographic(m.entry, src, names ? IMG_LANG_NAME[m.lang] || "" : "", m.lang)) added++;
+      }
+    } catch (_e) { /* 이 그림만 건너뛴다 */ }
+  }
+  if (added) {
+    applyPageBreaks(payload.pageBreaks); // 그림 덩어리가 생겼으니 쪽 구성을 다시 입힌다
+    resetUndo();
+    syncFloatPrint();
+  }
+}
+
 TAB_SAVE.analyze = {
   saveBtn,
   getPayload: () => ({
@@ -3688,7 +3842,10 @@ TAB_SAVE.analyze = {
     settings: { targetGrammar: grammarEl.value },
     entries: collectAnalysisEdits(),
     pageBreaks: collectPageBreaks(),
+    images: collectInfographicMeta(),
   }),
+  afterSave: (itemId, payload) => uploadInfographics(itemId, payload.images || []),
+  afterLoad: (itemId, payload) => loadInfographics(itemId, payload),
   applyPayload: (payload) => {
     passageMgr.setJobs(payload.passages || []);
     grammarEl.value = (payload.settings && payload.settings.targetGrammar) || "";
@@ -3959,11 +4116,12 @@ function buildAnalysisHtml(d, job, total, idx) {
      저장함에 있는 예전 분석은 summary만 갖고 있어서, outline만 그리면 불러왔을 때
      이 자리가 통째로 비어 버린다. 소책자는 지금도 summary를 쓴다(일부러 다르다 —
      server.py의 outline 스키마 주석 참고). */
+  let secNo = 1; // ROMAN[1] = Ⅱ — 고르지 않은 구역은 건너뛰고 번호를 이어 매긴다
   const outline = buildOutlineHtml(d.outline);
   if (outline) {
     parts.push(`
-      <div class="pg-blk" data-brk="page" data-brk-def="page">
-      <h3 class="section"><span class="num">Ⅱ.</span> 주제 &amp; 흐름 요약</h3>
+      <div class="pg-blk" data-sec="outline" data-brk="page" data-brk-def="page">
+      <h3 class="section"><span class="num">${ROMAN[secNo++]}.</span> 주제 &amp; 흐름 요약</h3>
       ${outline.front}
       </div>
     `);
@@ -3974,15 +4132,15 @@ function buildAnalysisHtml(d, job, total, idx) {
        순간 읽을 수 없게 된다. 빈자리를 조금 버리더라도 통째로 넘기는 편이 낫다.
        '쪽 구성'에서 끌 수 있는 기본값이므로, 굳이 붙이고 싶으면 손으로 옮기면 된다. */
     if (outline.back) {
-      parts.push(`<div class="pg-blk" data-brk="page" data-brk-def="page">${outline.back}</div>`);
+      parts.push(`<div class="pg-blk" data-sec="outline" data-brk="page" data-brk-def="page">${outline.back}</div>`);
     }
   } else if (d.summary && d.summary.length) {
     const rows = d.summary.map(
       (r) => `<tr><td>${esc(r.label)}</td><td>${safeHTML(r.content)}</td></tr>`
     ).join("");
     parts.push(`
-      <div class="pg-blk" data-brk="page" data-brk-def="page">
-      <h3 class="section"><span class="num">Ⅱ.</span> 주제 &amp; 흐름 요약</h3>
+      <div class="pg-blk" data-sec="outline" data-brk="page" data-brk-def="page">
+      <h3 class="section"><span class="num">${ROMAN[secNo++]}.</span> 주제 &amp; 흐름 요약</h3>
       <div class="table-wrap"><table class="flow"><tbody>${rows}</tbody></table></div>
       </div>
     `);
@@ -3997,8 +4155,8 @@ function buildAnalysisHtml(d, job, total, idx) {
       </tr>`
     ).join("");
     parts.push(`
-      <div class="pg-blk">
-      <h3 class="section"><span class="num">Ⅲ.</span> 핵심 어휘 &amp; 표현</h3>
+      <div class="pg-blk" data-sec="vocab">
+      <h3 class="section"><span class="num">${ROMAN[secNo++]}.</span> 핵심 어휘 &amp; 표현</h3>
       <div class="table-wrap"><table class="vocab">
         <thead><tr><th>단어 / 표현</th><th>품사</th><th>뜻</th><th>유의어</th><th>반의어</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -8281,8 +8439,7 @@ function openSaveDialog(tab) {
     ? `지금 ${passageSaveFrom ? passageSaveFrom.label : "입력칸"}에 있는 지문만 저장합니다. ` +
       "나중에 \"📄 지문 저장함\"에서 그대로 되불러올 수 있습니다."
     : "지문과 만든 결과를 함께 저장합니다. 나중에 \"📦 제작 자료 저장함\"에서 이 제목으로 다시 찾을 수 있습니다.");
-  // 지문 분석에 요약 이미지가 붙어 있으면, 저장해도 그림은 빠진다는 것을 여기서 알린다.
-  // 저장하고 나서야 알면 그림을 다시 만들어야 하고 그때 요금이 또 나간다.
+  // 지문 분석에 요약 이미지가 붙어 있으면, 그림도 함께 저장된다는 것을 알린다(용량을 차지한다).
   const warnEl = $("saveDialogWarn");
   if (warnEl) warnEl.hidden = !(tab === "analyze" && docHasInfographic());
   const blocked = TAB_SAVE[tab] && TAB_SAVE[tab].canSave ? TAB_SAVE[tab].canSave() : "";
@@ -8352,6 +8509,8 @@ async function doSaveDialog(overwriteId) {
     );
     // 새로 저장했으면 이제부터 그 자료를 고치는 중이다 — 다음 저장에서 덮어쓸 수 있게 기억한다
     if (res && res.id) LOADED_SAVED[tab] = { id: res.id, title };
+    // 탭에 딸린 파일(요약 이미지)이 있으면 저장본이 만들어진 뒤 올린다
+    if (res && res.id && TAB_SAVE[tab].afterSave) await TAB_SAVE[tab].afterSave(res.id, payload);
     closeSaveDialog();
   } catch (err) {
     saveDialogErrorEl.textContent = err.message || "저장에 실패했습니다.";
@@ -8696,6 +8855,8 @@ async function loadSavedItem(id, mode) {
     /* 표지 제목을 되살린다. 제목을 담기 전에 저장한 옛 저장본은 빈칸으로 남는데,
        앞 자료의 이름이 남아 있는 것보다 낫다 — 탭 위 칸에 새로 적으면 된다. */
     if (!append && DOC_TITLES[tab]) DOC_TITLES[tab].set((item.payload || {}).coverTitle || "");
+    // 글을 먼저 보여 준 뒤 딸린 그림을 받아 붙인다 (받는 동안 화면을 막지 않는다)
+    if (!append && TAB_SAVE[tab].afterLoad) TAB_SAVE[tab].afterLoad(id, item.payload || {});
   } catch (err) {
     alert(err.message || "불러오기에 실패했습니다.");
   }
@@ -8843,6 +9004,7 @@ const HOWTO = {
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. 여러 개면 <b>[＋ 지문 추가]</b>로 칸을 늘리세요. 교과서 <b>대화문</b>도 그대로 넣으면 말한 사람을 살려 분석합니다.",
       "(선택) 지문 칸 아래 <b>목표 어법</b>에 문법 이름을 적으면(예: 분사구문) 그 구조가 <b>주황색</b>으로 표시됩니다.",
       "(선택) <b>표지 제목</b>을 적으면 인쇄·PDF 첫 장에 제목과 날짜만 담긴 표지가 붙습니다.",
+      "<b>함께 만들 것</b>에서 <b>주제 &amp; 흐름 요약</b>·<b>핵심 어휘 &amp; 표현</b>을 고릅니다. 문장 분석은 늘 만들어지고, 필요 없는 구역은 체크를 끄면 만들지 않습니다.",
       "<b>요약 이미지</b>를 고릅니다 — 한국어＋영어 · 한글요약 · 영어요약. 여럿 고르면 그만큼 장수가 늘고, 필요 없으면 모두 끄세요. 지문당 값이 더 붙습니다.",
       "<b>[분석하기]</b>를 누르면 지문을 하나씩 차례로 만듭니다.",
       "만든 뒤에 고칠 수 있습니다 — <b>[✏️ 직접 수정]</b>은 글자를, <b>[📄 쪽 구성]</b>은 인쇄될 쪽 경계를 옮깁니다. 빈자리가 많으면 <b>[⤴ 전체 올리기]</b>로 한 번에 채우세요. <b>[↩ 되돌리기]</b>로 한 단계씩 무릅니다.",

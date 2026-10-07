@@ -7481,6 +7481,14 @@ def build_user_prompt(passage, target_grammar, mode, complete_hint=None,
         )
         for h in note_hint:
             lines.append("  · " + h)
+    skip = _analyze_skipped()
+    if skip:
+        names = {"outline": "`outline`(주제 & 흐름 요약)", "vocab": "`vocab`(핵심 어휘 & 표현)"}
+        lines.append(
+            "이번 요청에서는 " + ", ".join(names[k] for k in skip)
+            + "를 만들지 않습니다 — 출력 형식에 그 항목이 없으니 넣지 말고, "
+            "문장 분석(sentences)과 제목만 만드세요."
+        )
     if english_fix:
         lines.append(
             "⚠️ 이전 시도에서 일부 chunk의 평문 영어(`text`)가 비어 있거나 누락됐습니다. "
@@ -7853,6 +7861,29 @@ def splice_sentences(result, fixed, targets):
     return out
 
 
+# 상세분석에서 선생님이 고를 수 있는 구역. 문장 분석(Ⅰ)은 늘 만들고, 이 둘만 뺄 수 있다.
+# 재요청 경로(refine_analysis → call_gemini)가 여러 겹이라 인자로 끌고 다니지 않고
+# 요청을 처리하는 스레드에 적어 둔다 — call_gemini는 상세분석만 부른다.
+ANALYZE_OPTIONAL_SECTIONS = ("outline", "vocab")
+_ANALYZE_SKIP = threading.local()
+
+
+def _analyze_skipped():
+    return getattr(_ANALYZE_SKIP, "keys", ())
+
+
+def _analysis_schema():
+    skip = _analyze_skipped()
+    if not skip:
+        return GEMINI_SCHEMA
+    schema = copy.deepcopy(GEMINI_SCHEMA)
+    for k in skip:
+        schema["properties"].pop(k, None)
+    schema["required"] = [k for k in schema["required"] if k not in skip]
+    schema["propertyOrdering"] = [k for k in schema["propertyOrdering"] if k not in skip]
+    return schema
+
+
 def call_gemini(passage, target_grammar, mode, api_key, model, complete_hint=None,
                 english_fix=False, conj_hint=None, num_hint=None,
                 ruby_hint=None, conflict_hint=None, note_hint=None):
@@ -7879,7 +7910,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model, complete_hint=Non
             "temperature": 0.2,
             "maxOutputTokens": 65536,
             "responseMimeType": "application/json",
-            "responseSchema": GEMINI_SCHEMA,
+            "responseSchema": _analysis_schema(),
         },
     }
     result = _gemini_json(payload, api_key, model, _ANALYZE_TRUNC_MSG, label="analyze")
@@ -8734,6 +8765,8 @@ def delete_user_account(user_id, by_admin=False):
     email = (snap.to_dict() or {}).get("email") if snap.exists else None
     for item in DB.collection("saved_items").where("user_id", "==", user_id).stream():
         item.reference.delete()
+    for img in DB.collection(SAVED_IMAGES).where("user_id", "==", user_id).stream():
+        img.reference.delete()
     # 이용 내역도 함께 지운다 — 탈퇴하면 다 사라진다고 안내하고 있고,
     # 계정이 없어진 뒤에도 남아 있을 이유가 없다.
     for row in DB.collection(POINT_LEDGER).where("user_id", "==", user_id).stream():
@@ -9386,6 +9419,20 @@ CHANGELOG = [
             "탭이 정리됐습니다 — 상세분석·요약분석은 '📖 지문 분석', 객관식·주관식은 '📝 문제 제작' 하나로 묶여 아래에서 고릅니다. 새로 '객관식+주관식'이 생겼습니다 — 객관식과 주관식 유형을 한 시험지에 섞어 만들 수 있습니다. "
             "유형 칸에서 두 종류를 함께 고르면 한 번에 만들어 한 시험지·한 답지로 인쇄됩니다. "
             "요금은 객관식·주관식 탭에서 따로 만들 때와 같습니다.",
+        ],
+    },
+    {
+        "version": 60,
+        "date": "2026-10-07",
+        "items": [
+            "지문 상세분석 — 이제 만들 구역을 고를 수 있습니다. 문장 분석은 늘 만들고, "
+            "'주제 & 흐름 요약'과 '핵심 어휘 & 표현'은 체크를 끄면 만들지 않습니다. "
+            "요약 이미지는 지금처럼 원하는 종류만 고르면 됩니다. "
+            "고르지 않은 구역은 번호도 건너뛰지 않고 이어서 매겨집니다.",
+            "'쪽 구성'에서 구역마다 [🗑 이 구역 삭제]가 생겼습니다. 만든 뒤에 빼고 싶은 구역을 "
+            "지울 수 있고, [↩ 되돌리기]로 되살릴 수 있습니다.",
+            "요약 이미지도 이제 사이트 저장에 함께 저장됩니다. 저장본을 불러오면 그림까지 "
+            "그대로 나오므로 다시 만들 필요가 없습니다(요금도 다시 나가지 않습니다).",
         ],
     },
 ]
@@ -10484,6 +10531,9 @@ def save_item(item_id, user_id, tab, title, payload):
         if not snap.exists or snap.to_dict().get("user_id") != user_id:
             raise PermissionError("저장 항목을 찾을 수 없습니다.")
         ref.set({"tab": tab, "title": title, "payload": payload, "updated_at": now}, merge=True)
+        # 덮어쓴 저장본에 이제 없는 그림은 지운다 — 안 지우면 보이지 않는 용량이 쌓인다
+        prune_item_images(item_id, {r["key"] for r in (payload.get("images") or [])}
+                          if isinstance(payload, dict) else set())
         return item_id
     ref = DB.collection("saved_items").document()
     ref.set({
@@ -10491,6 +10541,95 @@ def save_item(item_id, user_id, tab, title, payload):
         "created_at": now, "updated_at": now,
     })
     return ref.id
+
+
+# ── 저장본에 딸린 그림(요약 이미지) ──
+# 저장본 문서(saved_items)에는 그림을 넣지 못한다 — Firestore 문서 하나가 1MiB인데 요약
+# 이미지는 한 장이 base64로 600~750KB라 두 장만 되어도 넘는다. 그래서 그림은 한 장에
+# 문서 하나로 따로 담고(saved_images), 저장본의 payload.images에는 어느 그림이 있는지
+# 목록(entry·lang·key)만 적는다. 한 장씩이면 1MiB 안에 들어가므로 줄이지 않고 그대로 쓴다.
+SAVED_IMAGES = "saved_images"
+SAVED_IMAGE_MAX_CHARS = 1_000_000      # base64 글자 수 — 문서 한도(1,048,576바이트)보다 조금 작게
+SAVED_IMAGES_PER_ITEM = 12
+_SAVED_IMG_KEY_RE = re.compile(r"^[0-9a-z_]{1,24}$")
+_SAVED_IMG_MAGIC = {                    # mime → 파일 첫머리(바이트) — 이름만 속인 파일을 막는다
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/png": (b"\x89PNG",),
+    "image/webp": (b"RIFF",),
+}
+
+
+def clean_saved_images_meta(payload):
+    """payload.images를 정리한다 — 모양이 다른 항목은 버린다. 목록이 없으면 빈 목록."""
+    out = []
+    raw = payload.get("images") if isinstance(payload, dict) else None
+    if isinstance(raw, list):
+        for r in raw[:SAVED_IMAGES_PER_ITEM]:
+            if not isinstance(r, dict):
+                continue
+            key = str(r.get("key") or "")
+            if not _SAVED_IMG_KEY_RE.match(key):
+                continue
+            try:
+                entry = int(r.get("entry"))
+            except (TypeError, ValueError):
+                continue
+            out.append({"entry": entry, "lang": str(r.get("lang") or "")[:8], "key": key})
+    if isinstance(payload, dict):
+        payload["images"] = out
+    return out
+
+
+def _owned_item(item_id, user_id):
+    snap = DB.collection("saved_items").document(item_id).get()
+    return snap.exists and snap.to_dict().get("user_id") == user_id
+
+
+def save_item_image(item_id, user_id, key, mime, b64):
+    """저장본에 그림 한 장을 담는다(같은 key면 덮어쓴다). 반환: 오류 문구 또는 None."""
+    _require_db()
+    if not item_id or not _SAVED_IMG_KEY_RE.match(key or ""):
+        return "잘못된 요청입니다."
+    if mime not in _SAVED_IMG_MAGIC:
+        return "지원하지 않는 그림 형식입니다."
+    if not isinstance(b64, str) or not b64 or len(b64) > SAVED_IMAGE_MAX_CHARS:
+        return "그림이 너무 커서 저장할 수 없습니다."
+    try:
+        head = base64.b64decode(b64[:16] + "=" * (-len(b64[:16]) % 4))
+    except Exception:
+        return "그림 데이터가 올바르지 않습니다."
+    if not any(head.startswith(m) for m in _SAVED_IMG_MAGIC[mime]):
+        return "그림 데이터가 올바르지 않습니다."
+    if not _owned_item(item_id, user_id):
+        return "저장 항목을 찾을 수 없습니다."
+    ref = DB.collection(SAVED_IMAGES).document(f"{item_id}__{key}")
+    if not ref.get().exists:
+        have = sum(1 for _ in DB.collection(SAVED_IMAGES).where("item_id", "==", item_id).stream())
+        if have >= SAVED_IMAGES_PER_ITEM:
+            return "한 저장본에 담을 수 있는 그림 수를 넘었습니다."
+    ref.set({"user_id": user_id, "item_id": item_id, "key": key, "mime": mime,
+             "data": b64, "created_at": _now_iso()})
+    return None
+
+
+def get_item_image(item_id, user_id, key):
+    _require_db()
+    if not _SAVED_IMG_KEY_RE.match(key or ""):
+        return None
+    snap = DB.collection(SAVED_IMAGES).document(f"{item_id}__{key}").get()
+    if not snap.exists:
+        return None
+    d = snap.to_dict()
+    if d.get("user_id") != user_id:
+        return None
+    return {"image": d.get("data", ""), "mime": d.get("mime", "image/jpeg")}
+
+
+def prune_item_images(item_id, keep_keys):
+    """저장본의 그림 목록에 없는 그림 문서를 지운다(그림이 줄었거나 저장본을 덮어썼을 때)."""
+    for doc in DB.collection(SAVED_IMAGES).where("item_id", "==", item_id).stream():
+        if doc.to_dict().get("key") not in keep_keys:
+            doc.reference.delete()
 
 
 def rename_saved_item(item_id, user_id, title):
@@ -10510,6 +10649,7 @@ def delete_saved_item(item_id, user_id):
     snap = ref.get()
     if not snap.exists or snap.to_dict().get("user_id") != user_id:
         return False
+    prune_item_images(item_id, set())   # 딸린 그림도 함께 지운다
     ref.delete()
     return True
 
@@ -11439,6 +11579,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 500)
             return
 
+        if path.startswith("/api/saved-image/"):
+            # /api/saved-image/<저장본 id>/<그림 key>
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            parts = path[len("/api/saved-image/"):].split("/")
+            try:
+                img = get_item_image(parts[0], user_id, parts[1]) if len(parts) == 2 else None
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            if not img:
+                self._send_json({"error": "그림을 찾을 수 없습니다."}, 404)
+                return
+            self._send_json(img)
+            return
+
         if path.startswith("/api/saved/"):
             user_id = _session_user(self)
             if not user_id:
@@ -11669,6 +11827,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/account/recharge", "/api/account/recharge/confirm",
                         "/api/account/ack-update", "/api/portone/webhook",
                         "/api/saved", "/api/saved/delete", "/api/saved/rename",
+                        "/api/saved-image",
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
                         "/api/admin/approve-exam",
@@ -12332,6 +12491,7 @@ class Handler(BaseHTTPRequestHandler):
             if not tab or payload is None:
                 self._send_json({"error": "저장할 내용이 없습니다."}, 400)
                 return
+            clean_saved_images_meta(payload)   # 그림 목록은 모양을 다듬어 담는다(그림 본체는 따로)
             try:
                 new_id = save_item(item_id, user_id, tab, title, payload)
             except PermissionError as e:
@@ -12341,6 +12501,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"저장에 실패했습니다: {e}"}, 500)
                 return
             self._send_json({"id": new_id})
+            return
+
+        if path == "/api/saved-image":
+            # 저장본에 딸린 그림 한 장. 저장본을 먼저 만든 뒤 그 id로 한 장씩 올린다.
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                err = save_item_image(str(req.get("id") or ""), user_id,
+                                      str(req.get("key") or ""), str(req.get("mime") or ""),
+                                      req.get("image"))
+            except Exception as e:
+                self._send_json({"error": f"그림 저장에 실패했습니다: {e}"}, 500)
+                return
+            if err:
+                self._send_json({"error": err}, 400)
+                return
+            self._send_json({"ok": True})
             return
 
         if path == "/api/saved/rename":
@@ -13046,6 +13225,15 @@ class Handler(BaseHTTPRequestHandler):
         mode = req.get("mode") or "teacher"
         api_key = req.get("apiKey") or ""
         model = MODEL  # 지문 분석은 항상 Flash — 사용자가 모델을 고르지 않는다
+        # 만들 구역 — 안 보내면(옛 화면·저장된 요청) 예전처럼 전부 만든다.
+        # 값이 같은 요청이 한 스레드에서 이어질 수 있어 매번 덮어쓴다.
+        picked = req.get("sections")
+        if isinstance(picked, list):
+            _ANALYZE_SKIP.keys = tuple(
+                k for k in ANALYZE_OPTIONAL_SECTIONS if k not in picked
+            )
+        else:
+            _ANALYZE_SKIP.keys = ()
 
         t0 = time.monotonic()
         trace = RefineTrace(t0)
