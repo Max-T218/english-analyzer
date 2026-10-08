@@ -6982,20 +6982,8 @@ async function generateWorkbook() {
   syncFloatPrint();
 
   const total = jobs.length;
-  let okCount = 0;
-  const htmlParts = [];
-  const answerParts = [];
-  const entries = []; // 저장 기능이 쓸 {job, data} — 성공한 것만
-  const title = wbTitleEl.value.trim();
-  const exam = wbExamEl ? wbExamEl.value.trim() : "";
-  if (title) {
-    htmlParts.push(`
-      <div class="wb-cover">
-        <h1>${esc(title)}</h1>
-        ${exam ? `<div class="wb-exam">${esc(exam)}</div>` : ""}
-        <div class="wb-date">${esc(new Date().toLocaleDateString("ko-KR"))}</div>
-      </div>`);
-  }
+  // 지문 차례대로 {job, data}(성공) 또는 {errorHtml}(실패)을 담는다 — 그리기는 drawWorkbook이 한다
+  const results = [];
 
   for (let i = 0; i < total; i++) {
     const job = jobs[i];
@@ -7005,7 +6993,7 @@ async function generateWorkbook() {
         : "AI가 워크북을 만들고 있습니다… (지문 길이에 따라 40~120초 걸릴 수 있어요)";
 
     if (job.text.length < 20) {
-      htmlParts.push(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
+      results.push({ errorHtml: buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력).") });
       continue;
     }
 
@@ -7017,65 +7005,44 @@ async function generateWorkbook() {
         { passage: job.text, stages },
         "워크북 생성에 실패했습니다."
       );
-      const built = buildWorkbookHtml(data, stages, job, total, exam);
-      htmlParts.push(built.html);
-      answerParts.push(built.answerHtml);
-      entries.push({ job, data });
-      okCount++;
+      results.push({ job, data });
     } catch (err) {
       const msg = err.message || String(err);
-      htmlParts.push(buildErrorHtml(job, total, msg));
+      results.push({ errorHtml: buildErrorHtml(job, total, msg) });
       // 한도 소진은 기다려도 안 풀린다 — 남은 지문을 시도하지 않고 즉시 멈춘다
       if (isQuotaError(err)) {
         const left = total - (i + 1);
-        if (left > 0) htmlParts.push(quotaStopHtml(left, err));
+        if (left > 0) results.push({ errorHtml: quotaStopHtml(left, err) });
         break;
       }
     }
   }
 
-  // 참고 자료처럼 문제지 뒤에 '정답'을 한데 모아 붙인다
-  let hasAnswerBook = false;
-  if (okCount && (!wbAnswerBookChk || wbAnswerBookChk.checked)) {
-    const body = answerParts.filter((p) => p && p.trim()).join("");
-    if (body) {
-      hasAnswerBook = true;
-      htmlParts.push(`
-        <section class="wb-answerbook">
-          <h2 class="wb-answerbook-head">정답</h2>
-          ${body}
-        </section>`);
-    }
-  }
-  if (okCount) htmlParts.push(`<footer>단계별 WORKBOOK · 자동 생성</footer>`);
-  workbookDocEl.innerHTML = htmlParts.join("");
-  syncWbTight();   // 새로 그렸으니 쪽 수를 다시 센다
-  applyAnswerVisibility();
-  if (okCount) {
-    workbookPrintBtn.style.display = "inline-flex";
-    // '답지만'은 뒤쪽 정답 모음을 지면에 올리는 기능이라, 그게 없으면 쓸 수 없다
-    wbAnswerPrintBtn.style.display = hasAnswerBook ? "inline-flex" : "none";
-    workbookSaveBtn.style.display = "inline-flex";
-    workbookDocxBtn.style.display = "inline-flex";
-  }
-  lastWorkbookEntries = entries; // 저장 버튼이 이 값을 그대로 payload로 보낸다
-  syncFloatPrint();
+  const okCount = drawWorkbook(results);
   wbLoadingEl.classList.remove("on");
   wbBtn.disabled = false;
   addPassageBtn.disabled = false;
   clearPassagesBtn.disabled = false;
-  workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
   refreshTokenDisplay();
   // 워크북에도 '직접 수정'은 없다
   if (okCount) showDoneGuide(`지문 ${okCount}개의 워크북`, false);
 }
 
-// "내 저장함"에서 불러온 워크북을 다시 그린다 — API를 다시 부르지 않고, 저장해 둔
-// 원본 data를 지금 화면의 단계 선택(stages)·제목·머리말로 buildWorkbookHtml에 넘긴다.
+// "내 저장함"에서 불러온 워크북을 다시 그린다 — API를 다시 부르지 않는다.
 function renderWorkbookEntries(entries) {
+  drawWorkbook(entries);
+}
+
+/* 받아 둔 결과를 지금 화면의 단계 선택·제목·머리말·출력 순서로 그린다.
+   AI를 부르지 않으므로 출력 순서를 바꿀 때도 이것만 다시 부른다(요금 없음).
+   results: {job, data}(성공) 또는 {errorHtml}(실패 안내) — 지문 차례대로.
+   돌려주는 값은 그려진 지문 수. */
+let lastWorkbookResults = [];
+function drawWorkbook(results) {
+  lastWorkbookResults = results;
+  const entries = results.filter((r) => r.data);
   const total = entries.length;
   const htmlParts = [];
-  const answerParts = [];
   const title = wbTitleEl.value.trim();
   const exam = wbExamEl ? wbExamEl.value.trim() : "";
   const stages = [...wbStageGridEl.querySelectorAll("input:checked")].map((i) => parseInt(i.value, 10));
@@ -7087,35 +7054,74 @@ function renderWorkbookEntries(entries) {
         <div class="wb-date">${esc(new Date().toLocaleDateString("ko-KR"))}</div>
       </div>`);
   }
-  entries.forEach(({ job, data }) => {
-    const built = buildWorkbookHtml(data, stages, job, total, exam);
+
+  let answerBody = "";
+  if (wbOrderEl && wbOrderEl.value === "stage") {
+    // 단계별 — 실패 안내는 맨 앞에 모은다(단계마다 끼워 넣을 자리가 없다)
+    results.forEach((r) => { if (r.errorHtml) htmlParts.push(r.errorHtml); });
+    const built = buildWorkbookByStage(entries, stages, exam);
     htmlParts.push(built.html);
-    answerParts.push(built.answerHtml);
-  });
+    answerBody = built.answerHtml;
+  } else {
+    const answerParts = [];
+    results.forEach((r) => {
+      if (r.errorHtml) { htmlParts.push(r.errorHtml); return; }
+      const built = buildWorkbookHtml(r.data, stages, r.job, total, exam);
+      htmlParts.push(built.html);
+      answerParts.push(built.answerHtml);
+    });
+    answerBody = answerParts.filter((p) => p && p.trim()).join("");
+  }
+
+  // 참고 자료처럼 문제지 뒤에 '정답'을 한데 모아 붙인다
   let hasAnswerBook = false;
-  if (total && (!wbAnswerBookChk || wbAnswerBookChk.checked)) {
-    const body = answerParts.filter((p) => p && p.trim()).join("");
-    if (body) {
-      hasAnswerBook = true;
-      htmlParts.push(`
-        <section class="wb-answerbook">
-          <h2 class="wb-answerbook-head">정답</h2>
-          ${body}
-        </section>`);
-    }
+  if (total && (!wbAnswerBookChk || wbAnswerBookChk.checked) && answerBody.trim()) {
+    hasAnswerBook = true;
+    htmlParts.push(`
+      <section class="wb-answerbook">
+        <h2 class="wb-answerbook-head">정답</h2>
+        ${answerBody}
+      </section>`);
   }
   if (total) htmlParts.push(`<footer>단계별 WORKBOOK · 자동 생성</footer>`);
   workbookDocEl.innerHTML = htmlParts.join("");
   syncWbTight();   // 새로 그렸으니 쪽 수를 다시 센다
   applyAnswerVisibility();
   workbookPrintBtn.style.display = total ? "inline-flex" : "none";
+  // '답지만'은 뒤쪽 정답 모음을 지면에 올리는 기능이라, 그게 없으면 쓸 수 없다
   wbAnswerPrintBtn.style.display = total && hasAnswerBook ? "inline-flex" : "none";
   workbookSaveBtn.style.display = total ? "inline-flex" : "none";
   workbookDocxBtn.style.display = total ? "inline-flex" : "none";
-  lastWorkbookEntries = entries;
+  lastWorkbookEntries = entries; // 저장 버튼이 이 값을 그대로 payload로 보낸다
   syncFloatPrint();
   // 비우는 호출일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
-  if (total) workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (results.length) workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  return total;
+}
+
+/* ── 출력 순서 ──
+   passage — 지문 하나의 1~9단계를 다 찍고 다음 지문으로(예전 그대로)
+   stage   — 모든 지문의 1단계(예: 좌지문 우해석)를 먼저 모아 찍고, 다음 단계로.
+             수업에서 좌지문 우해석만 쓰려는데 지문마다 뒤 단계를 넘겨야 해서 불편했다. */
+const wbOrderEl = radioGroup("wbOrder");
+const wbOrderHintEl = $("wbOrderHint");
+const WB_ORDER_STORE = "gemini_wb_order";
+function updateWbOrderHint() {
+  if (!wbOrderHintEl) return;
+  wbOrderHintEl.innerHTML = wbOrderEl.value === "stage"
+    ? "<b>모든 지문의 같은 단계</b>를 모아 찍습니다 — 지문1·2·3의 좌지문 우해석 → 지문1·2·3의 빈칸 완성 … 순서입니다."
+    : "<b>지문 하나의 단계를 모두</b> 찍고 다음 지문으로 넘어갑니다 — 지문1의 1~9단계 → 지문2의 1~9단계 … 순서입니다.";
+}
+if (wbOrderEl) {
+  const saved = localStorage.getItem(WB_ORDER_STORE);
+  if (saved === "passage" || saved === "stage") wbOrderEl.value = saved;
+  wbOrderEl.addEventListener("change", () => {
+    localStorage.setItem(WB_ORDER_STORE, wbOrderEl.value);
+    updateWbOrderHint();
+    // 이미 만든 결과가 있으면 그 자리에서 다시 늘어놓는다 — AI를 다시 부르지 않는다
+    if (lastWorkbookResults.length) drawWorkbook(lastWorkbookResults);
+  });
+  updateWbOrderHint();
 }
 
 function getWorkbookSettings() {
@@ -7125,6 +7131,7 @@ function getWorkbookSettings() {
     exam: wbExamEl ? wbExamEl.value : "",
     answer: wbAnswerChk.checked,
     answerBook: wbAnswerBookChk ? wbAnswerBookChk.checked : true,
+    order: wbOrderEl ? wbOrderEl.value : "passage",
   };
 }
 function applyWorkbookSettings(settings) {
@@ -7140,6 +7147,11 @@ function applyWorkbookSettings(settings) {
   if (wbExamEl) wbExamEl.value = settings.exam || "";
   wbAnswerChk.checked = !!settings.answer;
   if (wbAnswerBookChk) wbAnswerBookChk.checked = settings.answerBook !== false;
+  // 순서를 담지 않은 옛 저장본은 지금 고른 순서를 그대로 둔다
+  if (wbOrderEl && (settings.order === "passage" || settings.order === "stage")) {
+    wbOrderEl.value = settings.order;
+    updateWbOrderHint();
+  }
 }
 
 TAB_SAVE.workbook = {
@@ -7445,13 +7457,7 @@ function buildWorkbookHtml(d, stages, job, total, exam) {
   const label = job && (job.named || total > 1) ? job.name : "";
 
   parts.push(`<section class="wb-passage">`);
-  if (d.englishTitle || d.koreanTitle) {
-    parts.push(`
-      <div class="wb-titlebar">
-        <b>${esc(d.englishTitle || "")}</b>
-        ${d.koreanTitle ? `<span>${esc(d.koreanTitle)}</span>` : ""}
-      </div>`);
-  }
+  parts.push(wbTitlebarHtml(d));
 
   const sentences = (d.sentences || []).filter((s) => s && s.en);
   // 지면에 찍히는 번호는 1부터 연속. 내용이 없어 건너뛴 단계는 번호를 쓰지 않으므로
@@ -7464,20 +7470,7 @@ function buildWorkbookHtml(d, stages, job, total, exam) {
     if (!built || !built.html.trim()) return;
     stageNo++;
     const head = `STEP ${stageNo} ${meta.name}`;
-    // 표의 <thead>는 브라우저가 쪽마다 다시 그려 준다 — 참고 자료의 '쪽 머리말'이 된다
-    parts.push(`
-      <table class="wb-page">
-        <thead><tr><td>
-          <div class="wb-run">
-            <span class="wb-run-l">${esc(head)}</span>
-            <span class="wb-run-r">${esc([label, exam].filter(Boolean).join(" ┃ "))}</span>
-          </div>
-        </td></tr></thead>
-        <tbody><tr><td>
-          <div class="wb-guide">${esc(meta.guide)}</div>
-          ${built.html}
-        </td></tr></tbody>
-      </table>`);
+    parts.push(wbStageTableHtml(head, label, exam, meta.guide, built.html));
     if (built.answers && built.answers.length) {
       answerStages.push({ head, items: built.answers });
     }
@@ -7486,12 +7479,80 @@ function buildWorkbookHtml(d, stages, job, total, exam) {
   parts.push(`</section>`);
 
   // 뒤쪽 '정답' 모음에 들어갈 조각
-  let answerHtml = "";
-  if (answerStages.length) {
-    answerHtml = `
+  return { html: parts.join(""), answerHtml: wbAnswerGroupHtml(label, answerStages) };
+}
+
+/* 단계별 순서 — 모든 지문의 같은 단계를 모아 찍는다(출력 순서 '단계별로 묶기').
+   지문·단계 한 칸마다 .wb-passage 상자 하나를 둔다 — 인쇄 CSS가 그 상자마다 새 쪽을
+   열고(쪽 수 세기 wbCountPages도 같은 상자를 센다), 제목줄이 있어 어느 지문인지 보인다.
+   STEP 번호는 고른 단계 중 어느 지문에서든 내용이 나온 단계에만 1부터 붙인다.
+   정답 모음도 같은 순서 — 단계 아래에 지문별로 묶는다. */
+function buildWorkbookByStage(entries, stages, exam) {
+  const total = entries.length;
+  const items = entries.map(({ job, data }) => ({
+    d: data,
+    label: job && (job.named || total > 1) ? job.name : "",
+    sentences: (data.sentences || []).filter((s) => s && s.en),
+  }));
+  const parts = [];
+  const answers = [];
+  let stageNo = 0;
+  stages.forEach((stageId) => {
+    const meta = WB_STAGES.find((s) => s.id === stageId);
+    if (!meta) return;
+    const builtAll = items
+      .map((it) => ({ it, built: buildStage(stageId, it.d, it.sentences) }))
+      .filter((x) => x.built && x.built.html.trim());
+    if (!builtAll.length) return;
+    stageNo++;
+    const head = `STEP ${stageNo} ${meta.name}`;
+    const groups = [];
+    builtAll.forEach(({ it, built }) => {
+      parts.push(`<section class="wb-passage">${wbTitlebarHtml(it.d)}` +
+        wbStageTableHtml(head, it.label, exam, meta.guide, built.html) + `</section>`);
+      if (built.answers && built.answers.length) {
+        groups.push({ head: it.label || head, items: built.answers });
+      }
+    });
+    answers.push(wbAnswerGroupHtml(head, groups));
+  });
+  return { html: parts.join(""), answerHtml: answers.join("") };
+}
+
+function wbTitlebarHtml(d) {
+  if (!d.englishTitle && !d.koreanTitle) return "";
+  return `
+      <div class="wb-titlebar">
+        <b>${esc(d.englishTitle || "")}</b>
+        ${d.koreanTitle ? `<span>${esc(d.koreanTitle)}</span>` : ""}
+      </div>`;
+}
+
+// 표의 <thead>는 브라우저가 쪽마다 다시 그려 준다 — 참고 자료의 '쪽 머리말'이 된다
+function wbStageTableHtml(head, label, exam, guide, body) {
+  return `
+      <table class="wb-page">
+        <thead><tr><td>
+          <div class="wb-run">
+            <span class="wb-run-l">${esc(head)}</span>
+            <span class="wb-run-r">${esc([label, exam].filter(Boolean).join(" ┃ "))}</span>
+          </div>
+        </td></tr></thead>
+        <tbody><tr><td>
+          <div class="wb-guide">${esc(guide)}</div>
+          ${body}
+        </td></tr></tbody>
+      </table>`;
+}
+
+// 정답 모음 한 덩어리 — 큰 이름표(label) 아래 소제목(groups[].head)마다 번호·정답 목록.
+// 지문별 순서는 '지문 → 단계', 단계별 순서는 '단계 → 지문'으로 같은 모양을 쓴다.
+function wbAnswerGroupHtml(label, groups) {
+  if (!groups.length) return "";
+  return `
       <div class="wb-ab-passage">
         ${label ? `<div class="wb-ab-label">${esc(label)}</div>` : ""}
-        ${answerStages
+        ${groups
           .map(
             (st) => `
           <div class="wb-ab-stage">
@@ -7503,9 +7564,6 @@ function buildWorkbookHtml(d, stages, job, total, exam) {
           )
           .join("")}
       </div>`;
-  }
-
-  return { html: parts.join(""), answerHtml };
 }
 
 // 한 단계를 통째로 만든다 → { html, answers:[{no, text}] }
@@ -9082,6 +9140,7 @@ const HOWTO = {
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "넣을 <b>단계</b>를 고릅니다. 값이 단계 수에 걸려 있고, 7단계부터는 더 올라가지 않습니다.",
+      "지문이 여럿이면 <b>출력 순서</b>를 고릅니다 — <b>지문별로 묶기</b>는 지문 하나의 단계를 다 찍고 다음 지문으로, <b>단계별로 묶기</b>는 모든 지문의 좌지문 우해석을 먼저 모아 찍고 다음 단계로 넘어갑니다. 만든 뒤에 바꿔도 다시 만들지 않고 바로 다시 늘어놓습니다(요금 없음).",
       "(선택) <b>제목</b>과 <b>시험명</b>을 적으면 맨 앞에 <b>표지가 한 장</b> 생깁니다.",
       "<b>[워크북 만들기]</b>를 누릅니다.",
       "<b>[정답 표시]</b>를 끄면 학생용으로, 켜면 선생님용으로 인쇄됩니다. 뒤쪽 <b>정답 별지</b>는 만들 때 정해집니다.",
