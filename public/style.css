@@ -149,6 +149,12 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .img-langs-title{font-size:12.5px; font-weight:800; color:var(--accent); margin-right:2px;}
 .img-langs .chk{font-size:13px;}
 .img-langs-note{width:100%; color:var(--ink-soft);}
+/* 지문 분석의 고를 것 두 상자 — 실행 단추 위에 나란히, 폭을 반씩 나눈다(좁으면 아래로) */
+.analyze-opts{display:flex; flex-wrap:wrap; gap:10px; margin-top:16px;}
+.analyze-opts .img-langs{flex:1 1 300px;}
+/* 쪽 구성·직접 수정 안내는 단추 줄 아래 한 줄로 */
+.actions-notes{display:flex; flex-direction:column; gap:4px; margin-top:8px;}
+.actions-notes:not(:has(.edit-hint:not(:empty))){display:none;}
 /* 요약 그림이 두 종 이상일 때 제목 옆에 붙는 말 이름 — 인쇄한 뒤 어느 판인지
    가릴 수 있어야 한다. 제목보다 흐리게 두어 제목을 가리지 않게 한다. */
 .section-sub{font-size:12px; font-weight:700; color:var(--ink-soft); margin-left:6px;}
