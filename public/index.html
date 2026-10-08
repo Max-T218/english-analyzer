@@ -1052,6 +1052,38 @@
         </div>
       </div>
     </div>
+    <div id="quizVocabWrap" hidden>
+    <!-- 단어장 — 학교가 채택한 단어장이 시험 범위에 들어갈 때(2026-10-08). app.js의 createVocabBox("quizVocab")가
+         지문마다 거기 나오는 단어만 골라 /api/quiz의 targetWords로 보내고, 체크박스를 켜면 문제를 만들기 전에
+         지문마다 /api/reword(variation "vocab")를 한 번 부른다. -->
+    <div class="row" style="margin-top:14px">
+      <div class="field" style="flex:1 1 100%">
+        <label for="quizVocab">단어장 (선택)</label>
+        <textarea id="quizVocab" rows="5" autocomplete="off" spellcheck="false"
+          placeholder="한 줄에 한 단어씩 — 뜻·유의어는 적어도 되고 안 적어도 됩니다&#10;abandon 버리다 = give up&#10;be aware of ~을 알다&#10;crucial, adapt, sustain&#10;(단어장 쪽 사진을 이 칸에 붙여넣거나 끌어다 놓아도 됩니다)"></textarea>
+        <div class="passage-add-row" style="margin-top:6px">
+          <select id="quizVocabFrom" class="small" aria-label="단어장 가져오기" style="width:auto;flex:0 1 auto;max-width:100%">
+            <option value="">📒 저장한 단어장에서 가져오기…</option>
+          </select>
+          <button type="button" class="btn ghost small" id="quizVocabFileBtn">📷 사진·PDF에서 가져오기</button>
+          <button type="button" class="btn ghost small danger" id="quizVocabClearBtn">🗑️ 단어 지우기</button>
+        </div>
+        <input type="file" id="quizVocabFile" accept="image/*,application/pdf" multiple hidden>
+        <div class="ocr-status" id="quizVocabStatus" role="status" aria-live="polite" hidden></div>
+        <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px">
+          <label class="chk" title="지문에 나오는 단어장 단어를 유의어로 바꿔 싣습니다. 줄 끝에 '= 유의어'를 적어 두면 그 말로 바꿉니다.">
+            <input type="checkbox" id="quizVocabToSyn"> 지문 속 단어장 단어를 유의어로 바꿔 싣기 (줄 끝에 “= 유의어”를 적으면 그 말로)
+          </label>
+          <label class="chk" title="지문에 없는 단어장 단어를, 뜻이 같은 본문 낱말 자리에 바꿔 넣습니다.">
+            <input type="checkbox" id="quizVocabToBook"> 지문의 다른 낱말을 단어장 단어로 바꿔 싣기 (뜻이 같은 자리에만)
+          </label>
+        </div>
+        <div class="hint" id="quizVocabHint">
+          고른 유형 중 <b>어휘·영영풀이·빈칸 문항</b>이 지문에 나오는 이 단어를 정답 자리로 씁니다. 객관식·주관식 탭에서만 쓰입니다.
+        </div>
+      </div>
+    </div>
+    </div>
     <input type="file" id="ocrFile" accept="image/*" multiple hidden>
     <input type="file" id="pdfFile" accept="application/pdf" multiple hidden>
     <div class="ocr-hint">
@@ -1742,6 +1774,37 @@
           <input type="text" id="examTargetGrammar" autocomplete="off" placeholder="예: 분사구문, 관계대명사, 가정법">
           <div class="hint">
             배분표의 <b>어법 문항</b>을 이 문법으로 냅니다. 비워 두면 지문에 맞춰 알아서 정합니다.
+          </div>
+        </div>
+      </div>
+
+      <!-- 시험 범위 단어장 — 학교가 채택한 단어장이 시험 범위에 들어갈 때(2026-10-08). app.js의 createVocabBox("examVocab")가
+           지문마다 거기 나오는 단어만 골라 /api/quiz의 targetWords로 보내고, 체크박스를 켜면 문제를 만들기 전에
+           지문마다 /api/reword(variation "vocab")를 한 번 부른다. -->
+      <div class="row" style="margin-top:14px">
+        <div class="field" style="flex:1 1 100%">
+          <label for="examVocab">시험 범위 단어장 (선택)</label>
+          <textarea id="examVocab" rows="5" autocomplete="off" spellcheck="false"
+            placeholder="한 줄에 한 단어씩 — 뜻·유의어는 적어도 되고 안 적어도 됩니다&#10;abandon 버리다 = give up&#10;be aware of ~을 알다&#10;crucial, adapt, sustain&#10;(단어장 쪽 사진을 이 칸에 붙여넣거나 끌어다 놓아도 됩니다)"></textarea>
+          <div class="passage-add-row" style="margin-top:6px">
+            <select id="examVocabFrom" class="small" aria-label="단어장 가져오기" style="width:auto;flex:0 1 auto;max-width:100%">
+              <option value="">📒 저장한 단어장에서 가져오기…</option>
+            </select>
+            <button type="button" class="btn ghost small" id="examVocabFileBtn">📷 사진·PDF에서 가져오기</button>
+            <button type="button" class="btn ghost small danger" id="examVocabClearBtn">🗑️ 단어 지우기</button>
+          </div>
+          <input type="file" id="examVocabFile" accept="image/*,application/pdf" multiple hidden>
+          <div class="ocr-status" id="examVocabStatus" role="status" aria-live="polite" hidden></div>
+          <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px">
+            <label class="chk" title="지문에 나오는 단어장 단어를 유의어로 바꿔 싣습니다. 줄 끝에 '= 유의어'를 적어 두면 그 말로 바꿉니다.">
+              <input type="checkbox" id="examVocabToSyn"> 지문 속 단어장 단어를 유의어로 바꿔 싣기 (줄 끝에 “= 유의어”를 적으면 그 말로)
+            </label>
+            <label class="chk" title="지문에 없는 단어장 단어를, 뜻이 같은 본문 낱말 자리에 바꿔 넣습니다.">
+              <input type="checkbox" id="examVocabToBook"> 지문의 다른 낱말을 단어장 단어로 바꿔 싣기 (뜻이 같은 자리에만)
+            </label>
+          </div>
+          <div class="hint" id="examVocabHint">
+            배분표의 <b>어휘·영영풀이·빈칸 문항</b>이 지문에 나오는 이 단어를 정답 자리로 씁니다.
           </div>
         </div>
       </div>

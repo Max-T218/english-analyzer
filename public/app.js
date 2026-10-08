@@ -1979,6 +1979,8 @@ copyPassagesBtn.addEventListener("click", async () => {
 let passageSaveFrom = null;   // null이면 공용 지문칸, 아니면 {mgr, grammarEl, label}
 const passageSaveMgr = () => (passageSaveFrom ? passageSaveFrom.mgr : passageMgr);
 const passageSaveGrammarEl = () => (passageSaveFrom ? passageSaveFrom.grammarEl : grammarEl);
+// 단어장 칸도 지문과 한 벌로 저장한다(2026-10-08) — 시험 범위가 지문+단어장이라 둘을 따로 챙기면 빠뜨린다
+const passageSaveVocab = () => (passageSaveFrom ? passageSaveFrom.vocab : quizVocab);
 
 // 불러온 지문이 칸 상한을 넘어 일부만 들어갔을 때의 안내 — 몇 개가 빠졌는지, 왜인지.
 function passageDropNote(added, dropped, limit) {
@@ -1996,6 +1998,7 @@ TAB_SAVE.passage = {
   getPayload: () => ({
     passages: passageSaveMgr().getJobs(),
     targetGrammar: (passageSaveGrammarEl() || {}).value || "",
+    targetVocab: (passageSaveVocab() || {}).value || "",
   }),
   /* mode "append"면 지금 입력칸을 비우지 않고 뒤에 이어 붙인다 (저장함의 [뒤에 붙이기]).
      목표 어법은 그때 덮어쓰지 않는다 — 이어 붙이는 저장본의 값으로 지금 것을 바꾸면,
@@ -2004,6 +2007,8 @@ TAB_SAVE.passage = {
     if (mode === "append") {
       const { added, full } = passageMgr.appendJobs(payload.passages || []);
       if (!grammarEl.value.trim()) grammarEl.value = payload.targetGrammar || "";
+      if (payload.targetVocab) quizVocab.append(parseVocabLines(payload.targetVocab).map((e) => ({
+        word: e.word, meaning: e.meaning, synonym: e.syn })));
       const total = passageMgr.getJobs().length;
       ocrStatus(
         full
@@ -2014,6 +2019,7 @@ TAB_SAVE.passage = {
     } else {
       const { added, dropped } = passageMgr.setJobs(payload.passages || []);
       grammarEl.value = payload.targetGrammar || "";
+      quizVocab.value = payload.targetVocab || "";
       if (dropped) ocrStatus(passageDropNote(added, dropped, MAX_PASSAGES), "warn");
     }
     passageListEl.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2722,6 +2728,9 @@ function syncTabChrome(tab) {
   // 시험지 분석 리포트는 공용 지문칸을 쓰지 않는다
   const onTrend = tab === "trend";
   if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || tab === "vocab" || tab === "students";
+  // 공용 지문칸 아래 단어장은 문제 탭에서만 쓰인다(분석·워크북은 단어장을 보지 않는다)
+  const quizVocabWrap = $("quizVocabWrap");
+  if (quizVocabWrap) quizVocabWrap.hidden = !["mcq", "saq", "mix"].includes(tab);
   /* 기출 탭에서는 분석이 끝나 시험지 칸이 열렸을 때만 마크 칸을 보여 준다.
      시험지 분석 리포트는 보고서가 나온 뒤 인쇄 단추 위(#trendBrandSlot, trendRender가 그린다)로
      옮긴다 — 보고서에도 학원 마크를 넣게 되면서(2026-09-29) 칸이 이 탭에서 안 보여 어디서
@@ -5633,8 +5642,14 @@ function setupQuizTab({ prefix, types, footer }) {
     // 유형마다 단가가 갈리고 추가 문항은 따로 매겨진다(costPerSet). 지문변형 세트를
     // 여러 개 고르면 세트 수만큼 문제 생성이 통째로 반복된다.
     const rewordSets = vars.filter((v) => v !== "verbatim").length;
+    // 단어장으로 지문 바꿔 싣기 — '원문 그대로' 세트에서만, 바꿀 것이 있는 지문마다 한 번
+    const vocabTexts = usableJobs.map((j) => j.text);
+    const vocabSwapJobs = vars.includes("verbatim")
+      ? usableJobs.filter((j) => quizVocab.swapBody(j.text, vocabTexts)).length
+      : 0;
     const cost = PRICING
-      ? usableJobs.reduce((s, j) => s + vars.length * jobPlanOf(j).perVarCost + rewordSets * PRICING.reword, 0)
+      ? usableJobs.reduce((s, j) => s + vars.length * jobPlanOf(j).perVarCost + rewordSets * PRICING.reword, 0) +
+        vocabSwapJobs * (PRICING.reword || 0)
       : 0;
     // 한 묶음에 담을 지문 수. 0이면 나누지 않고 지금까지대로 한 번에 간다.
     let batchSize = 0;
@@ -5769,6 +5784,24 @@ function setupQuizTab({ prefix, types, footer }) {
           //    문제를 만들기 전에 지문을 한 번만 다시 쓴다.
           let source = job.text;
           let varied = [];
+          /* 단어장으로 지문 바꿔 싣기 — '원문 그대로' 세트에서만 한다(단어 변형 세트는 이미 다른 말로
+             바꾼 지문이라 둘을 겹치면 무엇이 단어장 때문에 바뀌었는지 가릴 수 없다). 실패하면 원문 그대로 만든다. */
+          const vocabBody = variation === "verbatim" ? quizVocab.swapBody(job.text, vocabTexts) : null;
+          if (vocabBody) {
+            loadingTextEl.textContent = `${tag} — 단어장 단어로 바꾸는 중…`;
+            try {
+              const r = await postGenerate("/api/reword", { passage: job.text, ...vocabBody }, "지문 바꾸기에 실패했습니다.");
+              source = (r.passage || "").trim() || job.text;
+              varied = Array.isArray(r.variations) ? r.variations : [];
+            } catch (err) {
+              append(buildNoticeHtml(job, total, `단어장 단어로 바꾸지 못해 원문 그대로 만듭니다 — ${err.message || err}`, ""));
+              if (isQuotaError(err)) {
+                stopped = true;
+                stopErr = err;
+                continue;
+              }
+            }
+          }
           if (variation !== "verbatim") {
             loadingTextEl.textContent = `${tag} 지문 변형본 만드는 중…`;
             const rwStart = Date.now();
@@ -5825,6 +5858,9 @@ function setupQuizTab({ prefix, types, footer }) {
                     // 어법 계열 유형이 섞여 있을 때만 서버가 쓴다. 비어 있으면 지금까지대로
                     // AI가 지문에 맞춰 알아서 문법 포인트를 고른다.
                     targetGrammar: grammarEl.value,
+                    // 단어장 중 이 지문에 나오는 것 + 바꿔 넣은 낱말 — 서버는 어휘 계열 유형에만 싣는다
+                    targetWords: [...new Set([...quizVocab.forText(source), ...varied.map((x) => x.to)])]
+                      .slice(0, VOCAB_BOX_PER_PASSAGE),
                     difficulty,
                     school: school(),
                   },
@@ -8844,6 +8880,13 @@ async function loadSavedItem(id, mode) {
       if (gEl && (!append || !gEl.value.trim())) {
         gEl.value = (item.payload || {}).targetGrammar || "";
       }
+      // 단어장 칸 — 통째로 바꿀 때는 갈아 끼우고, 이어 붙일 때는 없는 단어만 더한다
+      const vBox = passageLoadTo.vocab;
+      const tv = (item.payload || {}).targetVocab || "";
+      if (vBox) {
+        if (!append) vBox.value = tv;
+        else if (tv) vBox.append(parseVocabLines(tv).map((e) => ({ word: e.word, meaning: e.meaning, synonym: e.syn })));
+      }
       let msg;
       if (append) {
         const { added, full } = mgr.appendJobs(list);
@@ -9083,6 +9126,7 @@ const HOWTO = {
     lead: "지문 하나로 수능·내신 어투의 5지선다 문항을 만듭니다.",
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. (선택) <b>목표 어법</b>을 적으면 어법 문항의 정답 자리를 그 문법으로 냅니다.",
+      "(선택) 지문 칸 아래 <b>단어장</b>에 학교가 정한 단어장 단어를 적거나 붙여넣으면(한 줄에 한 단어, 단어장 쪽 <b>사진·PDF</b>도 됩니다 · <b>📒 저장한 단어장에서 가져오기</b>도 됩니다) 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 씁니다. <b>유의어로 바꿔 싣기</b> · <b>단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문을 단어장으로 바꿔 씁니다(지문 변형이 '원문 그대로'일 때만) — 바뀐 낱말은 화면에서만 형광으로 보입니다.",
       "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추). 중학교 내신 유형 — <b>문법 쓰임 같은 것·다른 것</b>(that·as 등의 쓰임), <b>다의어 같은 뜻</b>은 아무 지문에서나 만들고, 대화문 유형(<b>대화 순서·어색한 응답·대화 빈칸·대화 내용 일치·대화 내용 불일치·답할 수 없는 질문·짝지어진 대화·대화 어법·어휘 선택·짝지어진 대화 어법·대화 상황 파악</b> — 실제 중학교 시험지의 대화문 문제 모양을 따랐습니다)은 줄마다 \"A:\", \"B:\"처럼 말하는 사람이 적힌 <b>대화문</b>을 넣었을 때만 만들어집니다 — 대화문이 아니면 빼고 값도 받지 않습니다.",
       "<b>학교급</b>을 고릅니다 — <b>중학교</b>를 고르면 보기·오답·문법 포인트를 중학생 수준으로 쉽게 만듭니다. 요금은 같습니다.",
       "<b>난이도</b>를 고릅니다 — 보기를 얼마나 까다롭게 만들지 정합니다. 둘의 요금은 같고, <b>둘 다 고르면</b> 같은 지문으로 기본 한 벌·고난도 한 벌이 나옵니다(요금도 두 벌).<br>" +
@@ -9104,6 +9148,7 @@ const HOWTO = {
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "(선택) <b>목표 어법</b>을 적으면 어법 선택형·틀린 어법 찾기·동사형 쓰기의 정답 자리를 그 문법으로 내고, <b>서술형배열·조건 영작·문장 전환</b>은 그 문법이 쓰인 문장을 골라 출제합니다.",
+      "(선택) 지문 칸 아래 <b>단어장</b>에 학교가 정한 단어장 단어를 적거나 붙여넣으면(한 줄에 한 단어, 단어장 쪽 <b>사진·PDF</b>도 됩니다 · <b>📒 저장한 단어장에서 가져오기</b>도 됩니다) 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 씁니다. <b>유의어로 바꿔 싣기</b> · <b>단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문을 단어장으로 바꿔 씁니다(지문 변형이 '원문 그대로'일 때만) — 바뀐 낱말은 화면에서만 형광으로 보입니다.",
       "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다.",
       "<b>학교급</b>을 고릅니다 — <b>중학교</b>를 고르면 묻는 말·문법 포인트를 중학생 수준으로 만듭니다. 요금은 같습니다.",
       "<b>난이도</b>를 고릅니다 — 묻는 말을 얼마나 까다롭게 만들지 정합니다. 둘의 요금은 같고, <b>둘 다 고르면</b> 기본 한 벌·고난도 한 벌이 나옵니다.<br>" +
@@ -9124,6 +9169,7 @@ const HOWTO = {
     lead: "객관식(5지선다)과 주관식(서술형·단답형) 유형을 한 시험지에 섞어 만듭니다. 객관식 탭·주관식 탭을 따로 돌려 두 시험지를 이어 붙일 필요가 없습니다.",
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. (선택) <b>목표 어법</b>을 적으면 어법 계열 문항이 그 문법으로 나옵니다.",
+      "(선택) 지문 칸 아래 <b>단어장</b>에 학교가 정한 단어장 단어를 적거나 붙여넣으면(한 줄에 한 단어, 단어장 쪽 <b>사진·PDF</b>도 됩니다 · <b>📒 저장한 단어장에서 가져오기</b>도 됩니다) 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 씁니다. <b>유의어로 바꿔 싣기</b> · <b>단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문을 단어장으로 바꿔 씁니다(지문 변형이 '원문 그대로'일 때만) — 바뀐 낱말은 화면에서만 형광으로 보입니다.",
       "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추). 칸은 <b>객관식 (5지선다)</b>와 <b>주관식 (서술형·단답형)</b> 두 묶음으로 나뉘어 있고, 두 묶음에서 자유롭게 고르면 됩니다.",
       "<b>학교급</b>·<b>난이도</b>를 고릅니다. 고난도는 객관식 전 유형과 주관식 중 <b>OX진위·질문에 답하기·표현 찾아 쓰기·영영풀이 쓰기·조건 영작</b>에서만 됩니다 — <b>기본 + 고난도</b>를 같이 고르면 고난도가 안 되는 주관식은 기본 벌에만 들어가고, <b>고난도만</b> 고르면 그 유형은 새로 고를 수 없게 막힙니다.",
       "<b>출제 순서</b>를 고릅니다 — <b>유형 순서대로</b>는 객관식 → 주관식 순으로 나오고, <b>지문 내 유형 섞기</b>·<b>전체 문항 섞기</b>를 고르면 두 종류가 한 시험지 안에서 뒤섞입니다.",
@@ -9169,8 +9215,9 @@ const HOWTO = {
     steps: [
       "기출 시험지 <b>PDF·사진</b>을 끌어다 놓으면 바로 <b>유형 분석</b>을 시작합니다. 한 번 분석해 저장해 둔 구성이 있으면 <b>[📂 저장한 구성 불러오기]</b>로, 시험지 분석 리포트에서 분석해 저장해 둔 기출이면 <b>[📂 분석 리포트에서 불러오기]</b>로 건너뛰어도 됩니다.",
       "기출을 <b>여러 부</b> 쓰려면 다음 시험지를 이어서 올리세요 — 곧바로 이어서 분석하고, 한 구성으로 합칩니다. <b>한 번이라도 나온 유형은 1문항씩</b> 깔고 남는 자리를 자주 나온 유형에 더 줍니다.",
-      "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손봅니다 — 고친 숫자는 누를 것 없이 <b>바로</b> 아래 제작 칸에 반영됩니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 따로 남겨 둘 수 있습니다 — 시험지를 만든 뒤에도 누를 수 있습니다. <b>불러온 구성도</b> 같은 표가 떠서 개수를 고칠 수 있습니다.",
+      "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손봅니다. 기출에 없던 유형(예: 단어장 단어를 묻는 <b>영영풀이 쓰기</b>)은 표 아래 <b>[＋ 기출에 없는 유형 더하기…]</b>로 넣습니다 — 고친 숫자는 누를 것 없이 <b>바로</b> 아래 제작 칸에 반영됩니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 따로 남겨 둘 수 있습니다 — 시험지를 만든 뒤에도 누를 수 있습니다. <b>불러온 구성도</b> 같은 표가 떠서 개수를 고칠 수 있습니다.",
       "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b> · <b>[📷 사진에서 가져오기]</b>로 채울 수도 있고(캡처한 그림은 지문 칸에 <b>Ctrl+V</b>로 붙여넣어도 됩니다), 기출 속 지문을 쓰려면 <b>[📄 지문도 가져오기]</b>를 누르세요.",
+      "(선택) <b>시험 범위 단어장</b> — 학교가 채택한 단어장이 시험 범위에 들어가면 단어를 칸에 적거나 붙여넣으세요(한 줄에 한 단어, 뜻은 있어도 없어도 됩니다). <b>📒 저장한 단어장에서 가져오기</b>로 단어장 탭에서 저장한 것을 불러올 수도 있습니다. 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 쓰고, 칸 아래에 지문에서 못 찾은 단어를 알려 드립니다. 줄 끝에 <b>= 유의어</b>를 적어 둘 수 있습니다(예: abandon 버리다 = give up). <b>지문 속 단어장 단어를 유의어로 바꿔 싣기</b> · <b>지문의 다른 낱말을 단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문마다 한 번 바꿔 씁니다 — 바뀐 낱말은 화면에서만 형광으로 보이고 인쇄에는 평범하게 찍힙니다.",
       "(선택) 목표 어법 · 출제 순서 · <b>학교급</b>(중학교면 보기·오답을 중학생 수준으로, 지문이 모자라면 <b>주제·제목·내용 일치처럼 지문을 안 고치는 유형</b>은 한 지문으로 최대 3문항까지 냅니다. 그래도 모자라거나 본문이 짧으면 <b>같은 과의 이웃한 본문을 이어</b> 실제 시험처럼 긴 지문으로 씁니다 — 지문 이름을 “5과 본문 (1)”, “(2)”처럼 번호만 다르게 달아 두면 같은 과로 알아봅니다) — <b>지문이 그래도 모자라면 멈추지 않고 넣은 지문 안에서</b> 한 지문을 여러 문항에 나눠 씁니다(고등학교도 같습니다). 이때는 빈칸 문항의 답이 같은 지문의 다른 문항에 보일 수 있어, 어디를 확인할지 시험 범위 칸 아래에 알려 드립니다 · 몇 부(1부 / A형·B형) · 시험지 머리글(학교 이름·고사 이름 등) · 표지 제목을 정합니다. 중학교 기출의 <b>대화문 문항</b>은 시험 범위 칸에 넣은 <b>대화문</b>(줄마다 \"A:\", \"B:\")으로만 만듭니다.",
       "<b>[📝 문제 제작]</b>을 누릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b> — 사이트 저장은 만든 시험지를 저장하고, 기출 구성 저장과는 따로 쌓입니다. 저장한 시험지는 맨 위 <b>[📂 저장한 시험지 불러오기]</b>로 되불러옵니다. 불러온 시험지 말고 <b>새 시험지를 따로</b> 만들려면 <b>[🧹 만든 시험지 비우기]</b>를 누른 뒤 만드세요 — 안 비우면 새 시험지가 불러온 것 뒤에 붙습니다. 비워도 저장해 둔 것은 지워지지 않고, 새 시험지는 비운 시험지와 겹치지 않게 만들어집니다.",
@@ -10169,10 +10216,9 @@ function renderExamMerge(questions, note, detailHtml, saved) {
     : names
       .map((nm, i) => `<th class="exam-merge-doc" title="${esc(nm)}">${esc(String(i + 1))}부</th>`)
       .join("");
-  const rows = examMergeRows
-    .map((r, i) => `
-      <tr data-row="${i}">
-        <td class="exam-kind">${esc(r.kind)}</td>
+  const rowHtml = (r, i) => `
+      <tr data-row="${i}"${r.want === 0 ? ' class="is-zero"' : ""}>
+        <td class="exam-kind">${esc(r.kind)}${r.added ? ' <span class="hint">(더함)</span>' : ""}</td>
         <td class="exam-engine">${esc(r.engine || "—")}</td>
         ${r.per.map((v) => `<td class="exam-merge-n${v ? "" : " zero"}">${v || "·"}</td>`).join("")}
         <td class="exam-merge-want">
@@ -10180,8 +10226,23 @@ function renderExamMerge(questions, note, detailHtml, saved) {
           <b class="merge-val">${r.want}</b>
           <button type="button" class="btn ghost small merge-inc" aria-label="늘리기">＋</button>
         </td>
-      </tr>`)
-    .join("");
+      </tr>`;
+  const rows = examMergeRows.map(rowHtml).join("");
+  /* 기출에 없던 유형도 더할 수 있다(2026-10-08) — 학교 단어장을 영영풀이 쓰기 같은 주관식으로
+     따로 묻고 싶은데, 그 유형이 기출에 없으면 구성표에 들어올 길이 없었다. 더한 줄은 부별 칸이
+     비어 있고 1문항으로 시작한다. */
+  const addOptions = () => {
+    const have = new Set(examMergeRows.map((r) => `${r.engine}|${r.kind}`));
+    const group = (engine, list) => {
+      const opts = list
+        .filter((t) => !have.has(`${engine}|${t.id}`))
+        .map((t) => `<option value="${esc(engine + "|" + t.id)}">${esc(t.id)}</option>`)
+        .join("");
+      return opts ? `<optgroup label="${engine}">${opts}</optgroup>` : "";
+    };
+    return `<option value="">＋ 기출에 없는 유형 더하기…</option>` +
+      group("주관식", SAQ_TYPES) + group("객관식", MCQ_TYPES);
+  };
 
   examResultEl.innerHTML = `
     <section class="panel exam-report">
@@ -10222,6 +10283,8 @@ function renderExamMerge(questions, note, detailHtml, saved) {
         </table>
       </div>
       <div class="actions" style="margin-top:12px">
+        <select id="examMergeAdd" class="small" style="width:auto;max-width:100%"
+                aria-label="기출에 없는 유형 더하기">${addOptions()}</select>
         <span class="hint" id="examMergeTotal"></span>
       </div>
       <p class="hint" id="examMergeWarn" hidden></p>
@@ -10255,13 +10318,29 @@ function renderExamMerge(questions, note, detailHtml, saved) {
     });
     syncExamMergeTotal();
   };
+  const addEl = $("examMergeAdd");
+  addEl.addEventListener("change", () => {
+    const [engine, kind] = addEl.value.split("|");
+    if (!kind) return;
+    const row = { kind, engine, format: engine === "객관식" ? "선다형" : "서답형", fit: "같음",
+                  per: new Array(docs).fill(0), want: 1, dlg: 0, added: true };
+    examMergeRows.push(row);
+    body.insertAdjacentHTML("beforeend", rowHtml(row, examMergeRows.length - 1));
+    addEl.innerHTML = addOptions();
+    syncExamMergeTotal();
+    const t = $("examMergeTarget");
+    if (t) t.value = examMergeRows.reduce((a, r) => a + r.want, 0);
+    applyMerge();
+  });
   const targetEl = $("examMergeTarget");
   const applyTarget = () => {
     let v = Math.round(Number(targetEl.value));
     if (!Number.isFinite(v) || v < 1) v = 1;
     if (v > EXAM_MERGE_MAX_TOTAL) v = EXAM_MERGE_MAX_TOTAL;
     targetEl.value = v;
-    allocateExamMerge(examMergeRows, v);
+    // 손으로 더한 유형은 기출 빈도가 없어 나눌 근거가 없다 — 고른 개수를 그대로 두고 나머지만 나눈다
+    const fixed = examMergeRows.filter((r) => r.added).reduce((a, r) => a + r.want, 0);
+    allocateExamMerge(examMergeRows.filter((r) => !r.added), Math.max(0, v - fixed));
     repaintWants();
     applyMerge();
   };
@@ -11357,7 +11436,7 @@ examPaperMgr.ocrSay = examPassageStatus;
    저장함·덮어쓰기 배선은 공용 것을 그대로 탄다(passageSaveFrom 참고).
    시험 범위는 학기 내내 같은 지문이라 한 번 저장해 두고 되부르는 쓰임이 잦다. */
 $("examPassageSaveBtn").addEventListener("click", () => {
-  passageSaveFrom = { mgr: examPaperMgr, grammarEl: examGrammarEl, label: "시험 범위 지문 칸" };
+  passageSaveFrom = { mgr: examPaperMgr, grammarEl: examGrammarEl, vocab: examVocab, label: "시험 범위 지문 칸" };
   openSaveDialog(PASSAGE_TAB);
 });
 
@@ -11367,6 +11446,7 @@ $("examSavedBtn").addEventListener("click", () => {
   openSavedList("passage", {
     mgr: examPaperMgr,
     grammarEl: examGrammarEl,
+    vocab: examVocab,
     label: "시험 범위 지문 칸",
     after: (msg) => {
       examPassageStatus(msg, "ok");
@@ -11418,6 +11498,9 @@ function examCopies() {
 }
 
 function updateExamPaperCost() {
+  // 지문을 저장함·PDF로 채우면 input이 안 일어나므로 단어장 안내도 여기서 함께 고친다
+  // (처음 불릴 때는 아직 단어장 칸 코드가 안 읽혔을 수 있어 감싼다)
+  try { examVocab.sync(); } catch (_) { /* 시작 직후 */ }
   if (!examPaperCostHintEl) return;
   if (!examScanNow) {
     examPaperCostHintEl.textContent = "";
@@ -11491,8 +11574,370 @@ $("examPassageList").addEventListener(
   true
 );
 
+/* ── 단어장 칸 (2026-10-08) ──
+   학교가 채택한 단어장이 시험 범위에 들어갈 때 쓴다. 두 군데에 같은 칸이 있다 —
+   동형 모의고사의 '시험 범위 단어장'(prefix "examVocab")과 공용 지문칸 아래의 단어장
+   (prefix "quizVocab", 객관식·주관식·객관식+주관식 탭에서만 보인다). createVocabBox 한 벌을 둘이 쓴다.
+   선생님이 칸에 직접 적거나 붙여넣고, 저장한 단어장·사진·PDF에서 가져올 수도 있다.
+   문제를 만들 때 지문마다 거기 실제로 나오는 단어만 골라(forText) /api/quiz의 targetWords로
+   보낸다 — 서버는 어휘 계열 유형에만 그 지시를 싣는다(QUIZ_VOCAB_TYPES). 체크박스를 켜면
+   문제를 만들기 전에 지문을 단어장으로 바꿔 쓴다(swapBody → /api/reword variation "vocab"). */
+const VOCAB_BOX_PER_PASSAGE = 30;   // server.py의 QUIZ_TARGET_WORDS_MAX와 같은 값
+const VOCAB_BOX_SYN_MAX = 30;       // server.py의 REWORD_VOCAB_SYN_MAX
+const VOCAB_BOX_ADD_MAX = 60;       // server.py의 REWORD_VOCAB_ADD_MAX
+const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// 칸에 적힌 줄에서 영어 표제어·뜻·유의어를 꺼낸다. "abandon (v.) 버리다", "1. be aware of ~ : ~을 알다",
+// "0001 appearance 명 1. 외모"(단어장 책의 번호), "crucial, adapt, sustain"(한글이 없는 줄은 쉼표로
+// 여러 단어) 모두 받는다. 유의어는 줄 끝의 "= give up"(등호 뒤가 영어일 때만 — "abandon = 버리다"의
+// 등호는 뜻 구분이다).
+function parseVocabLines(textValue) {
+  const out = [];
+  const seen = new Set();
+  String(textValue || "").split(/\r?\n/).forEach((line) => {
+    line = line.replace(/^\s*(?:\d+\s*[.)]?|[①-⑳]|[-•·*▪□☐])\s*/, "");
+    let syn = "";
+    const eq = line.lastIndexOf("=");
+    if (eq > 0 && !/[가-힣]/.test(line.slice(eq + 1)) && /[A-Za-z]/.test(line.slice(eq + 1))) {
+      syn = line.slice(eq + 1).replace(/[^A-Za-z '’~,\/-]/g, "").replace(/\s+/g, " ").trim();
+      line = line.slice(0, eq);
+    }
+    const meaning = (line.match(/~?\s*[가-힣].*$/) || [""])[0].replace(/[=:|—–]/g, " ").trim();
+    const parts = /[가-힣]/.test(line) ? [line] : line.split(/[,;]/);
+    parts.forEach((p) => {
+      const m = p.match(/^[\sA-Za-z'’~().\/-]*/);
+      let w = (m ? m[0] : "")
+        .replace(/\([^)]*\)?/g, " ")
+        .replace(/\s+(?:n|v|vt|vi|adj|adv|prep|conj|phr|a|ad)\.?\s*$/i, " ")
+        .replace(/[\s\-–—~./]+$/, "")
+        .replace(/^[\s~.\/-]+/, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (w.length < 2 || !/[A-Za-z]{2}/.test(w)) return;
+      const key = w.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push({ word: w, syn: parts.length > 1 ? "" : syn, meaning: parts.length > 1 ? "" : meaning });
+      }
+    });
+  });
+  return out;
+}
+
+// 숙어(take part in, come up with…)에 자주 붙는 불규칙 동사만 — 목록 밖 불규칙 변화는 '못 찾은 단어'로 안내된다
+const VOCAB_IRREGULAR = {
+  take: ["took", "taken"], make: ["made"], come: ["came"], go: ["went", "gone", "goes"],
+  get: ["got", "gotten", "getting"], give: ["gave", "given"], keep: ["kept"], put: ["putting"],
+  bring: ["brought"], run: ["ran", "running"], set: ["setting"], break: ["broke", "broken"],
+  fall: ["fell", "fallen"], hold: ["held"], find: ["found"], think: ["thought"],
+  see: ["saw", "seen"], leave: ["left"], stand: ["stood"],
+  catch: ["caught"], deal: ["dealt"], lead: ["led"], feel: ["felt"], tell: ["told"],
+  pay: ["paid"], lay: ["laid"], say: ["said"], seek: ["sought"], buy: ["bought"],
+  teach: ["taught"], build: ["built"], spend: ["spent"], lose: ["lost"], mean: ["meant"],
+  grow: ["grew", "grown"], know: ["knew", "known"], draw: ["drew", "drawn"],
+  write: ["wrote", "written"], drive: ["drove", "driven"], rise: ["rose", "risen"],
+  arise: ["arose", "arisen"], choose: ["chose", "chosen"], speak: ["spoke", "spoken"],
+  begin: ["began", "begun", "beginning"], forget: ["forgot", "forgotten"],
+  have: ["has", "had", "having"], do: ["does", "did", "done"],
+};
+// 낱말 하나의 흔한 꼴(복수·3인칭·과거·-ing)을 함께 찾는다
+function vocabTokenRe(t) {
+  const w = t.toLowerCase();
+  if (w === "be") return "(?:am|is|are|was|were|be|been|being)";
+  if (w === "one's" || w === "one’s") return "(?:my|your|his|her|its|our|their|one['’]s)";
+  if (w === "oneself") return "(?:myself|yourself|himself|herself|itself|ourselves|yourselves|themselves|oneself)";
+  const alts = new Set([w, w + "s", w + "es", w + "ed", w + "d", w + "ing", ...(VOCAB_IRREGULAR[w] || [])]);
+  if (/e$/.test(w)) alts.add(w.slice(0, -1) + "ing");
+  if (/[^aeiou]y$/.test(w)) {
+    alts.add(w.slice(0, -1) + "ies");
+    alts.add(w.slice(0, -1) + "ied");
+  }
+  if (/[^aeiou][aeiou][bdgklmnprt]$/.test(w) && w.length <= 6) {
+    alts.add(w + w.slice(-1) + "ed");
+    alts.add(w + w.slice(-1) + "ing");
+  }
+  if (/[^f]fe?$/.test(w)) alts.add(w.replace(/fe?$/, "ves"));
+  return "(?:" + [...alts].map(reEsc).join("|") + ")";
+}
+
+const vocabReCache = new Map();
+function vocabEntryRe(entry) {
+  if (vocabReCache.has(entry)) return vocabReCache.get(entry);
+  // A·B·sb·sth 같은 자리 표시는 빼고(사이에 무엇이든 올 수 있다), 남은 낱말 사이에 두 낱말까지 허용한다
+  const toks = entry
+    .replace(/~|\b(?:A|B|sb|sth|somebody|something|someone)\b/g, " ")
+    .split(/[\s\/]+/)
+    .filter(Boolean);
+  let re = null;
+  if (toks.length) {
+    const body = toks.map(vocabTokenRe).join("[\\s,]+(?:[A-Za-z'’]+\\s+){0,2}?");
+    re = new RegExp("(?<![A-Za-z])" + body + "(?![A-Za-z])", "i");
+  }
+  vocabReCache.set(entry, re);
+  return re;
+}
+
+/* p = 요소 id 앞머리. 칸·가져오기 목록·지우기·사진/PDF·안내·체크박스 둘이 모두 `${p}…` id를 쓴다.
+   getTexts() = 지금 칸에 있는 지문들(안내와 '어느 지문에도 없는 단어'를 가리는 데 쓴다).
+   scope = 안내 문구에 넣을 지문 이름("시험 범위 지문" / "지문"). */
+function createVocabBox(p, getTexts, scope) {
+  const el = $(p);
+  const fromEl = $(p + "From");
+  const hintEl = $(p + "Hint");
+  const statusEl = $(p + "Status");
+  const fileEl = $(p + "File");
+  const baseHint = hintEl ? hintEl.innerHTML : "";
+  const parse = () => parseVocabLines(el && el.value);
+  const entries = () => parse().map((e) => e.word);
+  const status = (html, tone) => {
+    if (!statusEl) return;
+    statusEl.innerHTML = html || "";
+    statusEl.className = "ocr-status" + (tone ? " " + tone : "");
+    statusEl.hidden = !html;
+  };
+
+  // 이 지문에 나오는 단어장 단어 — 지문에 쓰인 꼴이 표제어와 다르면 괄호로 붙인다("abandon (abandoned)")
+  function forText(text) {
+    const out = [];
+    for (const w of entries()) {
+      const re = vocabEntryRe(w);
+      const m = re && re.exec(text || "");
+      if (!m) continue;
+      const found = m[0].replace(/\s+/g, " ");
+      out.push(found.toLowerCase() === w.toLowerCase() ? w : `${w} (${found})`);
+      if (out.length >= VOCAB_BOX_PER_PASSAGE) break;
+    }
+    return out;
+  }
+
+  const swapOn = () => ({ syn: !!($(p + "ToSyn") || {}).checked, add: !!($(p + "ToBook") || {}).checked });
+  function swapSet(v) {
+    if ($(p + "ToSyn")) $(p + "ToSyn").checked = !!(v && v.syn);
+    if ($(p + "ToBook")) $(p + "ToBook").checked = !!(v && v.add);
+  }
+  /* 단어장으로 지문 바꿔 싣기 — 두 갈래(체크박스)를 지문 하나의 /api/reword 요청 본문으로 만든다.
+     ① 지문에 나오는 단어장 단어 → 유의어(줄 끝 "= 유의어"가 있으면 그것)
+     ② 지문에 없는 단어장 단어 → 뜻이 같은 자리에 심기. 어느 지문에도 없는 단어를 앞에 둔다 —
+        그 단어는 이 길이 아니면 시험지에 나올 수 없다. 바꿀 것이 없으면 null(부르지 않는다). */
+  function swapBody(text, allTexts) {
+    const on = swapOn();
+    if (!on.syn && !on.add) return null;
+    const toSynonym = [];
+    const absent = [];
+    parse().forEach((e) => {
+      const re = vocabEntryRe(e.word);
+      const m = re && re.exec(text || "");
+      if (m) {
+        if (on.syn) toSynonym.push({ word: e.word, found: m[0].replace(/\s+/g, " "), synonym: e.syn });
+      } else if (on.add) {
+        absent.push({ word: e.word, meaning: e.meaning, nowhere: !re || !(allTexts || []).some((t) => re.test(t)) });
+      }
+    });
+    const toVocab = [...absent.filter((a) => a.nowhere), ...absent.filter((a) => !a.nowhere)]
+      .slice(0, VOCAB_BOX_ADD_MAX)
+      .map(({ word, meaning }) => ({ word, meaning }));
+    if (!toSynonym.length && !toVocab.length) return null;
+    return { variation: "vocab", toSynonym: toSynonym.slice(0, VOCAB_BOX_SYN_MAX), toVocab };
+  }
+
+  // 칸 아래 안내 — 몇 단어가 지문에 실제로 나오는지 알려 준다
+  let timer = 0;
+  function sync() {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!hintEl) return;
+      const words = entries();
+      if (!words.length) {
+        hintEl.innerHTML = baseHint;
+        return;
+      }
+      const texts = (getTexts() || []).filter((t) => t && t.trim());
+      if (!texts.length) {
+        hintEl.innerHTML = `단어 <b>${words.length}개</b>를 읽었습니다. ${scope}을 넣으면 어느 단어가 지문에 나오는지 알려 드립니다.`;
+        return;
+      }
+      const missing = words.filter((w) => {
+        const re = vocabEntryRe(w);
+        return !re || !texts.some((t) => re.test(t));
+      });
+      let html =
+        `단어 <b>${words.length}개</b> 중 <b>${words.length - missing.length}개</b>가 ${scope}에 나옵니다 — ` +
+        "어휘·영영풀이·빈칸 문항이 이 단어를 정답 자리로 씁니다.";
+      if (missing.length) {
+        const shown = missing.slice(0, 12).map(esc).join(", ");
+        html +=
+          `<br>지문에서 못 찾은 단어 ${missing.length}개: ${shown}${missing.length > 12 ? " …" : ""}` +
+          " — 지문에 다른 꼴(불규칙 변화 등)로 쓰였으면 그 꼴로 고쳐 적어 주세요." +
+          " '단어장 단어로 바꿔 싣기'를 켜면 뜻이 같은 자리에 넣어 봅니다.";
+      }
+      hintEl.innerHTML = html;
+    }, 250);
+  }
+
+  // 칸에 단어를 더한다 — 이미 있는 단어는 다시 적지 않는다. 유의어 칸이 있으면 "= 유의어"로 붙인다
+  function append(rows) {
+    const have = new Set(entries().map((w) => w.toLowerCase()));
+    const add = [];
+    rows.forEach((v) => {
+      const w = String((v && v.word) || "").trim();
+      if (!w || have.has(w.toLowerCase())) return;
+      have.add(w.toLowerCase());
+      const syn = String(v.synonym || "").trim();
+      add.push([w, String(v.meaning || "").trim(), /[A-Za-z]/.test(syn) && !/[가-힣]/.test(syn) ? `= ${syn}` : ""]
+        .filter(Boolean).join(" "));
+    });
+    if (add.length) {
+      const cur = el.value.replace(/\s+$/, "");
+      el.value = (cur ? cur + "\n" : "") + add.join("\n");
+    }
+    sync();
+    return add.length;
+  }
+
+  // 가져오기 목록 — 펼칠 때마다 저장함을 다시 읽는다(방금 저장한 단어장도 보이게)
+  let listBusy = false;
+  async function fillList() {
+    if (!fromEl || listBusy) return;
+    listBusy = true;
+    let items = [];
+    try {
+      const data = await getJson("/api/saved", "");
+      items = (data.items || []).filter((it) => it.tab === "vocab");
+    } catch (_) {
+      items = [];
+    }
+    const cur = getVocabSets().reduce((n, s) => n + (s.vocab || []).length, 0);
+    fromEl.innerHTML =
+      `<option value="">📒 저장한 단어장에서 가져오기…</option>` +
+      (cur ? `<option value="current">지금 단어장 탭에 있는 단어 (${cur}개)</option>` : "") +
+      items.map((it) => `<option value="${esc(it.id)}">💾 ${esc(it.title || "제목 없음")}</option>`).join("") +
+      (items.length || cur ? "" : `<option value="" disabled>저장한 단어장이 없습니다 — 위 칸에 직접 적어 주세요</option>`);
+    listBusy = false;
+  }
+  if (fromEl) {
+    fromEl.addEventListener("focus", fillList);
+    fromEl.addEventListener("change", async () => {
+      const val = fromEl.value;
+      fromEl.value = "";
+      if (!val) return;
+      let rows = [];
+      try {
+        if (val === "current") rows = flattenVocabSets(getVocabSets());
+        else {
+          const item = await getJson(`/api/saved/${encodeURIComponent(val)}`, "단어장을 불러오지 못했습니다.");
+          rows = flattenVocabSets((item.payload && item.payload.vocabSets) || []);
+        }
+      } catch (err) {
+        status(esc(err.message || "단어장을 불러오지 못했습니다."), "warn");
+        return;
+      }
+      const n = append(rows);
+      status(n ? `단어 <b>${n}개</b>를 넣었습니다.` : rows.length ? "이미 모두 들어 있는 단어입니다." : "이 단어장에는 단어가 없습니다.",
+             n ? "ok" : "warn");
+    });
+  }
+
+  /* 사진·PDF에서 단어 가져오기 — 단어장 탭과 같은 /api/vocabocr·/api/vocabpdf를 부른다.
+     결과는 칸에 '단어 뜻 = 유의어' 줄로 들어가니, 선생님이 칸에서 보고 고친다. */
+  let fileBusy = false;
+  async function importFiles(fileList) {
+    const files = [...(fileList || [])];
+    if (!files.length || fileBusy) return;
+    fileBusy = true;
+    const rows = [];
+    const notes = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const who = file.name || `파일 ${i + 1}`;
+      status(`<span class="spinner"></span> ${esc(who)} 읽는 중… (${i + 1}/${files.length})`);
+      try {
+        if (isPdf(file)) {
+          const data = await blobToBase64(file);
+          if (data.length > PDF_MAX_UPLOAD) throw new Error("파일이 너무 큽니다. 쪽을 나눠 올려 주세요.");
+          const payload = { file: { mime: "application/pdf", data } };
+          let res = await postGenerate("/api/vocabpdf", payload, "PDF에서 단어 목록을 꺼내지 못했습니다.");
+          if (!res.items.length && res.canAi && await costConfirmed(PRICING ? PRICING.vocabPdf : 0,
+              `${who}\n\n표 모양을 규칙으로 읽지 못했습니다. AI로 다시 찾아볼까요?`)) {
+            res = await postGenerate("/api/vocabpdf", Object.assign({ ai: true }, payload),
+                                     "PDF에서 단어 목록을 꺼내지 못했습니다.");
+          }
+          rows.push(...(res.items || []));
+          if (res.note) notes.push(`${who}: ${res.note}`);
+        } else if (isPhoto(file)) {
+          const part = await photoToPart(file);
+          if (part.data.length > OCR_MAX_UPLOAD) throw new Error("사진이 너무 큽니다. 더 작게 찍어 올려 주세요.");
+          const data = await postGenerate("/api/vocabocr", { file: part }, "사진에서 단어 목록을 읽지 못했습니다.");
+          rows.push(...(data.items || []));
+          if (data.note) notes.push(`${who}: ${data.note}`);
+        } else {
+          notes.push(`${who}: 사진(JPG·PNG·WEBP)이나 PDF만 올릴 수 있습니다.`);
+        }
+      } catch (err) {
+        notes.push(`${who}: ${err.message || err}`);
+        if (isQuotaError(err)) break;
+      }
+    }
+    fileBusy = false;
+    if (fileEl) fileEl.value = "";
+    refreshTokenDisplay();
+    const n = append(rows);
+    const parts = notes.map((x) => `⚠️ ${esc(x)}`);
+    parts.push(n ? `단어 <b>${n}개</b>를 칸에 넣었습니다. 원본과 대조해 확인하세요.` : "새로 넣은 단어가 없습니다.");
+    status(parts.join("<br>"), n ? (notes.length ? "warn" : "ok") : "warn");
+  }
+  if ($(p + "FileBtn") && fileEl) {
+    $(p + "FileBtn").addEventListener("click", () => fileEl.click());
+    fileEl.addEventListener("change", () => importFiles(fileEl.files));
+  }
+  // 칸에 사진을 붙여넣거나(Ctrl+V) 끌어다 놓아도 읽는다 — 글자 붙여넣기는 그대로 둔다
+  if (el) {
+    el.addEventListener("paste", (e) => {
+      const files = [...((e.clipboardData && e.clipboardData.files) || [])];
+      if (!files.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      importFiles(files);
+    });
+    el.addEventListener("dragover", (e) => {
+      if ([...(e.dataTransfer.types || [])].includes("Files")) e.preventDefault();
+    });
+    el.addEventListener("drop", (e) => {
+      const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+      if (!files.length) return;
+      e.preventDefault();
+      e.stopPropagation();   // 지문칸 쪽 끌어다 놓기(지문으로 읽기)로 번지지 않게
+      importFiles(files);
+    });
+    el.addEventListener("input", sync);
+  }
+  if ($(p + "ClearBtn")) {
+    $(p + "ClearBtn").addEventListener("click", () => {
+      if (!el.value.trim()) return;
+      if (!confirm("단어장 칸을 비우시겠습니까?")) return;
+      el.value = "";
+      status("");
+      sync();
+    });
+  }
+
+  return {
+    el, parse, entries, forText, swapOn, swapSet, swapBody, sync, append, fillList,
+    get value() { return el ? el.value : ""; },
+    set value(v) { if (el) el.value = v || ""; sync(); },
+    clear() { if (el) el.value = ""; swapSet(null); status(""); sync(); },
+  };
+}
+
+const examVocab = createVocabBox("examVocab", () => examPaperMgr.getJobs().map((j) => j.text || ""), "시험 범위 지문");
+$("examPassageList").addEventListener("input", examVocab.sync);
+// 공용 지문칸 아래 단어장 — 객관식·주관식·객관식+주관식 탭에서만 보인다(syncTabChrome)
+const quizVocab = createVocabBox("quizVocab", () => passageMgr.getJobs().map((j) => j.text || ""), "지문");
+$("passageList").addEventListener("input", quizVocab.sync);
+
 function openExamPaperPanel(scan) {
   examScanNow = scan;
+  examVocab.fillList();
+  examVocab.sync();
   examPlanNow = null;
   examPaperErrorEl.textContent = "";
   examPaperPanelEl.hidden = false;
@@ -11689,12 +12134,26 @@ function examUsedPairs() {
 async function runExamPaper() {
   if (!examPlanNow || examPaperBusy) return;
   const { jobs, copies, plans } = examPlanNow;
-  const won = PRICING
+  const jobOf = (no) => jobs.find((j) => j.no === no);
+  /* 단어장으로 지문 바꿔 싣기 — 이번에 쓰이는 지문마다 한 번만 바꾼다. A형·B형이 같은 지문을 쓰면
+     같은 바꾼 지문을 쓴다(문항마다 따로 바꾸면 한 시험지 안에서 지문이 달라진다). */
+  const allTexts = jobs.map((j) => j.text || "");
+  const swaps = [];
+  new Set(plans.flat().map((r) => r.passageNo)).forEach((no) => {
+    const job = jobOf(no);
+    const body = job && examVocab.swapBody(job.text, allTexts);
+    if (body) swaps.push({ no, job, body });
+  });
+  const swapWon = PRICING ? (PRICING.reword || 0) * swaps.length : 0;
+  const won = (PRICING
     ? examRunPrice(examPlanNow.slots.reduce((s, sl) => s + examSlotPrice(sl), 0) * copies)
-    : 0;
+    : 0) + swapWon;
   const totalSteps = plans.reduce((n, rows) => n + rows.length, 0);
   const eventLine = examEventNote() ? `\n(${examEventNote()})` : "";
-  if (!(await costConfirmed(won, `시험지 ${copies}부(${totalSteps}문항)를 만듭니다.${eventLine}`, copies,
+  const swapLine = swaps.length
+    ? `\n먼저 지문 ${swaps.length}개를 단어장 단어로 바꿔 씁니다${swapWon ? ` (지문 바꾸기 ${swapWon.toLocaleString()}P 포함)` : ""}.`
+    : "";
+  if (!(await costConfirmed(won, `시험지 ${copies}부(${totalSteps}문항)를 만듭니다.${swapLine}${eventLine}`, copies,
       `만들 부수를 ${copies}부에서 줄이거나, 시험지 구성에서 문항 수를 줄이면 값이 내려갑니다.`))) return;
 
   examPaperBusy = true;
@@ -11705,13 +12164,28 @@ async function runExamPaper() {
   if (makeBtn) makeBtn.disabled = true;
   if (replanBtn) replanBtn.disabled = true;
 
-  const jobOf = (no) => jobs.find((j) => j.no === no);
   // 이번 누름의 표 — 서버가 이 값으로 여러 부의 값을 모아 상한(이벤트)을 건다
   const examRun = newReqId();
   let step = 0;
   let stopped = false;
   let madeCopies = 0;   // 이번 누름에서 완성된 부·문항 — 끝나고 완료 안내에 쓴다
   let madeQuestions = 0;
+
+  // ⓪ 단어장으로 지문 바꾸기 — 실패한 지문은 원문 그대로 만들고 끝에 알린다(시험지를 멈추지 않는다)
+  const swapped = new Map();   // 지문 번호 → { text, variations }
+  const swapFails = [];
+  for (let i = 0; i < swaps.length && !stopped; i++) {
+    const { no, job, body } = swaps[i];
+    examPaperLoadingTextEl.textContent = `지문을 단어장 단어로 바꾸는 중… (${i + 1}/${swaps.length})`;
+    try {
+      const r = await postGenerate("/api/reword", { passage: job.text, ...body }, "지문 바꾸기에 실패했습니다.");
+      const text = String(r.passage || "").trim();
+      if (text) swapped.set(no, { text, variations: Array.isArray(r.variations) ? r.variations : [] });
+    } catch (err) {
+      swapFails.push(job.name || `지문 ${no}`);
+      if (isQuotaError(err)) stopped = true;
+    }
+  }
 
   for (let c = 0; c < copies && !stopped; c++) {
     const rows = plans[c];
@@ -11725,21 +12199,30 @@ async function runExamPaper() {
         `${label ? label + " · " : ""}${r.q}번 ${r.type} 만드는 중… (${step}/${totalSteps})`;
       const job = jobOf(r.passageNo);
       if (!job) continue;
+      // 단어장으로 바꾼 지문이 있으면 그것을 '원문 그대로'로 넘긴다 — 바꾸기는 ⓪에서 끝났다
+      const sw = swapped.get(r.passageNo);
+      const text = sw ? sw.text : job.text;
+      // 시험 범위 단어장 중 이 지문에 나오는 것 + 바꿔 넣은 낱말 — 서버는 어휘 계열 유형에만 싣는다
+      const words = [...new Set([...examVocab.forText(text), ...(sw ? sw.variations.map((v) => v.to) : [])])]
+        .slice(0, VOCAB_BOX_PER_PASSAGE);
       try {
         const data = await postGenerate(
           "/api/quiz",
           {
-            passage: job.text,
+            passage: text,
             types: [{ id: r.type, count: 1 }],
             variation: "verbatim",
             // 이 탭은 지문칸이 따로이므로 목표 어법도 이 탭 칸의 값을 쓴다
             targetGrammar: examGrammarEl.value,
+            targetWords: words,
             examRun,
             school: examSchoolEl && examSchoolEl.value === "middle" ? "middle" : "high",
           },
           "문제 생성에 실패했습니다."
         );
         const q = (data.questions || [])[0];
+        // 바꾼 낱말은 화면에서만 형광으로 보인다(markVariations — 인쇄에는 안 찍힌다)
+        if (q && sw && sw.variations.length) q.__variations = sw.variations;
         if (q) questions.push({ ...q, _plan: r });
         else failed.push({ ...r, msg: "문항이 만들어지지 않았습니다." });
       } catch (err) {
@@ -11776,6 +12259,9 @@ async function runExamPaper() {
   if (stopped) {
     examPaperErrorEl.textContent =
       "한도에 걸려 중단했습니다. 만들어진 부는 아래에 남아 있으니 저장해 두세요.";
+  } else if (swapFails.length) {
+    examPaperErrorEl.textContent =
+      `단어장 단어로 바꾸지 못한 지문이 있어 원문 그대로 만들었습니다: ${swapFails.join(", ")}`;
   }
   // 다음에 누르면 방금 쓴 (지문, 유형) 조합을 피해 새로 배분한다 — 대원칙 2
   examPlanNow = null;
@@ -12098,6 +12584,8 @@ TAB_SAVE.exam = {
     passages: examPaperMgr.getJobs(),
     sets: examPaperSets,
     targetGrammar: examGrammarEl.value,
+    targetVocab: examVocab.value,
+    vocabSwap: examVocab.swapOn(),
     // 머리글(학교명·고사명 등) — 불러온 시험지를 다시 인쇄해도 같은 모양이 되도록
     sheetHead: examHeadValues(),
     // 기출 구성표 — 발문·번호·고사 이름은 빼고 '무슨 유형 몇 개'만
@@ -12106,6 +12594,9 @@ TAB_SAVE.exam = {
   applyPayload: (payload) => {
     examPaperMgr.setJobs(payload.passages || []);
     examGrammarEl.value = payload.targetGrammar || "";
+    examVocab.value = payload.targetVocab || "";
+    examVocab.swapSet(payload.vocabSwap);
+    examVocab.sync();
     applyExamSheetHead(payload.sheetHead);
     examPaperSets = Array.isArray(payload.sets) ? payload.sets : [];
     examPlanNow = null;
@@ -12146,6 +12637,8 @@ TAB_SAVE.examspec = {
   getPayload: () => ({
     passages: examPaperMgr.getJobs(),
     targetGrammar: examGrammarEl.value,
+    targetVocab: examVocab.value,
+    vocabSwap: examVocab.swapOn(),
     sheetHead: examHeadValues(),
     examSpec: examScanNow ? examSpecFromScan(examScanNow) : null,
   }),
@@ -12155,6 +12648,10 @@ TAB_SAVE.examspec = {
       examPaperMgr.setJobs(payload.passages);
       examGrammarEl.value = payload.targetGrammar || "";
     }
+    // 단어장은 지문과 따로 적을 수 있으니 지문이 없는 저장본이어도 있으면 되살린다
+    if (payload.targetVocab) examVocab.value = payload.targetVocab;
+    if (payload.vocabSwap) examVocab.swapSet(payload.vocabSwap);
+    examVocab.sync();
     applyExamSheetHead(payload.sheetHead);
     examPaperSets = [];
     examPlanNow = null;
@@ -12209,6 +12706,9 @@ function clearExamTab() {
   examAvoidPairs = new Set();
   examPaperMgr.setJobs([]);
   examGrammarEl.value = "";
+  examVocab.value = "";
+  examVocab.swapSet(null);
+  examVocab.sync();
   if (examPassageStatusEl) examPassageStatusEl.textContent = "";
   if (DOC_TITLES.exam) DOC_TITLES.exam.set("");
   examPaperErrorEl.textContent = "";

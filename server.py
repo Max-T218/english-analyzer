@@ -1360,6 +1360,35 @@ QUIZ_GRAMMAR_TYPES = {"어법", "어법 선택형", "틀린 어법 찾기", "동
 # 동사형 쓰기·서술형배열·조건 영작·문장 전환은 지시가 따로다(build_quiz_user_prompt 참고).
 QUIZ_GRAMMAR_SPOT_TYPES = {"어법", "어법 선택형", "틀린 어법 찾기"}
 
+# '시험 범위 단어장'(화면의 targetWords, 동형 모의고사 탭)이 걸리는 유형 — 2026-10-08.
+# 학교가 채택한 단어장이 시험 범위에 들어가는 경우, 지문 속 그 단어를 정답 자리로 삼는다.
+# 목표 어법과 같은 원칙이다: 낱말을 직접 묻는 유형에만 싣고, 주제·제목·순서처럼
+# 낱말과 무관한 유형에는 지시를 아예 보내지 않는다. 화면이 지문에 실제로 나오는 단어만
+# 골라 보내지만, 없는 단어를 지문에 끼워 넣지 말라는 것도 지시에 못 박는다.
+QUIZ_VOCAB_TYPES = {"어휘", "어휘 선택형", "틀린 어휘 찾기", "영영풀이", "영영풀이 쓰기",
+                    "영영풀이 오류 찾기", "빈칸", "빈칸 쓰기", "표현 찾아 쓰기",
+                    "다의어 같은 뜻", "다의어 문맥의미 매칭형", "대화 어법·어휘 선택"}
+QUIZ_TARGET_WORDS_MAX = 30   # 지문 하나에 싣는 단어 수 — 화면도 같은 수로 자른다
+_TARGET_WORD_RE = re.compile(r"[^A-Za-z0-9 '’~().,/-]")
+
+
+def parse_target_words(raw):
+    """화면이 보낸 단어 목록을 다듬는다 — 프롬프트에만 들어가므로 영어 낱말에 쓰이는
+    글자만 남기고 길이·개수를 자른다."""
+    if not isinstance(raw, list):
+        return []
+    out, seen = [], set()
+    for w in raw:
+        if not isinstance(w, str):
+            continue
+        w = re.sub(r"\s+", " ", _TARGET_WORD_RE.sub("", w)).strip()[:80]
+        if w and w.lower() not in seen:
+            seen.add(w.lower())
+            out.append(w)
+        if len(out) >= QUIZ_TARGET_WORDS_MAX:
+            break
+    return out
+
 # 한 지문에서 유형별로 뽑을 수 있는 최대 문항 수.
 # public/app.js의 TYPE_MAX와 반드시 같은 값을 유지한다(화면은 이 값으로 +버튼을 막고,
 # 서버는 화면을 우회한 요청을 여기서 잘라낸다 — 가격이 개수에 걸리므로 필수).
@@ -2589,8 +2618,9 @@ def _check_answer_plan(result, answer_plan):
 
 def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
                            variation="verbatim", target_grammar="", ox_plan=(),
-                           insert_hint=None, answer_plan=()):
+                           insert_hint=None, answer_plan=(), target_words=()):
     """items = [(유형, 문항수)] — 유형마다 몇 문항인지가 요청에 그대로 들어 있다.
+    target_words = 시험 범위 단어장 중 이 지문에 나오는 단어(parse_target_words가 다듬은 것).
     ox_plan = plan_ox_false_counts가 뽑은 OX 문항별 X 개수.
     answer_plan = plan_answer_positions가 뽑은 객관식 문항별 정답 번호."""
     types = [t for t, _ in items]
@@ -2717,6 +2747,17 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
             + "\n목표 어법을 쉼표로 여럿 적었으면 문항마다 하나씩 돌아가며 배정하세요. "
             "다만 지문에 그 문법이 쓰인 곳(문장 전환이면 바꿀 재료)이 없으면 억지로 지문을 "
             "고쳐 넣지 말고, 지문에 실제로 있는 문법으로 평소대로 출제하세요."
+        )
+    if target_words and picked & QUIZ_VOCAB_TYPES:
+        lines.append(
+            "시험 범위 단어장: " + ", ".join(target_words) + "\n"
+            "학교가 시험 범위로 정한 단어장의 단어 가운데 이 지문에 나오는 것입니다"
+            "(괄호 안은 지문에 실제로 쓰인 꼴). 아래 유형 문항은 학생이 판단해야 하는 자리 — "
+            "정답이 되는 밑줄·네모·괄호·빈칸, 뜻풀이할 낱말 — 를 되도록 이 단어로 잡으세요: "
+            + ", ".join(sorted(picked & QUIZ_VOCAB_TYPES)) + ".\n"
+            "단, 각 유형의 규칙(빈칸은 글의 핵심과 맞닿은 자리, 빈칸 쓰기는 본문에 다시 나오는 "
+            "내용어 등)이 먼저입니다. 규칙에 맞는 단어가 없으면 평소대로 출제하고, "
+            "목록의 단어를 지문에 새로 끼워 넣거나 지문을 고쳐 만들지 마세요."
         )
     if short_hint is not None:
         # 어떤 유형이 몇 문항 모자랐는지 짚어 주는 편이 재요청 한 번에 채워질 확률이 높다.
@@ -2858,7 +2899,7 @@ def _check_ox_plan(result, ox_plan):
 
 def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
                       explain_hint=None, variation="verbatim", target_grammar="",
-                      insert_hint=None, difficulty="normal", level="high"):
+                      insert_hint=None, difficulty="normal", level="high", target_words=()):
     """items = [(유형, 문항수)]. 개수 상한은 parse_quiz_items가 이미 적용해 둔다.
     difficulty="hard"면 QUIZ_HARD_RULES를 지시문 뒤에 덧붙인다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -2889,7 +2930,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
             {"role": "user", "parts": [
                 {"text": build_quiz_user_prompt(
                     passage, items, short_hint, explain_hint, variation, target_grammar,
-                    ox_plan, insert_hint, answer_plan,
+                    ox_plan, insert_hint, answer_plan, target_words,
                 )}
             ]}
         ],
@@ -3002,6 +3043,87 @@ Rules (all levels):
 The output is what students will read, so it must stand on its own as a complete passage."""
 
 
+# ── 단어장으로 지문 바꿔 쓰기(동형 모의고사 '시험 범위 단어장', 2026-10-08) ──
+# 학교가 채택한 단어장이 시험 범위일 때, 교과서 본문을 단어장으로 바꿔 내는 학교 방식을 따른다.
+# 두 갈래이고 화면이 고른 것만 실린다:
+#   ① 지문 속 단어장 단어 → 그 유의어(단어장 유의어 칸이 있으면 그것) — 유의어까지 외웠는지 본다
+#   ② 지문의 다른 낱말 → 지문에 없는 단어장 단어 — 뜻이 같은 자리에만 심는다
+# light/heavy와 같은 /api/reword 길이라, 바뀐 낱말은 diff_variations로 잡혀 화면에 형광으로만 보인다.
+REWORD_VOCAB_SYSTEM_PROMPT = r"""You reword an English reading passage for a Korean school exam so
+that it tests the school's assigned vocabulary list (단어장). Return ONLY the structured JSON
+described by the schema — no markdown, no prose, no commentary.
+
+The request may contain one or both of these task lists. Do only the tasks that are listed.
+
+[A] 유의어로 바꾸기 — each line names a vocabulary word that appears in the passage (with the form
+actually used in the passage) and, when known, the synonym from the vocabulary book.
+- Replace that word in the passage with the given synonym. If no synonym is given, or the given
+  one does not fit THIS context in meaning or grammar, use another accurate synonym of similar
+  difficulty. Inflect it correctly (tense, number, part of speech) so the sentence stays
+  grammatical. If the word occurs several times, replace every occurrence the same way.
+- A multi-word synonym must sit in natural word order, even if that means moving words within
+  the same clause (memorize vocabulary lists → learn vocabulary lists by heart, NOT "learn by
+  heart vocabulary lists"). Read the finished sentence: if a native editor would rewrite it,
+  pick a different synonym that fits as a drop-in.
+- Prefer a synonym that does not already appear elsewhere in the passage — swapping in a word
+  the passage already uses makes the same word appear twice and adds nothing to test.
+- If no synonym keeps the meaning exactly in this context, leave that word unchanged.
+
+[B] 단어장 단어 심기 — each line is a vocabulary word (sometimes with its Korean meaning) that
+does NOT yet appear in the passage.
+- For each one, look for a word or phrase already in the passage that means the SAME thing in
+  context, and replace it with the vocabulary word, inflected correctly.
+- Only do this where the result is natural, published-quality English and the meaning is
+  exactly the same. Skip any vocabulary word that has no such spot — most will have none, and
+  that is expected. Never add a sentence, clause, or new information to make room for a word.
+- Change at most 8 spots in total for [B]. Prefer spots in different sentences.
+
+Rules for everything:
+- Keep EVERY fact, the order of ideas, the number of sentences, paragraph breaks, line breaks,
+  speaker labels (in dialogues), proper nouns, numbers, and quoted text exactly the same.
+- Change nothing that is not required by the tasks above.
+- Return the FULL passage, start to finish, as plain text. No HTML, no markdown, no marks
+  around changed words, no notes about what you changed."""
+
+REWORD_VOCAB_SYN_MAX = 30
+REWORD_VOCAB_ADD_MAX = 60
+
+
+def parse_reword_vocab(req):
+    """화면이 보낸 ①·② 목록을 다듬는다 — 프롬프트에만 들어가므로 글자·길이·개수를 자른다."""
+    def clean(v, n=80):
+        return re.sub(r"\s+", " ", _TARGET_WORD_RE.sub("", str(v or ""))).strip()[:n]
+
+    def clean_ko(v):
+        return re.sub(r"[<>\r\n]", " ", str(v or "")).strip()[:40]
+
+    syn, add = [], []
+    for it in (req.get("toSynonym") or [])[:REWORD_VOCAB_SYN_MAX]:
+        if isinstance(it, dict) and clean(it.get("word")):
+            syn.append((clean(it.get("word")), clean(it.get("found")), clean(it.get("synonym"))))
+    for it in (req.get("toVocab") or [])[:REWORD_VOCAB_ADD_MAX]:
+        if isinstance(it, dict) and clean(it.get("word")):
+            add.append((clean(it.get("word")), clean_ko(it.get("meaning"))))
+    return syn, add
+
+
+def build_reword_vocab_prompt(passage, syn, add):
+    lines = []
+    if syn:
+        lines.append("[A] 유의어로 바꾸기")
+        for w, found, s in syn:
+            lines.append(f"- {w}" + (f" (지문: {found})" if found and found.lower() != w.lower() else "")
+                         + (f" → 단어장 유의어: {s}" if s else " → 유의어: 알맞은 것을 고르세요"))
+        lines.append("")
+    if add:
+        lines.append("[B] 단어장 단어 심기")
+        for w, ko in add:
+            lines.append(f"- {w}" + (f" ({ko})" if ko else ""))
+        lines.append("")
+    lines += ["[원문]", passage.strip()]
+    return "\n".join(lines)
+
+
 def build_reword_user_prompt(passage, variation):
     return "\n".join([
         f"변형 정도: {QUIZ_VARIATIONS.get(variation, QUIZ_VARIATIONS['light'])}",
@@ -3014,8 +3136,9 @@ def build_reword_user_prompt(passage, variation):
 _REWORD_TRUNC_MSG = "지문 변형본이 잘렸습니다. 지문을 더 짧게 나눠 다시 시도하세요."
 
 
-def call_gemini_reword(passage, variation, api_key, model):
-    """지문을 한 번만 리워딩해 확정된 변형본 텍스트를 돌려준다."""
+def call_gemini_reword(passage, variation, api_key, model, vocab=None):
+    """지문을 한 번만 리워딩해 확정된 변형본 텍스트를 돌려준다.
+    variation == "vocab"이면 vocab = (①유의어 목록, ②심을 단어 목록)으로 단어장 바꿔 쓰기를 한다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -3023,7 +3146,10 @@ def call_gemini_reword(passage, variation, api_key, model):
             "관리자에게 문의하세요."
         )
     model = model if (model and _MODEL_RE.match(model)) else MODEL
-    if variation not in ("light", "heavy"):
+    syn, add = vocab or ((), ())
+    if variation == "vocab" and not (syn or add):
+        return passage
+    if variation not in ("light", "heavy", "vocab"):
         # 변형이 필요 없는 값이 오면 원문을 그대로 돌려준다 (호출 자체가 낭비)
         return passage
     # '5개 이상 변형'은 Pro에서만 — 문제 생성이 아니라 이 단계에 걸리는 제약이다.
@@ -3034,9 +3160,14 @@ def call_gemini_reword(passage, variation, api_key, model):
         )
 
     payload = {
-        "systemInstruction": {"parts": [{"text": REWORD_SYSTEM_PROMPT}]},
+        "systemInstruction": {"parts": [{"text": (
+            REWORD_VOCAB_SYSTEM_PROMPT if variation == "vocab" else REWORD_SYSTEM_PROMPT
+        )}]},
         "contents": [
-            {"role": "user", "parts": [{"text": build_reword_user_prompt(passage, variation)}]}
+            {"role": "user", "parts": [{"text": (
+                build_reword_vocab_prompt(passage, syn, add) if variation == "vocab"
+                else build_reword_user_prompt(passage, variation)
+            )}]}
         ],
         "generationConfig": {
             # 지문 하나만 다시 쓰는 짧은 작업이라 온도를 낮게 잡아 사실 왜곡을 줄인다
@@ -9445,6 +9576,22 @@ CHANGELOG = [
             "만든 뒤에 바꿔도 다시 만들지 않고 바로 다시 늘어놓습니다(요금 없음).",
         ],
     },
+    {
+        "version": 62,
+        "date": "2026-10-08",
+        "items": [
+            "동형 모의고사 — '시험 범위 단어장' 칸이 생겼습니다. 학교가 채택한 단어장이 시험 "
+            "범위에 들어가면 단어를 이 칸에 적거나 붙여넣으세요(저장한 단어장에서 가져올 수도 "
+            "있습니다). 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 씁니다. "
+            "요금은 그대로입니다.",
+            "같은 칸에서 '지문 속 단어장 단어를 유의어로' · '지문의 다른 낱말을 단어장 단어로' "
+            "바꿔 싣기를 고를 수 있습니다. 바뀐 낱말은 화면에서만 형광으로 보입니다.",
+            "구성표 아래 '＋ 기출에 없는 유형 더하기'로 기출에 없던 유형(예: 영영풀이 쓰기 주관식)도 "
+            "시험지에 넣을 수 있습니다.",
+            "객관식·주관식·객관식+주관식 탭에도 지문 칸 아래 '단어장' 칸이 생겼습니다. 단어장 쪽 "
+            "사진·PDF를 넣으면 단어를 읽어 칸에 채웁니다. 단어장은 '지문 저장'에 함께 저장됩니다.",
+        ],
+    },
 ]
 
 
@@ -13002,7 +13149,9 @@ class Handler(BaseHTTPRequestHandler):
             # '5개 이상 변형'만 Pro — 사용자가 모델을 고르지 않고 서버가 자동으로 정한다.
             model = MODEL_PRO if variation == "heavy" else MODEL
             try:
-                reworded = call_gemini_reword(passage, variation, api_key, model)
+                # "vocab"(단어장으로 바꿔 쓰기, 동형 모의고사)은 바꿀 목록을 함께 받는다 — 모델은 light와 같은 Flash
+                reworded = call_gemini_reword(passage, variation, api_key, model,
+                                              vocab=parse_reword_vocab(req) if variation == "vocab" else None)
                 # 바뀐 낱말 목록을 함께 돌려준다 — 화면이 지문에서 그 낱말을 표시하고
                 # 해설지에 '원문 → 변형' 표를 싣는 데 쓴다.
                 self._charge_and_send(path, req, {
@@ -13061,10 +13210,14 @@ class Handler(BaseHTTPRequestHandler):
             # 목표 어법 — 어법 계열 유형이 섞여 있을 때만 프롬프트에 실린다
             # (판단은 build_quiz_user_prompt가 한다). 길이는 넉넉히 잘라 둔다.
             quiz_grammar = (req.get("targetGrammar") or "").strip()[:200]
+            # 시험 범위 단어장 — 화면(동형 모의고사 탭)이 이 지문에 나오는 단어만 골라 보낸다.
+            # 어휘 계열 유형이 섞여 있을 때만 프롬프트에 실린다(build_quiz_user_prompt).
+            quiz_words = parse_target_words(req.get("targetWords"))
             t0 = time.monotonic()
             try:
                 result = call_gemini_quiz(passage, items, api_key, model, variation=variation,
-                                          target_grammar=quiz_grammar, difficulty=difficulty, level=level)
+                                          target_grammar=quiz_grammar, difficulty=difficulty, level=level,
+                                          target_words=quiz_words)
                 # 문항 누락 방어 — 요청한 개수보다 적게 오면 한 번 더 요청해 채운다
                 want = sum(n for _, n in items)
                 for _ in range(2):
@@ -13082,7 +13235,7 @@ class Handler(BaseHTTPRequestHandler):
                     retry = call_gemini_quiz(
                         passage, items, api_key, model,
                         short_hint=(missing or got), variation=variation,
-                        target_grammar=quiz_grammar, difficulty=difficulty, level=level,
+                        target_grammar=quiz_grammar, difficulty=difficulty, level=level, target_words=quiz_words,
                     )
                     # 더 많이 만들어 온 결과만 채택 (재시도가 더 나쁘면 기존 유지)
                     if len(retry.get("questions", [])) > got:
@@ -13098,7 +13251,7 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     retry = call_gemini_quiz(
                         passage, items, api_key, model, explain_hint=missing, variation=variation,
-                        target_grammar=quiz_grammar, difficulty=difficulty, level=level,
+                        target_grammar=quiz_grammar, difficulty=difficulty, level=level, target_words=quiz_words,
                     )
                     # 문항 수가 줄지 않고 해설이 더 잘 채워진 결과만 채택
                     if (
@@ -13121,7 +13274,7 @@ class Handler(BaseHTTPRequestHandler):
                             retry = call_gemini_quiz(
                                 passage, items, api_key, model, variation=variation,
                                 target_grammar=quiz_grammar, insert_hint=bad,
-                                difficulty=difficulty, level=level,
+                                difficulty=difficulty, level=level, target_words=quiz_words,
                             )
                         except Exception:
                             break
