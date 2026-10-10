@@ -6,7 +6,7 @@
 
 - **백엔드**: 거의 Python 표준 라이브러리 (pip 의존성은 `requirements.txt`의 두 개 —
   로그인·저장용 `google-cloud-firestore`, PDF에서 지문 꺼내기용 `pdfminer.six`)
-- **AI**: Google Gemini API (`gemini-3.7-flash`, 일부 기능만 `gemini-3.1-pro-preview`)
+- **AI**: Google Gemini API (`gemini-3.8-flash`, 일부 기능만 `gemini-3.1-pro-preview`)
 - **프런트엔드**: 정적 HTML/CSS/JS (`public/`)
 
 ## 1. 준비물
@@ -169,7 +169,7 @@ Gemini 실사용량을 그때그때 재는 대신, **행동 하나당 고정 가
 | `GEMINI_API_KEY` | (필수) | 관리자의 Gemini API 키. 없으면 AI 기능 전체가 막힘 |
 | `PORT` | `8000` | 서버 포트 |
 | `HOST` | `0.0.0.0` | 바인딩 주소 |
-| `GEMINI_MODEL` | `gemini-3.7-flash` | 기본(Flash) 모델 — 지문 분석·워크북·OCR·지문변형(light), 그리고 지문을 그대로 싣는 유형만 고른 문제 제작에 씀 |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | 기본(Flash) 모델 — 지문 분석·워크북·OCR·지문변형(light), 그리고 지문을 그대로 싣는 유형만 고른 문제 제작에 씀 |
 | `GEMINI_MODEL_PRO` | `gemini-3.1-pro-preview` | 정확도가 더 필요한 작업 전용 모델 — 지문을 고쳐 만드는 유형이 섞인 문제 제작(객관식·주관식 모두)과 지문변형(heavy)에 씀 |
 | `GEMINI_MODEL_IMAGE` | `gemini-3-pro-image` | 요약 그림을 그리는 모델(나노바나나 프로). 상세분석·소책자가 함께 씀 — 값싼 모델로 바꾸려면 여러 장 뽑아 보고 정할 것(server.py 주석 참고) |
 | `GEMINI_IMAGE_SIZE` | `2K` | 요약 그림 화질. 올리면 원가가 두 배가 되니 `PRICE_INFOGRAPHIC_KRW`와 함께 볼 것 |
