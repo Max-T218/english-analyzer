@@ -1113,22 +1113,12 @@
           <div class="hint">적어 두면 인쇄·PDF 첫 장에 제목과 날짜만 담긴 표지가 한 장 붙습니다. 비워 두면 표지가 없습니다.</div>
         </div>
       </div>
-      <!-- 고를 것(함께 만들 것 · 요약 이미지)은 실행 단추 위에 나란히 둔다. 단추 줄 안에 섞어 두었더니
+      <!-- 고를 것(요약 이미지)은 실행 단추 위에 나란히 둔다. 단추 줄 안에 섞어 두었더니
            결과가 생겨 단추가 늘면 상자가 줄 사이로 밀려 들쭉날쭉했다(2026-10-08 사용자). -->
       <div class="analyze-opts">
-        <!-- 문장 분석(Ⅰ)은 늘 만들고, 나머지는 고른 것만 만든다. 안 고른 구역은 AI에게
-             시키지도 않는다(서버 ANALYZE_OPTIONAL_SECTIONS). -->
-        <div class="img-langs" id="sectionBox">
-          <span class="img-langs-title">함께 만들 것</span>
-          <label class="chk" title="주제문·글의 흐름 단계·흐름도·핵심어를 한 쪽으로 정리합니다.">
-            <input type="checkbox" class="sec-pick" data-sec="outline" id="secOutline" checked> 주제 &amp; 흐름 요약
-          </label>
-          <label class="chk" title="지문에서 뽑은 8~14개 단어·표현의 품사, 뜻, 유의어, 반의어 표입니다. 단어장 탭에도 이 목록이 쓰입니다.">
-            <input type="checkbox" class="sec-pick" data-sec="vocab" id="secVocab" checked> 핵심 어휘 &amp; 표현
-          </label>
-          <span class="chk-sub img-langs-note">문장 분석은 항상 만들어집니다. 요약 이미지는 옆 칸에서 고릅니다.</span>
-        </div>
-
+        <!-- '함께 만들 것'(주제 & 흐름 요약·핵심 어휘 체크)은 2026-10-10에 뺐다 — 늘 전부 만들고,
+             필요 없으면 쪽 구성의 [🗑 이 구역 삭제]로 지운다. 아끼는 원가가 지문당 몇 원뿐이었다.
+             서버의 sections 처리(ANALYZE_OPTIONAL_SECTIONS)는 그대로 있다 — 안 보내면 전부 만든다. -->
         <div class="img-langs" id="infoLangBox">
           <span class="img-langs-title">요약 이미지</span>
           <label class="chk" title="설명은 한국어로, 지문의 핵심 영어 표현은 영어 그대로 넣습니다. 우리말로 뜻을 잡으면서 지문의 실제 낱말과 이어 볼 수 있습니다.">
