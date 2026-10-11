@@ -1827,6 +1827,15 @@
         2부를 만들면 <b>같은 지문에 같은 유형이 겹치지 않게</b> 배분합니다 —
         A형을 푼 학생이 B형에서 이득을 보지 않도록.
       </div>
+      <label class="group-label">시험지 이름 (선택)</label>
+      <div class="exam-copy-names" style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="examCopyName1" maxlength="30" placeholder="A형" style="flex:1;min-width:140px">
+        <input type="text" id="examCopyName2" maxlength="30" placeholder="B형" style="flex:1;min-width:140px">
+      </div>
+      <div class="hint type-order-hint">
+        시험지 위에 찍히는 이름입니다. 2부씩 두 번 뽑을 때 <b>"1회 A형"</b>처럼 적어 두면 구분됩니다.
+        비워 두면 A형·B형(1부는 이름 없음)이고, 화면에 이미 있는 시험지와 같은 이름은 쓸 수 없습니다.
+      </div>
 
       <!-- 시험지 머리글 — 실제 학교 시험지처럼 찍기 위한 칸.
            학교 이름을 적으면 완성된 시험지 맨 앞에 학교 시험지 머리글이 붙는다.

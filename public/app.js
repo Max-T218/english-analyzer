@@ -9217,7 +9217,7 @@ const HOWTO = {
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b> — 사이트 저장은 만든 시험지를 저장하고, 기출 구성 저장과는 따로 쌓입니다. 저장한 시험지는 맨 위 <b>[📂 저장한 시험지 불러오기]</b>로 되불러옵니다. 불러온 시험지 말고 <b>새 시험지를 따로</b> 만들려면 <b>[🧹 만든 시험지 비우기]</b>를 누른 뒤 만드세요 — 안 비우면 새 시험지가 불러온 것 뒤에 붙습니다. 비워도 저장해 둔 것은 지워지지 않고, 새 시험지는 비운 시험지와 겹치지 않게 만들어집니다.",
       "다른 시험지를 만들려면 맨 위 <b>[🔄 새로 시작하기]</b>를 누릅니다 — 올린 기출·분석표·시험 범위 지문·만든 시험지를 모두 비우고, 학교 이름 같은 머리글은 남깁니다. 필요한 것은 먼저 저장해 두세요.",
     ],
-    tip: "이벤트 기간에는 [📝 문제 제작] 한 번에(A형·B형 포함) 드는 포인트에 상한이 있습니다 — 상한과 기간은 문제 제작 단추 위 예상 비용 옆에 표시됩니다. 목표 어법도 이 탭의 칸을 씁니다 — 지문 칸이 따로이므로 위 공용 칸의 값은 여기에 쓰이지 않습니다. 시험 범위 지문은 <b>[💾 지문 저장]</b>으로 남겨 두면 학기 내내 되불러 쓸 수 있습니다.",
+    tip: "2부씩 여러 번 뽑을 때는 <b>시험지 이름</b> 칸에 \"1회 A형\"처럼 적어 두세요 — 이름이 시험지 위에 찍혀 구분됩니다. 이벤트 기간에는 [📝 문제 제작] 한 번에(A형·B형 포함) 드는 포인트에 상한이 있습니다 — 상한과 기간은 문제 제작 단추 위 예상 비용 옆에 표시됩니다. 목표 어법도 이 탭의 칸을 씁니다 — 지문 칸이 따로이므로 위 공용 칸의 값은 여기에 쓰이지 않습니다. 시험 범위 지문은 <b>[💾 지문 저장]</b>으로 남겨 두면 학기 내내 되불러 쓸 수 있습니다.",
   },
 
   students: {
@@ -10808,9 +10808,17 @@ examBtn.addEventListener("click", runExamScan);
 // (passageDropNote).
 const EXAM_PAPER_MAX_PASSAGES = 100;
 // 부수 상한. 계산상으로는 더 나오지만(유형별 적합 지문 ÷ 부당 문항 수) 2부가 이미
-// 60회 호출·30~60분이고, 그보다 길면 한 탭을 붙들고 있기 어려워 실제로 안 쓰인다.
+// 60회 호출·30~60분이다. 2026-10-11에 3~5부를 시험해 보니(지문 8개·21문항) 3부부터
+// 부 사이에 같은 지문·같은 유형이 되풀이되어(3부 6곳·5부 25곳) 2부로 두었다.
 const EXAM_PAPER_MAX_COPIES = 2;
 const EXAM_COPY_LABELS = ["A형", "B형"];
+/* 부 이름 — 선생님이 칸(examCopyName1·2)에 적은 것을 쓰고, 비워 두면 A형·B형(1부면 이름 없음).
+   2부씩 두 번 뽑으면 A형이 둘이 되어 시험지를 못 가리므로 직접 정하게 했다(2026-10-11). */
+function examCopyName(c, copies) {
+  const el = document.getElementById(`examCopyName${c + 1}`);
+  const typed = ((el && el.value) || "").trim().slice(0, 30);
+  return typed || (copies > 1 ? EXAM_COPY_LABELS[c] : "");
+}
 
 /* 유형별 지문 조건 — server.py의 QUIZ_TYPE_MAX 주석이 그대로 근거다.
    "순서·문장삽입은 지문의 문장 수에 물리적으로 묶여 모델을 바꿔도 늘지 않는다",
@@ -12069,7 +12077,7 @@ function runExamPaperFlow() {
       `문항마다 조건이 달라 지문이 딱 맞으면 짜이지 않을 때가 있습니다. ` +
       `지문을 ${Math.max(1, needPass + 3 - jobs.length)}개쯤 더 넣거나(<b>${needPass + 3}개</b> 안팎이면 안정적입니다), ` +
       `문항 수·부수를 줄여 보세요.<br>` +
-      `<small>이 유형의 필요한 조건: ${esc(f.need)}${copies > 1 ? " · 2부째는 첫 부와 (지문, 유형)이 겹치면 안 되므로 지문이 더 필요합니다" : ""}</small>`;
+      `<small>이 유형의 필요한 조건: ${esc(f.need)}${copies > 1 ? " · 둘째 부부터는 앞 부들과 (지문, 유형)이 겹치면 안 되므로 지문이 더 필요합니다" : ""}</small>`;
     return;
   }
 
@@ -12150,6 +12158,13 @@ async function runExamPaper() {
   const swapLine = swaps.length
     ? `\n먼저 지문 ${swaps.length}개를 단어장 단어로 바꿔 씁니다${swapWon ? ` (지문 바꾸기 ${swapWon.toLocaleString()}P 포함)` : ""}.`
     : "";
+  // 이미 화면에 있는 부와 이름이 같으면 시험지·답지가 뒤섞인다 — 만들기 전에 막는다
+  const names = Array.from({ length: copies }, (_, c) => examCopyName(c, copies));
+  const taken = names.find((n) => n && examPaperSets.some((s) => s.label === n));
+  if (taken) {
+    alert(`"${taken}" 이름의 시험지가 이미 화면에 있습니다. 이름을 바꾸거나 [🧹 만든 시험지 비우기]를 먼저 눌러 주세요.`);
+    return;
+  }
   if (!(await costConfirmed(won, `시험지 ${copies}부(${totalSteps}문항)를 만듭니다.${swapLine}${eventLine}`, copies,
       `만들 부수를 ${copies}부에서 줄이거나, 시험지 구성에서 문항 수를 줄이면 값이 내려갑니다.`))) return;
 
@@ -12186,7 +12201,7 @@ async function runExamPaper() {
 
   for (let c = 0; c < copies && !stopped; c++) {
     const rows = plans[c];
-    const label = copies > 1 ? EXAM_COPY_LABELS[c] : "";
+    const label = names[c];
     const questions = [];
     const failed = [];
 
