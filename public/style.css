@@ -805,6 +805,10 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .qz-choices{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px;}
 .qz-choices li{display:flex; gap:8px; font-size:14px; line-height:1.5;}
 .qz-choices .qz-num{font-weight:700; color:var(--accent); flex:0 0 auto;}
+/* ①~⑤는 폰트에서 원래 작게 그려져 같은 크기로는 보기 글자보다 작아 보인다(2026-10-11) —
+   보기 번호와 정답표의 정답 번호만 키운다. line-height:1로 줄 높이는 늘리지 않는다. */
+.qz-choices li > .qz-num{font-size:1.3em; line-height:1; align-self:center;}
+.qz-bigno{font-size:1.35em; line-height:1; vertical-align:-.08em;}
 .qz-choices li.qz-correct .qz-choice-text{font-weight:700; color:var(--g);}
 /* 서술형 배열 — 섞인 단어 + 답 쓰는 줄 */
 .qz-scramble{

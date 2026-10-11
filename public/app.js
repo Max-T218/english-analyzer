@@ -6283,7 +6283,9 @@ function quizAnswerLabel(q) {
       .map((f, i) => `(${i + 1}) ${f.wrong} → ${f.right}`)
       .join("　");
   }
-  return CIRCLED[(q.answer || 1) - 1] || esc(q.answer);
+  // ①~⑤는 폰트에서 원래 작게 그려져 정답표에서 옆 글자보다 작아 보인다 — 크게 키우는 표시를 단다
+  const circ = CIRCLED[(q.answer || 1) - 1];
+  return circ ? `<span class="qz-bigno">${circ}</span>` : esc(q.answer);
 }
 
 // 내신 서술형 시험지의 <조건> 상자 — 조건 영작·문장 전환이 함께 쓴다.
