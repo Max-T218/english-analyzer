@@ -9056,7 +9056,11 @@ savedKindsEl.addEventListener("click", (e) => {
   renderSavedList();
 });
 
-passageLibraryBtn.addEventListener("click", () => openSavedList("passage"));
+passageLibraryBtn.addEventListener("click", () => {
+  const active = document.querySelector(".tab-page.active");
+  if (active && active.id === "tab-exam") openExamPassageLibrary();
+  else openSavedList("passage");
+});
 /* 탭마다 '📂 불러오기' — 그 탭에서 저장한 것만 보여 준다. 시험지 탭의 단추는
    자기 자리(examLoadSpecBtn)에 따로 있다. */
 ["analyze", "brief", "mcq", "saq", "mix", "workbook", "vocab"].forEach((tab) => {
@@ -11432,7 +11436,10 @@ $("examPassageSaveBtn").addEventListener("click", () => {
 
 /* 저장함을 열되 불러온 지문은 시험 범위 칸으로 보낸다 — 목적지만 바꾸고 저장함은
    공용 것을 그대로 쓴다(passageLoadTo 참고). */
-$("examSavedBtn").addEventListener("click", () => {
+$("examSavedBtn").addEventListener("click", () => openExamPassageLibrary());
+/* 맨 위 [지문 저장함]도 동형 모의고사 탭에서는 같은 길을 탄다 — 이 탭엔 공용 지문칸이
+   없어서, 거기로 불러오면 눈에 보이는 곳에 아무것도 안 들어가 '안 불러와진다'로 보인다. */
+function openExamPassageLibrary() {
   openSavedList("passage", {
     mgr: examPaperMgr,
     grammarEl: examGrammarEl,
@@ -11443,7 +11450,7 @@ $("examSavedBtn").addEventListener("click", () => {
       examInputChanged();
     },
   });
-});
+}
 
 $("examClearPassagesBtn").addEventListener("click", () => {
   if (confirm("입력한 시험 범위 지문을 모두 지우시겠습니까?\n되돌릴 수 없습니다.")) {
