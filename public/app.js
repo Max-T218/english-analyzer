@@ -5852,6 +5852,8 @@ function setupQuizTab({ prefix, types, footer }) {
                     // 단어장 중 이 지문에 나오는 것 + 바꿔 넣은 낱말 — 서버는 어휘 계열 유형에만 싣는다
                     targetWords: [...new Set([...quizVocab.forText(source), ...varied.map((x) => x.to)])]
                       .slice(0, VOCAB_BOX_PER_PASSAGE),
+                    // 그중 영영풀이까지 적힌 것 — 영영풀이 계열 문항이 그 정의를 그대로 쓴다
+                    targetDefs: quizVocab.defsForText(source),
                     difficulty,
                     school: school(),
                   },
@@ -9211,7 +9213,7 @@ const HOWTO = {
       "기출을 <b>여러 부</b> 쓰려면 다음 시험지를 이어서 올리세요 — 곧바로 이어서 분석하고, 한 구성으로 합칩니다. <b>한 번이라도 나온 유형은 1문항씩</b> 깔고 남는 자리를 자주 나온 유형에 더 줍니다.",
       "구성표에서 <b>총 문항 수</b>와 유형별 개수를 손봅니다. 기출에 없던 유형(예: 단어장 단어를 묻는 <b>영영풀이 쓰기</b>)은 표 아래 <b>[＋ 기출에 없는 유형 더하기…]</b>로 넣습니다 — 고친 숫자는 누를 것 없이 <b>바로</b> 아래 제작 칸에 반영됩니다. (선택) <b>[💾 이 기출 구성 저장]</b>으로 구성만 따로 남겨 둘 수 있습니다 — 시험지를 만든 뒤에도 누를 수 있습니다. <b>불러온 구성도</b> 같은 표가 떠서 개수를 고칠 수 있습니다.",
       "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 <b>지문 칸이 따로</b> 있습니다(위 공용 칸과 별개). <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b> · <b>[📷 사진에서 가져오기]</b>로 채울 수도 있고(캡처한 그림은 지문 칸에 <b>Ctrl+V</b>로 붙여넣어도 됩니다), 기출 속 지문을 쓰려면 <b>[📄 지문도 가져오기]</b>를 누르세요.",
-      "(선택) <b>시험 범위 단어장</b> — 학교가 채택한 단어장이 시험 범위에 들어가면 단어를 칸에 적거나 붙여넣으세요(한 줄에 한 단어, 뜻은 있어도 없어도 됩니다). <b>📒 저장한 단어장에서 가져오기</b>로 단어장 탭에서 저장한 것을 불러올 수도 있습니다. 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 쓰고, 칸 아래에 지문에서 못 찾은 단어를 알려 드립니다. 줄 끝에 <b>= 유의어</b>를 적어 둘 수 있습니다(예: abandon 버리다 = give up). <b>지문 속 단어장 단어를 유의어로 바꿔 싣기</b> · <b>지문의 다른 낱말을 단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문마다 한 번 바꿔 씁니다 — 바뀐 낱말은 화면에서만 형광으로 보이고 인쇄에는 평범하게 찍힙니다.",
+      "(선택) <b>시험 범위 단어장</b> — 학교가 채택한 단어장이 시험 범위에 들어가면 단어를 칸에 적거나 붙여넣으세요(한 줄에 한 단어, 뜻은 있어도 없어도 됩니다). <b>📒 저장한 단어장에서 가져오기</b>로 단어장 탭에서 저장한 것을 불러올 수도 있습니다. 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 쓰고, 칸 아래에 지문에서 못 찾은 단어를 알려 드립니다. 줄 끝에 <b>= 유의어</b>를 적어 둘 수 있습니다(예: abandon 버리다 = give up). 학교 프린트에 영영풀이가 있으면 <b>쌍점(:) 뒤에</b> 적어 두세요(예: secret 비밀 : something that is kept hidden) — 영영풀이 문항이 그 문장을 그대로 씁니다. 사진으로 가져오면 프린트의 영영풀이도 함께 읽습니다. <b>지문 속 단어장 단어를 유의어로 바꿔 싣기</b> · <b>지문의 다른 낱말을 단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문마다 한 번 바꿔 씁니다 — 바뀐 낱말은 화면에서만 형광으로 보이고 인쇄에는 평범하게 찍힙니다.",
       "(선택) 목표 어법 · 출제 순서 · <b>학교급</b>(중학교면 보기·오답을 중학생 수준으로, 지문이 모자라면 <b>주제·제목·내용 일치처럼 지문을 안 고치는 유형</b>은 한 지문으로 최대 3문항까지 냅니다. 그래도 모자라거나 본문이 짧으면 <b>같은 과의 이웃한 본문을 이어</b> 실제 시험처럼 긴 지문으로 씁니다 — 지문 이름을 “5과 본문 (1)”, “(2)”처럼 번호만 다르게 달아 두면 같은 과로 알아봅니다) — <b>지문이 그래도 모자라면 멈추지 않고 넣은 지문 안에서</b> 한 지문을 여러 문항에 나눠 씁니다(고등학교도 같습니다). 이때는 빈칸 문항의 답이 같은 지문의 다른 문항에 보일 수 있어, 어디를 확인할지 시험 범위 칸 아래에 알려 드립니다 · 몇 부(1부 / A형·B형) · 시험지 머리글(학교 이름·고사 이름 등) · 표지 제목을 정합니다. 중학교 기출의 <b>대화문 문항</b>은 시험 범위 칸에 넣은 <b>대화문</b>(줄마다 \"A:\", \"B:\")으로만 만듭니다.",
       "<b>[📝 문제 제작]</b>을 누릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b> — 사이트 저장은 만든 시험지를 저장하고, 기출 구성 저장과는 따로 쌓입니다. 저장한 시험지는 맨 위 <b>[📂 저장한 시험지 불러오기]</b>로 되불러옵니다. 불러온 시험지 말고 <b>새 시험지를 따로</b> 만들려면 <b>[🧹 만든 시험지 비우기]</b>를 누른 뒤 만드세요 — 안 비우면 새 시험지가 불러온 것 뒤에 붙습니다. 비워도 저장해 둔 것은 지워지지 않고, 새 시험지는 비운 시험지와 겹치지 않게 만들어집니다.",
@@ -11596,6 +11598,32 @@ const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // "0001 appearance 명 1. 외모"(단어장 책의 번호), "crucial, adapt, sustain"(한글이 없는 줄은 쉼표로
 // 여러 단어) 모두 받는다. 유의어는 줄 끝의 "= give up"(등호 뒤가 영어일 때만 — "abandon = 버리다"의
 // 등호는 뜻 구분이다).
+/* 줄에서 영영풀이를 찾는다 — 표제어 뒤(쌍점·대시·탭·괄호·한글 뜻 다음)에 영어 낱말이 세 개
+   이상 이어진 덩어리. 표제어가 그 안에 다시 나오면 영영풀이가 아니라 예문으로 보고 버린다
+   (정의는 표제어를 쓰지 않는다). 찾으면 {head, rest, def}, 아니면 null. */
+function vocabDefOf(line) {
+  const m = String(line || "").match(/^\s*[A-Za-z][A-Za-z'’~\/ .-]*?(?=\s*(?:[:：—–\t(]|\s-\s|[가-힣]))/);
+  if (!m) return null;
+  const head = m[0];
+  const rest = line.slice(head.length);
+  const hw = head.trim().toLowerCase().replace(/[^a-z' ]/g, "").split(/\s+/).filter((t) => t.length > 2);
+  let def = "";
+  for (const mm of rest.matchAll(/[A-Za-z][A-Za-z'’,;.\/ -]*/g)) {
+    const t = mm[0].replace(/[\s,;\/-]+$/, "").trim();
+    // 쌍점·대시·괄호·탭 바로 뒤면 두 낱말("tiny: extremely small")도 영영풀이로 본다
+    const afterSep = /[:：—–(\t]\s*$/.test(rest.slice(0, mm.index));
+    if ((t.match(/[A-Za-z]+/g) || []).length < (afterSep ? 2 : 3)) continue;
+    if (/^(?:n|v|vt|vi|adj|adv|prep|conj|phr)\.\s/i.test(t)) continue;
+    const low = t.toLowerCase();
+    if (hw.some((h) => new RegExp(`(?<![a-z])${reEsc(h)}`).test(low))) continue;
+    // 표제어의 변화형(make up → made up)이 들어 있어도 예문·쓰임 표시다
+    const hre = vocabEntryRe(head.trim().replace(/[\s.~-]+$/, ""));
+    if (hre && hre.test(t)) continue;
+    if (t.length > def.length) def = t;
+  }
+  return def ? { head, rest, def: def.slice(0, 200) } : null;
+}
+
 function parseVocabLines(textValue) {
   const out = [];
   const seen = new Set();
@@ -11607,23 +11635,34 @@ function parseVocabLines(textValue) {
       syn = line.slice(eq + 1).replace(/[^A-Za-z '’~,\/-]/g, "").replace(/\s+/g, " ").trim();
       line = line.slice(0, eq);
     }
-    const meaning = (line.match(/~?\s*[가-힣].*$/) || [""])[0].replace(/[=:|—–]/g, " ").trim();
-    const parts = /[가-힣]/.test(line) ? [line] : line.split(/[,;]/);
-    parts.forEach((p) => {
-      const m = p.match(/^[\sA-Za-z'’~().\/-]*/);
-      let w = (m ? m[0] : "")
-        .replace(/\([^)]*\)?/g, " ")
-        .replace(/\s+(?:n|v|vt|vi|adj|adv|prep|conj|phr|a|ad)\.?\s*$/i, " ")
-        .replace(/[\s\-–—~./]+$/, "")
-        .replace(/^[\s~.\/-]+/, "")
-        .replace(/\s+/g, " ")
-        .trim();
+    const cleanWord = (s) => String(s || "")
+      .replace(/\([^)]*\)?/g, " ")
+      .replace(/\s+(?:n|v|vt|vi|adj|adv|prep|conj|phr|a|ad)\.?\s*$/i, " ")
+      .replace(/[\s\-–—~./]+$/, "")
+      .replace(/^[\s~.\/-]+/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const add = (w, rest) => {
       if (w.length < 2 || !/[A-Za-z]{2}/.test(w)) return;
       const key = w.toLowerCase();
       if (!seen.has(key)) {
         seen.add(key);
-        out.push({ word: w, syn: parts.length > 1 ? "" : syn, meaning: parts.length > 1 ? "" : meaning });
+        out.push({ word: w, ...rest });
       }
+    };
+    // 영영풀이가 적힌 줄 — "낱말: 영어 정의" · "낱말 뜻 : 정의" · "낱말 (정의)" (2026-10-11)
+    const d = vocabDefOf(line);
+    if (d) {
+      const meaning = (d.rest.replace(d.def, " ").match(/~?\s*[가-힣].*$/) || [""])[0]
+        .replace(/[=:|—–()]/g, " ").replace(/\s+/g, " ").trim();
+      add(cleanWord(d.head), { syn, meaning, def: d.def });
+      return;
+    }
+    const meaning = (line.match(/~?\s*[가-힣].*$/) || [""])[0].replace(/[=:|—–]/g, " ").trim();
+    const parts = /[가-힣]/.test(line) ? [line] : line.split(/[,;]/);
+    parts.forEach((p) => {
+      const m = p.match(/^[\sA-Za-z'’~().\/-]*/);
+      add(cleanWord(m ? m[0] : ""), { syn: parts.length > 1 ? "" : syn, meaning: parts.length > 1 ? "" : meaning, def: "" });
     });
   });
   return out;
@@ -11714,6 +11753,17 @@ function createVocabBox(p, getTexts, scope) {
     }
     return out;
   }
+  // 그중 영영풀이까지 적힌 단어 — 서버가 영영풀이 계열 문항에 그 정의를 글자 그대로 쓴다
+  function defsForText(text) {
+    const out = [];
+    for (const e of parse()) {
+      if (!e.def) continue;
+      const re = vocabEntryRe(e.word);
+      if (re && re.test(text || "")) out.push({ word: e.word, def: e.def });
+      if (out.length >= VOCAB_BOX_PER_PASSAGE) break;
+    }
+    return out;
+  }
 
   const swapOn = () => ({ syn: !!($(p + "ToSyn") || {}).checked, add: !!($(p + "ToBook") || {}).checked });
   function swapSet(v) {
@@ -11788,7 +11838,10 @@ function createVocabBox(p, getTexts, scope) {
       if (!w || have.has(w.toLowerCase())) return;
       have.add(w.toLowerCase());
       const syn = String(v.synonym || "").trim();
-      add.push([w, String(v.meaning || "").trim(), /[A-Za-z]/.test(syn) && !/[가-힣]/.test(syn) ? `= ${syn}` : ""]
+      // 영영풀이가 있으면 "낱말 뜻 : 영영풀이"로 적는다(parseVocabLines가 다시 읽는 모양)
+      const def = String(v.definition || "").replace(/[=\n]/g, " ").trim();
+      add.push([w, String(v.meaning || "").trim(), def ? `: ${def}` : "",
+        /[A-Za-z]/.test(syn) && !/[가-힣]/.test(syn) ? `= ${syn}` : ""]
         .filter(Boolean).join(" "));
     });
     if (add.length) {
@@ -11926,7 +11979,7 @@ function createVocabBox(p, getTexts, scope) {
   }
 
   return {
-    el, parse, entries, forText, swapOn, swapSet, swapBody, sync, append, fillList,
+    el, parse, entries, forText, defsForText, swapOn, swapSet, swapBody, sync, append, fillList,
     get value() { return el ? el.value : ""; },
     set value(v) { if (el) el.value = v || ""; sync(); },
     clear() { if (el) el.value = ""; swapSet(null); status(""); sync(); },
@@ -12227,6 +12280,7 @@ async function runExamPaper() {
             // 이 탭은 지문칸이 따로이므로 목표 어법도 이 탭 칸의 값을 쓴다
             targetGrammar: examGrammarEl.value,
             targetWords: words,
+            targetDefs: examVocab.defsForText(text),
             examRun,
             school: examSchoolEl && examSchoolEl.value === "middle" ? "middle" : "high",
           },

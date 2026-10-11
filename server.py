@@ -674,7 +674,7 @@ def complete_signup(email, code):
         "krw_free": starting_krw,
         "krw_paid": 0,
         # upsert_user와 같은 이유 — 방금 가입했으니 지난 업데이트 소식은 최신으로 맞춰 둔다
-        "last_seen_changelog": CHANGELOG[0]["version"] if CHANGELOG else 0,
+        "last_seen_changelog": CHANGELOG_LATEST,
         # 1단계에서 받아 둔 동의를 그대로 옮겨 적는다. 옛 계정에는 이 값이 없는데,
         # 동의 절차가 생기기 전에 가입한 사람이라는 뜻이다(지우거나 막지 않는다).
         **{k: v for k, v in (d.get("consent") or {}).items()},
@@ -1386,6 +1386,31 @@ def parse_target_words(raw):
         if w and w.lower() not in seen:
             seen.add(w.lower())
             out.append(w)
+        if len(out) >= QUIZ_TARGET_WORDS_MAX:
+            break
+    return out
+
+
+# 단어장에 적힌 영영풀이를 그대로 쓰는 유형(2026-10-11) — 학교 프린트에 선생님이 영영풀이까지
+# 적어 주는 경우가 많고, 내신은 그 문장을 그대로 낸다.
+QUIZ_ENG_DEF_TYPES = {"영영풀이", "영영풀이 쓰기", "영영풀이 오류 찾기"}
+_TARGET_DEF_RE = re.compile(r"[^A-Za-z0-9 '’~().,;:/!?\"-]")
+
+
+def parse_target_defs(raw):
+    """화면이 보낸 [{word, def}]를 [(낱말, 정의)]로 다듬는다 — 프롬프트에만 들어가므로
+    영어 글자만 남기고 길이·개수를 자른다."""
+    if not isinstance(raw, list):
+        return []
+    out, seen = [], set()
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        w = re.sub(r"\s+", " ", _TARGET_WORD_RE.sub("", str(it.get("word") or ""))).strip()[:80]
+        d = re.sub(r"\s+", " ", _TARGET_DEF_RE.sub("", str(it.get("def") or ""))).strip()[:200]
+        if w and len(d.split()) >= 2 and w.lower() not in seen:
+            seen.add(w.lower())
+            out.append((w, d))
         if len(out) >= QUIZ_TARGET_WORDS_MAX:
             break
     return out
@@ -2621,9 +2646,10 @@ def _check_answer_plan(result, answer_plan):
 
 def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
                            variation="verbatim", target_grammar="", ox_plan=(),
-                           insert_hint=None, answer_plan=(), target_words=()):
+                           insert_hint=None, answer_plan=(), target_words=(), target_defs=()):
     """items = [(유형, 문항수)] — 유형마다 몇 문항인지가 요청에 그대로 들어 있다.
     target_words = 시험 범위 단어장 중 이 지문에 나오는 단어(parse_target_words가 다듬은 것).
+    target_defs = 그중 단어장에 영영풀이까지 적힌 것 [(낱말, 정의)] (parse_target_defs).
     ox_plan = plan_ox_false_counts가 뽑은 OX 문항별 X 개수.
     answer_plan = plan_answer_positions가 뽑은 객관식 문항별 정답 번호."""
     types = [t for t, _ in items]
@@ -2761,6 +2787,19 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
             "단, 각 유형의 규칙(빈칸은 글의 핵심과 맞닿은 자리, 빈칸 쓰기는 본문에 다시 나오는 "
             "내용어 등)이 먼저입니다. 규칙에 맞는 단어가 없으면 평소대로 출제하고, "
             "목록의 단어를 지문에 새로 끼워 넣거나 지문을 고쳐 만들지 마세요."
+        )
+    def_types = picked & QUIZ_ENG_DEF_TYPES
+    if target_defs and def_types:
+        lines.append(
+            "단어장에 적힌 영영풀이(학교 프린트에 선생님이 적어 준 것):\n"
+            + "\n".join(f"- {w}: {d}" for w, d in target_defs) + "\n"
+            "아래 유형에서 이 단어를 뜻풀이할 낱말로 고르면, 맞는 정의는 위 영영풀이를 "
+            "**글자 그대로** 쓰세요(학생이 외운 문장이 그대로 나와야 합니다): "
+            + ", ".join(sorted(def_types)) + ".\n"
+            "영영풀이 오류 찾기에서 일부러 틀리게 쓰는 하나만 새로 지으세요 — 그때도 위 "
+            "정의의 모양을 따라 뜻만 비틀면 좋습니다. 영영풀이 쓰기는 위 정의를 그대로 "
+            "제시문으로 쓰세요. 영영풀이가 적힌 단어를 먼저 고르되, 유형 규칙에 안 맞으면 "
+            "다른 단어로 평소대로 내도 됩니다."
         )
     if short_hint is not None:
         # 어떤 유형이 몇 문항 모자랐는지 짚어 주는 편이 재요청 한 번에 채워질 확률이 높다.
@@ -2902,7 +2941,8 @@ def _check_ox_plan(result, ox_plan):
 
 def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
                       explain_hint=None, variation="verbatim", target_grammar="",
-                      insert_hint=None, difficulty="normal", level="high", target_words=()):
+                      insert_hint=None, difficulty="normal", level="high", target_words=(),
+                      target_defs=()):
     """items = [(유형, 문항수)]. 개수 상한은 parse_quiz_items가 이미 적용해 둔다.
     difficulty="hard"면 QUIZ_HARD_RULES를 지시문 뒤에 덧붙인다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -2933,7 +2973,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
             {"role": "user", "parts": [
                 {"text": build_quiz_user_prompt(
                     passage, items, short_hint, explain_hint, variation, target_grammar,
-                    ox_plan, insert_hint, answer_plan, target_words,
+                    ox_plan, insert_hint, answer_plan, target_words, target_defs,
                 )}
             ]}
         ],
@@ -3427,9 +3467,12 @@ VOCAB_ITEMS_SCHEMA = {
                     "meaning": {"type": "STRING"},
                     "synonym": {"type": "STRING"},
                     "antonym": {"type": "STRING"},
+                    # 영영풀이 — 프린트에 적혀 있을 때만(2026-10-11). 시험 범위 단어장 칸이
+                    # 영영풀이 계열 문항에 그대로 쓴다
+                    "definition": {"type": "STRING"},
                 },
-                "required": ["word", "pos", "meaning", "synonym", "antonym"],
-                "propertyOrdering": ["word", "pos", "meaning", "synonym", "antonym"],
+                "required": ["word", "pos", "meaning", "synonym", "antonym", "definition"],
+                "propertyOrdering": ["word", "pos", "meaning", "synonym", "antonym", "definition"],
             },
         },
         "note": {"type": "STRING"},
@@ -3454,6 +3497,9 @@ commentary.
   and mention it in `note` instead.
 - `synonym` / `antonym`: ONLY if the photo explicitly marks them (e.g. "유=", "반=", "syn:",
   "ant:", "↔"); otherwise "".
+- `definition`: the ENGLISH definition (영영풀이) exactly as printed/written for that word —
+  teachers often write one next to the word or in parentheses after it. Copy it word for word,
+  without the headword. "" when none is shown; NEVER write one yourself.
 
 ## Transcribe, don't invent
 - If handwriting or a smudge makes a word or its meaning unreadable, SKIP that entry entirely
@@ -3484,6 +3530,8 @@ Same field rules as reading from a photo:
   a meaning that isn't in the text.
 - `synonym` / `antonym`: ONLY if explicitly marked (e.g. "유=", "반=", "syn:", "ant:") —
   otherwise "".
+- `definition`: the ENGLISH definition (영영풀이) given for the word, copied word for word
+  without the headword — "" when none is in the text. NEVER write one yourself.
 
 ## When order is scrambled
 If a word's meaning was clearly separated from it by column-scrambling (e.g. a run of English
@@ -3525,6 +3573,7 @@ def _clean_vocab_items(raw):
             "meaning": str(it.get("meaning") or "").strip(),
             "synonym": str(it.get("synonym") or "").strip(),
             "antonym": str(it.get("antonym") or "").strip(),
+            "definition": str(it.get("definition") or "").strip(),
         })
     return out
 
@@ -3605,6 +3654,75 @@ def call_gemini_vocab_pdf(text, api_key, model):
     if not items:
         raise RuntimeError(note or "이 PDF에서 단어 목록을 찾지 못했습니다.")
     return {"items": items, "note": note}
+
+
+VOCAB_PDF_PAGES_PER_CALL = 2      # 한 번에 보내는 쪽 수 — 단어장 책 한 쪽이 80단어 안팎이다
+VOCAB_PDF_CHARS_PER_CALL = 8000   # 쪽이 빽빽하면 이보다 길어지기 전에 끊는다
+VOCAB_PDF_MAX_CALLS = 12          # 24쪽 안팎 — 그 이상은 잘라 내고 안내한다
+
+
+def vocab_pdf_ai_chunked(pages, api_key, model):
+    """규칙이 못 읽은 단어장 PDF를 쪽 묶음마다 따로 AI에 보내 합친다(2026-10-11).
+    한 번에 보내면 13쪽·1,000단어짜리 단어장 책에서 답이 출력 한도에 걸려 통째로 잘렸다
+    ('글자가 너무 많아 잘렸습니다'). 2단 쪽은 영어 칸과 한글 칸이 한 쪽 안에서 섞여 나오므로
+    쪽 단위로 끊어야 짝이 안 갈린다. 묶음은 동시에 보내 시간을 줄이고, 일부가 실패해도
+    읽힌 것은 살린다 — 모두 실패했을 때만 오류다."""
+    chunks, cur, cur_pages = [], [], 0
+    for page in pages:
+        lines = [r["t"] for r in page if r["t"].strip()]
+        if not lines:
+            continue
+        size = sum(len(t) + 1 for t in cur)
+        if cur and (cur_pages >= VOCAB_PDF_PAGES_PER_CALL
+                    or size + sum(len(t) + 1 for t in lines) > VOCAB_PDF_CHARS_PER_CALL):
+            chunks.append("\n".join(cur))
+            cur, cur_pages = [], 0
+        cur.extend(lines)
+        cur_pages += 1
+    if cur:
+        chunks.append("\n".join(cur))
+    dropped = max(0, len(chunks) - VOCAB_PDF_MAX_CALLS)
+    chunks = [c[:VOCAB_PDF_CHARS_PER_CALL * 2] for c in chunks[:VOCAB_PDF_MAX_CALLS]]
+
+    results = [None] * len(chunks)
+
+    def work(i, text):
+        try:
+            results[i] = call_gemini_vocab_pdf(text, api_key, model)
+        except Exception as e:   # 한 묶음 실패가 전체를 막지 않게 — 아래에서 모아 판단한다
+            results[i] = e
+
+    threads = [threading.Thread(target=work, args=(i, t), daemon=True) for i, t in enumerate(chunks)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    items, seen, notes, fails = [], set(), [], []
+    for i, r in enumerate(results):
+        if isinstance(r, Exception) or r is None:
+            fails.append((i, r))
+            continue
+        for it in r["items"]:
+            key = it["word"].lower()
+            if key not in seen:
+                seen.add(key)
+                items.append(it)
+        if r.get("note"):
+            notes.append(r["note"])
+    if not items:
+        first = next((r for _, r in fails if isinstance(r, Exception)), None)
+        if isinstance(first, QuotaExceeded):
+            raise first
+        raise RuntimeError(str(first) if first else "이 PDF에서 단어 목록을 찾지 못했습니다.")
+    msg = []
+    if fails:
+        pages_txt = ", ".join(f"{i * VOCAB_PDF_PAGES_PER_CALL + 1}쪽 부근" for i, _ in fails[:5])
+        msg.append(f"일부 묶음({pages_txt})을 읽지 못해 빠졌습니다 — 그 쪽만 따로 올려 주세요.")
+    if dropped:
+        msg.append(f"쪽이 많아 앞쪽 {VOCAB_PDF_MAX_CALLS * VOCAB_PDF_PAGES_PER_CALL}쪽 안팎만 읽었습니다 — 나머지는 나눠 올려 주세요.")
+    msg.extend(notes[:2])
+    return {"items": items, "note": " ".join(msg)}
 
 
 # ══════════════ 지문 요약 인포그래픽 ══════════════
@@ -4539,7 +4657,15 @@ def _parse_vocab_line(line):
         pos, rest = m.group(1), m.group(2).strip()
     if not rest:
         return None
-    return {"word": word, "pos": pos, "meaning": rest, "synonym": "", "antonym": ""}
+    # 한글 뜻 뒤에 영어 낱말 둘 이상이 이어지면 영영풀이로 떼어 둔다(2026-10-11 — 프린트에
+    # 선생님이 영영풀이를 함께 적는 경우. 시험 범위 단어장 칸이 영영풀이 문항에 그대로 쓴다)
+    definition = ""
+    m = re.search(r"[A-Za-z][A-Za-z'’,;. /()-]*$", rest)
+    if m and len(re.findall(r"[A-Za-z]+", m.group(0))) >= 2 and _HANGUL_RE.search(rest[:m.start()]):
+        definition = m.group(0).strip(" ,;/-()")
+        rest = rest[:m.start()].strip(" :;—–-(")
+    return {"word": word, "pos": pos, "meaning": rest, "synonym": "", "antonym": "",
+            "definition": definition}
 
 
 def parse_vocab_lines_rule(pages):
@@ -8874,7 +9000,7 @@ def upsert_user(sub, email, name, agree=None):
             "krw_free": starting_krw, "krw_paid": 0,
             # 방금 가입했으니 지금까지의 업데이트 소식은 이미 다 겪은 셈이다 —
             # 첫 로그인부터 지난 소식이 쏟아지지 않게 최신 번호로 맞춰 둔다.
-            "last_seen_changelog": CHANGELOG[0]["version"] if CHANGELOG else 0,
+            "last_seen_changelog": CHANGELOG_LATEST,
             **consent,
         })
         _log_signup_grant(sub, starting_krw, grant_label)
@@ -9595,7 +9721,22 @@ CHANGELOG = [
             "사진·PDF를 넣으면 단어를 읽어 칸에 채웁니다. 단어장은 '지문 저장'에 함께 저장됩니다.",
         ],
     },
+    {
+        "version": 63,
+        "date": "2026-10-11",
+        "items": [
+            "단어장 칸에 학교 프린트의 영영풀이를 쌍점 뒤에 적으면(예: secret 비밀 : something that "
+            "is kept hidden) 영영풀이 문항이 그 문장을 그대로 씁니다. 사진·PDF로 가져와도 프린트의 "
+            "영영풀이를 함께 읽습니다.",
+            "영영풀이 오류 찾기의 영어 풀이가 지문 속 괄호에서 ①~⑤ 선택지로 옮겨졌습니다.",
+            "동형 모의고사 — 시험지 이름을 직접 정할 수 있습니다(예: 1회 A형). 쪽이 많은 단어장 "
+            "PDF도 이제 잘리지 않고 읽힙니다.",
+        ],
+    },
 ]
+# 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
+# [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
+CHANGELOG_LATEST = max((c["version"] for c in CHANGELOG), default=0)
 
 
 def _changelog_fresh(item):
@@ -9619,7 +9760,8 @@ def _unseen_updates(last_seen):
         last_seen = int(last_seen or 0)
     except (TypeError, ValueError):
         last_seen = 0
-    return [c for c in reversed(CHANGELOG) if c["version"] > last_seen and _changelog_fresh(c)]
+    return sorted((c for c in CHANGELOG if c["version"] > last_seen and _changelog_fresh(c)),
+                  key=lambda c: c["version"])
 
 
 def _account_payload(user_id):
@@ -12354,7 +12496,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if CHANGELOG:
                 DB.collection("users").document(user_id).set(
-                    {"last_seen_changelog": CHANGELOG[0]["version"]}, merge=True
+                    {"last_seen_changelog": CHANGELOG_LATEST}, merge=True
                 )
             self._send_json({"ok": True})
             return
@@ -12880,11 +13022,8 @@ class Handler(BaseHTTPRequestHandler):
             if req.get("ai"):
                 # 원문 줄을 그대로 이어 보낸다 — 본문을 옮겨 적는 게 아니라 이미 뽑힌
                 # 글자의 순서만 다시 맞추는 일이라 이미지보다 훨씬 가볍다.
-                text = "\n".join(r["t"] for page in pages for r in page)
-                if len(text) > 60000:
-                    text = text[:60000]
                 try:
-                    found = call_gemini_vocab_pdf(text, req.get("apiKey") or "", MODEL)
+                    found = vocab_pdf_ai_chunked(pages, req.get("apiKey") or "", MODEL)
                 except QuotaExceeded as e:
                     self._send_json({"error": str(e), "code": "quota"}, 429)
                     return
@@ -13216,11 +13355,13 @@ class Handler(BaseHTTPRequestHandler):
             # 시험 범위 단어장 — 화면(동형 모의고사 탭)이 이 지문에 나오는 단어만 골라 보낸다.
             # 어휘 계열 유형이 섞여 있을 때만 프롬프트에 실린다(build_quiz_user_prompt).
             quiz_words = parse_target_words(req.get("targetWords"))
+            # 그중 영영풀이가 적힌 단어 — 영영풀이 계열 유형에서 그 정의를 그대로 쓴다
+            quiz_defs = parse_target_defs(req.get("targetDefs"))
             t0 = time.monotonic()
             try:
                 result = call_gemini_quiz(passage, items, api_key, model, variation=variation,
                                           target_grammar=quiz_grammar, difficulty=difficulty, level=level,
-                                          target_words=quiz_words)
+                                          target_words=quiz_words, target_defs=quiz_defs)
                 # 문항 누락 방어 — 요청한 개수보다 적게 오면 한 번 더 요청해 채운다
                 want = sum(n for _, n in items)
                 for _ in range(2):
@@ -13238,7 +13379,7 @@ class Handler(BaseHTTPRequestHandler):
                     retry = call_gemini_quiz(
                         passage, items, api_key, model,
                         short_hint=(missing or got), variation=variation,
-                        target_grammar=quiz_grammar, difficulty=difficulty, level=level, target_words=quiz_words,
+                        target_grammar=quiz_grammar, difficulty=difficulty, level=level, target_words=quiz_words, target_defs=quiz_defs,
                     )
                     # 더 많이 만들어 온 결과만 채택 (재시도가 더 나쁘면 기존 유지)
                     if len(retry.get("questions", [])) > got:
@@ -13254,7 +13395,7 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     retry = call_gemini_quiz(
                         passage, items, api_key, model, explain_hint=missing, variation=variation,
-                        target_grammar=quiz_grammar, difficulty=difficulty, level=level, target_words=quiz_words,
+                        target_grammar=quiz_grammar, difficulty=difficulty, level=level, target_words=quiz_words, target_defs=quiz_defs,
                     )
                     # 문항 수가 줄지 않고 해설이 더 잘 채워진 결과만 채택
                     if (
@@ -13277,7 +13418,7 @@ class Handler(BaseHTTPRequestHandler):
                             retry = call_gemini_quiz(
                                 passage, items, api_key, model, variation=variation,
                                 target_grammar=quiz_grammar, insert_hint=bad,
-                                difficulty=difficulty, level=level, target_words=quiz_words,
+                                difficulty=difficulty, level=level, target_words=quiz_words, target_defs=quiz_defs,
                             )
                         except Exception:
                             break
