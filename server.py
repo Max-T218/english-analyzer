@@ -1825,17 +1825,19 @@ the passage in full.
   것은?". 영영풀이와 재료(단어+영어 정의)는 같지만, 한 단어에 정의 하나씩이 아니라
   **다섯 쌍**을 한꺼번에 보여주고 그중 잘못 짝지어진 것을 고르게 한다.
   · `passageHtml` = 지문 전문에서 내용어 5개를 골라 각각 circled number를 붙여
-    <u>…</u>로 감싸고, 그 낱말 바로 뒤에 괄호로 영영풀이를 단다 — 예:
-    "the animal remained largely <u>①unnoticed</u>(without attracting attention) by
-    predators". 정의는 <u> 밖에 평문으로 쓴다(정의 자체에는 밑줄 치지 마라).
+    <u>…</u>로 감싸기만 한다 — 예: "the animal remained largely <u>①unnoticed</u> by
+    predators". **지문 안에 정의(괄호 풀이)를 쓰지 마라** — 정의는 선택지로 간다.
+    지문 속에 끼우면 읽기 흐름이 끊겨서 2026-10-11에 선택지로 옮겼다.
+  · choices = 다섯 개, 지문의 ①~⑤ 순서 그대로, 각각 "낱말: 영어 정의" 모양 — 예:
+    "unnoticed: without attracting attention". 낱말은 지문에 밑줄 친 형태 그대로 쓰고,
+    앞에 번호(①)는 붙이지 마라(화면이 붙인다).
   · 다섯 중 넷은 그 낱말이 **이 지문에서 실제로 쓰인 뜻**과 맞는 정의를 쓴다.
     나머지 하나는 그럴듯하지만 **틀린** 정의를 쓴다 — 가장 확실한 방법은 방향이
     반대인 정의를 쓰는 것이다(예: melt를 "to cause a solid to become liquid"가
     아니라 "to cause a liquid to become solid"라고 뒤집기), 또는 그 낱말의 다른
     뜻(문맥에 안 맞는 의미)을 정의로 준다.
   · 정의에는 그 낱말 자체나 같은 어근을 쓰지 마라(영영풀이 유형과 같은 규칙).
-  choices = ["①","②","③","④","⑤"] in that literal order; answer = 정의가 틀린
-  것의 위치.
+  answer = 정의가 틀린 것의 위치(1~5).
 - WORD / GRAMMAR-USAGE TYPES (중학교 내신) — "문법 쓰임 같은 것", "문법 쓰임 다른 것",
   "다의어 같은 뜻", "짝지어진 대화". The five choices are NEW short sentences (or mini-dialogues)
   you write; each choice may contain <u>…</u> around the target word and <br> for line breaks.
