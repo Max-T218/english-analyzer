@@ -11369,6 +11369,11 @@ def update_student(teacher_id, student_id, name=None, login_id=None, password=No
         _release_login_id(cur.get("login_id"), ref.id)
     if new_id or password:
         _delete_student_sessions(ref.id)   # 아이디·비밀번호가 바뀌면 이전 로그인은 끊는다
+        # 비밀번호를 여러 번 틀려 '5분 뒤 다시'로 잠긴 학생도 선생님이 초기화하면 바로 들어오게 한다.
+        # 잠금은 아이디별이라 옛 아이디·새 아이디 둘 다 푼다(IP별 잠금은 그대로 둔다).
+        _student_login_clear(cur.get("login_id") or "")
+        if new_id:
+            _student_login_clear(new_id)
 
 
 def change_student_password(student_id, current, new):
