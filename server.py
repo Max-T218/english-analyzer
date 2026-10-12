@@ -4052,7 +4052,7 @@ def infographic_system_prompt(lang):
     return INFOGRAPHIC_SYSTEM_PROMPT.replace("{LANG_RULE}", spec["rule"])
 
 
-_INFOGRAPHIC_TRUNC_MSG = "지문이 너무 길어 요약 구조를 만들다가 잘렸습니다. 지문을 나눠 시도해 주세요."
+_INFOGRAPHIC_TRUNC_MSG = "요약 구조를 만들다가 잘렸습니다. 잠시 뒤 다시 시도해 주세요."
 
 
 def _clip(text, limit):
@@ -4267,7 +4267,10 @@ def call_gemini_infographic(passage, api_key, model=None, lang="mix"):
         "contents": [{"role": "user", "parts": [{"text": text}]}],
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": 4096,
+            # 모델의 '생각'도 이 한도에서 빠진다. 4096이던 때 생각에 3,932를 쓰고 답은
+            # 150만 쓰다 잘려 842자 지문도 '지문이 너무 길어' 오류가 났다(2026-10-13 로그).
+            # 실제 답은 300~600이다. 한도는 쓴 만큼만 값이 나가므로 넉넉히 둔다.
+            "maxOutputTokens": 16384,
             "responseMimeType": "application/json",
             "responseSchema": INFOGRAPHIC_SCHEMA,
         },
@@ -5042,7 +5045,8 @@ def call_gemini_student_comment(data, api_key, model):
         "contents": [{"role": "user", "parts": [{"text": text}]}],
         "generationConfig": {
             "temperature": 0.7,
-            "maxOutputTokens": 2048,
+            # 생각도 이 한도에서 빠진다 — 요약 이미지 문구가 4096에서 잘린 것과 같은 까닭
+            "maxOutputTokens": 8192,
             "responseMimeType": "application/json",
             "responseSchema": STUDENT_COMMENT_SCHEMA,
         },
