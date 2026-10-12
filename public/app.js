@@ -13280,7 +13280,8 @@ function renderTestResults(data, title) {
     <table>
       <thead><tr><th>학생</th><th>결과</th><th>회차별 점수</th><th>마지막 제출</th><th class="no-print"></th></tr></thead>
       <tbody>${body}</tbody></table></div>
-    <button type="button" class="btn ghost small print-results-btn">🖨️ 성적표 인쇄</button>`;
+    <button type="button" class="btn ghost small print-results-btn">🖨️ 성적표 인쇄</button>
+    <button type="button" class="btn ghost small close-report-btn">✕ 성적표 닫기</button>`;
 }
 
 /* ── 월간 성적표 ──
@@ -13436,7 +13437,8 @@ function renderStudentReport(data, period) {
     <button type="button" class="btn small report-ai-btn">✨ AI로 코멘트 쓰기${aiPriceLabel()}</button>
     <button type="button" class="btn ghost small report-comment-reset-btn">기본 초안으로 되돌리기</button>
     <span class="error report-ai-err"></span>
-    <button type="button" class="btn ghost small print-results-btn">🖨️ 성적표 인쇄</button>`;
+    <button type="button" class="btn ghost small print-results-btn">🖨️ 성적표 인쇄</button>
+    <button type="button" class="btn ghost small close-report-btn">✕ 성적표 닫기</button>`;
 }
 
 // 성적표 칸 하나를 (다시) 채운다 — 월을 바꿀 때마다 서버에서 그 기간만 다시 받는다
@@ -13508,6 +13510,12 @@ addStudentBtn.addEventListener("click", async () => {
 });
 
 studentTableBodyEl.addEventListener("click", async (e) => {
+  const closeBtn = e.target.closest(".close-report-btn");
+  if (closeBtn) {
+    const rr = closeBtn.closest("tr.report-row");
+    if (rr) rr.remove();
+    return;
+  }
   const printBtn = e.target.closest(".print-results-btn");
   if (printBtn) {
     const rr = printBtn.closest("tr.report-row");
@@ -13730,6 +13738,11 @@ assignedTestListEl.addEventListener("click", async (e) => {
   if (toggleBtn) {
     const detail = toggleBtn.closest("tr").nextElementSibling;
     detail.hidden = !detail.hidden;
+    return;
+  }
+  const closeBtn = e.target.closest(".close-report-btn");
+  if (closeBtn) {
+    closeBtn.closest(".results-body").hidden = true;
     return;
   }
   const printBtn = e.target.closest(".print-results-btn");
