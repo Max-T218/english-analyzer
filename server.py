@@ -3262,7 +3262,8 @@ def call_gemini_reword(passage, variation, api_key, model, vocab=None):
         "generationConfig": {
             # 지문 하나만 다시 쓰는 짧은 작업이라 온도를 낮게 잡아 사실 왜곡을 줄인다
             "temperature": 0.3,
-            "maxOutputTokens": 8192,
+            # 생각도 이 한도에서 빠진다 — 요약 이미지가 4096에서 잘린 것과 같은 까닭(2026-10-13)
+            "maxOutputTokens": 32768,
             "responseMimeType": "application/json",
             "responseSchema": REWORD_SCHEMA,
         },
@@ -3479,7 +3480,8 @@ def call_gemini_ocr(file, api_key, model, partial=False):
             # 부른다(실제로 기출 지문에서 발생). 읽을 대상이 사진에 있어 모델이 추측할
             # 여지가 크지 않으므로, 살짝 올려도 정확도 손해는 거의 없다.
             "temperature": 0.15,
-            "maxOutputTokens": 16384,
+            # 생각도 이 한도에서 빠진다 — 요약 이미지가 4096에서 잘린 것과 같은 까닭(2026-10-13)
+            "maxOutputTokens": 32768,
             "responseMimeType": "application/json",
             "responseSchema": OCR_SCHEMA,
         },
@@ -3659,7 +3661,8 @@ def call_gemini_vocab_ocr(file, api_key, model):
         ]}],
         "generationConfig": {
             "temperature": 0.1,
-            "maxOutputTokens": 16384,
+            # 생각도 이 한도에서 빠진다 — 요약 이미지가 4096에서 잘린 것과 같은 까닭(2026-10-13)
+            "maxOutputTokens": 32768,
             "responseMimeType": "application/json",
             "responseSchema": VOCAB_ITEMS_SCHEMA,
         },
@@ -3690,7 +3693,8 @@ def call_gemini_vocab_pdf(text, api_key, model):
         "contents": [{"role": "user", "parts": [{"text": text}]}],
         "generationConfig": {
             "temperature": 0.1,
-            "maxOutputTokens": 16384,
+            # 생각도 이 한도에서 빠진다 — 요약 이미지가 4096에서 잘린 것과 같은 까닭(2026-10-13)
+            "maxOutputTokens": 32768,
             "responseMimeType": "application/json",
             "responseSchema": VOCAB_ITEMS_SCHEMA,
         },
@@ -4822,7 +4826,8 @@ def call_gemini_pdf_split(pages, api_key, model):
             # 경계 찾기는 판단이 아니라 확인에 가깝다 — 낮은 온도가 맞다.
             # 본문을 뱉지 않으므로 여기서는 온도를 올려 재현 차단을 피할 이유가 없다.
             "temperature": 0.0,
-            "maxOutputTokens": 8192,
+            # 생각도 이 한도에서 빠진다 — 요약 이미지가 4096에서 잘린 것과 같은 까닭(2026-10-13)
+            "maxOutputTokens": 32768,
             "responseMimeType": "application/json",
             "responseSchema": PDF_SPLIT_SCHEMA,
         },
@@ -4954,7 +4959,8 @@ def call_gemini_exam_trend(data, api_key, model):
         "contents": [{"role": "user", "parts": [{"text": text}]}],
         "generationConfig": {
             "temperature": 0.4,
-            "maxOutputTokens": 8192,
+            # 생각도 이 한도에서 빠진다 — 요약 이미지가 4096에서 잘린 것과 같은 까닭(2026-10-13)
+            "maxOutputTokens": 32768,
             "responseMimeType": "application/json",
             "responseSchema": EXAM_TREND_SCHEMA,
         },
