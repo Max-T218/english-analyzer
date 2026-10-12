@@ -329,11 +329,16 @@ async function postJson(url, payload, fallbackMsg) {
     data = JSON.parse(text);
   } catch {}
   if (!data) {
+    // 502·504(Render 앞단)·524(Cloudflare)는 우리 서버가 아니라 중간 프록시가 오래
+    // 기다리다 끊은 것이다 — 서버는 그 뒤에도 계속 만들고 있다(postGenerate 참고).
+    const cut = res.status === 502 || res.status === 504 || res.status === 524;
     const hint = /^\s*</.test(text)
-      ? res.status === 502 || res.status === 504
-        ? "서버 응답이 너무 오래 걸려 중간에서 끊겼습니다. 지문을 짧게 나눠 다시 시도해 보세요."
+      ? cut
+        ? "서버 응답이 너무 오래 걸려 중간에서 끊겼습니다. 잠시 뒤 다시 시도해 보세요."
         : "서버가 JSON 대신 HTML을 반환했습니다."
       : text.slice(0, 120).trim() || "응답이 비어 있습니다.";
+    // status를 일부러 안 붙인다 — postGenerate가 '서버가 답하지 않은 것'으로 보고
+    // 같은 요청번호로 다시 묻게 하기 위해서다.
     throw new Error(`서버 오류 (HTTP ${res.status}) — ${hint}`);
   }
   if (!res.ok) {
@@ -364,6 +369,11 @@ async function postJson(url, payload, fallbackMsg) {
    — 즉 값이 또 나간다. status가 붙어 있으면 '서버가 답을 했다'는 뜻이라 그것으로
    가른다(status 없는 것 = 연결이 끊겼거나 중간 프록시가 가로챈 것). */
 const GEN_RETRY = 2;   // 처음 한 번 + 끊겼을 때 두 번까지
+/* 다시 물었는데 첫 요청이 아직 만드는 중이면 서버가 최대 60초 기다렸다가 409
+   'in_progress'로 답한다(server.py의 _INFLIGHT). 프록시가 100초에서 화면 연결만 끊고
+   서버는 계속 만들고 있는 경우다 — 이때 새로 만들면 값이 두 번 나가므로, 같은 번호로
+   몇 번 더 물어 그 결과를 받아 온다. 한 번에 60초꼴이라 6번이면 6분까지 기다린다. */
+const GEN_WAIT_MAX = 6;
 
 function newReqId() {
   return "r" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
@@ -371,10 +381,17 @@ function newReqId() {
 
 async function postGenerate(url, payload, fallbackMsg, onRetry) {
   const reqId = newReqId();
+  let waits = 0;
   for (let attempt = 0; ; attempt++) {
     try {
       return await postJson(url, Object.assign({}, payload, { reqId }), fallbackMsg);
     } catch (err) {
+      if (err.code === "in_progress" && waits < GEN_WAIT_MAX) {
+        waits++;
+        attempt--;   // 끊김 횟수(GEN_RETRY)로 세지 않는다
+        await new Promise((r) => setTimeout(r, 2000));
+        continue;
+      }
       if (err.status || attempt >= GEN_RETRY) throw err;
       if (onRetry) onRetry(attempt + 1);
       await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));

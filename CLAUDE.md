@@ -173,7 +173,8 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 | Firestore 연결 | `_load_firestore` |
 | 회원가입·인증코드·비밀번호 | `start_signup`, `complete_signup`, `login_with_password`, `_hash_password` |
 | 가입 동의(약관·개인정보·만14세) | `TERMS_VERSION`, `_consent_record`(화면을 거치지 않는 요청도 여기서 막는다), `upsert_user`(구글은 **계정을 새로 만들 때만** 동의를 따진다 — 로그인 창의 구글 버튼으로도 새 계정이 만들어지므로 화면이 아니라 서버에서 막아야 빠짐없다). 화면은 `public/app.js`의 `AGREE_BOXES`/`syncAgree`/`resetAgree` |
-| Gemini 호출 공통(재시도·시간 예산) | `RETRY_MIN_WAIT`, `MAX_RETRY_TOTAL`, `_over_budget`, `RefineTrace`, `_parse_retry_delay` |
+| Gemini 호출 공통(재시도·시간 예산) | `RETRY_MIN_WAIT`, `MAX_RETRY_TOTAL`, `_over_budget`, `RefineTrace`, `_parse_retry_delay`. 보정 예산 `REFINE_BUDGET`은 Render(`RENDER` 환경변수)에서 기본 55초, 로컬은 무제한 — 프록시가 약 100초에서 화면 연결을 끊기 때문(2026-10-13) |
+| 끊긴 요청 다시 받기(값 두 번 안 내기) | `_hold_get`/`_hold_put`(다 만든 결과를 요청번호로 10분 보관), `_inflight_claim`/`_inflight_release`(**만드는 중**인 요청번호 — 같은 번호가 다시 오면 새로 만들지 않고 최대 `INFLIGHT_WAIT_SECONDS` 기다렸다가 결과를 주고, 그래도 안 끝났으면 409 `in_progress`). 화면은 `public/app.js`의 `postGenerate`(`GEN_WAIT_MAX`) |
 | 원가 실측(Render 로그) | `_log_usage`(`[usage] <기능이름> <모델> 입력 N(캐시 N) · 출력 N · 생각 N`). 기능 이름표는 2026-09-27에 넣었다 — 이전에는 모델 이름만 찍혀 어느 기능 호출인지 로그만으로 못 갈랐다. `_gemini_json`을 부르는 자리마다 `label="quiz"`처럼 넘긴다. 새 `call_gemini_*`를 추가하면 이 label도 함께 붙일 것 |
 | Vertex AI로 부르는 길(청구처만 다르다) | `GEMINI_VIA_VERTEX`(기본 꺼짐), `_vertex_credentials`(Firestore와 같은 서비스 계정), `_vertex_try`(실패하면 None → `_gemini_call_with_retry`의 `_post`가 AI Studio로 다시 보낸다. 권한·한도 오류면 잠시 Vertex를 건너뛴다). 그림은 Interactions API가 Vertex에 없어 `call_gemini_infographic`이 `vertex_data`로 `:generateContent` 모양을 따로 넘긴다. **구글 클라우드 무료 체험 크레딧이 AI Studio 요금에는 안 쓰여서 만든 길이다**(2026-11-02 만료) |
 | 기능별 프롬프트·스키마·호출 | `*_SCHEMA` / `*_SYSTEM_PROMPT` / `call_gemini_*` 3종 세트 — quiz, reword, ocr, workbook, vocab(`VOCAB_ITEMS_SCHEMA` 하나를 `call_gemini_vocab_ocr`/`call_gemini_vocab_pdf` 둘이 같이 씁니다). 지문 분석만 이름에 접두어가 없어 `GEMINI_SCHEMA` / `SYSTEM_PROMPT`입니다 |

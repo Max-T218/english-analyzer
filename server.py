@@ -761,6 +761,46 @@ def _hold_put(user_id, path, req_id, result):
             bin_.pop(min(bin_, key=lambda k: bin_[k]["at"]), None)
 
 
+# === 아직 만드는 중인 요청 =================================================
+# 위 그릇은 '다 만든 것'만 담는다. 그런데 배포 프록시는 약 100초에서 화면 쪽 연결을
+# 끊고, 서버는 그 뒤에도 계속 만들어 끝내면 값을 받는다(2026-10-13 로그 — 133초 걸린
+# 분석이 서버엔 200으로 남았다). 화면이 끊기자마자 같은 요청번호로 다시 물으면 그때는
+# 아직 그릇이 비어 있어 처음부터 또 만들게 된다 — 값이 두 번 나간다.
+# 그래서 만드는 중인 요청번호를 적어 두고, 같은 번호가 다시 오면 새로 만들지 않고
+# 첫 요청이 끝나기를 기다렸다가 그 결과를 돌려준다.
+_INFLIGHT = {}
+# 다시 물은 요청이 첫 요청을 기다리는 시간(초). 이 요청도 같은 프록시를 지나므로
+# 100초보다 넉넉히 짧아야 한다. 그때까지도 안 끝났으면 '아직 만드는 중'이라고만
+# 답하고, 화면이 조금 뒤 다시 묻는다.
+INFLIGHT_WAIT_SECONDS = 60
+
+
+def _inflight_claim(user_id, path, req_id):
+    """이 요청번호로 만들기 시작한다고 적는다. (내 열쇠, None) 또는 (None, 남의 Event).
+
+    이미 같은 번호가 돌고 있으면 그 Event를 돌려준다 — 호출한 쪽이 그것을 기다린다.
+    요청번호가 없거나 이상하면 둘 다 None(예전처럼 그냥 만든다)."""
+    key = _hold_key(user_id, path, req_id)
+    if not key:
+        return None, None
+    with _HOLD_LOCK:
+        ev = _INFLIGHT.get(key)
+        if ev is not None:
+            return None, ev
+        _INFLIGHT[key] = threading.Event()
+        return key, None
+
+
+def _inflight_release(key):
+    """만들기가 끝났다(성공이든 실패든). 기다리던 요청을 깨운다."""
+    if not key:
+        return
+    with _HOLD_LOCK:
+        ev = _INFLIGHT.pop(key, None)
+    if ev is not None:
+        ev.set()
+
+
 GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000"
 
 GEMINI_URL = (
@@ -962,9 +1002,14 @@ MAX_RETRY_TOTAL = _env("MAX_RETRY_TOTAL", 150.0, float)
                          # (호출 1건마다 따로 적용된다)
 GEMINI_TIMEOUT = _env("GEMINI_TIMEOUT", 300.0, float)
                          # Gemini 호출 1회의 소켓 타임아웃(초)
-REFINE_BUDGET = _env("REFINE_BUDGET", 86400.0, float)
+REFINE_BUDGET = _env("REFINE_BUDGET", 55.0 if os.environ.get("RENDER") else 86400.0, float)
                          # 이 시간(초)을 이미 쓴 뒤에는 보정 재요청을 시작하지 않는다
-                         # (기본값은 사실상 무제한 = 검사를 끝까지 다 돌린다)
+                         # (로컬 기본값은 사실상 무제한 = 검사를 끝까지 다 돌린다)
+                         # Render(환경변수 RENDER가 저절로 붙는다)에서는 55초다 — 대시보드에
+                         # 값을 안 넣어 무제한으로 돌다가, 보정을 네 번 하느라 133초 걸린 분석이
+                         # 프록시에 끊겼다(2026-10-13). 보정 한 번이 15~35초라 55초에 마지막
+                         # 보정을 시작해도 100초 안에 끝난다. 덜 고친 흠은 남을 수 있어도
+                         # 통째로 못 받는 것보다 낫다.
 
 # 429(할당량) 빠른 실패 기준.
 # 분당 한도라면 구글이 응답에 짧은 retryDelay를 실어 보내므로 그만큼만 기다렸다
@@ -13176,6 +13221,7 @@ class Handler(BaseHTTPRequestHandler):
         """예상 못 한 예외가 나도 연결을 끊지 않고 JSON 오류로 답한다.
         여기서 터지면 화면은 'JSON 대신 HTML' 같은 엉뚱한 메시지밖에 볼 수 없어
         원인을 찾기가 매우 어렵다(실제로 그런 사고가 있었다)."""
+        self._inflight_key = None
         try:
             self._handle_post()
         except Exception as e:
@@ -13184,6 +13230,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"서버 내부 오류입니다: {e}"}, 500)
             except Exception:
                 pass
+        finally:
+            # 성공이면 _charge_and_send가 이미 결과를 그릇에 담은 뒤다 — 그다음에 깨워야
+            # 기다리던 요청이 그릇에서 결과를 찾는다.
+            _inflight_release(self._inflight_key)
+            self._inflight_key = None
     def _handle_post(self):
         # keep-alive 연결에서는 같은 핸들러 인스턴스(=같은 스레드)가 요청을 여러 번
         # 처리할 수 있다 — 지난 요청의 흔적이 이번 요청으로 새어 들어오지 않도록
@@ -13294,7 +13345,22 @@ class Handler(BaseHTTPRequestHandler):
             # 잔액 확인보다 앞에 두는 것이 중요하다 — 이미 값을 낸 결과를 받아 가는
             # 길이라, 그 차감으로 잔액이 바닥났다고 해서 막히면 안 된다.
             if path in GENERATE_PATHS:
-                held = _hold_get(user_id, path, req.get("reqId"))
+                rid = req.get("reqId")
+                held = _hold_get(user_id, path, rid)
+                if held is None:
+                    # 같은 번호가 아직 만들어지는 중이면(프록시가 화면 연결만 끊은 경우)
+                    # 새로 만들지 않고 그것이 끝나기를 기다린다 — _INFLIGHT 주석 참고.
+                    mine, running = _inflight_claim(user_id, path, rid)
+                    if running is not None:
+                        if not running.wait(INFLIGHT_WAIT_SECONDS):
+                            self._send_json({"error": "아직 만드는 중입니다. 잠시 뒤 다시 확인합니다.",
+                                             "code": "in_progress"}, 409)
+                            return
+                        held = _hold_get(user_id, path, rid)
+                        if held is None:
+                            # 첫 요청이 실패로 끝났다 — 값이 안 나갔으니 이번에 새로 만든다
+                            mine, _ = _inflight_claim(user_id, path, rid)
+                    self._inflight_key = mine
                 if held is not None:
                     self._send_json(dict(held, reused=True))
                     return
