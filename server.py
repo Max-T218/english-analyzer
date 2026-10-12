@@ -9133,7 +9133,7 @@ def delete_user_account(user_id, by_admin=False):
     email = (snap.to_dict() or {}).get("email") if snap.exists else None
     for item in DB.collection("saved_items").where("user_id", "==", user_id).stream():
         item.reference.delete()
-    for img in DB.collection(SAVED_IMAGES).where("user_id", "==", user_id).stream():
+    for img in DB.collection(SAVED_IMAGES).where("user_id", "==", user_id).select(["key"]).stream():
         img.reference.delete()
     # 이용 내역도 함께 지운다 — 탈퇴하면 다 사라진다고 안내하고 있고,
     # 계정이 없어진 뒤에도 남아 있을 이유가 없다.
@@ -11040,8 +11040,11 @@ def save_item_image(item_id, user_id, key, mime, b64):
     if not _owned_item(item_id, user_id):
         return "저장 항목을 찾을 수 없습니다."
     ref = DB.collection(SAVED_IMAGES).document(f"{item_id}__{key}")
-    if not ref.get().exists:
-        have = sum(1 for _ in DB.collection(SAVED_IMAGES).where("item_id", "==", item_id).stream())
+    # 있는지·몇 장인지만 본다 — 그림 문서는 한 장이 700KB 남짓이라 통째로 읽으면
+    # 장수가 늘수록 저장이 눈에 띄게 느려졌다(셋째 장을 올릴 때 앞의 두 장을 다시 받았다)
+    if not ref.get(field_paths=["key"]).exists:
+        have = sum(1 for _ in DB.collection(SAVED_IMAGES).where("item_id", "==", item_id)
+                   .select(["key"]).stream())
         if have >= SAVED_IMAGES_PER_ITEM:
             return "한 저장본에 담을 수 있는 그림 수를 넘었습니다."
     ref.set({"user_id": user_id, "item_id": item_id, "key": key, "mime": mime,
@@ -11064,7 +11067,7 @@ def get_item_image(item_id, user_id, key):
 
 def prune_item_images(item_id, keep_keys):
     """저장본의 그림 목록에 없는 그림 문서를 지운다(그림이 줄었거나 저장본을 덮어썼을 때)."""
-    for doc in DB.collection(SAVED_IMAGES).where("item_id", "==", item_id).stream():
+    for doc in DB.collection(SAVED_IMAGES).where("item_id", "==", item_id).select(["key"]).stream():
         if doc.to_dict().get("key") not in keep_keys:
             doc.reference.delete()
 

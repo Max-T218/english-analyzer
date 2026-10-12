@@ -78,12 +78,18 @@ function closePrintGuide() {
   printGuideEl.hidden = true;
   printGuideRun = null;
 }
-/* 지금 인쇄할 화면에 요약 이미지가 붙어 있는가.
-   그림은 저장하지 않으면 사라진다(저장하면 saved_images에 한 장씩 따로 담긴다 —
-   저장본 문서 하나는 1MiB 한도라 그림을 같이 넣지 못한다). 다시 만들면 요금이 또
-   나가므로 경고를 띄운다. */
+/* 지금 화면에 요약 이미지가 붙어 있는가(저장 창의 '그림도 함께 저장' 안내용). */
 function docHasInfographic() {
   return !!document.querySelector("#result [data-infographic]");
+}
+/* 아직 사이트에 저장되지 않은 요약 이미지가 있는가 — 인쇄 안내의 경고용.
+   그림은 저장하지 않으면 사라지고 다시 만들면 요금이 또 나가므로 경고하지만,
+   이미 저장했거나 저장본에서 불러온 그림이면 '저장하라'는 말이 틀린 말이 된다. */
+function docHasUnsavedInfographic() {
+  const cur = LOADED_SAVED.analyze;
+  return [...document.querySelectorAll("#result img.infographic")].some(
+    (img) => !(cur && infoSavedSrc.get(cur.id + "|" + infoKeyOf(img)) === img.src)
+  );
 }
 /* titleOpt를 주면 시험지명 입력칸이 함께 뜬다 — {get, set}.
    이 칸이 있을 때는 '다시 보지 않기'를 켜 두었어도 창을 건너뛰지 않는다.
@@ -91,7 +97,7 @@ function docHasInfographic() {
    것과 같기 때문이다. */
 let printGuideTitleOpt = null;
 function showPrintGuide(run, titleOpt) {
-  const warn = docHasInfographic();
+  const warn = docHasUnsavedInfographic();
   const warnEl = $("printGuideWarn");
   if (warnEl) warnEl.hidden = !warn;
   printGuideTitleOpt = titleOpt || null;
@@ -3783,25 +3789,49 @@ function blobToBase64(blob) {
   });
 }
 
-// 저장본이 만들어진 뒤 그림을 한 장씩 올린다. 실패한 장수만 알려 주려고 오류는 모아서 던진다.
-async function uploadInfographics(itemId, metas) {
+/* 이미 서버에 올라가 있는 그림 — "저장본id|key" → 그 그림의 blob URL.
+   그림을 새로 만들면 URL이 바뀌므로, 같으면 서버에 있는 것과 같은 그림이다.
+   덮어쓰기 저장 때 안 바뀐 그림은 다시 올리지 않는다(한 장이 700KB 남짓이라
+   몇 장만 되어도 저장이 한참 걸렸다). */
+const infoSavedSrc = new Map();
+function infoKeyOf(img) {
+  const sec = img.closest(".passage-block[data-entry]");
+  const fig = img.closest(".info-shot[data-lang]");
+  return sec && fig ? `${sec.dataset.entry}_${fig.dataset.lang}` : "";
+}
+
+// 저장본이 만들어진 뒤 그림을 올린다 — 서로 기다릴 까닭이 없어 한꺼번에 보낸다.
+// 실패한 장수만 알려 주려고 오류는 모아서 던진다.
+async function uploadInfographics(itemId, metas, onProgress) {
+  const todo = metas.filter((m) => {
+    const img = resultEl.querySelector(
+      `.passage-block[data-entry="${m.entry}"] .info-shot[data-lang="${m.lang}"] img.infographic`
+    );
+    return !(img && infoSavedSrc.get(itemId + "|" + m.key) === img.src);
+  });
   let failed = 0;
-  for (const m of metas) {
+  let done = 0;
+  if (onProgress && todo.length) onProgress(0, todo.length);
+  await Promise.all(todo.map(async (m) => {
     const img = resultEl.querySelector(
       `.passage-block[data-entry="${m.entry}"] .info-shot[data-lang="${m.lang}"] img.infographic`
     );
     try {
       if (!img) throw new Error("그림을 찾지 못했습니다.");
-      const blob = await fetch(img.src).then((r) => r.blob());
+      const src = img.src;
+      const blob = await fetch(src).then((r) => r.blob());
       await postJson(
         "/api/saved-image",
         { id: itemId, key: m.key, mime: blob.type || "image/jpeg", image: await blobToBase64(blob) },
         "그림 저장에 실패했습니다."
       );
+      infoSavedSrc.set(itemId + "|" + m.key, src);
     } catch (_e) {
       failed++;
     }
-  }
+    done++;
+    if (onProgress) onProgress(done, todo.length);
+  }));
   if (failed) {
     throw new Error(`글은 저장됐지만 요약 이미지 ${failed}장은 저장하지 못했습니다. 다시 저장해 보세요.`);
   }
@@ -3820,7 +3850,10 @@ async function loadInfographics(itemId, payload) {
       if (d && d.image && resultEl.querySelector(`.passage-block[data-entry="${m.entry}"]`)) {
         const src = b64ToBlobUrl(d.image, d.mime || "image/jpeg");
         const names = metas.filter((x) => x.entry === m.entry).length > 1;
-        if (addInfographic(m.entry, src, names ? IMG_LANG_NAME[m.lang] || "" : "", m.lang)) added++;
+        if (addInfographic(m.entry, src, names ? IMG_LANG_NAME[m.lang] || "" : "", m.lang)) {
+          added++;
+          infoSavedSrc.set(itemId + "|" + m.key, src);  // 서버에 있는 그대로다 — 다시 올릴 필요 없다
+        }
       }
     } catch (_e) { /* 이 그림만 건너뛴다 */ }
   }
@@ -3840,7 +3873,7 @@ TAB_SAVE.analyze = {
     pageBreaks: collectPageBreaks(),
     images: collectInfographicMeta(),
   }),
-  afterSave: (itemId, payload) => uploadInfographics(itemId, payload.images || []),
+  afterSave: (itemId, payload, onProgress) => uploadInfographics(itemId, payload.images || [], onProgress),
   afterLoad: (itemId, payload) => loadInfographics(itemId, payload),
   applyPayload: (payload) => {
     passageMgr.setJobs(payload.passages || []);
@@ -8785,6 +8818,9 @@ async function doSaveDialog(overwriteId) {
   saveDialogErrorEl.textContent = "";
   saveDialogConfirmBtn.disabled = true;
   saveDialogOverwriteBtn.disabled = true;
+  // 그림을 올리는 동안 누른 단추에 몇 장째인지 보여 준다 — 안 보이면 멈춘 줄 안다
+  const busyBtn = overwriteId ? saveDialogOverwriteBtn : saveDialogConfirmBtn;
+  const busyLabel = busyBtn.textContent;
   try {
     const payload = TAB_SAVE[tab].getPayload();
     // 표지 제목도 함께 담는다 — 안 담으면 불러왔을 때 앞 자료의 제목이 그대로 남는다
@@ -8797,11 +8833,16 @@ async function doSaveDialog(overwriteId) {
     // 새로 저장했으면 이제부터 그 자료를 고치는 중이다 — 다음 저장에서 덮어쓸 수 있게 기억한다
     if (res && res.id) LOADED_SAVED[tab] = { id: res.id, title };
     // 탭에 딸린 파일(요약 이미지)이 있으면 저장본이 만들어진 뒤 올린다
-    if (res && res.id && TAB_SAVE[tab].afterSave) await TAB_SAVE[tab].afterSave(res.id, payload);
+    if (res && res.id && TAB_SAVE[tab].afterSave) {
+      await TAB_SAVE[tab].afterSave(res.id, payload, (done, total) => {
+        busyBtn.textContent = `요약 이미지 저장 중… ${done}/${total}`;
+      });
+    }
     closeSaveDialog();
   } catch (err) {
     saveDialogErrorEl.textContent = err.message || "저장에 실패했습니다.";
   } finally {
+    busyBtn.textContent = busyLabel;
     saveDialogConfirmBtn.disabled = false;
     saveDialogOverwriteBtn.disabled = false;
   }
