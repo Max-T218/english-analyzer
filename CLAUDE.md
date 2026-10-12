@@ -83,31 +83,45 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 개인정보일 수 있어, 로컬에서 이 기능을 테스트할 때도 실제 이름을 넣지 말고
 "테스트"처럼 알아볼 수 없는 값을 쓰세요.
 
-**학생 로그인에 반 코드가 없습니다 — 이름 하나만 입력하면 로그인됩니다**
-(`login_student`). 학생 등록이 어차피 반 하나에 묶여 있으니 로그인에서 코드를
-또 묻는 게 군더더기라고 판단해 뺐다. 그 대가로 **로그인에 비밀값이 전혀 없다** —
-이름을 아는 사람이면(급우든 남이든) 누구나 그 학생으로 로그인할 수 있다. 이전
-버전(코드+이름)에 있던 "코드를 모르면 이름을 알아도 못 들어간다"는 방어선이
-사라졌다는 뜻이다. `class_codes`/반 코드를 만드는 코드는 서버에 그대로 있지만
-(`create_class`/`regenerate_class_code`), **교사 화면에서는 뺐다** — 로그인에 쓰이지
-않는 코드를 "이 코드를 넣고 로그인합니다"라고 안내하고 있어서, 선생님이 학생에게
-쓸모없는 코드를 알려 주게 됐기 때문이다. 코드 로그인을 되살리기로 하면 서버는
-그대로 두고 화면만 다시 붙이면 된다.
-
-동명이인이면 이름만으로 누구인지 가릴 수 없어 사고(엉뚱한 사람으로 로그인,
-시험 결과 뒤섞임)로 이어지므로 **두 군데서 막는다**: `create_student`가 등록
-시점에 `students` 컬렉션 전체(반·선생님 안 가림)에서 같은 이름이 있으면 등록
-자체를 거부하고, `login_student`도 혹시 남아 있는 기존 동명이인 데이터에 대비해
-로그인 시점에 한 번 더 거부한다. 즉 이름은 반 하나가 아니라 **앱 전체에서
-유일해야** 한다 — 흔한 이름일수록 다른 선생님 반과 충돌해 등록이 막힐 수 있다.
-비밀번호처럼 해시할 게 없으므로(이름 자체가 조회 키), 무차별 대입은 IP별
-실패 횟수 제한(`_student_login_blocked`)으로만 막습니다.
+**학생 로그인은 선생님이 정해 준 아이디 + 비밀번호입니다**(2026-10-12 — 이전엔 이름만
+입력하면 로그인돼 비밀값이 없었다). 선생님이 등록할 때 이름·아이디·비밀번호를 직접
+정하고(`create_student`), 이후 `update_student`(`/api/students/update`)로 셋 모두
+고칠 수 있다 — 비밀번호를 잊은 학생은 선생님이 새로 정해 주는 것이 '초기화'다.
+학생도 직접 바꿀 수 있고(`change_student_password`, `/api/student/password`) 그러면
+`pw_set_by`가 `student`가 되어 선생님도 모르는 비밀번호가 된다. 비밀번호는 `_hash_password`
+해시로만 저장해 **선생님도 현재 값을 볼 수 없다**(등록 때 따로 적어 두라고 화면이 안내한다).
+아이디는 **앱 전체에서 유일**하다 — `student_login_ids` 컬렉션(문서 ID = 아이디)에
+`create()`로 선점해 동시 요청에도 한쪽만 통과한다(`_claim_login_id`/`_release_login_id`).
+형식은 영문 소문자·숫자·`.`·`_`·`-` 3~20자, 비밀번호는 4~64자이고 **영문 대소문자를 구분하지 않는다**(`_pw_key` — 해시 전·대조 전에 소문자로 바꾼다). 등록 화면에는 비밀번호 칸이 없고 **항상 `STUDENT_PW_DEFAULT`(`1234`)로 등록된다**(서버는 `password`가 비면 기본값을 쓰고, 보내면 그 값을 쓴다). 학생이 한 번도 직접 바꾸지 않았으면(`pw_set_by != student`) 로그인 응답의 `pwChanged`가 false라 화면이 비밀번호 변경 안내창을 띄운다. **이름은 이제 화면에
+보이는 용도일 뿐이라 겹쳐도 된다**(동명이인 허용). 아이디나 비밀번호가 바뀌면 그 학생의
+기존 세션(`student_sessions`)을 지워 로그인을 끊는다. 무차별 대입 방지는 아이디별
+5회/5분 + IP별 40회/5분을 함께 건다(`_student_login_blocked` — 한 교실이 같은 IP로
+보이므로 IP만 보면 반 전체가 잠긴다). 아이디/비밀번호 어느 쪽이 틀렸는지는 일부러
+같은 문구로 답한다. 반 이름 변경(`rename_class`)·삭제(`delete_class` — 딸린 학생·시험·답안·반 코드를 함께 지운다)와 학생의 반 이동(`update_student`의 `class_id` — 옮겨 갈 반이 내 반인지 확인, 이전 반에서 낸 시험의 답안은 그 시험에 남는다)이 있다. `class_codes`/반 코드를 만드는 코드는 서버에 남아 있지만
+(`create_class`/`regenerate_class_code`) 로그인에 쓰이지 않아 **교사 화면에서는 뺐다.**
+**배포 후 옛 학생(이름만 있고 `login_id` 없는 문서)은 로그인할 수 없다** — 기존 기록은
+지우기로 했다(2026-10-12).
 
 단어시험은 **반 전체**에 낼 수도, **학생 한 명**에게만 낼 수도 있습니다
 (`create_test_assignment`의 `student_id` — 없으면 반 전체, 있으면 그 학생만).
 `list_tests_for_student`·`get_test_detail_for_student`·`grade_and_submit_attempt`는
 전부 `_assignment_targets_student`로 이 배정 대상을 확인합니다 — 반이 같아도
 다른 학생 한 명에게만 낸 시험은 안 보입니다.
+
+**성적표**(2026-10-12): 채점할 때(`grade_and_submit_attempt`) 문제마다 번호·문제·내 답·정답·맞음을
+`test_attempts` 문서의 `details`에 함께 저장한다(이 값이 없는 옛 답안은 `hasDetails:false`로 표시).
+그걸로 ① 학생 결과 화면의 '틀린 단어'(`wrongItems`, `get_result_for_student` —
+`/api/student/tests/result`) ② 시험별 성적표(`list_attempts_for_assignment` — 대상 학생을 모두
+싣고 안 낸 학생은 '미제출', 삭제된 학생의 답안은 `removed`로 남는다) ③ 학생별 성적표
+(`get_student_report` — `/api/students/report`, 시험별 결과 + 모든 시험을 합친 '자주 틀린 단어')를
+만든다. 학생 표의 '최근 성적'은 `list_students`가 `_class_tests_and_attempts`로 반의 시험·답안을
+한 번에 읽어 계산한다(시험 수만큼 쿼리). 학생별 성적표는 **월간**이 기본이다 — 화면의 월 선택(`<input type=month>`)이 그 달의 시작·끝을 한국 시간
+기준 ISO 시각으로 바꿔 `start`/`end`로 보내고(`reportPeriod`), 서버(`get_student_report`)는 그 기간에
+제출한 회차만 센다(시간대는 서버가 추측하지 않는다). 기간 안에 만들어졌는데 안 본 시험은 '미응시'로 싣는다.
+화면은 시험별 막대그래프(`reportChartSvg` — 막대=기간 내 최고 점수, 빨간 선=합격선, 검은 눈금=첫 시도)와
+코멘트 초안(`buildReportComment` — 평균·추이·만점·재시험·미통과·미응시·자주 틀린 단어를 규칙으로 이어 쓴
+것, **AI를 안 불러 요금이 없다**)을 기본으로 채워 두고, 성적표의 **[✨ AI로 코멘트 쓰기]**는 `/api/studentcomment`(`call_gemini_student_comment`, Flash 고정, `PRICE_STUDENT_COMMENT_KRW` 기본 50P, `_classroom_approved` 확인)로 더 자연스러운 글을 쓴다. **학생 이름은 AI에 보내지 않는다**(미성년자 개인정보) — 프롬프트가 이름 자리를 `{학생}`으로 쓰게 하고 화면이 이름으로 바꿔 넣는다. 서버 가격은 `/api/pricing`의 `studentComment`로 내려가 버튼 옆에 표시된다. 코멘트는 코멘트는 선생님이 고친 뒤 인쇄할 수 있다. 인쇄는 `openPrintWindow`(새 창)이고, **디자인은 시험지 분석 리포트(`trend.js`)와 같은 틀을 빌려 쓴다** — `TREND_CSS`(표지 머리 `.rp-head`·숫자 카드 `.trend-tile`·번호 소제목 `h4.sec`)와 학원 마크·워터마크 설정(`trendBrand`/`trendBrandPrintCss`/`trendBrandPrintBody`)을 그대로 쓰고, 성적표에만 필요한 CSS는 `app.js`의 `REPORT_CSS`에 더했다. 월간·시험별 두 성적표가 `reportHeadHtml`/`reportTilesHtml`/`statusTagHtml`을 같이 쓴다. **분석 리포트 CSS를 고치면 성적표도 함께 바뀐다**(`trend.js`가 `app.js`보다 나중에 로드되지만 호출은 클릭 때라 문제없다). 화면은 `public/app.js`의
+`renderTestResults`/`renderStudentReport`/`studentLastScoreHtml`.
 
 **재시험**: `create_test_assignment`의 `max_wrong`(없으면 1회로 끝, 있으면 "이
 개수 이하로 틀려야 합격")을 기준으로 `_attempt_progress`가 합격 여부·합격 회차·
@@ -133,7 +147,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 | 휴면계정(1년 미접속 → 전환, 30일 전 메일 통지) | `DORMANT_AFTER_DAYS`/`DORMANT_NOTICE_DAYS`, `_touch_login`(create_session 한 곳에서 last_login을 적고, 휴면이면 즉시 깨운다), `_touch_active`(세션이 30일 가므로 로그인 때만 적으면 매일 쓰는 회원도 last_login이 멈춰 휴면 판정이 틀어진다 — `_session_user`가 하루 한 번 `_touch_login`을 불러 접속일을 갱신한다), `sweep_dormant_accounts`(cron이 없어 `_account_payload`에서 하루 한 번 훑는다 — `_sweep_due`가 간격을 막는다), `_send_dormant_notice`(**통지에 실패하면 전환하지 않는다** — 30일 전 통지는 전환의 전제 조건이다). 잔액은 건드리지 않는다 |
 | 결제(포트원) — 결제창 열기 전 요청 생성 → 결제 후 서버가 직접 확인하고서만 충전 | `PORTONE_STORE_ID`/`PORTONE_CHANNEL_KEY_CARD`/`PORTONE_API_SECRET`, `create_payment_intent`, `confirm_payment_intent`(`payment_intents` 컬렉션, 브라우저가 보고하는 성공 여부를 그대로 믿지 않는다). **포트원 V2 응답의 필드 이름을 손볼 때는 스키마를 먼저 확인하세요** — `channel`을 `selectedChannel`로, 통화를 `amount` 안으로 잘못 읽어 실결제가 돈만 빠져나가고 충전이 안 되던 사고가 있었습니다 |
 | 결제 취소 → 포인트 자동 회수(웹훅) | `PORTONE_WEBHOOK_SECRET`, `_verify_portone_webhook`(Standard Webhooks 규격 — 서명 대상은 `{id}.{시각}.{본문}`이라 **받은 그대로의 바이트**가 필요하다. 그래서 라우팅이 `_handle_post` 앞쪽, `raw`가 살아 있는 자리에 있다), `apply_payment_cancellation`(알림 금액을 믿지 않고 포트원에 다시 물어본다. 이미 쓴 포인트는 빼지 않고 남은 유상분에서만 회수하며, 누적 취소액 기준이라 같은 알림이 두 번 와도 한 번만 반영된다). 실패하면 일부러 200이 아닌 응답을 보내 포트원이 재전송하게 한다 |
-| 반 · 학생 · 단어시험(AI 안 씀) | `_classroom_approved`/`set_classroom_approved`(관리자 승인 게이트), `create_class`/`regenerate_class_code`(반 하나당 코드 하나, `classes`/`class_codes` 컬렉션)/`create_student`/`delete_student`(`students` 컬렉션, 개별 코드 없음. `create_student`가 이름을 앱 전체에서 유일하도록 등록 시점에 동명이인을 거부한다), `login_student`(이름만 받아 로그인 — 반 코드 없음, `students` 전체를 이름으로 검색)/`create_student_session`/`_student_session_user`(학생 세션, `admin_sessions`와 같은 모양), `create_test_assignment`(`student_id`를 주면 그 학생 한 명에게만, 안 주면 반 전체에)/`_assignment_targets_student`(반 전체/개별 배정 판정, 조회·응시·제출 세 곳이 공유)/`_build_student_questions`(객관식 오답을 같은 단어장의 다른 뜻/단어에서 결정적으로 뽑음)/`grade_and_submit_attempt`(`test_assignments`/`test_attempts` 컬렉션, 문서 ID를 `{assignment_id}_{student_id}_{round}`로 고정해 그 회차의 중복 제출을 막음 — 재시험 기준은 아래 참고)/`_get_student_attempts`/`_attempt_progress`(합격 여부·합격 회차·다음 회차 계산)/`delete_assignment`(시험과 딸린 답안까지 삭제) |
+| 반 · 학생 · 단어시험(AI 안 씀) | `_classroom_approved`/`set_classroom_approved`(관리자 승인 게이트), `create_class`/`regenerate_class_code`(반 하나당 코드 하나, `classes`/`class_codes` 컬렉션)/`create_student`/`delete_student`(`students` 컬렉션, 개별 코드 없음. `create_student`·`update_student`가 이름·아이디·비밀번호를 받고 아이디는 `student_login_ids`로 앱 전체 유일, `change_student_password`는 학생 본인용), `login_student`(아이디+비밀번호, 아이디별·IP별 실패 제한)/`create_student_session`/`_student_session_user`(학생 세션, `admin_sessions`와 같은 모양), `create_test_assignment`(`student_id`를 주면 그 학생 한 명에게만, 안 주면 반 전체에)/`_assignment_targets_student`(반 전체/개별 배정 판정, 조회·응시·제출 세 곳이 공유)/`_build_student_questions`(객관식 오답을 같은 단어장의 다른 뜻/단어에서 결정적으로 뽑음)/`grade_and_submit_attempt`(`test_assignments`/`test_attempts` 컬렉션, 문서 ID를 `{assignment_id}_{student_id}_{round}`로 고정해 그 회차의 중복 제출을 막음 — 재시험 기준은 아래 참고)/`_get_student_attempts`/`_attempt_progress`(합격 여부·합격 회차·다음 회차 계산)/`delete_assignment`(시험과 딸린 답안까지 삭제) |
 | 동형 모의고사 제작 공개 범위 | **2026-09-27부터 모든 회원에게 열렸다** — `EXAM_OPEN_TO_ALL`(환경변수, 기본 켜짐)이면 `_exam_approved`가 늘 참이다. 다시 막으려면 Render에서 `EXAM_OPEN_TO_ALL=0` — 그때는 예전처럼 회원 문서의 `exam_approved`(관리자가 `/api/admin/approve-exam`으로 켠다)를 본다. `/api/examscan`·`/api/examocr`가 호출 앞에서 확인한다. 반/학생 승인(`classroom_approved`)과는 **별개의 플래그**다. 스위치가 켜져 있으면 `admin.html`의 모의고사 칸은 단추 대신 '전체 공개'로 보인다 |
 | 동형 모의고사 상한 이벤트(2026-10-16까지) | `EXAM_EVENT_CAP_KRW`(9,900)/`EXAM_EVENT_UNTIL` — [📝 문제 제작] 한 번(여러 부 합쳐)에 받는 값의 **상한**. 문항마다 만들어질 때 받는 방식은 그대로다. 화면이 누를 때마다 `examRun`을 실어 보내고, 서버가 회원 문서의 `exam_event_run`에 그 누름의 누적액을 쌓아 `_exam_run_capped`로 깎는다(`_charge_and_send`에서 받기 직전에 다시 센다). 지어낸 `examRun`으로 상한을 무한히 쓰지 못하게 한 누름당 `EXAM_EVENT_RUN_MAX_Q`(120)문항까지만 상한이 걸린다. 끝나는 날이 지나면 저절로 꺼진다. 화면은 `public/app.js`의 `examEventCap`/`examRunPrice`/`examEventNote` |
 | 단어장 칸 — 동형 모의고사 '시험 범위 단어장' + 문제 탭(객관식·주관식·혼합) 공용 지문칸 아래 '단어장'(2026-10-08) | 화면 `public/app.js`의 `createVocabBox(prefix, getTexts, scope)` 한 벌을 `examVocab`·`quizVocab` 두 칸이 쓴다(HTML id가 모두 `<prefix>…` — `From`/`FileBtn`/`File`/`Status`/`ClearBtn`/`ToSyn`/`ToBook`/`Hint`). `quizVocabWrap`은 `syncTabChrome`이 문제 탭에서만 보인다. `parseVocabLines`(칸에서 표제어·뜻·`= 유의어`를 꺼낸다 — 단어장 책의 `0001` 번호도 뗀다)/`vocabEntryRe`(흔한 변화형·숙어 자리표시까지 맞춘다)/`forText`(지문마다 나오는 단어만, 최대 30개)/`sync`(못 찾은 단어 안내)/`fillList`(단어장 탭 저장본에서 가져오기)/사진·PDF는 `/api/vocabocr`·`/api/vocabpdf`(칸에 붙여넣기·끌어다 놓기도 된다). 지문 저장본(`TAB_SAVE.passage`)에 `targetVocab`으로 함께 담긴다(`passageSaveFrom.vocab`/`passageLoadTo.vocab`). 문제 탭은 지문 변형 '원문 그대로' 세트에서만 단어장 바꿔 싣기를 한다. `/api/quiz`의 `targetWords` → 서버 `parse_target_words`(`QUIZ_TARGET_WORDS_MAX` — 화면 `VOCAB_BOX_PER_PASSAGE`와 **같은 값**) → `build_quiz_user_prompt`가 `QUIZ_VOCAB_TYPES`가 섞였을 때만 지시를 싣는다(목표 어법과 같은 구조). 저장본에는 `targetVocab`(칸 글 그대로). 요금·모델 변화 없음. **단어장으로 지문 바꿔 싣기**: 체크박스 둘(`<prefix>ToSyn` ① 지문 속 단어장 단어 → 유의어, 줄 끝 `= 유의어` / `<prefix>ToBook` ② 지문에 없는 단어장 단어를 뜻이 같은 자리에 심기) → `swapBody`가 지문마다 `/api/reword`(variation `"vocab"`, `toSynonym`/`toVocab`)를 `runExamPaper`의 문항 만들기 **전에 한 번** 부른다(A·B형이 같은 바꾼 지문을 쓴다). 서버 `REWORD_VOCAB_SYSTEM_PROMPT`/`parse_reword_vocab`(`REWORD_VOCAB_SYN_MAX`·`REWORD_VOCAB_ADD_MAX` ↔ 화면 `VOCAB_BOX_SYN_MAX`·`VOCAB_BOX_ADD_MAX`), Flash, 값은 `PRICE_REWORD_KRW` 지문당. 바뀐 낱말은 `q.__variations` → `markVariations`(화면 형광, 인쇄 안 찍힘). 구성표의 `examMergeAdd`(**기출에 없는 유형 더하기**, 줄에 `added`)로 영영풀이 쓰기 같은 유형을 넣는다 — 총 문항 수를 고쳐도 더한 줄의 개수는 그대로 둔다. 2단계(지문 없이 단어장만으로 내는 문항)는 기출에 실제로 나오는지 보고 정하기로 함 |
@@ -305,6 +319,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `/api/admin/users` `/api/admin/usage`
 `/api/classes` `/api/students` `/api/vocab-tests` `/api/vocab-tests/results`(선생님 쪽,
 반/학생/시험 — `classId`/`assignmentId`를 쿼리 문자열로 받습니다)
+`/api/students/report`(학생 한 명 성적표) `/api/studentcomment`(성적표 코멘트 AI 작성 — 선생님 쪽, 요금 있음) `/api/student/tests/result`(학생 본인의 지난 결과)
 `/api/student/me` `/api/student/tests` `/api/student/tests/detail`(학생 쪽,
 `student_session` 쿠키로 인증)
 
@@ -320,7 +335,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `/api/classes` `/api/classes/regenerate-code` `/api/students` `/api/students/delete`
 `/api/vocab-tests` `/api/vocab-tests/delete`(선생님 쪽 — 위 GET들과 경로가 같은 것도 있음,
 GET=조회/POST=생성. `/api/vocab-tests`에 `studentId`를 실으면 그 학생 한 명에게만 낸다)
-`/api/student/login`(`name`만 — 반 코드 없이 이름만으로 로그인) `/api/student/logout`
+`/api/student/login`(`loginId`+`password`) `/api/student/logout` `/api/student/password`(학생 본인 비밀번호 변경) `/api/students/update`(선생님이 이름·아이디·비밀번호 수정)
 `/api/student/tests/submit`
 
 ## 업데이트 소식(로그인 시 플로팅 창)

@@ -1605,8 +1605,24 @@
             <label class="opt-2line"><input type="radio" name="vocabFormat" value="list" checked> <span class="opt-text">단어장<span class="opt-sub">(뜻·유의어 포함)</span></span></label>
             <label class="opt-2line"><input type="radio" name="vocabFormat" value="ko"> <span class="opt-text">시험지 · 뜻 쓰기<span class="opt-sub">(영어 보고)</span></span></label>
             <label class="opt-2line"><input type="radio" name="vocabFormat" value="en"> <span class="opt-text">시험지 · 영어 쓰기<span class="opt-sub">(뜻 보고)</span></span></label>
+            <label class="opt-2line"><input type="radio" name="vocabFormat" value="mix"> <span class="opt-text">시험지 · 섞어서<span class="opt-sub">(뜻 쓰기 + 영어 쓰기)</span></span></label>
           </div>
         </div>
+      </div>
+      <!-- 시험지 문항 수 — 단어장 형식에서는 숨는다(syncVocabCountUI) -->
+      <div class="row" id="vocabCountRow" hidden>
+        <div class="field" id="vocabCountField" style="flex:0 0 200px;">
+          <label for="vocabCount">문항 수 (비우면 전체)</label>
+          <input type="number" id="vocabCount" min="1" step="1" placeholder="전체">
+        </div>
+        <div class="field" id="vocabMixFields" style="flex:1 1 100%;" hidden>
+          <label>유형별 문항 수 (둘 다 비우면 전체를 반반씩)</label>
+          <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:center;">
+            <span>영어 보고 뜻 쓰기 <input type="number" id="vocabMixKo" min="0" step="1" style="width:84px;"> 개</span>
+            <span>뜻 보고 영어 쓰기 <input type="number" id="vocabMixEn" min="0" step="1" style="width:84px;"> 개</span>
+          </div>
+        </div>
+        <p class="hint" style="flex:1 1 100%; margin:0;" id="vocabCountHint">단어 목록의 앞에서부터 그 개수만큼 냅니다. 무작위로 뽑으려면 정렬을 '무작위 섞기'로 하세요.</p>
       </div>
       <div class="row">
         <div class="field" style="flex:1 1 100%">
@@ -2019,6 +2035,8 @@
         </div>
         <div class="field" style="flex:0 0 auto; align-self:flex-end;">
           <button type="button" class="btn ghost small" id="newClassBtn">+ 새 반 만들기</button>
+          <button type="button" class="btn ghost small" id="renameClassBtn">이름 변경</button>
+          <button type="button" class="btn ghost small danger" id="deleteClassBtn">반 삭제</button>
         </div>
       </div>
       <div class="error" id="classError"></div>
@@ -2032,7 +2050,7 @@
            자체는 그대로 남아 있다 — 화면에서만 감춘 것이다). -->
       <div class="brand-panel" style="margin-bottom:12px;">
         <div class="brand-title">🔗 학생에게 알려 줄 주소
-          <span class="sub">(학생은 이 주소에서 <b>자기 이름</b>을 넣어 로그인합니다 — 따로 알려 줄 코드는 없습니다)</span>
+          <span class="sub">(학생은 이 주소에서 <b>선생님이 정해 준 아이디와 비밀번호</b>로 로그인합니다)</span>
         </div>
         <div class="brand-body" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
           <code id="studentUrlDisplay" style="font-size:15px; font-weight:700; word-break:break-all;"></code>
@@ -2044,17 +2062,22 @@
         <label>학생 목록</label>
       </div>
       <div class="row">
-        <div class="field" style="flex:1 1 160px;">
-          <input type="text" id="newStudentName" placeholder="학생 이름">
+        <div class="field" style="flex:1 1 120px;">
+          <input type="text" id="newStudentName" placeholder="이름 (예: 홍길동)" autocomplete="off">
+        </div>
+        <div class="field" style="flex:1 1 140px;">
+          <input type="text" id="newStudentLoginId" placeholder="아이디 (영문 소문자·숫자 3~20자)" autocomplete="off" autocapitalize="off" spellcheck="false">
         </div>
         <div class="field" style="flex:0 0 auto; align-self:flex-end;">
           <button type="button" class="btn small" id="addStudentBtn">＋ 학생 등록</button>
         </div>
       </div>
+      <p class="hint">아이디는 앱 전체에서 하나뿐이라 다른 선생님이 쓰는 아이디는 쓸 수 없습니다. 비밀번호는 모두 <b>1234</b>로 자동 등록됩니다(영어 대소문자는 구분하지 않습니다).
+        학생이 처음 로그인하면 바꾸라고 안내하고, 학생이 바꾼 뒤에는 선생님도 볼 수 없습니다. 잊으면 [수정]의 [1234로 초기화]를 누르세요.</p>
       <div class="error" id="studentError"></div>
       <div class="table-wrap" style="margin-top:10px;">
         <table>
-          <thead><tr><th>이름</th><th>등록일</th><th></th></tr></thead>
+          <thead><tr><th>이름</th><th>아이디</th><th>비밀번호</th><th>최근 성적</th><th>등록일</th><th></th></tr></thead>
           <tbody id="studentTableBody"></tbody>
         </table>
       </div>

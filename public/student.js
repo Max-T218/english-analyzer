@@ -31,9 +31,10 @@ const listWorkspaceEl = $("listWorkspace");
 const studyWorkspaceEl = $("studyWorkspace");
 const takeWorkspaceEl = $("takeWorkspace");
 const resultWorkspaceEl = $("resultWorkspace");
+const pwWorkspaceEl = $("pwWorkspace");
 
 function showOnly(el) {
-  [codeGateEl, listWorkspaceEl, studyWorkspaceEl, takeWorkspaceEl, resultWorkspaceEl].forEach((s) => {
+  [codeGateEl, listWorkspaceEl, studyWorkspaceEl, takeWorkspaceEl, resultWorkspaceEl, pwWorkspaceEl].forEach((s) => {
     s.hidden = s !== el;
   });
 }
@@ -54,33 +55,81 @@ function showOnly(el) {
   }
 })();
 
-/* ── 로그인: 이름만 입력 ──
-   반 코드는 더 이상 묻지 않는다. 학생 등록이 이름을 앱 전체에서 유일하게
-   강제하므로(create_student, server.py 참고) 이름 하나로 로그인이 결정된다. */
+/* ── 로그인: 선생님이 정해 준 아이디 + 비밀번호 ── */
 const codeNextBtn = $("codeNextBtn");
 const codeError = $("codeError");
 const codeStatus = $("codeStatus");
 $("codeForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const name = $("nameInput").value.trim();
+  const loginId = $("loginIdInput").value.trim();
+  const password = $("loginPwInput").value;
   codeError.textContent = "";
-  if (!name) {
-    codeError.textContent = "이름을 입력하세요.";
+  if (!loginId || !password) {
+    codeError.textContent = "아이디와 비밀번호를 입력하세요.";
     return;
   }
   codeNextBtn.disabled = true;
   codeStatus.textContent = "확인 중…";
   try {
-    const info = await postJson("/api/student/login", { name });
+    const info = await postJson("/api/student/login", { loginId, password });
     $("studentGreeting").textContent = `${info.name}님, 안녕하세요`;
-    $("nameInput").value = "";
+    $("loginIdInput").value = "";
+    $("loginPwInput").value = "";
     showOnly(listWorkspaceEl);
     loadTests();
+    // 아직 한 번도 직접 바꾸지 않았으면 바꾸라고 권한다(다음에 하기도 가능)
+    if (info.pwChanged === false) setPwNudge(true);
   } catch (err) {
     codeError.textContent = err.message || "로그인에 실패했습니다.";
   } finally {
     codeNextBtn.disabled = false;
     codeStatus.textContent = "";
+  }
+});
+
+/* ── 첫 로그인 안내창 ── */
+function setPwNudge(on) {
+  const el = $("pwNudge");
+  el.hidden = !on;
+  el.style.display = on ? "flex" : "none";
+}
+$("pwNudgeNowBtn").addEventListener("click", () => {
+  setPwNudge(false);
+  $("openPwBtn").click();
+});
+$("pwNudgeLaterBtn").addEventListener("click", () => setPwNudge(false));
+
+/* ── 비밀번호 변경 ── */
+$("openPwBtn").addEventListener("click", () => {
+  $("pwError").textContent = "";
+  $("pwStatus").textContent = "";
+  $("pwForm").reset();
+  showOnly(pwWorkspaceEl);
+});
+$("pwBackBtn").addEventListener("click", () => { showOnly(listWorkspaceEl); });
+$("pwForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errEl = $("pwError");
+  errEl.textContent = "";
+  const current = $("pwCurrent").value;
+  const next = $("pwNew").value;
+  if (!current || !next) {
+    errEl.textContent = "현재 비밀번호와 새 비밀번호를 입력하세요.";
+    return;
+  }
+  if (next !== $("pwNew2").value) {
+    errEl.textContent = "새 비밀번호 확인이 서로 다릅니다.";
+    return;
+  }
+  $("pwSaveBtn").disabled = true;
+  try {
+    await postJson("/api/student/password", { current, new: next });
+    $("pwForm").reset();
+    $("pwStatus").textContent = "변경했습니다.";
+  } catch (err) {
+    errEl.textContent = err.message || "변경에 실패했습니다.";
+  } finally {
+    $("pwSaveBtn").disabled = false;
   }
 });
 
@@ -118,11 +167,16 @@ function renderTests(tests) {
     if (!t.submitted) {
       rightSide = `<button type="button" class="btn small take-btn" data-id="${esc(t.id)}">응시하기</button>`;
     } else if (t.passed) {
-      rightSide = `<div style="font-weight:800; color:var(--accent);">✅ 합격 (${t.passedRound}회차 · ${t.score}/${t.total})</div>`;
+      rightSide = `
+        <div style="text-align:right;">
+          <div style="font-weight:800; color:var(--accent);">✅ 합격 (${t.passedRound}회차 · ${t.score}/${t.total})</div>
+          <button type="button" class="btn ghost small result-btn" data-id="${esc(t.id)}" style="margin-top:4px;">결과 보기</button>
+        </div>`;
     } else {
       rightSide = `
         <div style="text-align:right;">
           <div style="font-weight:700; color:var(--g);">미통과 (${t.attemptCount}회 시도 · 최근 ${t.score}/${t.total})</div>
+          <button type="button" class="btn ghost small result-btn" data-id="${esc(t.id)}" style="margin-top:4px;">틀린 단어 보기</button>
           <button type="button" class="btn small take-btn" data-id="${esc(t.id)}" style="margin-top:4px;">재시험 보기</button>
         </div>`;
     }
@@ -142,6 +196,8 @@ function renderTests(tests) {
 $("testList").addEventListener("click", (e) => {
   const takeBtn = e.target.closest(".take-btn");
   if (takeBtn) { openTest(takeBtn.dataset.id); return; }
+  const resultBtn = e.target.closest(".result-btn");
+  if (resultBtn) { openResult(resultBtn.dataset.id); return; }
   const studyBtn = e.target.closest(".study-btn");
   if (studyBtn) { openStudy(studyBtn.dataset.id); return; }
 });
@@ -192,6 +248,18 @@ $("studyTableBody").addEventListener("click", (e) => {
 $("studyTakeBtn").addEventListener("click", () => openTest(currentStudyAssignmentId));
 $("backToListBtn3").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
 
+async function openResult(assignmentId) {
+  const errEl = $("listError");
+  errEl.textContent = "";
+  try {
+    const r = await getJson(`/api/student/tests/result?assignmentId=${encodeURIComponent(assignmentId)}`);
+    currentAssignmentId = assignmentId;
+    showResultScreen(r, { title: `${r.title}${r.round > 1 ? ` (${r.round}회차)` : ""} 결과` });
+  } catch (err) {
+    errEl.textContent = err.message || "결과를 불러오지 못했습니다.";
+  }
+}
+
 let currentAssignmentId = null;
 let currentFormat = "saq";
 let currentQuestions = [];
@@ -222,24 +290,28 @@ async function openTest(assignmentId) {
   }
 }
 
-// 한 문항만 그려서 앞 문항으로 돌아가 대조하지 못하게 한다 — 다음으로 넘어가면
-// 그 문항의 HTML은 완전히 사라진다(뒤로가기 버튼 자체가 없음).
+// 한 문항만 그린다(여러 문항을 한 화면에 띄우면 위로 스크롤해 보기를 대조할 수 있다).
+// 이전 문항으로는 [← 이전]으로 돌아갈 수 있고, 먼저 고른 답이 그대로 표시된다.
+// 객관식은 보기를 누르면 답을 저장하고 곧바로 다음 문항으로 넘어간다. 마지막 문항이면
+// 바로 제출하지 않고 '제출할까요?' 확인창이 뜬다.
 function renderQuestion() {
   const q = currentQuestions[currentIndex];
   const total = currentQuestions.length;
+  const saved = currentAnswers[currentIndex] || "";
   $("takeProgress").textContent = `문항 ${currentIndex + 1} / ${total}`;
+  $("prevBtn").hidden = currentIndex === 0;
   $("takeForm").innerHTML = `
     <div class="field" style="margin-bottom:14px;">
       <label>${currentIndex + 1}. ${esc(q.prompt)}
-        <span class="hint">(${esc(DIRECTION_LABEL[q.direction] || q.direction)}${currentFormat === "saq" ? (q.direction === "en2ko" ? " · 뜻 쓰기" : " · 영어 쓰기") : ""})</span>
+        ${currentFormat === "saq" ? `<span class="hint">(${q.direction === "en2ko" ? "뜻 쓰기" : "영어 쓰기"})</span>` : ""}
       </label>
       ${currentFormat === "mcq"
         ? (q.options || []).map((opt) => `
             <label class="chk" style="display:flex; margin:4px 0;">
-              <input type="radio" name="qCurrent" value="${esc(opt)}">
+              <input type="radio" name="qCurrent" value="${esc(opt)}"${opt === saved ? " checked" : ""}>
               <span style="margin-left:6px;">${esc(opt)}</span>
             </label>`).join("")
-        : `<input type="text" id="qCurrentInput" autocomplete="off">`}
+        : `<input type="text" id="qCurrentInput" autocomplete="off" value="${esc(saved)}">`}
     </div>
   `;
   nextBtn.textContent = currentIndex === total - 1 ? "제출하기" : "다음";
@@ -261,6 +333,37 @@ $("retryBtn").addEventListener("click", () => openTest(currentAssignmentId));
 const nextBtn = $("nextBtn");
 const submitStatus = $("submitStatus");
 
+/* 결과 화면 — 제출 직후와 목록의 [결과 보기]가 같이 쓴다. 틀린 단어는 내 답과 정답을
+   나란히 보여 준다(어느 단어를 다시 외워야 하는지 알 수 있게). */
+function showResultScreen(result, opts) {
+  opts = opts || {};
+  $("resultHeading").textContent = opts.title ? opts.title : "제출 완료!";
+  $("resultScore").textContent = `${result.score} / ${result.total}점`;
+  $("resultLead").textContent = result.passed
+    ? (result.round > 1 ? `🎉 ${result.round}회차 만에 합격했습니다!` : "🎉 합격했습니다!")
+    : `아직 기준에 못 미쳤습니다 (틀린 개수 ${result.wrong}개). 다시 도전해 보세요.`;
+  $("retryBtn").hidden = result.passed;
+  const items = result.wrongItems || [];
+  const box = $("resultWrong");
+  if (items.length) {
+    box.innerHTML = `
+      <div style="font-weight:700; margin-bottom:6px;">틀린 단어 ${items.length}개</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>문제</th><th>내 답</th><th>정답</th></tr></thead>
+        <tbody>${items.map((w) => `<tr>
+          <td>${esc(w.no)}</td><td>${esc(w.prompt)}</td>
+          <td style="color:var(--g);">${w.given ? esc(w.given) : "<span class='hint'>(무응답)</span>"}</td>
+          <td style="font-weight:700;">${esc(w.correct)}</td></tr>`).join("")}</tbody>
+      </table></div>`;
+  } else if (result.hasDetails === false || result.wrong > 0) {
+    // 틀린 문제가 있는데 목록이 비어 있으면 '다 맞았다'고 하지 않는다(옛 기록·응답 누락)
+    box.innerHTML = `<p class="hint" style="text-align:center;">틀린 단어 정보를 불러오지 못했어요.</p>`;
+  } else {
+    box.innerHTML = `<p class="hint" style="text-align:center;">틀린 단어가 없어요. 🎉</p>`;
+  }
+  showOnly(resultWorkspaceEl);
+}
+
 async function submitTest() {
   const errEl = $("takeError");
   errEl.textContent = "";
@@ -270,12 +373,7 @@ async function submitTest() {
     const result = await postJson("/api/student/tests/submit", {
       assignmentId: currentAssignmentId, answers: currentAnswers,
     });
-    $("resultScore").textContent = `${result.score} / ${result.total}점`;
-    $("resultLead").textContent = result.passed
-      ? (result.round > 1 ? `🎉 ${result.round}회차 만에 합격했습니다!` : "🎉 합격했습니다!")
-      : `아직 기준에 못 미쳤습니다 (틀린 개수 ${result.wrong}개). 다시 도전해 보세요.`;
-    $("retryBtn").hidden = result.passed;
-    showOnly(resultWorkspaceEl);
+    showResultScreen(result);
   } catch (err) {
     errEl.textContent = err.message || "제출에 실패했습니다.";
   } finally {
@@ -284,12 +382,70 @@ async function submitTest() {
   }
 }
 
-nextBtn.addEventListener("click", () => {
+let autoAdvanceTimer = null;
+
+// 제출 확인창 — 마지막 문항을 풀면 바로 채점하지 않고 한 번 묻는다. 제출하면 되돌릴 수
+// 없고(재시험이 있는 시험은 한 회차를 쓴다) 아직 안 푼 문항이 있어도 그대로 채점되기 때문이다.
+function openSubmitConfirm() {
+  const blank = currentAnswers.filter((a) => !a).length;
+  $("submitConfirmMsg").textContent = blank
+    ? `아직 답하지 않은 문항이 ${blank}개 있어요. 그대로 제출하면 틀린 것으로 처리돼요.`
+    : "모든 문항에 답했어요. 제출하면 바로 채점돼요.";
+  const el = $("submitConfirm");
+  el.hidden = false;
+  el.style.display = "flex";
+}
+function closeSubmitConfirm() {
+  const el = $("submitConfirm");
+  el.hidden = true;
+  el.style.display = "none";
+}
+$("submitConfirmNoBtn").addEventListener("click", closeSubmitConfirm);
+$("submitConfirmYesBtn").addEventListener("click", () => {
+  closeSubmitConfirm();
+  submitTest();
+});
+
+function goNext() {
   currentAnswers[currentIndex] = readCurrentAnswer();
   if (currentIndex === currentQuestions.length - 1) {
-    submitTest();
+    openSubmitConfirm();
     return;
   }
   currentIndex++;
   renderQuestion();
+}
+
+nextBtn.addEventListener("click", goNext);
+
+// 주관식: 입력칸에서 Enter를 누르면 [다음]과 같다. 한글은 글자를 조합하는 중에 Enter가
+// 조합 확정 키로도 쓰이므로(isComposing / keyCode 229), 그때 넘어가 버리면 마지막
+// 글자가 답에서 빠진다 — 조합 중이면 무시한다.
+$("takeForm").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
+  if (e.target.id !== "qCurrentInput") return;
+  e.preventDefault();
+  goNext();
+});
+
+$("prevBtn").addEventListener("click", () => {
+  if (currentIndex === 0) return;
+  if (autoAdvanceTimer) { clearTimeout(autoAdvanceTimer); autoAdvanceTimer = null; }
+  currentAnswers[currentIndex] = readCurrentAnswer();   // 지금 문항 답도 보관
+  currentIndex--;
+  renderQuestion();
+});
+
+// 객관식: 보기를 누르면 바로 다음 문항으로. 이미 골라 둔 보기를 다시 눌러도 넘어간다
+// (이전으로 돌아왔을 때 같은 답을 그대로 두고 앞으로 가려는 경우).
+$("takeForm").addEventListener("click", (e) => {
+  if (currentFormat !== "mcq") return;
+  const input = e.target.closest("label.chk") && e.target.closest("label.chk").querySelector('input[name="qCurrent"]');
+  if (!input) return;
+  if (autoAdvanceTimer) return;                               // 더블클릭으로 두 칸 건너뛰지 않게
+  input.checked = true;
+  autoAdvanceTimer = setTimeout(() => {
+    autoAdvanceTimer = null;
+    goNext();
+  }, 220);   // 고른 표시가 잠깐 보이게 (마지막 문항이면 goNext가 제출 확인창을 연다)
 });

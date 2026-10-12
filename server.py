@@ -370,6 +370,8 @@ PRICE_EXAMSCAN_KRW = int(os.environ.get("PRICE_EXAMSCAN_KRW", "0"))
 # 그 둘은 무료로 두기로 했으므로, 보고서 값은 여기 한 곳에서만 받는다.
 # 실측 원가(8쪽 시험지 1부): 범위 없이 약 290원 · 범위 대조까지 약 780원 · 3부 합치기 약 860원.
 PRICE_EXAM_TREND_KRW = int(os.environ.get("PRICE_EXAM_TREND_KRW", "1000"))
+# 학생 성적표 코멘트(AI) — 1건당 정액. 집계 숫자만 보는 짧은 글쓰기라 Flash로 충분하다.
+PRICE_STUDENT_COMMENT_KRW = int(os.environ.get("PRICE_STUDENT_COMMENT_KRW", "50"))
 # 시험지에서 지문 꺼내기 — 유형 분석과 달리 지문 전문을 옮겨 적으므로 출력이 길고,
 # 쪽마다 그림을 한 장씩 읽는다. 그래서 1벌당이 아니라 '쪽당'으로 매긴다.
 PRICE_EXAM_OCR_KRW = int(os.environ.get("PRICE_EXAM_OCR_KRW", "0"))
@@ -4924,6 +4926,88 @@ def call_gemini_exam_trend(data, api_key, model):
         "strategies": strategies,
         "caution": _trend_text(result.get("caution"), 500),
     }
+
+
+# ── 학생 성적표 코멘트(/api/studentcomment) ──
+# 선생님이 보는 월간 성적표의 '선생님 코멘트'를 쓴다. 화면이 집계한 숫자(평균·시험별 점수·
+# 재시험·미응시)만 받는다. **학생 이름은 보내지 않는다** — 미성년자 개인정보를 외부 AI에
+# 넘기지 않으려고 글 안의 이름 자리는 {학생}으로 쓰게 하고, 화면이 이름으로 바꿔 넣는다.
+STUDENT_COMMENT_MAX_TESTS = 40
+STUDENT_COMMENT_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {"comment": {"type": "STRING"}},
+    "required": ["comment"],
+    "propertyOrdering": ["comment"],
+}
+STUDENT_COMMENT_SYSTEM_PROMPT = """당신은 학원·학교 영어 선생님을 돕는 보조자입니다.
+입력은 한 학생의 한 달(또는 지정 기간) 단어시험 결과를 집계한 숫자입니다. 학부모와 학생이 읽는 성적표의 '선생님 코멘트'를 한국어로 씁니다.
+
+규칙
+- 입력에 있는 숫자와 사실만 씁니다. 없는 시험, 없는 점수, 학생의 성격·가정 사정·출결을 지어내지 않습니다.
+- 학생 이름은 모르므로 이름 자리는 반드시 {학생}으로 씁니다(예: "{학생} 학생은 …"). 다른 호칭이나 실제 이름을 쓰지 않습니다.
+- 4~6문장. 순서: ① 이 기간 성적 전체 평가(평균, 합격 개수) ② 점수 흐름(오르는지·내리는지·일정한지) ③ 잘한 점(만점, 재시험을 끝까지 합격한 끈기 등 입력에 있는 것) ④ 보완할 점(미통과·미응시·점수가 낮은 시험) ⑤ 앞으로의 격려와 구체적인 학습 방법 한 가지.
+- 점수가 낮아도 비난하지 않고, 높아도 과장하지 않습니다. 따뜻하지만 사실에 충실한 어조입니다.
+- 첫 시도 점수와 최고 점수가 다르면 재시험으로 점수가 오른 것입니다. 합격선(passPercent) 아래이면 통과하지 못한 것입니다.
+- 시험이 하나도 없으면 응시 독려를 짧게 씁니다.
+- 존댓말 문어체, 마크다운·HTML·이모지·목록 기호 금지. 한 문단으로 씁니다."""
+
+
+def call_gemini_student_comment(data, api_key, model):
+    """집계 숫자에서 성적표 코멘트 한 문단을 쓴다(이름은 {학생} 자리표시자)."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+
+    def num(v, lo, hi):
+        try:
+            return max(lo, min(hi, int(v)))
+        except (TypeError, ValueError):
+            return None
+
+    period = _trend_text(data.get("period"), 30) or "이번 기간"
+    sm = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    lines = []
+    for t in (data.get("tests") or [])[:STUDENT_COMMENT_MAX_TESTS]:
+        if not isinstance(t, dict):
+            continue
+        title = _trend_text(t.get("title"), 40) or "시험"
+        status = {"passed": "합격", "failed": "미통과", "none": "미응시"}.get(t.get("status"), "미응시")
+        if status == "미응시":
+            lines.append(f"- {title}: 미응시")
+            continue
+        best, first, pas = num(t.get("bestPercent"), 0, 100), num(t.get("firstPercent"), 0, 100), num(t.get("passPercent"), 0, 100)
+        tries = num(t.get("tries"), 1, 50) or 1
+        bit = f"- {title}: {status}, 최고 {best}점"
+        if tries > 1 and first is not None:
+            bit += f", 첫 시도 {first}점, 재시험 포함 {tries}회"
+        if pas is not None:
+            bit += f", 합격선 {pas}점"
+        lines.append(bit)
+    done = num(sm.get("done"), 0, 999) or 0
+    text = (f"기간: {period}\n"
+            f"배정 시험 {num(sm.get('tests'), 0, 999) or 0}개, 응시 {done}개, 합격 {num(sm.get('passed'), 0, 999) or 0}개"
+            + (f", 평균 {num(sm.get('avgPercent'), 0, 100)}점(시험별 최고 점수 평균)" if sm.get("avgPercent") is not None else "")
+            + "\n시험별 결과(시간순):\n" + ("\n".join(lines) if lines else "- 없음"))
+    payload = {
+        "systemInstruction": {"parts": [{"text": STUDENT_COMMENT_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": text}]}],
+        "generationConfig": {
+            "temperature": 0.7,
+            "maxOutputTokens": 2048,
+            "responseMimeType": "application/json",
+            "responseSchema": STUDENT_COMMENT_SCHEMA,
+        },
+    }
+    result = _gemini_json(payload, api_key, model, "코멘트가 너무 길어 잘렸습니다. 다시 시도해 주세요.",
+                          label="studentcomment")
+    comment = _trend_text(result.get("comment"), 1200)
+    if not comment:
+        raise RuntimeError("코멘트를 만들지 못했습니다. 다시 시도해 주세요.")
+    return {"comment": comment}
 
 
 # ── 기출 시험지 유형 분석 스키마 ──
@@ -11073,6 +11157,42 @@ def list_classes(teacher_id):
     return rows
 
 
+def _own_class(teacher_id, class_id):
+    ref = DB.collection("classes").document(class_id or "_")
+    snap = ref.get()
+    if not snap.exists or (snap.to_dict() or {}).get("teacher_id") != teacher_id:
+        raise ValueError("반을 찾을 수 없습니다.")
+    return ref, snap.to_dict() or {}
+
+
+def rename_class(teacher_id, class_id, name):
+    _require_db()
+    name = _norm_text(name)
+    if not name:
+        raise ValueError("반 이름을 입력하세요.")
+    ref, _ = _own_class(teacher_id, class_id)
+    ref.update({"name": name})
+
+
+def delete_class(teacher_id, class_id):
+    """반을 지운다 — 딸린 학생(아이디·로그인 세션 포함)과 시험(답안 포함)과 반 코드까지
+    함께 지운다. 반만 지우면 주인 없는 학생·시험이 남아 목록에도 안 뜬 채 쌓인다.
+    되돌릴 수 없으므로 화면이 지우기 전에 한 번 더 묻는다."""
+    _require_db()
+    ref, cur = _own_class(teacher_id, class_id)
+    n_students = n_tests = 0
+    for doc in DB.collection("test_assignments").where("class_id", "==", class_id).stream():
+        delete_assignment(teacher_id, doc.id)
+        n_tests += 1
+    for doc in DB.collection("students").where("class_id", "==", class_id).stream():
+        delete_student(teacher_id, doc.id)
+        n_students += 1
+    if cur.get("code"):
+        DB.collection("class_codes").document(cur["code"]).delete()
+    ref.delete()
+    return {"students": n_students, "tests": n_tests}
+
+
 def regenerate_class_code(teacher_id, class_id):
     _require_db()
     ref = DB.collection("classes").document(class_id)
@@ -11088,23 +11208,150 @@ def regenerate_class_code(teacher_id, class_id):
     return new_code
 
 
-def create_student(teacher_id, class_id, name):
-    """학생 등록. 이름은 반을 가리지 않고 앱 전체에서 유일해야 한다 — 로그인
-    (login_student)이 이제 반 코드 없이 이름만으로 students 전체를 검색하기
-    때문에, 등록 시점에 동명이인을 막아 두지 않으면 나중에 둘 다 로그인이
-    거부되는 사고가 난다."""
+STUDENT_LOGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,19}$")
+STUDENT_PW_MIN = 4
+STUDENT_PW_MAX = 64
+STUDENT_PW_DEFAULT = "1234"   # 등록 때 선생님이 비워 두면 들어가는 초기 비밀번호
+
+
+def _pw_key(password):
+    """비밀번호는 영문 대소문자를 구분하지 않는다(2026-10-12 사용자 결정) — 해시하기
+    전과 맞춰 보기 전에 모두 소문자로 바꿔 같은 값으로 취급한다. 학생이 Caps Lock이나
+    첫 글자 대문자 때문에 못 들어오는 일을 줄이는 대신 조합 수가 줄어드는 것을 받아들였다."""
+    return password.lower()
+
+
+def _norm_login_id(login_id):
+    return (login_id or "").strip().lower()
+
+
+def _check_login_id(login_id):
+    if not STUDENT_LOGIN_ID_RE.match(login_id):
+        raise ValueError("아이디는 영문 소문자·숫자·점(.)·밑줄(_)·하이픈(-)으로 3~20자여야 합니다.")
+
+
+def _check_student_pw(password):
+    if not isinstance(password, str) or len(password) < STUDENT_PW_MIN:
+        raise ValueError(f"비밀번호는 {STUDENT_PW_MIN}자 이상으로 정해 주세요.")
+    if len(password) > STUDENT_PW_MAX:
+        raise ValueError(f"비밀번호는 {STUDENT_PW_MAX}자 이하로 정해 주세요.")
+
+
+def _claim_login_id(login_id, student_id):
+    """아이디는 앱 전체에서 유일하다. 조회 후 쓰기는 동시에 들어온 두 요청이 둘 다
+    통과할 수 있으므로, 아이디를 문서 ID로 쓰는 student_login_ids에 create()로
+    선점한다 — 이미 있으면 Firestore가 거부해 한쪽만 성공한다."""
+    from google.api_core.exceptions import AlreadyExists
+    try:
+        DB.collection("student_login_ids").document(login_id).create({"student_id": student_id})
+    except AlreadyExists:
+        raise ValueError("이미 사용 중인 아이디입니다. 다른 아이디로 정해 주세요.")
+
+
+def _release_login_id(login_id, student_id):
+    if not login_id:
+        return
+    ref = DB.collection("student_login_ids").document(login_id)
+    snap = ref.get()
+    if snap.exists and (snap.to_dict() or {}).get("student_id") == student_id:
+        ref.delete()
+
+
+def _own_student(teacher_id, student_id):
+    ref = DB.collection("students").document(student_id or "_")
+    snap = ref.get()
+    if not snap.exists or (snap.to_dict() or {}).get("teacher_id") != teacher_id:
+        raise ValueError("학생을 찾을 수 없습니다.")
+    return ref, snap.to_dict() or {}
+
+
+def create_student(teacher_id, class_id, name, login_id, password):
+    """학생 등록. 선생님이 이름·아이디·비밀번호를 정해 준다. 이름은 화면에 보이는
+    용도일 뿐이라 겹쳐도 되고(동명이인), 로그인 열쇠는 앱 전체에서 유일한 아이디다."""
     _require_db()
     name = _norm_text(name)
     if not name:
         raise ValueError("학생 이름을 입력하세요.")
-    c_snap = DB.collection("classes").document(class_id).get()
+    login_id = _norm_login_id(login_id)
+    _check_login_id(login_id)
+    password = password or STUDENT_PW_DEFAULT
+    _check_student_pw(password)
+    c_snap = DB.collection("classes").document(class_id or "_").get()
     if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
         raise ValueError("반을 찾을 수 없습니다.")
-    if list(DB.collection("students").where("name", "==", name).limit(1).stream()):
-        raise ValueError("같은 이름의 학생이 이미 등록되어 있습니다. 학생 로그인이 이름만으로 이뤄지므로 이름이 겹치면 등록할 수 없습니다.")
     ref = DB.collection("students").document()
-    ref.set({"teacher_id": teacher_id, "class_id": class_id, "name": name, "created_at": _now_iso()})
+    _claim_login_id(login_id, ref.id)
+    salt, digest = _hash_password(_pw_key(password))
+    try:
+        ref.set({
+            "teacher_id": teacher_id, "class_id": class_id, "name": name,
+            "login_id": login_id, "pw_salt": salt, "pw_hash": digest,
+            "pw_set_by": "teacher", "pw_updated_at": _now_iso(),
+            "created_at": _now_iso(),
+        })
+    except Exception:
+        _release_login_id(login_id, ref.id)
+        raise
     return {"studentId": ref.id}
+
+
+def update_student(teacher_id, student_id, name=None, login_id=None, password=None, class_id=None):
+    """선생님이 학생의 이름·아이디·비밀번호를 고친다(주지 않은 항목은 그대로).
+    비밀번호를 바꾸면 pw_set_by를 teacher로, 시각을 갱신해 둔다 — 초기화한 순간부터
+    선생님도 그 비밀번호를 아는 상태라는 기록이다."""
+    _require_db()
+    ref, cur = _own_student(teacher_id, student_id)
+    upd = {}
+    if name is not None:
+        name = _norm_text(name)
+        if not name:
+            raise ValueError("학생 이름을 입력하세요.")
+        upd["name"] = name
+    if password:
+        _check_student_pw(password)
+        salt, digest = _hash_password(_pw_key(password))
+        upd.update({"pw_salt": salt, "pw_hash": digest,
+                    "pw_set_by": "teacher", "pw_updated_at": _now_iso()})
+    if class_id and class_id != cur.get("class_id"):
+        _own_class(teacher_id, class_id)   # 옮겨 갈 반도 내 반이어야 한다
+        upd["class_id"] = class_id
+    new_id = None
+    if login_id is not None:
+        new_id = _norm_login_id(login_id)
+        _check_login_id(new_id)
+        if new_id == cur.get("login_id"):
+            new_id = None
+        else:
+            _claim_login_id(new_id, ref.id)   # 다른 검사가 모두 끝난 뒤에 선점한다
+            upd["login_id"] = new_id
+    if not upd:
+        return
+    try:
+        ref.update(upd)
+    except Exception:
+        if new_id:
+            _release_login_id(new_id, ref.id)
+        raise
+    if new_id:
+        _release_login_id(cur.get("login_id"), ref.id)
+    if new_id or password:
+        _delete_student_sessions(ref.id)   # 아이디·비밀번호가 바뀌면 이전 로그인은 끊는다
+
+
+def change_student_password(student_id, current, new):
+    """학생이 직접 비밀번호를 바꾼다. 이 뒤로는 선생님도 비밀번호를 모른다."""
+    _require_db()
+    ref = DB.collection("students").document(student_id)
+    snap = ref.get()
+    d = snap.to_dict() if snap.exists else None
+    if not d or not d.get("pw_hash"):
+        raise ValueError("학생을 찾을 수 없습니다.")
+    if not _verify_password_hash(_pw_key(current or ""), d["pw_salt"], d["pw_hash"]):
+        raise ValueError("현재 비밀번호가 맞지 않습니다.")
+    _check_student_pw(new)
+    salt, digest = _hash_password(_pw_key(new))
+    ref.update({"pw_salt": salt, "pw_hash": digest,
+                "pw_set_by": "student", "pw_updated_at": _now_iso()})
 
 
 def list_students(teacher_id, class_id):
@@ -11113,9 +11360,23 @@ def list_students(teacher_id, class_id):
     if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
         raise ValueError("반을 찾을 수 없습니다.")
     rows = []
+    assignments, attempts_by = _class_tests_and_attempts(class_id)
     for doc in DB.collection("students").where("class_id", "==", class_id).stream():
         d = doc.to_dict() or {}
-        rows.append({"id": doc.id, "name": d.get("name", ""), "createdAt": d.get("created_at", "")})
+        tests = _student_test_rows(doc.id, assignments, attempts_by)
+        done = [t for t in tests if t["status"] != "none"]
+        last = max(done, key=lambda t: t["lastAt"]) if done else None
+        rows.append({
+            "id": doc.id, "name": d.get("name", ""), "loginId": d.get("login_id", ""),
+            "pwSetBy": d.get("pw_set_by", ""), "pwUpdatedAt": d.get("pw_updated_at", ""),
+            "createdAt": d.get("created_at", ""),
+            # 학생 표에 보일 성적 한 줄 요약
+            "tests": len(tests), "done": len(done),
+            "passed": sum(1 for t in tests if t["status"] == "passed"),
+            "last": ({"title": last["title"], "score": last["rounds"][-1]["score"],
+                      "total": last["rounds"][-1]["total"], "status": last["status"],
+                      "at": last["lastAt"]} if last else None),
+        })
     rows.sort(key=lambda r: r["createdAt"])
     return rows
 
@@ -11127,11 +11388,9 @@ def _delete_student_sessions(student_id):
 
 def delete_student(teacher_id, student_id):
     _require_db()
-    ref = DB.collection("students").document(student_id)
-    snap = ref.get()
-    if not snap.exists or snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("학생을 찾을 수 없습니다.")
+    ref, cur = _own_student(teacher_id, student_id)
     _delete_student_sessions(student_id)
+    _release_login_id(cur.get("login_id"), student_id)
     ref.delete()
 
 
@@ -11175,54 +11434,59 @@ def _student_session_user(handler):
     return sess.get("student_id")
 
 
-# 무차별 대입 방지 — 관리자 로그인과 같은 방식(IP별 실패 횟수 제한)
+# 무차별 대입 방지 — 아이디별 5회/5분. 한 교실이 같은 IP로 보이므로 IP만 보면 반
+# 전체가 함께 잠기고, 아이디만 보면 IP 하나로 여러 아이디를 훑는 길이 열린다.
+# 그래서 아이디별 한도는 엄격하게(5회), IP별 한도는 교실 하나가 넉넉히 들어올 만큼
+# 느슨하게(40회) 둘 다 건다.
 _student_login_fails = {}
 STUDENT_LOGIN_MAX_ATTEMPTS = 5
+STUDENT_LOGIN_IP_MAX_ATTEMPTS = 40
 STUDENT_LOGIN_WINDOW = 300  # 5분
 
 
-def _student_login_blocked(ip):
+def _student_login_count(key):
     now = time.monotonic()
-    fails = [t for t in _student_login_fails.get(ip, []) if now - t < STUDENT_LOGIN_WINDOW]
-    _student_login_fails[ip] = fails
-    return len(fails) >= STUDENT_LOGIN_MAX_ATTEMPTS
+    fails = [t for t in _student_login_fails.get(key, []) if now - t < STUDENT_LOGIN_WINDOW]
+    if fails:
+        _student_login_fails[key] = fails
+    else:
+        _student_login_fails.pop(key, None)
+    return len(fails)
 
 
-def _student_login_record_fail(ip):
-    _student_login_fails.setdefault(ip, []).append(time.monotonic())
+def _student_login_blocked(ip, login_id):
+    return (_student_login_count("id:" + login_id) >= STUDENT_LOGIN_MAX_ATTEMPTS
+            or _student_login_count("ip:" + ip) >= STUDENT_LOGIN_IP_MAX_ATTEMPTS)
 
 
-def _student_login_clear(ip):
-    _student_login_fails.pop(ip, None)
+def _student_login_record_fail(ip, login_id):
+    for key in ("id:" + login_id, "ip:" + ip):
+        _student_login_fails.setdefault(key, []).append(time.monotonic())
 
 
-def login_student(name, ip):
-    """학생 로그인 — 이름만 입력하면 로그인된다. 반 코드는 더 이상 묻지 않는다
-    (학생 등록이 이미 반 하나에 속해 있으니 반 코드는 로그인에서 군더더기라는
-    판단 — 다만 그만큼 로그인의 유일한 방어선이던 비밀값이 사라졌다는 뜻이기도
-    하다. 이름을 아는 사람이면 누구나 그 학생으로 로그인할 수 있다).
+def _student_login_clear(login_id):
+    _student_login_fails.pop("id:" + login_id, None)
 
-    students 컬렉션 전체에서(반·선생님을 가리지 않고) 이름으로 찾는다 — 반을
-    구분할 입력값이 없으므로 검색 범위를 반 하나로 좁힐 수가 없다. 그래서 다른
-    선생님 반의 학생과 이름이 같아도 걸린다: 동명이인이면 누구로 로그인할지
-    가릴 수 없으므로 거부한다(아무나 골라 로그인시키면 서로 다른 사람의 시험
-    결과가 뒤섞인다). 흔한 이름일수록 이 충돌이 잦아질 수 있다."""
-    if _student_login_blocked(ip):
+
+def login_student(login_id, password, ip):
+    """학생 로그인 — 선생님이 정해 준 아이디와 비밀번호. 이름은 로그인에 쓰이지 않는다.
+    아이디가 없는지 비밀번호가 틀렸는지는 일부러 같은 문구로 답한다."""
+    login_id = _norm_login_id(login_id)
+    if not login_id or not isinstance(password, str) or not password:
+        raise ValueError("아이디와 비밀번호를 입력하세요.")
+    if _student_login_blocked(ip, login_id):
         raise ValueError("시도가 너무 많습니다. 5분 뒤 다시 시도하세요.")
-    name = _norm_text(name)
-    if not name:
-        raise ValueError("이름을 입력하세요.")
     _require_db()
-    matches = list(DB.collection("students").where("name", "==", name).stream())
-    if not matches:
-        _student_login_record_fail(ip)
-        raise ValueError("그 이름을 찾을 수 없습니다. 선생님께 확인해 주세요.")
-    if len(matches) > 1:
-        _student_login_record_fail(ip)
-        raise ValueError("같은 이름의 학생이 여러 명입니다. 선생님께 문의해 주세요.")
-    _student_login_clear(ip)
-    student_id = matches[0].id
-    return student_id, (matches[0].to_dict() or {}).get("name", "")
+    sid = None
+    if STUDENT_LOGIN_ID_RE.match(login_id):
+        sid = (DB.collection("student_login_ids").document(login_id).get().to_dict() or {}).get("student_id")
+    snap = DB.collection("students").document(sid).get() if sid else None
+    d = snap.to_dict() if snap is not None and snap.exists else None
+    if not d or not d.get("pw_hash") or not _verify_password_hash(_pw_key(password), d["pw_salt"], d["pw_hash"]):
+        _student_login_record_fail(ip, login_id)
+        raise ValueError("아이디 또는 비밀번호가 맞지 않습니다. 선생님께 확인해 주세요.")
+    _student_login_clear(login_id)
+    return snap.id, d.get("name", ""), d.get("pw_set_by") == "student"
 
 
 # --- 단어시험 (AI 없음) ------------------------------------------------------
@@ -11608,6 +11872,7 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
     questions = _build_student_questions(assignment_id, assignment, student_id, round)
 
     score = 0
+    details = []   # 문제마다 (번호·문제·내 답·정답·맞음) — 성적표의 '틀린 단어'가 이걸 쓴다
     for i, q in enumerate(questions):
         item = vocab[q["idx"]]
         direction = q["direction"]
@@ -11626,6 +11891,12 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
             ok = _answer_key(given) in accepted
         if ok:
             score += 1
+        details.append({
+            "no": i + 1, "direction": direction, "prompt": q["prompt"],
+            "given": given[:200], "ok": bool(ok),
+            "correct": item["meaning"] if direction == "en2ko" else item["word"],
+            "word": item["word"], "meaning": item["meaning"],
+        })
 
     total = len(questions)
     wrong = total - score
@@ -11635,6 +11906,7 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
         "teacher_id": assignment.get("teacher_id"), "student_name": student.get("name", ""),
         "answers": list(answers or []), "score": score, "total": total,
         "wrong": wrong, "passed": passed, "submitted_at": _now_iso(),
+        "details": details,
     }
     attempt_ref = DB.collection("test_attempts").document(f"{assignment_id}_{student_id}_{round}")
     try:
@@ -11646,12 +11918,167 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
             "wrong": d.get("wrong", 0), "passed": d.get("passed", True),
             "round": d.get("round", round),
         }
-    return {"score": score, "total": total, "wrong": wrong, "passed": passed, "round": round}
+    return {"score": score, "total": total, "wrong": wrong, "passed": passed, "round": round,
+            "wrongItems": _wrong_items(details)}
+
+
+def _wrong_items(details):
+    """화면에 보여 줄 틀린 문제 목록(정답 판정에 쓴 내부 값은 빼고)."""
+    return [
+        {"no": d.get("no"), "direction": d.get("direction"), "prompt": d.get("prompt", ""),
+         "given": d.get("given", ""), "correct": d.get("correct", "")}
+        for d in (details or []) if not d.get("ok")
+    ]
+
+
+def get_result_for_student(student_id, assignment_id):
+    """학생이 이미 본 시험의 최근 결과(틀린 단어 포함) — 목록의 [결과 보기]."""
+    _require_db()
+    s_snap = DB.collection("students").document(student_id).get()
+    a_snap = DB.collection("test_assignments").document(assignment_id).get()
+    if not s_snap.exists or not a_snap.exists:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    assignment = a_snap.to_dict()
+    if not _assignment_targets_student(assignment, student_id, s_snap.to_dict()):
+        raise ValueError("이 시험은 이 학생에게 배정되지 않았습니다.")
+    attempts = _get_student_attempts(assignment_id, student_id)
+    if not attempts:
+        raise ValueError("아직 제출하지 않은 시험입니다.")
+    last = attempts[-1]
+    progress = _attempt_progress(assignment, attempts)
+    return {
+        "title": assignment.get("title", ""), "round": last.get("round", 1),
+        "score": last.get("score", 0), "total": last.get("total", 0),
+        "wrong": last.get("wrong", 0), "passed": progress["passed"],
+        "attemptCount": len(attempts),
+        "hasDetails": "details" in last,
+        "wrongItems": _wrong_items(last.get("details")),
+    }
+
+
+def _class_tests_and_attempts(class_id):
+    """반의 시험과 그 답안을 한꺼번에 읽는다 — 학생 표(성적 요약)·학생별 성적표가 같이 쓴다.
+    attempts_by는 (시험 id, 학생 id) → 회차순 답안 목록."""
+    assignments = {}
+    for doc in DB.collection("test_assignments").where("class_id", "==", class_id).stream():
+        assignments[doc.id] = doc.to_dict() or {}
+    attempts_by = {}
+    for aid in assignments:
+        for doc in DB.collection("test_attempts").where("assignment_id", "==", aid).stream():
+            d = doc.to_dict() or {}
+            attempts_by.setdefault((aid, d.get("student_id")), []).append(d)
+    for rows in attempts_by.values():
+        rows.sort(key=lambda d: d.get("round", 1))
+    return assignments, attempts_by
+
+
+def _student_test_rows(student_id, assignments, attempts_by):
+    """이 학생에게 배정된 시험마다 한 줄 — 안 본 시험도 포함한다."""
+    rows = []
+    for aid, a in assignments.items():
+        if a.get("student_id") not in (None, student_id):
+            continue
+        atts = attempts_by.get((aid, student_id), [])
+        progress = _attempt_progress(a, atts)
+        last = atts[-1] if atts else None
+        rows.append({
+            "assignmentId": aid, "title": a.get("title", ""), "format": a.get("format"),
+            "wordCount": len(a.get("vocab") or []), "maxWrong": a.get("max_wrong"),
+            "createdAt": a.get("created_at", ""),
+            "status": "passed" if progress["passed"] else ("failed" if atts else "none"),
+            "passedRound": progress["passedRound"],
+            "rounds": [{
+                "round": x.get("round", 1), "score": x.get("score", 0), "total": x.get("total", 0),
+                "wrong": x.get("wrong", 0), "passed": x.get("passed", True),
+                "submittedAt": x.get("submitted_at", ""),
+            } for x in atts],
+            "lastAt": last.get("submitted_at", "") if last else "",
+            "wrongItems": _wrong_items(last.get("details")) if last else [],
+            "hasDetails": bool(last and "details" in last),
+        })
+    rows.sort(key=lambda r: r["createdAt"], reverse=True)
+    return rows
+
+
+def _parse_iso(v):
+    try:
+        d = datetime.fromisoformat(v)
+    except Exception:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def get_student_report(teacher_id, student_id, start=None, end=None):
+    """학생 한 명의 성적표 — 배정된 시험별 결과 + 여러 시험에 걸쳐 자주 틀린 단어.
+    start/end(ISO 시각)를 주면 그 기간[start, end)에 제출한 답안만 센다 — 월간 성적표용.
+    기간 안에 한 번이라도 낸 시험은 그 기간의 회차만 담아 싣고, 기간 안에 만들어졌는데
+    아직 안 본 시험은 '미응시'로 싣는다(그 기간에 해야 했던 것이므로). 달 경계(한국 시간)는
+    화면이 계산해 시각으로 넘긴다 — 서버가 시간대를 추측하지 않는다."""
+    _require_db()
+    ref, cur = _own_student(teacher_id, student_id)
+    t_start, t_end = _parse_iso(start or ""), _parse_iso(end or "")
+    ranged = bool(t_start and t_end)
+
+    def in_range(iso):
+        d = _parse_iso(iso or "")
+        return bool(d and t_start <= d < t_end)
+
+    assignments, attempts_by = _class_tests_and_attempts(cur.get("class_id"))
+    tests = _student_test_rows(student_id, assignments, attempts_by)
+    if ranged:
+        kept = []
+        for t in tests:
+            rounds = [r for r in t["rounds"] if in_range(r["submittedAt"])]
+            if rounds:
+                t["rounds"] = rounds
+                t["status"] = "passed" if any(r["passed"] for r in rounds) else "failed"
+                t["passedRound"] = next((r["round"] for r in rounds if r["passed"]), None)
+                t["lastAt"] = rounds[-1]["submittedAt"]
+                kept.append(t)
+            elif not t["rounds"] and in_range(t["createdAt"]):
+                kept.append(t)          # 이 기간에 나왔는데 아직 안 본 시험
+        tests = kept
+    for t in tests:
+        pcts = [r["score"] / r["total"] for r in t["rounds"] if r["total"]]
+        t["firstPercent"] = round(100 * pcts[0]) if pcts else None
+        t["bestPercent"] = round(100 * max(pcts)) if pcts else None
+        t["retried"] = len(t["rounds"]) > 1
+        # 합격 기준을 점수(%)로 — 그래프의 합격선
+        wc, mw = t["wordCount"], t["maxWrong"]
+        t["passPercent"] = round(100 * (wc - mw) / wc) if (mw is not None and wc) else None
+    tests.sort(key=lambda t: t["lastAt"] or t["createdAt"])   # 그래프는 시간순
+
+    stat = {}
+    for (aid, sid), atts in attempts_by.items():
+        if sid != student_id:
+            continue
+        for att in atts:
+            if ranged and not in_range(att.get("submitted_at")):
+                continue
+            for d in att.get("details") or []:
+                w = d.get("word")
+                if not w:
+                    continue
+                st = stat.setdefault(w, {"word": w, "meaning": d.get("meaning", ""), "tried": 0, "wrong": 0})
+                st["tried"] += 1
+                if not d.get("ok"):
+                    st["wrong"] += 1
+    frequent = sorted((v for v in stat.values() if v["wrong"]),
+                      key=lambda v: (-v["wrong"], -v["tried"], v["word"]))[:20]
+    done = [t for t in tests if t["status"] != "none"]
+    best = [t["bestPercent"] for t in done if t["bestPercent"] is not None]
+    return {
+        "student": {"id": student_id, "name": cur.get("name", ""), "loginId": cur.get("login_id", "")},
+        "summary": {"tests": len(tests), "done": len(done),
+                    "passed": sum(1 for t in tests if t["status"] == "passed"),
+                    "avgPercent": round(sum(best) / len(best)) if best else None},
+        "tests": tests, "frequentWrong": frequent,
+    }
 
 
 def list_attempts_for_assignment(teacher_id, assignment_id):
-    """반 전체(또는 개별) 시험의 학생별 회차 기록 — 회차별 점수를 다 보여주고,
-    몇 회차에 합격했는지도 함께 계산한다."""
+    """시험 하나의 성적표 — 대상 학생(반 전체 또는 개별 한 명)을 모두 한 줄씩 싣는다.
+    아직 안 낸 학생도 '미제출'로 나오고, 이미 삭제된 학생의 답안은 이름만 남아 뒤에 붙는다."""
     _require_db()
     a_snap = DB.collection("test_assignments").document(assignment_id).get()
     if not a_snap.exists or a_snap.to_dict().get("teacher_id") != teacher_id:
@@ -11660,22 +12087,54 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
     by_student = {}
     for doc in DB.collection("test_attempts").where("assignment_id", "==", assignment_id).stream():
         d = doc.to_dict() or {}
-        sid = d.get("student_id")
-        by_student.setdefault(sid, {"studentId": sid, "studentName": d.get("student_name", ""), "rounds": []})
-        by_student[sid]["rounds"].append({
-            "round": d.get("round", 1), "score": d.get("score", 0), "total": d.get("total", 0),
-            "wrong": d.get("wrong", 0), "passed": d.get("passed", True),
-            "submittedAt": d.get("submitted_at", ""),
-        })
+        by_student.setdefault(d.get("student_id"), []).append(d)
+    for rows in by_student.values():
+        rows.sort(key=lambda d: d.get("round", 1))
+
+    # 대상 학생 — 개별 시험이면 그 학생, 아니면 지금 그 반의 학생 전부
+    targets = {}
+    if assignment.get("student_id"):
+        snap = DB.collection("students").document(assignment["student_id"]).get()
+        if snap.exists:
+            targets[snap.id] = (snap.to_dict() or {}).get("name", "")
+    else:
+        for doc in DB.collection("students").where("class_id", "==", assignment.get("class_id")).stream():
+            targets[doc.id] = (doc.to_dict() or {}).get("name", "")
+
     rows = []
-    for entry in by_student.values():
-        entry["rounds"].sort(key=lambda r: r["round"])
-        progress = _attempt_progress(assignment, entry["rounds"])
-        entry["passed"] = progress["passed"]
-        entry["passedRound"] = progress["passedRound"]
-        rows.append(entry)
-    rows.sort(key=lambda r: (r["rounds"][0]["submittedAt"] if r["rounds"] else ""))
-    return rows
+    for sid in list(targets) + [x for x in by_student if x not in targets]:
+        atts = by_student.get(sid, [])
+        name = targets.get(sid) or (atts[0].get("student_name", "") if atts else "")
+        progress = _attempt_progress(assignment, atts)
+        last = atts[-1] if atts else None
+        rows.append({
+            "studentId": sid, "studentName": name,
+            "removed": sid not in targets,
+            "status": "passed" if progress["passed"] else ("failed" if atts else "none"),
+            "passed": progress["passed"], "passedRound": progress["passedRound"],
+            "rounds": [{
+                "round": x.get("round", 1), "score": x.get("score", 0), "total": x.get("total", 0),
+                "wrong": x.get("wrong", 0), "passed": x.get("passed", True),
+                "submittedAt": x.get("submitted_at", ""),
+            } for x in atts],
+            "lastAt": last.get("submitted_at", "") if last else "",
+            "wrongItems": _wrong_items(last.get("details")) if last else [],
+            "hasDetails": bool(last and "details" in last),
+        })
+    order = {"failed": 0, "passed": 1, "none": 2}
+    rows.sort(key=lambda r: (order[r["status"]], r["studentName"]))
+    submitted = [r for r in rows if r["status"] != "none"]
+    best_pct = [max(x["score"] / x["total"] for x in r["rounds"] if x["total"]) for r in submitted
+                if any(x["total"] for x in r["rounds"])]
+    return {
+        "attempts": rows,
+        "summary": {
+            "targets": len(rows), "submitted": len(submitted),
+            "passed": sum(1 for r in rows if r["status"] == "passed"),
+            "avgPercent": round(100 * sum(best_pct) / len(best_pct)) if best_pct else None,
+            "wordCount": len(assignment.get("vocab") or []),
+        },
+    }
 
 
 def delete_assignment(teacher_id, assignment_id):
@@ -11815,6 +12274,7 @@ class Handler(BaseHTTPRequestHandler):
                 # 기출 유형 분석 — 기본 0원. 값이 붙어도 시험지 1벌당이지 쪽 수에 곱하지 않는다
                 "examScan": PRICE_EXAMSCAN_KRW,
                 "examTrend": PRICE_EXAM_TREND_KRW,
+                "studentComment": PRICE_STUDENT_COMMENT_KRW,
                 # 시험지에서 지문 꺼내기 — 이것만 쪽당이다(화면이 쪽 수를 곱해 보여 준다)
                 "examOcrPage": PRICE_EXAM_OCR_KRW,
                 # 동형 모의고사 상한 이벤트 — 한 번 누를 때(여러 부 합쳐) 이 값까지만.
@@ -12010,7 +12470,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "시험을 지정하세요."}, 400)
                 return
             try:
-                self._send_json({"attempts": list_attempts_for_assignment(user_id, assignment_id)})
+                self._send_json(list_attempts_for_assignment(user_id, assignment_id))
             except ValueError as e:
                 self._send_json({"error": str(e)}, 404)
             return
@@ -12035,6 +12495,36 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 self._send_json({"tests": list_tests_for_student(student_id)})
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+            return
+
+        if path == "/api/student/tests/result":
+            student_id = _student_session_user(self)
+            if not student_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            try:
+                self._send_json(get_result_for_student(student_id, (query.get("assignmentId") or [""])[0]))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+            return
+
+        if path == "/api/students/report":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            try:
+                self._send_json(get_student_report(
+                    user_id, (query.get("studentId") or [""])[0],
+                    (query.get("start") or [""])[0], (query.get("end") or [""])[0],
+                ))
             except ValueError as e:
                 self._send_json({"error": str(e)}, 404)
             return
@@ -12140,7 +12630,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/brief", "/api/models", "/api/quiz", "/api/workbook",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
-                        "/api/examtrend", "/api/pdfsplit",
+                        "/api/examtrend", "/api/pdfsplit", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
@@ -12151,8 +12641,10 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
                         "/api/admin/approve-exam",
-                        "/api/classes", "/api/classes/regenerate-code", "/api/students",
-                        "/api/students/delete", "/api/vocab-tests", "/api/vocab-tests/delete",
+                        "/api/classes", "/api/classes/regenerate-code", "/api/classes/update", "/api/classes/delete",
+                        "/api/students",
+                        "/api/students/delete", "/api/students/update", "/api/student/password",
+                        "/api/vocab-tests", "/api/vocab-tests/delete",
                         "/api/vocab-tests/update",
                         "/api/student/login", "/api/student/logout", "/api/student/tests/submit"):
             self.send_error(404, "Not found")
@@ -12216,7 +12708,7 @@ class Handler(BaseHTTPRequestHandler):
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/quiz", "/api/workbook",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
-                           "/api/examtrend", "/api/pdfsplit",
+                           "/api/examtrend", "/api/pdfsplit", "/api/studentcomment",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf")
         # /api/docx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
         # 않는다(그래서 GENERATE_PATHS가 아니라 여기 따로 붙는다).
@@ -12285,6 +12777,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/examtrend":
                     cost = PRICE_EXAM_TREND_KRW
                     self._pending_label = "출제경향 보고서"
+                elif path == "/api/studentcomment":
+                    cost = PRICE_STUDENT_COMMENT_KRW
+                    self._pending_label = "성적표 코멘트"
                 elif path == "/api/examocr":
                     # 쪽마다 그림을 한 장씩 읽으므로 쪽 수에 곱한다(examscan과 다른 점).
                     pages = len(req.get("files") or ())
@@ -12652,6 +13147,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(result)
             return
 
+        if path in ("/api/classes/update", "/api/classes/delete"):
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                if path == "/api/classes/update":
+                    rename_class(user_id, req.get("classId"), req.get("name"))
+                    self._send_json({"updated": True})
+                else:
+                    self._send_json({"deleted": True, **delete_class(user_id, req.get("classId"))})
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+            return
+
         if path == "/api/classes/regenerate-code":
             user_id = _session_user(self)
             if not user_id:
@@ -12677,11 +13190,33 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
                 return
             try:
-                result = create_student(user_id, req.get("classId"), req.get("name"))
+                result = create_student(
+                    user_id, req.get("classId"), req.get("name"),
+                    req.get("loginId"), req.get("password"),
+                )
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
                 return
             self._send_json(result)
+            return
+
+        if path == "/api/students/update":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                update_student(
+                    user_id, req.get("studentId"), req.get("name"),
+                    req.get("loginId"), req.get("password"), req.get("classId"),
+                )
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json({"updated": True})
             return
 
         if path == "/api/students/delete":
@@ -12767,15 +13302,28 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "로그인 기능이 아직 설정되지 않았습니다."}, 503)
                 return
             try:
-                student_id, name = login_student(
-                    req.get("name"), _client_ip(self),
+                student_id, name, pw_changed = login_student(
+                    req.get("loginId"), req.get("password"), _client_ip(self),
                 )
             except ValueError as e:
                 self._send_json({"error": str(e)}, 401)
                 return
             token = create_student_session(student_id)
-            self._send_json({"loggedIn": True, "name": name},
+            self._send_json({"loggedIn": True, "name": name, "pwChanged": pw_changed},
                              cookies=[self._student_session_cookie(token)])
+            return
+
+        if path == "/api/student/password":
+            student_id = _student_session_user(self)
+            if not student_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                change_student_password(student_id, req.get("current"), req.get("new"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json({"changed": True})
             return
 
         if path == "/api/student/logout":
@@ -13236,6 +13784,25 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 report = call_gemini_exam_trend(data, req.get("apiKey") or "", MODEL)
                 self._charge_and_send(path, req, report)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        if path == "/api/studentcomment":
+            # 반·학생 기능(성적표)에 딸린 기능이라 같은 승인을 요구한다.
+            if not _classroom_approved(self._auth_user_id):
+                self._send_json({"error": "학생 관리 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            data = req.get("data")
+            if not isinstance(data, dict):
+                self._send_json({"error": "코멘트를 쓸 성적 집계가 없습니다."}, 400)
+                return
+            # 집계 숫자만 읽는 짧은 글쓰기 — 항상 Flash. 이름은 받지도 보내지도 않는다.
+            try:
+                result = call_gemini_student_comment(data, req.get("apiKey") or "", MODEL)
+                self._charge_and_send(path, req, result)
             except QuotaExceeded as e:
                 self._send_json({"error": str(e), "code": "quota"}, 429)
             except Exception as e:

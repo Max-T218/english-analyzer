@@ -13,14 +13,16 @@
 
   <header class="app-head">
     <h1 class="eyebrow">English Lab · 학생</h1>
-    <p>내 이름을 넣고 로그인합니다.</p>
+    <p>선생님이 정해 준 아이디와 비밀번호로 로그인합니다.</p>
   </header>
 
-  <!-- ══════════ 로그인: 이름만 ══════════ -->
+  <!-- ══════════ 로그인: 아이디 + 비밀번호 ══════════ -->
   <section class="panel" id="codeGate">
     <form class="auth-panel" id="codeForm" style="max-width:320px;">
-      <label for="nameInput">내 이름</label>
-      <input type="text" id="nameInput" placeholder="예: 홍길동" autocomplete="off">
+      <label for="loginIdInput">아이디</label>
+      <input type="text" id="loginIdInput" autocomplete="username" autocapitalize="off" spellcheck="false">
+      <label for="loginPwInput" style="margin-top:10px;">비밀번호</label>
+      <input type="password" id="loginPwInput" autocomplete="current-password">
       <div class="gate-actions">
         <button type="submit" class="btn" id="codeNextBtn">로그인</button>
         <span class="gate-status" id="codeStatus"></span>
@@ -33,10 +35,32 @@
   <section id="listWorkspace" hidden>
     <div class="panel" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
       <span class="hint" id="studentGreeting"></span>
-      <button type="button" class="btn ghost small" id="logoutBtn">로그아웃</button>
+      <span style="display:inline-flex; gap:6px;">
+        <button type="button" class="btn ghost small" id="openPwBtn">비밀번호 변경</button>
+        <button type="button" class="btn ghost small" id="logoutBtn">로그아웃</button>
+      </span>
     </div>
     <div class="error" id="listError"></div>
     <div id="testList"></div>
+  </section>
+
+  <!-- ══════════ 비밀번호 변경 ══════════ -->
+  <section class="panel" id="pwWorkspace" hidden>
+    <button type="button" class="btn ghost small" id="pwBackBtn">← 목록으로</button>
+    <form class="auth-panel" id="pwForm" style="max-width:320px; margin-top:12px;">
+      <label for="pwCurrent">현재 비밀번호</label>
+      <input type="password" id="pwCurrent" autocomplete="current-password">
+      <label for="pwNew" style="margin-top:10px;">새 비밀번호 (4자 이상, 영어 대소문자 구분 없음)</label>
+      <input type="password" id="pwNew" autocomplete="new-password">
+      <label for="pwNew2" style="margin-top:10px;">새 비밀번호 확인</label>
+      <input type="password" id="pwNew2" autocomplete="new-password">
+      <div class="gate-actions">
+        <button type="submit" class="btn" id="pwSaveBtn">변경</button>
+        <span class="gate-status" id="pwStatus"></span>
+      </div>
+      <div class="error" id="pwError"></div>
+    </form>
+    <p class="hint">바꾼 비밀번호는 선생님도 볼 수 없습니다. 잊으면 선생님께 새로 정해 달라고 하세요.</p>
   </section>
 
   <!-- ══════════ 단어 학습 화면 ══════════ -->
@@ -70,6 +94,7 @@
     <div class="error" id="takeError"></div>
     <div id="takeForm"></div>
     <div class="actions" style="margin-top:16px;">
+      <button type="button" class="btn ghost" id="prevBtn" hidden>← 이전</button>
       <button type="button" class="btn" id="nextBtn">다음</button>
       <span class="gate-status" id="submitStatus"></span>
     </div>
@@ -77,15 +102,44 @@
 
   <!-- ══════════ 결과 화면 ══════════ -->
   <section class="panel" id="resultWorkspace" hidden style="text-align:center; padding:40px 20px;">
-    <div style="font-size:15px; color:var(--ink-soft); margin-bottom:6px;">제출 완료!</div>
+    <div style="font-size:15px; color:var(--ink-soft); margin-bottom:6px;" id="resultHeading">제출 완료!</div>
     <div id="resultScore" style="font-size:32px; font-weight:800; color:var(--accent);"></div>
     <p id="resultLead" style="margin-top:10px; font-size:14px;"></p>
+    <div id="resultWrong" style="text-align:left; margin-top:18px;"></div>
     <div style="margin-top:20px; display:flex; gap:10px; justify-content:center;">
       <button type="button" class="btn" id="retryBtn" hidden>다시 도전하기</button>
       <button type="button" class="btn ghost" id="backToListBtn2">← 목록으로</button>
     </div>
   </section>
 
+</div>
+
+<!-- 첫 로그인 안내창 — 선생님이 정해 준 비밀번호 그대로면 로그인 직후에 한 번 뜬다 -->
+<div id="pwNudge" hidden style="position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; z-index:50; padding:16px;">
+  <div class="panel" style="max-width:380px; width:100%; text-align:center;">
+    <h3 style="margin:0 0 8px;">🔒 비밀번호를 바꾸세요.</h3>
+    <p style="font-size:14px; line-height:1.6; margin:0 0 16px;">
+      처음 비밀번호는 모든 친구가 똑같아서,<br>
+      그대로 두면 <b>다른 친구가 내 계정으로 들어올 수 있어요.</b><br>
+      <b>나만 아는 비밀번호</b>로 바꿔 주세요.
+    </p>
+    <div style="display:flex; gap:10px; justify-content:center;">
+      <button type="button" class="btn" id="pwNudgeNowBtn">지금 바꾸기</button>
+      <button type="button" class="btn ghost" id="pwNudgeLaterBtn">다음에 하기</button>
+    </div>
+    <p class="hint" style="margin-top:10px;">다음에 하기를 눌러도 위쪽 [비밀번호 변경]에서 언제든 바꿀 수 있어요.</p>
+  </div>
+</div>
+<!-- 제출 확인창 — 마지막 문항을 풀면 뜬다 -->
+<div id="submitConfirm" hidden style="position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; z-index:60; padding:16px;">
+  <div class="panel" style="max-width:360px; width:100%; text-align:center;">
+    <h3 style="margin:0 0 8px;">제출할까요?</h3>
+    <p id="submitConfirmMsg" style="font-size:14px; line-height:1.6; margin:0 0 16px;"></p>
+    <div style="display:flex; gap:10px; justify-content:center;">
+      <button type="button" class="btn" id="submitConfirmYesBtn">제출하기</button>
+      <button type="button" class="btn ghost" id="submitConfirmNoBtn">다시 확인하기</button>
+    </div>
+  </div>
 </div>
 <script src="/student.js"></script>
 </body>

@@ -7835,6 +7835,23 @@ vocabSortEl.addEventListener("change", () => {
   if (vocabDocEl.innerHTML.trim()) buildVocab();
 });
 const vocabTitleEl = $("vocabTitle");
+const vocabCountEl = $("vocabCount");
+const vocabMixKoEl = $("vocabMixKo");
+const vocabMixEnEl = $("vocabMixEn");
+// 시험지 형식에서만 문항 수 칸이 보이고, '섞어서'면 유형별 개수 칸으로 바뀐다
+function syncVocabCountUI() {
+  const fmt = vocabFormatEl.value;
+  $("vocabCountRow").hidden = fmt === "list";
+  $("vocabCountField").hidden = fmt === "mix";
+  $("vocabMixFields").hidden = fmt !== "mix";
+}
+syncVocabCountUI();
+vocabFormatEl.addEventListener("change", syncVocabCountUI);
+[vocabCountEl, vocabMixKoEl, vocabMixEnEl].forEach((el) =>
+  el.addEventListener("change", () => {
+    if (vocabDocEl.innerHTML.trim()) buildVocab();
+  })
+);
 const vocabDedupEl = $("vocabDedup");
 const vocabAnswerChk = $("vocabAnswerChk");
 const vocabBtn = $("vocabBtn");
@@ -7896,10 +7913,12 @@ vocabAnswerChk.addEventListener("change", () => {
   applyVocabAnswer();
 });
 
-vocabBtn.addEventListener("click", buildVocab);
+vocabBtn.addEventListener("click", () => buildVocab(true));
 vocabPrintBtn.addEventListener("click", () => printDoc(() => titledName("단어장", "vocabTitle")));
 
-function buildVocab() {
+// scroll: [단어장 만들기]를 눌렀을 때만 결과로 스크롤한다. 형식·정렬·문항 수를 바꿔 다시 그릴 때
+// 화면이 따라 내려가면 옵션을 연달아 만지기 불편하다.
+function buildVocab(scroll) {
   vocabErrorEl.textContent = "";
   const sets = getVocabSets();
   if (!sets.length) {
@@ -7947,13 +7966,52 @@ function buildVocab() {
 
   const fmt = vocabFormatEl.value;
   const title = vocabTitleEl.value.trim();
+
+  // 시험지 문항 수 — 목록 앞에서부터 그만큼 쓴다(무작위로 뽑으려면 정렬을 '무작위 섞기'로).
+  // 섞어서는 유형별 개수를 따로 받고, 합이 단어 수를 넘으면 뒤쪽을 줄여 안내한다.
+  const allRows = rows;
+  const readN = (el) => {
+    const n = parseInt(el.value, 10);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  let mixKoCount = 0, mixEnCount = 0, countNote = "";
+  if (fmt === "mix") {
+    let a = readN(vocabMixKoEl), b = readN(vocabMixEnEl);
+    if (a === null && b === null) {
+      a = Math.ceil(allRows.length / 2);
+      b = allRows.length - a;
+    } else {
+      a = a || 0;
+      b = b || 0;
+    }
+    if (a + b === 0) {
+      vocabErrorEl.textContent = "유형별 문항 수를 1개 이상 입력하세요.";
+      return;
+    }
+    if (a + b > allRows.length) {
+      countNote = `단어가 ${allRows.length}개뿐이라 ${allRows.length}문항으로 줄여 만들었습니다.`;
+      a = Math.min(a, allRows.length);
+      b = allRows.length - a < b ? allRows.length - a : b;
+    }
+    mixKoCount = a;
+    mixEnCount = b;
+    rows = allRows.slice(0, a + b);
+  } else if (fmt !== "list") {
+    const n = readN(vocabCountEl);
+    if (n !== null && n > 0) {
+      if (n > allRows.length) countNote = `단어가 ${allRows.length}개뿐이라 ${allRows.length}문항으로 만들었습니다.`;
+      rows = allRows.slice(0, n);
+    }
+  }
+  vocabErrorEl.textContent = countNote;
+
   const parts = [];
   parts.push(`
     <div class="vocab-head">
       <h3 class="section" style="margin-top:0">
         <span class="num">📒</span> ${esc(title || "핵심 어휘 단어장")}
       </h3>
-      <div class="vocab-meta">총 ${rows.length}단어 · ${esc(new Date().toLocaleDateString("ko-KR"))}</div>
+      <div class="vocab-meta">총 ${rows.length}${fmt === "list" ? "단어" : "문항"} · ${esc(new Date().toLocaleDateString("ko-KR"))}</div>
     </div>`);
 
   if (fmt === "list") {
@@ -7977,23 +8035,44 @@ function buildVocab() {
       </table></div>`);
   } else {
     // 시험지 — 한쪽을 비우고 쓰게 한다 (정답은 '정답 표시'를 켤 때만 인쇄)
-    const askEn = fmt === "ko"; // 영어 보고 뜻 쓰기
-    const body = rows
-      .map(
-        (r, i) => `<tr>
-          <td class="v-no">${i + 1}</td>
+    // vocab-2col — 인쇄할 때 좌우 두 단으로 나눈다(style.css). 시험지에만 붙인다.
+    // '단어장'은 뜻·유의어·반의어까지 든 5열 표라 반으로 쪼개면 읽을 수가 없다.
+    const testTable = (list, askEn, startNo) => {
+      const body = list
+        .map(
+          (r, i) => `<tr>
+          <td class="v-no">${startNo + i}</td>
           <td class="${askEn ? "v-word" : ""}">${esc(askEn ? r.word : r.meaning)}</td>
           <td class="v-blank"><span class="wb-ans">${esc(askEn ? r.meaning : r.word)}</span></td>
         </tr>`
-      )
-      .join("");
-    // vocab-2col — 인쇄할 때 좌우 두 단으로 나눈다(style.css). 시험지에만 붙인다.
-    // '단어장'은 뜻·유의어·반의어까지 든 5열 표라 반으로 쪼개면 읽을 수가 없다.
-    parts.push(`
+        )
+        .join("");
+      return `
       <div class="table-wrap vocab-2col"><table class="vocab vocab-test">
         <thead><tr><th>#</th><th>${askEn ? "단어 / 표현" : "뜻"}</th><th>${askEn ? "뜻" : "영어"}</th></tr></thead>
         <tbody>${body}</tbody>
-      </table></div>`);
+      </table></div>`;
+    };
+    if (fmt === "mix") {
+      // 고른 단어 중 어느 것을 '뜻 쓰기'로 낼지는 무작위로 정하되, 각 구역 안의 순서는
+      // 정렬 결과 그대로 둔다. 구역마다 머리말을 붙이고 번호는 이어서 센다.
+      const koIdx = new Set(
+        seededShuffle(rows.map((_, i) => i), Math.floor(Math.random() * 1e9)).slice(0, mixKoCount)
+      );
+      const koRows = rows.filter((_, i) => koIdx.has(i));
+      const enRows = rows.filter((_, i) => !koIdx.has(i));
+      const secHead = (t) => `<p class="vocab-sec" style="font-weight:700; margin:14px 0 6px;">${t}</p>`;
+      if (koRows.length) {
+        parts.push(secHead(`[1~${koRows.length}] 영어를 보고 뜻을 쓰시오.`));
+        parts.push(testTable(koRows, true, 1));
+      }
+      if (enRows.length) {
+        parts.push(secHead(`[${koRows.length + 1}~${rows.length}] 뜻을 보고 영어를 쓰시오.`));
+        parts.push(testTable(enRows, false, koRows.length + 1));
+      }
+    } else {
+      parts.push(testTable(rows, fmt === "ko", 1)); // ko = 영어 보고 뜻 쓰기
+    }
   }
 
   parts.push(`<footer>핵심 어휘 단어장 · 자동 생성</footer>`);
@@ -8006,7 +8085,7 @@ function buildVocab() {
   lastVocabRows = rows;
   updateVocabAssignBtnVisibility();
   syncFloatPrint();
-  vocabDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (scroll === true) vocabDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 // 워드(.docx)로 내려받기 — downloadDocx()가 화면에 그려진 그대로 서버로 보낸다(app.js:135).
@@ -8390,6 +8469,9 @@ TAB_SAVE.vocab = {
       title: vocabTitleEl.value,
       dedup: vocabDedupEl.checked,
       answer: vocabAnswerChk.checked,
+      count: vocabCountEl.value,
+      mixKo: vocabMixKoEl.value,
+      mixEn: vocabMixEnEl.value,
     },
   }),
   applyPayload: (payload) => {
@@ -8403,6 +8485,10 @@ TAB_SAVE.vocab = {
       vocabSortEl.value = s.sort;
       syncPicked("vocabSort");
     }
+    vocabCountEl.value = s.count || "";
+    vocabMixKoEl.value = s.mixKo || "";
+    vocabMixEnEl.value = s.mixEn || "";
+    syncVocabCountUI();
     vocabTitleEl.value = s.title || "";
     vocabDedupEl.checked = !!s.dedup;
     vocabAnswerChk.checked = !!s.answer;
@@ -9200,7 +9286,7 @@ const HOWTO = {
       "<b>지문 상세분석</b>을 돌리면 그 지문의 핵심 어휘가 <b>저절로</b> 여기 모입니다.",
       "그 밖에 <b>[✏️ 직접 입력]</b> · 사진 · PDF로도 넣을 수 있습니다 — 사진과 PDF는 이 탭 위 칸에 끌어다 놓거나 붙여넣기(Ctrl+V) 하면 됩니다.",
       "사진·PDF로 읽은 결과는 바로 들어가지 않습니다. <b>편집 표</b>에서 확인·수정한 뒤 <b>[이 단어장에 추가]</b>를 눌러야 확정됩니다.",
-      "<b>시험지 형식</b>으로 바꾸면 뜻 칸이 빈칸이 됩니다. <b>[정답 표시]</b>를 켜면 교사용으로 답이 함께 찍힙니다.",
+      "<b>시험지 형식</b>으로 바꾸면 뜻(또는 영어) 칸이 빈칸이 됩니다. <b>문항 수</b>를 적으면 목록 앞에서부터 그 개수만 냅니다(비우면 전체 — 무작위로 뽑으려면 정렬을 '무작위 섞기'로). <b>시험지 · 섞어서</b>는 '영어 보고 뜻 쓰기'와 '뜻 보고 영어 쓰기'를 각각 몇 개씩 낼지 정해 한 시험지에 두 구역으로 냅니다. <b>[정답 표시]</b>를 켜면 교사용으로 답이 함께 찍힙니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> — 단어장은 <b>2단</b>으로 인쇄됩니다.",
       "(관리자 승인을 받은 선생님) <b>[🏫 반에 시험 내기]</b>로 학생에게 온라인 단어시험을 낼 수 있습니다. AI를 부르지 않아 <b>요금이 없습니다</b>.",
     ],
@@ -9228,12 +9314,13 @@ const HOWTO = {
     title: "🏫 반 · 학생 관리하는 법",
     lead: "반을 만들고 학생을 등록하면, 단어장으로 온라인 단어시험을 내고 결과를 받아 볼 수 있습니다. AI를 부르지 않아 요금이 없습니다.",
     steps: [
-      "<b>[+ 새 반 만들기]</b>로 반을 만듭니다.",
-      "학생을 등록합니다. <b>이름은 앱 전체에서 겹치면 안 됩니다</b> — 학생이 이름만으로 로그인하기 때문에, 같은 이름이 있으면 누구인지 가릴 수 없습니다.",
+      "<b>[+ 새 반 만들기]</b>로 반을 만듭니다. 이름은 <b>[이름 변경]</b>으로, 필요 없어진 반은 <b>[반 삭제]</b>로 지웁니다(학생·시험·답안이 함께 지워집니다).",
+      "학생을 등록합니다. <b>이름과 아이디만 선생님이 정해 줍니다.</b> 아이디는 앱 전체에서 하나뿐이라 겹치면 등록되지 않습니다(이름은 겹쳐도 됩니다). 비밀번호는 입력하지 않아도 <b>1234</b>로 자동 등록됩니다(영어 대소문자는 구분하지 않습니다). 학생이 처음 로그인하면 바꾸라고 안내하고, 스스로 바꾼 뒤에는 선생님도 볼 수 없습니다.",
       "<b>단어장 탭</b>에서 단어장을 만든 뒤 <b>[🏫 반에 시험 내기]</b>를 누릅니다. 반 전체에도, 학생 한 명에게만도 낼 수 있습니다.",
       "시험을 낼 때 <b>합격 기준</b>을 두면, 기준에 못 미친 학생은 통과할 때까지 재시험을 봅니다. 회차마다 문제 순서와 보기 자리가 다시 섞입니다.",
-      "<b>[🔗 학생에게 알려 줄 주소]</b>를 복사해 문자·알림장으로 보냅니다. 학생은 그 주소에서 <b>자기 이름만</b> 넣어 로그인합니다.",
+      "<b>[🔗 학생에게 알려 줄 주소]</b>를 복사해 문자·알림장으로 보냅니다. 학생은 그 주소에서 <b>선생님이 정해 준 아이디와 비밀번호</b>로 로그인하고, 비밀번호는 스스로 바꿀 수도 있습니다.",
       "제출된 결과는 이 탭에서 봅니다.",
+      "학생이 비밀번호를 잊으면 학생 줄의 <b>[수정]</b>에서 새 비밀번호를 정하거나 <b>[1234로 초기화]</b>를 누르세요. 아이디·이름도, 다른 반으로 옮기는 것도 여기서 합니다.",
     ],
     tip: "이 탭은 관리자 승인을 받은 선생님에게만 보입니다. 학생 이름은 미성년자 개인정보라, 시험 삼아 넣어 보실 때는 실제 이름 대신 아무 말이나 쓰세요.",
   },
@@ -12910,8 +12997,11 @@ function fmtClassroomDate(iso) {
 const classSelectEl = $("classSelect");
 const newClassBtn = $("newClassBtn");
 const classErrorEl = $("classError");
+const renameClassBtn = $("renameClassBtn");
+const deleteClassBtn = $("deleteClassBtn");
 const studentsPanelEl = $("studentsPanel");
 const newStudentNameEl = $("newStudentName");
+const newStudentLoginIdEl = $("newStudentLoginId");
 const addStudentBtn = $("addStudentBtn");
 const studentErrorEl = $("studentError");
 const studentTableBodyEl = $("studentTableBody");
@@ -12943,6 +13033,8 @@ function onClassSelectChange() {
   const has = !!selectedClassId;
   studentsPanelEl.hidden = !has;
   assignedTestsPanelEl.hidden = !has;
+  renameClassBtn.hidden = !has;
+  deleteClassBtn.hidden = !has;
   if (has) {
     loadStudents();
     loadAssignedTests();
@@ -12961,6 +13053,37 @@ newClassBtn.addEventListener("click", async () => {
     onClassSelectChange();
   } catch (err) {
     classErrorEl.textContent = err.message || "반 만들기에 실패했습니다.";
+  }
+});
+
+renameClassBtn.addEventListener("click", async () => {
+  const cur = classesCache.find((c) => c.id === selectedClassId);
+  if (!cur) return;
+  const name = prompt("새 반 이름을 입력하세요.", cur.name);
+  if (name === null || !name.trim() || name.trim() === cur.name) return;
+  classErrorEl.textContent = "";
+  try {
+    await postJson("/api/classes/update", { classId: selectedClassId, name }, "이름 변경에 실패했습니다.");
+    await refreshClassSelect(true);
+  } catch (err) {
+    classErrorEl.textContent = err.message || "이름 변경에 실패했습니다.";
+  }
+});
+
+deleteClassBtn.addEventListener("click", async () => {
+  const cur = classesCache.find((c) => c.id === selectedClassId);
+  if (!cur) return;
+  const nStudents = studentTableBodyEl.querySelectorAll("tr[data-sid]").length;
+  const nTests = assignedTestListEl.querySelectorAll("[data-aid]").length;
+  if (!confirm(`'${cur.name}' 반을 삭제할까요?\n\n이 반의 학생 ${nStudents}명, 시험 ${nTests}개와 학생들이 낸 답안·점수가 모두 지워지며 되돌릴 수 없습니다.\n학생을 지우지 않고 다른 반으로 옮기려면 먼저 학생 줄의 [수정]에서 반을 바꾸세요.`)) {
+    return;
+  }
+  classErrorEl.textContent = "";
+  try {
+    await postJson("/api/classes/delete", { classId: selectedClassId }, "반 삭제에 실패했습니다.");
+    await refreshClassSelect(false);
+  } catch (err) {
+    classErrorEl.textContent = err.message || "반 삭제에 실패했습니다.";
   }
 });
 
@@ -13001,7 +13124,7 @@ copyStudentUrlBtn.addEventListener("click", async () => {
 
 async function loadStudents() {
   studentErrorEl.textContent = "";
-  studentTableBodyEl.innerHTML = `<tr><td colspan="3">불러오는 중…</td></tr>`;
+  studentTableBodyEl.innerHTML = `<tr><td colspan="6">불러오는 중…</td></tr>`;
   try {
     const data = await getJson(
       `/api/students?classId=${encodeURIComponent(selectedClassId)}`,
@@ -13014,33 +13137,368 @@ async function loadStudents() {
   }
 }
 
+/* ── 성적표 공용 도우미 ── */
+function fmtDateTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+const SCORE_STATUS = {
+  passed: ["✅ 합격", "var(--accent)"],
+  failed: ["❌ 미통과", "var(--g)"],
+  none: ["미제출", "var(--ink-soft)"],
+};
+function roundsText(rounds) {
+  return (rounds || []).map((r) => `${r.round}회 ${r.score}/${r.total}${r.passed ? " ✅" : ""}`).join(" · ");
+}
+// 틀린 단어 표(문제·내 답·정답) — 시험별 성적표와 학생별 성적표가 같이 쓴다
+function wrongItemsHtml(items, hasDetails) {
+  if (!items || !items.length) {
+    return hasDetails === false
+      ? `<p class="hint">이 기록에는 틀린 단어가 저장되어 있지 않습니다.</p>`
+      : `<p class="hint">틀린 단어가 없습니다.</p>`;
+  }
+  return `<table><thead><tr><th>#</th><th>문제</th><th>학생 답</th><th>정답</th></tr></thead><tbody>${items
+    .map((w) => `<tr><td>${esc(w.no)}</td><td>${esc(w.prompt)}</td>
+      <td>${w.given ? esc(w.given) : '<span class="hint">(무응답)</span>'}</td><td><b>${esc(w.correct)}</b></td></tr>`)
+    .join("")}</tbody></table>`;
+}
+// 학생 표의 '최근 성적' 칸
+function studentLastScoreHtml(s) {
+  if (!s.tests) return `<span class="hint">배정된 시험 없음</span>`;
+  const sub = `<span class="hint">응시 ${s.done}/${s.tests} · 합격 ${s.passed}</span>`;
+  if (!s.last) return `<span class="hint">아직 응시 안 함</span><br>${sub}`;
+  const st = SCORE_STATUS[s.last.status] || SCORE_STATUS.none;
+  return `${esc(s.last.title)} <b>${s.last.score}/${s.last.total}</b> <span style="color:${st[1]};">${st[0]}</span><br>${sub}`;
+}
+/* ── 성적표 디자인 ──
+   시험지 분석 리포트(public/trend.js)와 같은 틀을 쓴다 — 표지 머리(.rp-head) · 숫자 카드
+   (.trend-tile) · 번호 붙은 소제목(h4.sec) · 요약 상자 · 학원 마크/워터마크 인쇄.
+   스타일은 TREND_CSS(trend.js)를 그대로 쓰고 아래는 성적표에만 필요한 것만 더한다. */
+const REPORT_CSS = `
+.trend-report .rp-comment{margin:4px 0;padding:10px 14px;background:#f4f7fc;border-left:3px solid #4d94ec;
+  border-radius:0 8px 8px 0;font-size:13.5px;line-height:1.7;white-space:pre-wrap;color:#1a1f2b;font-family:inherit}
+.trend-report textarea.rp-comment{width:100%;box-sizing:border-box;border-top:0;border-right:0;border-bottom:0;resize:vertical}
+.trend-report .tag.pass{background:#dff3e6;color:#1d6b3c}
+.trend-report .tag.fail{background:#fdeed9;color:#a04a00}
+.trend-report .tag.none{background:#eceef2;color:#5b6473}
+.trend-report td.tk{text-align:left}
+.trend-report .rp-sub-table{margin:4px 0 8px;font-size:12px}
+.trend-report .rp-chart{display:block;margin:0 auto}
+`;
+(function injectReportStyle() {
+  const st = document.createElement("style");
+  st.textContent = REPORT_CSS;
+  document.head.appendChild(st);
+})();
+
+function reportHeadHtml(kicker, title, rows) {
+  const d = new Date();
+  const today = `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.`;
+  const trs = rows.concat([["작성일", today]]).reduce((acc, r, i, arr) => {
+    // 두 칸씩 한 줄로 묶는다(분석 리포트 표지와 같은 모양)
+    if (i % 2 === 0) acc.push(arr.slice(i, i + 2));
+    return acc;
+  }, []).map((pair) => pair.length === 2
+    ? `<tr><th>${pair[0][0]}</th><td>${pair[0][1]}</td><th>${pair[1][0]}</th><td>${pair[1][1]}</td></tr>`
+    : `<tr><th>${pair[0][0]}</th><td colspan="3">${pair[0][1]}</td></tr>`).join("");
+  const brand = typeof trendBrand === "function" ? trendBrand() : { name: "" };
+  return `<div class="rp-head">
+      <div class="rp-kicker">${esc(brand.name ? brand.name + " · " : "")}${esc(kicker)}</div>
+      <h3>${esc(title)}</h3>
+      <table class="rp-meta">${trs}</table>
+    </div>`;
+}
+function reportTilesHtml(tiles) {
+  return `<div class="trend-dash"><div class="trend-tiles t4">${tiles.map((t) => `
+    <div class="trend-tile" style="--acc:${t.color}"><span>${t.label}</span>
+      <b>${t.value}<small>${t.unit || ""}</small></b><em>${t.sub || "&nbsp;"}</em></div>`).join("")}</div></div>`;
+}
+function statusTagHtml(status, passedRound) {
+  const label = { passed: "합격", failed: "미통과", none: "미제출" }[status] || "미제출";
+  const cls = { passed: "pass", failed: "fail", none: "none" }[status] || "none";
+  return `<span class="tag ${cls}">${label}${passedRound ? ` (${passedRound}회차)` : ""}</span>`;
+}
+
+// 성적표를 새 창에서 인쇄한다 — 분석 리포트와 같은 CSS, 학원 마크(아래)·워터마크(뒷배경)
+// 설정(trendBrand)도 그대로 따른다. 화면의 버튼·토글은 .no-print로 숨긴다.
+function openPrintWindow(title, bodyHtml) {
+  const w = window.open("", "_blank");
+  if (!w) {
+    alert("팝업이 막혀 있어 인쇄 창을 열지 못했습니다. 팝업을 허용해 주세요.");
+    return;
+  }
+  const brand = typeof trendBrand === "function" ? trendBrand() : { img: "", name: "", wm: "" };
+  const foot = brand.img || brand.name ? brand : null;
+  const css = typeof TREND_CSS === "string" ? TREND_CSS : "";
+  const brandCss = typeof trendBrandPrintCss === "function" ? trendBrandPrintCss(foot) : "";
+  const body = typeof trendBrandPrintBody === "function" ? trendBrandPrintBody(bodyHtml, foot, brand.wm) : bodyHtml;
+  w.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${esc(title)}</title>
+    <style>@page{size:A4;margin:14mm}body{margin:0;padding:0}${css}${REPORT_CSS}
+    .trend-report{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .trend-report tr{break-inside:avoid}.trend-report h4{break-after:avoid}
+    .no-print{display:none !important}
+    .trend-dash{padding:14px 18px}
+    ${brandCss}</style></head><body>${body}</body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(() => { try { w.print(); } catch (_) { /* 창을 닫았다 */ } }, 300);
+}
+
+// 시험 하나의 성적표 — 요약 카드 + 학생별 한 줄(안 낸 학생도) + 틀린 단어 펼치기
+function renderTestResults(data, title) {
+  const rows = data.attempts || [];
+  const sm = data.summary || {};
+  if (!rows.length) return `<p class="hint">이 시험을 볼 학생이 없습니다.</p>`;
+  const cls = (classesCache.find((c) => c.id === selectedClassId) || {}).name || "";
+  const body = rows.map((r) => {
+    const wrongBtn = r.status === "none" ? "" :
+      `<button type="button" class="btn ghost small toggle-wrong-btn no-print">틀린 단어 ${r.wrongItems.length}</button>`;
+    return `<tr>
+        <td class="tk">${esc(r.studentName)}${r.removed ? ' <span class="hint">(삭제된 학생)</span>' : ""}</td>
+        <td>${statusTagHtml(r.status, r.passedRound)}</td>
+        <td class="tk">${esc(roundsText(r.rounds)) || "—"}</td>
+        <td>${esc(fmtDateTime(r.lastAt))}</td>
+        <td class="no-print">${wrongBtn}</td>
+      </tr>
+      <tr class="wrong-row" hidden><td colspan="5" class="tk">
+        <b>마지막 시도의 틀린 단어</b>${wrongItemsHtml(r.wrongItems, r.hasDetails)}
+      </td></tr>`;
+  }).join("");
+  const missing = sm.targets - sm.submitted;
+  return `<div class="trend-report results-printable">
+    ${reportHeadHtml("시험 성적표", title, [["시험", esc(title)], ["반", esc(cls || "—")]])}
+    ${reportTilesHtml([
+      { label: "대상 학생", value: sm.targets, unit: "명", sub: missing ? `미제출 ${missing}명` : "모두 제출", color: "#4d94ec" },
+      { label: "제출", value: sm.submitted, unit: `/${sm.targets}명`, sub: `${sm.wordCount}단어 시험`, color: "#ff8a4c" },
+      { label: "합격", value: sm.passed, unit: `/${sm.targets}명`, sub: sm.targets ? `합격률 ${Math.round((100 * sm.passed) / sm.targets)}%` : "", color: "#2fd197" },
+      { label: "평균 점수", value: sm.avgPercent != null ? sm.avgPercent : "—", unit: sm.avgPercent != null ? "점" : "", sub: "각자 최고 회차 · 100점 환산", color: "#ffc02e" },
+    ])}
+    <h4 class="sec">학생별 결과</h4>
+    <table>
+      <thead><tr><th>학생</th><th>결과</th><th>회차별 점수</th><th>마지막 제출</th><th class="no-print"></th></tr></thead>
+      <tbody>${body}</tbody></table></div>
+    <button type="button" class="btn ghost small print-results-btn">🖨️ 성적표 인쇄</button>`;
+}
+
+/* ── 월간 성적표 ──
+   기간(기본: 이번 달)에 낸 시험을 시간순으로 막대그래프로 보여 주고, 평균·추이·재시험·
+   자주 틀린 단어로 코멘트 초안을 써 준다(AI를 부르지 않는 규칙 기반 — 요금 없음).
+   코멘트는 선생님이 인쇄 전에 고쳐 쓸 수 있다. */
+const REPORT_COLORS = { passed: "#2563eb", failed: "#f59e0b", none: "#9ca3af" };
+
+function reportMonthDefault() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+// "2026-10" → 그 달 1일 0시 ~ 다음 달 1일 0시(선생님 컴퓨터의 시간대 = 한국 시간)
+function reportPeriod(monthStr) {
+  if (!monthStr) return null;
+  const [y, m] = monthStr.split("-").map(Number);
+  if (!y || !m) return null;
+  return {
+    start: new Date(y, m - 1, 1).toISOString(),
+    end: new Date(y, m, 1).toISOString(),
+    label: `${y}년 ${m}월`,
+  };
+}
+
+// 시험별 점수 막대그래프(SVG). 막대 = 기간 안 최고 점수(100점 환산), 빨간 선 = 합격선,
+// 검은 눈금 = 첫 시도 점수(재시험을 본 경우). 색·광택은 분석 리포트 막대와 같다.
+// 인쇄 창에서는 CSS 변수가 없어 색을 직접 쓴다.
+function reportChartSvg(tests, avg) {
+  const done = tests.filter((t) => t.status !== "none" && t.bestPercent != null);
+  if (!done.length) return `<p class="hint">이 기간에 응시한 시험이 없어 그래프가 없습니다.</p>`;
+  const slot = 80, L = 40, R = 16, T = 30, B = 58, H = 260;
+  const W = Math.max(480, L + R + slot * done.length);
+  const y = (p) => T + (H - T - B) * (1 - p / 100);
+  const gradId = "rpg" + Math.random().toString(36).slice(2, 7);
+  let g = `<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".45" stop-color="#fff" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#000" stop-opacity=".06"/></linearGradient></defs>`;
+  [0, 25, 50, 75, 100].forEach((p) => {
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(p)}" y2="${y(p)}" stroke="${p === 0 ? "#c3c2b7" : "#e6e8ee"}"/>
+          <text x="${L - 7}" y="${y(p) + 4}" font-size="11" text-anchor="end" fill="#898781">${p}</text>`;
+  });
+  if (avg != null) {
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(avg)}" y2="${y(avg)}" stroke="#2fd197" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="${W - R}" y="${y(avg) - 5}" font-size="11" font-weight="700" text-anchor="end" fill="#1d9d70">평균 ${avg}점</text>`;
+  }
+  done.forEach((t, i) => {
+    const cx = L + slot * i + slot / 2, bw = 36;
+    const col = t.status === "passed" ? "#4d94ec" : "#ff8a4c";
+    const top = y(t.bestPercent), h = y(0) - top;
+    const name = t.title.length > 7 ? t.title.slice(0, 7) + "…" : t.title;
+    g += `<rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${h}" rx="4" fill="${col}"/>
+      <rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${h}" rx="4" fill="url(#${gradId})"/>
+      <text x="${cx}" y="${top - 6}" font-size="13" font-weight="700" text-anchor="middle" fill="#0b0b0b">${t.bestPercent}</text>`;
+    if (t.passPercent != null) {
+      g += `<line x1="${cx - bw / 2 - 6}" x2="${cx + bw / 2 + 6}" y1="${y(t.passPercent)}" y2="${y(t.passPercent)}" stroke="#dc2626" stroke-width="2"/>`;
+    }
+    if (t.retried && t.firstPercent != null && t.firstPercent !== t.bestPercent) {
+      g += `<line x1="${cx - bw / 2}" x2="${cx + bw / 2}" y1="${y(t.firstPercent)}" y2="${y(t.firstPercent)}" stroke="#0b0b0b" stroke-width="2.5"/>`;
+    }
+    g += `<text x="${cx}" y="${H - B + 17}" font-size="11.5" font-weight="600" text-anchor="middle" fill="#0b0b0b">${esc(name)}</text>
+      <text x="${cx}" y="${H - B + 31}" font-size="10.5" text-anchor="middle" fill="#898781">${esc(fmtDateTime(t.lastAt).slice(0, 5))}</text>`;
+  });
+  const legend = `<text x="${L}" y="15" font-size="11.5" fill="#52514e">
+      <tspan fill="#4d94ec">■</tspan> 합격<tspan dx="12" fill="#ff8a4c">■</tspan> 미통과<tspan dx="12" fill="#dc2626">━</tspan> 합격선<tspan dx="12" fill="#0b0b0b">━</tspan> 첫 시도(재시험을 본 경우)</text>`;
+  return `<svg class="rp-chart" viewBox="0 0 ${W} ${H}" style="width:100%; max-width:${W}px; height:auto;"
+      font-family="Malgun Gothic, 맑은 고딕, sans-serif" role="img" aria-label="시험별 점수 그래프">${legend}${g}</svg>`;
+}
+
+// 코멘트 초안 — 평균 → 추이 → 재시험·미통과 → 미응시 → 자주 틀린 단어 순으로 이어 쓴다
+function buildReportComment(data) {
+  const name = data.student.name;
+  const tests = data.tests || [];
+  const done = tests.filter((t) => t.status !== "none" && t.bestPercent != null);
+  const none = tests.filter((t) => t.status === "none");
+  if (!done.length) {
+    return `${name} 학생은 이 기간에 응시한 시험이 없습니다.` +
+      (none.length ? ` 배정된 시험 ${none.length}개를 응시하도록 지도 부탁드립니다.` : "");
+  }
+  const avg = data.summary.avgPercent;
+  const out = [];
+  let lead = `${name} 학생은 이 기간 ${done.length}개 시험에 응시해 `;
+  if (avg >= 90) lead += `평균 ${avg}점으로 단어 암기가 매우 탄탄합니다.`;
+  else if (avg >= 80) lead += `평균 ${avg}점으로 안정적인 성적을 보였습니다.`;
+  else if (avg >= 70) lead += `평균 ${avg}점으로 무난한 성적이며, 조금만 더 복습하면 더 오를 수 있습니다.`;
+  else if (avg >= 60) lead += `평균 ${avg}점으로 기본은 갖췄으나 꾸준한 복습이 필요합니다.`;
+  else lead += `평균 ${avg}점으로 단어 암기에 더 많은 시간이 필요합니다. 매일 조금씩 반복해 외우는 습관을 권합니다.`;
+  out.push(lead);
+
+  if (done.length >= 3) {
+    const k = Math.max(1, Math.floor(done.length / 3));
+    const mean = (arr) => arr.reduce((s, t) => s + t.bestPercent, 0) / arr.length;
+    const diff = mean(done.slice(-k)) - mean(done.slice(0, k));
+    if (diff >= 8) out.push("시험을 거듭할수록 점수가 올라 꾸준한 성장세가 보입니다.");
+    else if (diff <= -8) out.push("최근 시험의 점수가 이전보다 낮아졌으니 복습에 조금 더 신경 써 주세요.");
+    else out.push("점수가 비교적 일정하게 유지되고 있습니다.");
+  }
+  const perfect = done.filter((t) => t.bestPercent === 100).length;
+  if (perfect) out.push(`만점을 받은 시험이 ${perfect}개 있습니다.`);
+  const retriedPassed = done.filter((t) => t.retried && t.status === "passed").length;
+  if (retriedPassed) out.push(`재시험을 거쳐 끝까지 합격한 시험이 ${retriedPassed}개 있어 끈기가 돋보입니다.`);
+  const failed = done.filter((t) => t.status === "failed").length;
+  if (failed) out.push(`아직 합격하지 못한 시험이 ${failed}개 있어 보충이 필요합니다.`);
+  if (none.length) out.push(`응시하지 않은 시험이 ${none.length}개 있어 응시를 지도해 주세요.`);
+  // 자주 틀린 단어는 인쇄본에 싣지 않기로 했으므로(화면 전용) 코멘트에도 단어를 적지 않는다
+  return out.join(" ");
+}
+
+// AI 코멘트 버튼에 붙는 요금 표시(서버가 /api/pricing으로 내려 준 값)
+function aiPriceLabel() {
+  const won = (PRICING && PRICING.studentComment) || 0;
+  return won > 0 ? ` (${won.toLocaleString()}P)` : "";
+}
+
+// 학생 한 명의 성적표 본문(월 선택 칸은 따로 — 인쇄에는 안 들어간다)
+function renderStudentReport(data, period) {
+  const st = data.student, sm = data.summary;
+  const tests = data.tests || [];
+  const cls = (classesCache.find((c) => c.id === selectedClassId) || {}).name || "";
+  const done = tests.filter((t) => t.status !== "none" && t.bestPercent != null);
+  const top = done.reduce((a, t) => (!a || t.bestPercent > a.bestPercent ? t : a), null);
+  const missing = sm.tests - sm.done;
+  const testRows = tests.length ? tests.map((t) => `<tr><td class="tk">${esc(t.title)}</td>
+      <td>${statusTagHtml(t.status, t.passedRound)}</td>
+      <td class="tk">${esc(roundsText(t.rounds)) || "—"}</td><td>${esc(fmtDateTime(t.lastAt))}</td></tr>`).join("")
+    : `<tr><td colspan="4" class="hint">이 기간에 해당하는 시험이 없습니다.</td></tr>`;
+  const freq = data.frequentWrong || [];
+  const freqHtml = freq.length
+    ? `<table><thead><tr><th>단어</th><th>뜻</th><th>틀린 횟수</th></tr></thead><tbody>${freq.map((w) =>
+        `<tr><td class="tk"><b>${esc(w.word)}</b></td><td class="tk">${esc(w.meaning)}</td><td>${w.wrong}번 / ${w.tried}번 출제</td></tr>`).join("")}</tbody></table>`
+    : `<p class="hint">틀린 단어 기록이 없습니다.</p>`;
+  return `<div class="trend-report results-printable">
+    ${reportHeadHtml("월간 성적표", `${st.name} 학생 학습 성적표`, [
+      ["학생", `${esc(st.name)}${st.loginId ? ` (${esc(st.loginId)})` : ""}`],
+      ["기간", esc(period ? period.label : "전체 기간")],
+      ["반", esc(cls || "—")],
+    ])}
+    ${reportTilesHtml([
+      { label: "응시 시험", value: sm.done, unit: `/${sm.tests}개`, sub: missing ? `미응시 ${missing}개` : "모두 응시", color: "#4d94ec" },
+      { label: "평균 점수", value: sm.avgPercent != null ? sm.avgPercent : "—", unit: sm.avgPercent != null ? "점" : "", sub: "시험별 최고 점수 평균", color: "#2fd197" },
+      { label: "합격", value: sm.passed, unit: `/${sm.done}개`, sub: sm.done ? `합격률 ${Math.round((100 * sm.passed) / sm.done)}%` : "", color: "#ff8a4c" },
+      { label: "최고 점수", value: top ? top.bestPercent : "—", unit: top ? "점" : "", sub: top ? esc(top.title.length > 12 ? top.title.slice(0, 11) + "…" : top.title) : "", color: "#9b6cf0" },
+    ])}
+    <h4 class="sec">시험별 점수</h4>
+    <div class="trend-dash">${reportChartSvg(tests, sm.avgPercent)}</div>
+    <h4 class="sec">선생님 코멘트</h4>
+    <textarea class="report-comment rp-comment" rows="4">${esc(buildReportComment(data))}</textarea>
+    <h4 class="sec">시험별 결과</h4>
+    <table>
+      <thead><tr><th>시험</th><th>결과</th><th>회차별 점수</th><th>마지막 제출</th></tr></thead>
+      <tbody>${testRows}</tbody></table></div>
+    <!-- 자주 틀린 단어는 선생님이 화면에서만 본다 — .results-printable 밖에 두어 인쇄본에 안 실린다 -->
+    <div class="trend-report report-frequent"><h4>자주 틀린 단어 <span class="hint">(화면에서만 보이며 인쇄되지 않습니다)</span></h4>${freqHtml}</div>
+    <button type="button" class="btn small report-ai-btn">✨ AI로 코멘트 쓰기${aiPriceLabel()}</button>
+    <button type="button" class="btn ghost small report-comment-reset-btn">기본 초안으로 되돌리기</button>
+    <span class="error report-ai-err"></span>
+    <button type="button" class="btn ghost small print-results-btn">🖨️ 성적표 인쇄</button>`;
+}
+
+// 성적표 칸 하나를 (다시) 채운다 — 월을 바꿀 때마다 서버에서 그 기간만 다시 받는다
+async function loadStudentReport(tr, studentId, monthStr) {
+  const period = reportPeriod(monthStr);
+  const cell = tr.querySelector("td");
+  cell.innerHTML = `<div class="report-controls no-print" style="margin-bottom:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <label>기간</label>
+      <input type="month" class="report-month" value="${esc(monthStr || "")}" style="width:auto;">
+      <button type="button" class="btn ghost small report-all-btn">전체 기간</button>
+    </div><div class="report-body"><p class="hint">불러오는 중…</p></div>`;
+  const bodyEl = cell.querySelector(".report-body");
+  try {
+    const qs = `studentId=${encodeURIComponent(studentId)}` +
+      (period ? `&start=${encodeURIComponent(period.start)}&end=${encodeURIComponent(period.end)}` : "");
+    const data = await getJson(`/api/students/report?${qs}`, "성적표를 불러오지 못했습니다.");
+    bodyEl.innerHTML = renderStudentReport(data, period);
+    tr._reportData = data;
+    tr.dataset.title = `${data.student.name} 성적표${period ? ` (${period.label})` : ""}`;
+    tr.dataset.period = period ? period.label : "전체 기간";
+  } catch (err) {
+    bodyEl.innerHTML = `<p class="error">${esc(err.message || "성적표를 불러오지 못했습니다.")}</p>`;
+  }
+}
+
 function renderStudents(students) {
   studentTableBodyEl.innerHTML = students.length
     ? students
         .map(
           (s) => `
-      <tr data-sid="${esc(s.id)}">
+      <tr data-sid="${esc(s.id)}" data-name="${esc(s.name)}" data-login-id="${esc(s.loginId)}">
         <td>${esc(s.name)}</td>
+        <td>${s.loginId ? `<code>${esc(s.loginId)}</code>` : `<span class="error">미발급</span>`}</td>
+        <td class="hint">${s.pwSetBy === "student" ? "학생이 변경함" : s.pwSetBy === "teacher" ? "선생님이 정함" : "—"}</td>
+        <td>${studentLastScoreHtml(s)}</td>
         <td>${esc(fmtClassroomDate(s.createdAt))}</td>
-        <td><button type="button" class="btn ghost small danger del-student-btn">삭제</button></td>
+        <td style="white-space:nowrap;">
+          <button type="button" class="btn ghost small report-student-btn">성적표</button>
+          <button type="button" class="btn ghost small edit-student-btn">수정</button>
+          <button type="button" class="btn ghost small danger del-student-btn">삭제</button>
+        </td>
       </tr>`
         )
         .join("")
-    : `<tr><td colspan="3" class="hint">등록된 학생이 없습니다.</td></tr>`;
+    : `<tr><td colspan="6" class="hint">등록된 학생이 없습니다.</td></tr>`;
 }
 
 addStudentBtn.addEventListener("click", async () => {
   const name = newStudentNameEl.value.trim();
+  const loginId = newStudentLoginIdEl.value.trim();
   studentErrorEl.textContent = "";
   if (!selectedClassId) return;
-  if (!name) {
-    studentErrorEl.textContent = "학생 이름을 입력하세요.";
+  if (!name || !loginId) {
+    studentErrorEl.textContent = "이름과 아이디를 입력하세요.";
     return;
   }
   addStudentBtn.disabled = true;
   try {
-    await postJson("/api/students", { classId: selectedClassId, name }, "학생 등록에 실패했습니다.");
+    await postJson("/api/students", { classId: selectedClassId, name, loginId }, "학생 등록에 실패했습니다.");
     newStudentNameEl.value = "";
+    newStudentLoginIdEl.value = "";
+    newStudentNameEl.focus();
     await loadStudents();
   } catch (err) {
     studentErrorEl.textContent = err.message || "학생 등록에 실패했습니다.";
@@ -13050,9 +13508,154 @@ addStudentBtn.addEventListener("click", async () => {
 });
 
 studentTableBodyEl.addEventListener("click", async (e) => {
+  const printBtn = e.target.closest(".print-results-btn");
+  if (printBtn) {
+    const rr = printBtn.closest("tr.report-row");
+    const clone = rr.querySelector(".results-printable").cloneNode(true);
+    // 입력칸은 인쇄에 그대로 못 쓰니 선생님이 고친 글을 문단으로 바꿔 싣는다
+    clone.querySelectorAll("textarea.report-comment").forEach((ta) => {
+      const p = document.createElement("div");
+      p.className = "rp-comment";
+      p.textContent = ta.value;
+      ta.replaceWith(p);
+    });
+    openPrintWindow(rr.dataset.title || "성적표", clone.outerHTML);
+    return;
+  }
+  const aiBtn = e.target.closest(".report-ai-btn");
+  if (aiBtn) {
+    const rr = aiBtn.closest("tr.report-row");
+    const data = rr._reportData;
+    const errEl = rr.querySelector(".report-ai-err");
+    if (!data) return;
+    errEl.textContent = "";
+    const won = (PRICING && PRICING.studentComment) || 0;
+    if (won > 0 && !(await costConfirmed(won, "AI가 이 학생의 성적 코멘트를 씁니다.", 1))) return;
+    const label = aiBtn.textContent;
+    aiBtn.disabled = true;
+    aiBtn.textContent = "쓰는 중…";
+    try {
+      // 학생 이름은 보내지 않는다(미성년자 개인정보) — AI는 {학생}으로 쓰고 여기서 이름으로 바꾼다
+      const res = await postGenerate("/api/studentcomment", {
+        data: {
+          period: rr.dataset.period || "",
+          summary: data.summary,
+          tests: (data.tests || []).map((t) => ({
+            title: t.title, status: t.status, bestPercent: t.bestPercent, firstPercent: t.firstPercent,
+            passPercent: t.passPercent, tries: (t.rounds || []).length,
+          })),
+        },
+      }, "코멘트를 쓰지 못했습니다.");
+      rr.querySelector("textarea.report-comment").value = String(res.comment || "").replace(/\{학생\}/g, data.student.name);
+      if (typeof refreshTokenDisplay === "function") refreshTokenDisplay();
+    } catch (err) {
+      errEl.textContent = err.message || "코멘트를 쓰지 못했습니다.";
+    } finally {
+      aiBtn.disabled = false;
+      aiBtn.textContent = label;
+    }
+    return;
+  }
+  const resetBtn = e.target.closest(".report-comment-reset-btn");
+  if (resetBtn) {
+    const rr = resetBtn.closest("tr.report-row");
+    if (rr._reportData) rr.querySelector("textarea.report-comment").value = buildReportComment(rr._reportData);
+    return;
+  }
+  const allBtn = e.target.closest(".report-all-btn");
+  if (allBtn) {
+    const rr = allBtn.closest("tr.report-row");
+    loadStudentReport(rr, rr.dataset.for, "");
+    return;
+  }
+  /* 수정 칸 — 이름·아이디·새 비밀번호. 비밀번호는 비워 두면 그대로 둔다
+     (서버가 해시로만 저장해 현재 비밀번호를 보여 줄 수 없다). */
+  const saveEditBtn = e.target.closest(".save-student-btn");
+  if (saveEditBtn) {
+    const editRow = saveEditBtn.closest("tr.edit-row");
+    const errEl = editRow.querySelector(".edit-student-error");
+    errEl.textContent = "";
+    const body = {
+      studentId: editRow.dataset.for,
+      name: editRow.querySelector(".es-name").value.trim(),
+      loginId: editRow.querySelector(".es-login").value.trim(),
+      password: editRow.querySelector(".es-pw").value,
+      classId: editRow.querySelector(".es-class").value,
+    };
+    const moving = body.classId !== selectedClassId;
+    if (moving && !confirm("이 학생을 다른 반으로 옮길까요?\n\n옮기면 새 반에서 낸 시험이 보이고, 지금 반에서 낸 시험은 더 이상 보이지 않습니다. 이미 낸 답안은 지금 반의 시험 결과에 남습니다.")) {
+      return;
+    }
+    if (!body.password) delete body.password;
+    saveEditBtn.disabled = true;
+    try {
+      await postJson("/api/students/update", body, "수정에 실패했습니다.");
+      loadStudents();   // 다른 반으로 옮겼으면 이 목록에서는 사라진다
+    } catch (err) {
+      errEl.textContent = err.message || "수정에 실패했습니다.";
+      saveEditBtn.disabled = false;
+    }
+    return;
+  }
+  if (e.target.closest(".reset-pw-btn")) {
+    e.target.closest("tr.edit-row").querySelector(".es-pw").value = "1234";
+    return;
+  }
+  if (e.target.closest(".cancel-student-btn")) {
+    e.target.closest("tr.edit-row").remove();
+    return;
+  }
+
   const row = e.target.closest("tr[data-sid]");
   if (!row) return;
   const studentId = row.dataset.sid;
+
+  if (e.target.closest(".report-student-btn")) {
+    const open = studentTableBodyEl.querySelector(`tr.report-row[data-for="${studentId}"]`);
+    if (open) {
+      open.remove();
+      return;
+    }
+    const tr = document.createElement("tr");
+    tr.className = "report-row";
+    tr.dataset.for = studentId;
+    tr.innerHTML = `<td colspan="6"></td>`;
+    row.after(tr);
+    loadStudentReport(tr, studentId, reportMonthDefault());
+    return;
+  }
+
+  if (e.target.closest(".edit-student-btn")) {
+    const openEdit = studentTableBodyEl.querySelector(`tr.edit-row[data-for="${studentId}"]`);
+    if (openEdit) {
+      openEdit.remove();
+      return;
+    }
+    const tr = document.createElement("tr");
+    tr.className = "edit-row";
+    tr.dataset.for = studentId;
+    tr.innerHTML = `<td colspan="6">
+      <div class="row">
+        <div class="field" style="flex:1 1 120px;"><label>반</label>
+          <select class="es-class">${classesCache.map((c) => `<option value="${esc(c.id)}"${c.id === selectedClassId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>
+        <div class="field" style="flex:1 1 110px;"><label>이름</label>
+          <input type="text" class="es-name" value="${esc(row.dataset.name)}" autocomplete="off"></div>
+        <div class="field" style="flex:1 1 130px;"><label>아이디</label>
+          <input type="text" class="es-login" value="${esc(row.dataset.loginId)}" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+        <div class="field" style="flex:1 1 150px;"><label>새 비밀번호 (비워 두면 그대로)</label>
+          <input type="text" class="es-pw" autocomplete="off" spellcheck="false">
+          <button type="button" class="btn ghost small reset-pw-btn" style="margin-top:4px;">1234로 초기화</button></div>
+        <div class="field" style="flex:0 0 auto; align-self:flex-end;">
+          <button type="button" class="btn small save-student-btn">저장</button>
+          <button type="button" class="btn ghost small cancel-student-btn">취소</button>
+        </div>
+      </div>
+      <div class="error edit-student-error"></div>
+      <p class="hint">아이디나 비밀번호를 바꾸면 그 학생이 로그인해 있던 기기는 로그아웃됩니다. 반을 바꾸면 그 학생은 새 반의 시험을 보게 됩니다.</p>
+    </td>`;
+    row.after(tr);
+    return;
+  }
 
   if (e.target.closest(".del-student-btn")) {
     if (!confirm("이 학생을 삭제할까요? 그동안의 시험 결과는 남지만, 다음부터 목록에 안 뜹니다.")) {
@@ -13066,6 +13669,14 @@ studentTableBodyEl.addEventListener("click", async (e) => {
     }
     return;
   }
+});
+
+// 월 선택을 바꾸면 그 달 성적표로 다시 불러온다
+studentTableBodyEl.addEventListener("change", (e) => {
+  const m = e.target.closest(".report-month");
+  if (!m) return;
+  const rr = m.closest("tr.report-row");
+  loadStudentReport(rr, rr.dataset.for, m.value);
 });
 
 const FORMAT_LABEL_KO = { mcq: "객관식", saq: "주관식" };
@@ -13115,6 +13726,21 @@ function renderAssignedTests(tests) {
 }
 
 assignedTestListEl.addEventListener("click", async (e) => {
+  const toggleBtn = e.target.closest(".toggle-wrong-btn");
+  if (toggleBtn) {
+    const detail = toggleBtn.closest("tr").nextElementSibling;
+    detail.hidden = !detail.hidden;
+    return;
+  }
+  const printBtn = e.target.closest(".print-results-btn");
+  if (printBtn) {
+    const body = printBtn.closest(".results-body");
+    // 인쇄본에는 틀린 단어를 모두 펼쳐서 싣는다
+    const clone = body.querySelector(".results-printable").cloneNode(true);
+    clone.querySelectorAll(".wrong-row").forEach((r) => (r.hidden = false));
+    openPrintWindow(body.dataset.title || "성적표", clone.outerHTML);
+    return;
+  }
   const delBtn = e.target.closest(".del-test-btn");
   if (delBtn) {
     const card = delBtn.closest("[data-aid]");
@@ -13214,22 +13840,9 @@ assignedTestListEl.addEventListener("click", async (e) => {
       `/api/vocab-tests/results?assignmentId=${encodeURIComponent(card.dataset.aid)}`,
       "결과를 불러오지 못했습니다."
     );
-    const students = data.attempts || [];
-    body.innerHTML = students.length
-      ? `<table><thead><tr><th>학생</th><th>회차별 점수</th><th>결과</th></tr></thead><tbody>` +
-        students
-          .map((s) => {
-            const roundsText = (s.rounds || [])
-              .map((r) => `${r.round}회 ${r.score}/${r.total}${r.passed ? " ✅" : ""}`)
-              .join(" · ");
-            const resultText = s.passed
-              ? `합격(${s.passedRound}회차)`
-              : `미통과(${(s.rounds || []).length}회 시도)`;
-            return `<tr><td>${esc(s.studentName)}</td><td>${esc(roundsText)}</td><td>${esc(resultText)}</td></tr>`;
-          })
-          .join("") +
-        `</tbody></table>`
-      : `<p class="hint">아직 제출한 학생이 없습니다.</p>`;
+    const title = card.querySelector("b") ? card.querySelector("b").textContent : "시험";
+    body.innerHTML = renderTestResults(data, title);
+    body.dataset.title = `${title} 성적표`;
   } catch (err) {
     body.innerHTML = `<p class="error">${esc(err.message || "결과를 불러오지 못했습니다.")}</p>`;
   }

@@ -371,6 +371,10 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .auth-panel label:first-of-type{margin-top:0;}
 .auth-panel label .opt-sub{font-weight:500; color:var(--ink-soft); font-size:11.5px;}
 .auth-panel input{width:100%;}
+/* 체크박스 한 줄(label.chk)은 위 규칙의 영향을 받으면 칸이 가로로 길게 늘어나 무슨
+   체크박스인지 알아볼 수 없다 — 작은 상자 + 옆 글자로 되돌린다. */
+.auth-panel label.chk{display:inline-flex; align-items:center; gap:8px; margin:4px 0 8px; font-size:13px; color:var(--ink);}
+.auth-panel label.chk input{width:16px; height:16px; padding:0; flex:0 0 auto;}
 
 .gate-actions{display:flex; align-items:center; gap:12px; margin-top:16px; flex-wrap:wrap;}
 .gate-actions .btn{padding:11px 22px; font-size:15px;}
