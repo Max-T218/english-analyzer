@@ -4047,6 +4047,8 @@ WHAT YOU MUST NOT CHANGE
 - No text may be smaller than 1/50 of the image height. If the text does not fit, make the
   artwork simpler — never shrink the text.
 - Leave at least 4% margin on every edge and crop nothing.
+- Output exactly ONE image that holds every part together. Never make a separate image
+  for each part, and never output a second version.
 """
 
 def infographic_system_prompt(lang):
@@ -4335,6 +4337,10 @@ def call_gemini_infographic(passage, api_key, model=None, lang="mix"):
         "contents": [{"role": "user", "parts": [{"text": _infographic_prompt(plan)}]}],
         "generationConfig": {
             "responseModalities": ["IMAGE"],
+            # 그림 한 장이 1120, 생각이 많아야 1300쯤이다. 상한이 없을 때 그림을 7장(7840)
+            # 그리다 MAX_TOKENS로 통째로 잘려 101초를 쓰고 한 장도 못 받았다(2026-10-13).
+            # 이 상한이면 한 장은 넉넉히 들고, 폭주는 둘째 장에서 일찍 끊겨 다시 그릴 시간이 남는다.
+            "maxOutputTokens": 4096,
             "imageConfig": {
                 "aspectRatio": IMAGE_ASPECT,
                 "imageSize": IMAGE_SIZE,
@@ -4345,7 +4351,12 @@ def call_gemini_infographic(passage, api_key, model=None, lang="mix"):
     # 그림이 안 오면 한 번 더 그린다 — 그림 모델은 같은 요청에도 결과가 달라서, 한 번
     # 거절(안전 필터·글로만 답함)한 것이 다음에는 그려지는 일이 잦다(2026-10-13 한글 요약).
     # 거절된 호출은 그림 출력이 없어 값이 거의 안 나간다. 두 번째도 안 되면 그때 알린다.
+    started = time.monotonic()
     for attempt in (1, 2):
+        # 첫 시도가 오래 걸렸으면 다시 그리지 않는다 — 한 장에 25~35초라, 45초를 넘긴
+        # 뒤에 또 그리면 프록시(약 100초)에 끊긴다. 그때는 선생님이 다시 누르는 편이 낫다.
+        if attempt == 2 and time.monotonic() - started > 45:
+            break
         try:
             body = _gemini_call_with_retry(
                 data, api_key, use_model,
@@ -4374,14 +4385,17 @@ def call_gemini_infographic(passage, api_key, model=None, lang="mix"):
               f" · 글 {said!r} · 모양 " + " / ".join(
                   ln.strip() for ln in _describe_json(body).splitlines()),
               flush=True)
-    else:
-        if reason and any(k in reason.upper() for k in ("SAFETY", "PROHIBITED", "BLOCK", "RECITATION")):
+    if not image:
+        up = (reason or "").upper()
+        if any(k in up for k in ("SAFETY", "PROHIBITED", "BLOCK", "RECITATION")):
             why = "그림 모델이 이 내용의 그림을 거절했습니다(안전 필터)."
+        elif "MAX_TOKENS" in up:
+            why = "그림 모델이 한 장이 아니라 여러 장을 그리다 중간에 끊겼습니다."
         else:
             why = "그림 모델이 그림 대신 다른 답을 돌려주었습니다."
         raise RuntimeError(
-            f"{why} 두 번 시도해도 그림이 나오지 않았습니다. 잠시 뒤 다시 눌러 보시고, "
-            f"계속 안 되면 다른 언어(영어·혼합)로 만들어 보세요. (사유: {reason or '알 수 없음'})"
+            f"{why} 잠시 뒤 다시 눌러 보세요 — 그림 모델은 같은 요청에도 결과가 달라 "
+            f"다시 하면 대개 됩니다. 실패한 것은 값이 나가지 않았습니다. (사유: {reason or '알 수 없음'})"
         )
     return {
         "image": image,
