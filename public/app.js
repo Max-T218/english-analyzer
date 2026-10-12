@@ -13433,7 +13433,8 @@ function renderStudentReport(data, period) {
       <thead><tr><th>시험</th><th>결과</th><th>회차별 점수</th><th>마지막 제출</th></tr></thead>
       <tbody>${testRows}</tbody></table></div>
     <!-- 자주 틀린 단어는 선생님이 화면에서만 본다 — .results-printable 밖에 두어 인쇄본에 안 실린다 -->
-    <div class="trend-report report-frequent"><h4>자주 틀린 단어 <span class="hint">(화면에서만 보이며 인쇄되지 않습니다)</span></h4>${freqHtml}</div>
+    <div class="trend-report report-frequent"><h4>자주 틀린 단어 <span class="hint">(화면에서만 보이며 인쇄되지 않습니다)</span></h4>${freqHtml}
+      ${(data.wrongAll || []).length ? `<button type="button" class="btn small wrong-to-vocab-btn" style="margin-top:8px;">📒 틀린 단어 ${data.wrongAll.length}개로 단어장 만들기</button>` : ""}</div>
     <button type="button" class="btn small report-ai-btn">✨ AI로 코멘트 쓰기${aiPriceLabel()}</button>
     <button type="button" class="btn ghost small report-comment-reset-btn">기본 초안으로 되돌리기</button>
     <span class="error report-ai-err"></span>
@@ -13526,6 +13527,28 @@ addStudentBtn.addEventListener("click", async () => {
 });
 
 studentTableBodyEl.addEventListener("click", async (e) => {
+  const wrongBtn = e.target.closest(".wrong-to-vocab-btn");
+  if (wrongBtn) {
+    const rr = wrongBtn.closest("tr.report-row");
+    const data = rr && rr._reportData;
+    const words = (data && data.wrongAll) || [];
+    if (!words.length) return;
+    if (getVocabSets().length && !confirm(
+      "단어장 탭에 모아 둔 단어장이 있습니다.\n이 학생의 틀린 단어로 바꿀까요? (저장하지 않은 단어장은 사라집니다)"
+    )) return;
+    const period = rr.dataset.period && rr.dataset.period !== "전체 기간" ? ` (${rr.dataset.period})` : "";
+    const name = `${data.student.name} 틀린 단어${period}`;
+    saveVocabSets([{
+      name, src: "manual", _id: `v${Date.now()}${Math.floor(Math.random() * 1e6)}`,
+      vocab: words.map((w) => ({ word: w.word, meaning: w.meaning, pos: "", synonym: "", antonym: "" })),
+    }]);
+    vocabEditorClose();
+    TAB_SAVE.vocab.clearResults();
+    vocabTitleEl.value = name;
+    document.querySelector('.tab-btn[data-tab="vocab"]').click();
+    buildVocab(true);
+    return;
+  }
   const closeBtn = e.target.closest(".close-report-btn");
   if (closeBtn) {
     const rr = closeBtn.closest("tr.report-row");

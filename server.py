@@ -12063,8 +12063,9 @@ def get_student_report(teacher_id, student_id, start=None, end=None):
                 st["tried"] += 1
                 if not d.get("ok"):
                     st["wrong"] += 1
-    frequent = sorted((v for v in stat.values() if v["wrong"]),
-                      key=lambda v: (-v["wrong"], -v["tried"], v["word"]))[:20]
+    wrong_all = sorted((v for v in stat.values() if v["wrong"]),
+                       key=lambda v: (-v["wrong"], -v["tried"], v["word"]))
+    frequent = wrong_all[:20]
     done = [t for t in tests if t["status"] != "none"]
     best = [t["bestPercent"] for t in done if t["bestPercent"] is not None]
     return {
@@ -12073,6 +12074,8 @@ def get_student_report(teacher_id, student_id, start=None, end=None):
                     "passed": sum(1 for t in tests if t["status"] == "passed"),
                     "avgPercent": round(sum(best) / len(best)) if best else None},
         "tests": tests, "frequentWrong": frequent,
+        # 화면 표는 20개까지만 보이지만, '틀린 단어로 단어장 만들기'는 틀린 단어 전부를 쓴다
+        "wrongAll": [{"word": v["word"], "meaning": v["meaning"]} for v in wrong_all],
     }
 
 
