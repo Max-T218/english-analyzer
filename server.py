@@ -4230,6 +4230,34 @@ def _image_from_interaction(body):
     return data, mime
 
 
+def _image_refusal(body):
+    """그림이 없는 응답에서 (사유, 모델이 한 말 앞부분)을 꺼낸다.
+
+    Vertex(:generateContent)는 candidates[].finishReason(IMAGE_SAFETY·NO_IMAGE…)과
+    promptFeedback.blockReason에, Interactions API는 모양이 문서에 없어 비슷한 이름의
+    키 어디엔가 담는다 — 그래서 _image_from_interaction처럼 응답 전체를 훑는다.
+    STOP처럼 정상 종료를 뜻하는 값은 사유로 치지 않는다."""
+    reasons, texts = [], []
+
+    def walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                lk = k.lower().replace("_", "")
+                if lk in ("finishreason", "blockreason", "finishmessage", "status") \
+                        and isinstance(v, str) and v.upper() not in ("STOP", "COMPLETED", "FINISHSTOP"):
+                    reasons.append(v)
+                elif lk == "text" and isinstance(v, str) and v.strip():
+                    texts.append(v.strip())
+                else:
+                    walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(body)
+    return ", ".join(dict.fromkeys(reasons))[:200], " ".join(texts)[:150]
+
+
 def _describe_json(node, depth=0):
     """응답의 '모양'만 짧게 적는다 — 원인을 찾으려면 어떤 키가 왔는지 알아야 하는데,
     응답을 통째로 찍으면 base64가 섞여 로그가 터진다. 값은 길이만 남긴다."""
@@ -4314,34 +4342,46 @@ def call_gemini_infographic(passage, api_key, model=None, lang="mix"):
             },
         },
     }, ensure_ascii=False).encode("utf-8")
-    try:
-        body = _gemini_call_with_retry(
-            data, api_key, use_model,
-            url=GEMINI_IMAGE_URL,
-            vertex_data=vertex_data,
-            # 그림 모델을 글자 모델로 갈아탈 수는 없다 — 없으면 없다고 말해야 한다
-            allow_fallback=False,
-        )
-        _log_usage(body, use_model, label="infographic-image")
-    except ProUnavailable:
-        # 공통 처리기의 안내문은 '모델 목록에서 Flash를 고르라'고 하는데, 이 기능에는
-        # 모델을 고르는 자리가 없고 대체할 그림 모델도 없다. 상황에 맞게 다시 말한다.
-        raise ProUnavailable(
-            f"이 API 키로는 그림 모델({use_model})을 사용할 수 없습니다. "
-            "요약 이미지는 결제(billing)가 설정된 키에서만 만들 수 있습니다 — "
-            "무료 등급 키에는 이미지 할당량이 없습니다. 관리자에게 문의하세요."
-        )
-
-    image, mime = _image_from_interaction(body)
-    if not image:
-        # 응답은 200으로 왔는데 그 안에 이미지가 없다. 형식이 바뀐 것인지, 모델이
-        # 거절한 것인지(안전 필터 등) 응답 모양을 봐야 알 수 있으므로 로그에 남긴다.
-        # 값은 길이만 적으므로 base64가 로그를 덮지 않는다.
-        print("[인포그래픽] 이미지를 찾지 못했다. 응답 모양:", flush=True)
-        print(_describe_json(body), flush=True)
+    # 그림이 안 오면 한 번 더 그린다 — 그림 모델은 같은 요청에도 결과가 달라서, 한 번
+    # 거절(안전 필터·글로만 답함)한 것이 다음에는 그려지는 일이 잦다(2026-10-13 한글 요약).
+    # 거절된 호출은 그림 출력이 없어 값이 거의 안 나간다. 두 번째도 안 되면 그때 알린다.
+    for attempt in (1, 2):
+        try:
+            body = _gemini_call_with_retry(
+                data, api_key, use_model,
+                url=GEMINI_IMAGE_URL,
+                vertex_data=vertex_data,
+                # 그림 모델을 글자 모델로 갈아탈 수는 없다 — 없으면 없다고 말해야 한다
+                allow_fallback=False,
+            )
+            _log_usage(body, use_model, label="infographic-image")
+        except ProUnavailable:
+            # 공통 처리기의 안내문은 '모델 목록에서 Flash를 고르라'고 하는데, 이 기능에는
+            # 모델을 고르는 자리가 없고 대체할 그림 모델도 없다. 상황에 맞게 다시 말한다.
+            raise ProUnavailable(
+                f"이 API 키로는 그림 모델({use_model})을 사용할 수 없습니다. "
+                "요약 이미지는 결제(billing)가 설정된 키에서만 만들 수 있습니다 — "
+                "무료 등급 키에는 이미지 할당량이 없습니다. 관리자에게 문의하세요."
+            )
+        image, mime = _image_from_interaction(body)
+        if image:
+            break
+        # 응답은 200으로 왔는데 그 안에 이미지가 없다. 왜 그런지 한 줄로 남긴다 —
+        # 여러 줄로 찍었더니 Render 로그 검색('인포그래픽')에 첫 줄만 걸려 응답 모양을
+        # 볼 수 없었다. 값은 길이만 적으므로 base64가 로그를 덮지 않는다.
+        reason, said = _image_refusal(body)
+        print(f"[인포그래픽] 이미지 없음 ({attempt}회째) · 사유 {reason or '없음'}"
+              f" · 글 {said!r} · 모양 " + " / ".join(
+                  ln.strip() for ln in _describe_json(body).splitlines()),
+              flush=True)
+    else:
+        if reason and any(k in reason.upper() for k in ("SAFETY", "PROHIBITED", "BLOCK", "RECITATION")):
+            why = "그림 모델이 이 내용의 그림을 거절했습니다(안전 필터)."
+        else:
+            why = "그림 모델이 그림 대신 다른 답을 돌려주었습니다."
         raise RuntimeError(
-            "그림 모델이 이미지를 돌려주지 않았습니다. "
-            "서버 로그에 응답 모양을 남겼으니 확인해 주세요."
+            f"{why} 두 번 시도해도 그림이 나오지 않았습니다. 잠시 뒤 다시 눌러 보시고, "
+            f"계속 안 되면 다른 언어(영어·혼합)로 만들어 보세요. (사유: {reason or '알 수 없음'})"
         )
     return {
         "image": image,
