@@ -399,6 +399,95 @@ async function postGenerate(url, payload, fallbackMsg, onRetry) {
   }
 }
 
+/* ══════ 만드는 중 멈추기 / 이어서 만들기 ══════
+   지문을 여러 개 차례로 만드는 탭(상세분석·요약분석·요약 이미지·객관식·주관식·혼합·
+   워크북·동형 모의고사)의 진행 칸(.loading)에 [⏸ 멈추기]를 붙인다.
+
+   지문 '하나'를 만드는 도중에는 멈추지 않는다 — 그 지문은 이미 AI에게 갔고, 서버는
+   화면과 상관없이 끝까지 만들어 값을 받는다. 도중에 끊으면 값만 나가고 결과는 못 받는다.
+   그래서 누르면 '지금 것까지 만들고' 다음 것을 보내기 전에 선다. 반복문은 다음 지문으로
+   넘어가기 전에 gate.check()를 기다리는데, 멈춘 동안 그 반복문은 그 자리에 살아 있으므로
+   [▶ 이어서 만들기]는 그냥 기다림을 풀어 주는 것이다 — 이미 만든 것을 다시 만들지 않고,
+   탭마다 결과를 이어 붙이는 방법을 따로 짤 필요도 없다. [■ 여기서 끝내기]는 반복문을
+   끝내 그때까지 만든 것만 남긴다(남은 것은 보내지 않았으니 값도 안 나간다).
+   화면을 새로 고치면 멈춘 자리도 사라진다(반복문이 페이지 안에서만 산다). */
+const RUN_GATES = new Map();
+
+function runGate(loadingEl) {
+  if (RUN_GATES.has(loadingEl)) return RUN_GATES.get(loadingEl);
+  const bar = document.createElement("span");
+  bar.className = "run-ctl";
+  bar.innerHTML =
+    `<button type="button" class="btn ghost small run-pause">⏸ 멈추기</button>` +
+    `<span class="run-paused-msg" hidden></span>` +
+    `<button type="button" class="btn small run-resume" hidden>▶ 이어서 만들기</button>` +
+    `<button type="button" class="btn ghost small run-end" hidden>■ 여기서 끝내기</button>`;
+  loadingEl.appendChild(bar);
+  const pauseB = bar.querySelector(".run-pause");
+  const msgEl = bar.querySelector(".run-paused-msg");
+  const resumeB = bar.querySelector(".run-resume");
+  const endB = bar.querySelector(".run-end");
+  let want = false;        // 멈추기를 눌렀다 — 다음 check에서 선다
+  let release = null;      // 멈춘 동안 check를 풀어 주는 함수
+  let ended = false;       // [■ 여기서 끝내기]를 눌렀다
+
+  const showIdle = () => {
+    pauseB.hidden = false;
+    pauseB.disabled = false;
+    pauseB.textContent = "⏸ 멈추기";
+    msgEl.hidden = resumeB.hidden = endB.hidden = true;
+    loadingEl.classList.remove("paused");
+  };
+  // 한 번 더 누르면 멈추기를 거둔다 — 잘못 눌렀을 때 되돌릴 길
+  pauseB.addEventListener("click", () => {
+    want = !want;
+    pauseB.textContent = want ? "⏸ 지금 것까지 만들고 멈춥니다 (다시 누르면 취소)" : "⏸ 멈추기";
+  });
+  const finish = (end) => {
+    if (!release) return;
+    ended = end;
+    want = false;
+    const r = release;
+    release = null;
+    showIdle();
+    r(end);
+  };
+  resumeB.addEventListener("click", () => finish(false));
+  endB.addEventListener("click", () => finish(true));
+
+  const gate = {
+    // 실행을 시작할 때 부른다 — 지난 실행에서 남은 상태를 지운다
+    begin() {
+      want = false;
+      ended = false;
+      if (release) { const r = release; release = null; r(true); }
+      showIdle();
+    },
+    /* 다음 것을 보내기 직전에 기다린다. 끝내야 하면 true.
+       doneText: 멈췄을 때 보일 '어디까지 했는지' 문구.
+       onPause: 멈춘 순간 한 번 부른다 — 결과를 끝에 한꺼번에 그리는 탭이 그때까지 만든 것을
+       미리 보여 주는 데 쓴다. */
+    async check(doneText, onPause) {
+      if (ended) return true;
+      if (!want) return false;
+      pauseB.hidden = true;
+      msgEl.textContent = `멈췄습니다 — ${doneText} 남은 것은 아직 보내지 않아 값이 나가지 않았습니다.`;
+      msgEl.hidden = resumeB.hidden = endB.hidden = false;
+      loadingEl.classList.add("paused");
+      if (onPause) { try { onPause(); } catch (e) { console.error(e); } }
+      return new Promise((resolve) => { release = resolve; });
+    },
+    get ended() { return ended; },
+  };
+  RUN_GATES.set(loadingEl, gate);
+  return gate;
+}
+
+// 끝내기로 멈췄을 때 남기는 안내 — 남은 것은 보내지 않았으니 값도 안 나갔다
+function runEndedNote(left, unit) {
+  return `[■ 여기서 끝내기]로 멈췄습니다. 남은 ${unit} ${left}개는 만들지 않았고 값도 나가지 않았습니다.`;
+}
+
 // 할당량 소진인가? — 서버가 code를 붙여 주면 그것으로 판정하고,
 // 예전 응답이나 예외 상황을 대비해 메시지 문구로도 한 번 더 확인한다.
 // 이 키로 Pro를 쓸 수 없는 경우 — 모델만 바꾸면 되므로 한도 소진과 구분해 안내한다
@@ -3419,8 +3508,17 @@ async function analyze() {
   const htmlParts = []; // 결과를 모아뒀다가 모두 끝난 뒤 한 번에 렌더
   const vocabSets = []; // 단어장 탭이 쓸 지문별 핵심 어휘
   const entries = []; // 저장 기능이 쓸 {job, data} — 성공한 것만
+  const gate = runGate(loadingEl);
+  gate.begin();
+  let endedLeft = 0;
   for (let i = 0; i < total; i++) {
     const job = jobs[i];
+    // 멈춘 동안 그때까지 만든 분석본을 보여 준다(이 탭은 끝에 한꺼번에 그리므로)
+    if (i > 0 && await gate.check(`지문 ${total}개 중 ${i}개까지 만들었습니다.`,
+        () => { resultEl.innerHTML = htmlParts.join(""); syncDocCovers(); })) {
+      endedLeft = total - i;
+      break;
+    }
     loadingTextEl.textContent =
       total > 1
         ? `${job.name} 분석 중… (${i + 1}/${total})`
@@ -3480,6 +3578,12 @@ async function analyze() {
   clearPassagesBtn.disabled = false;
   resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
   refreshTokenDisplay(); // 성공한 만큼 차감됐을 잔액 표시를 갱신
+  if (endedLeft) {
+    errorEl.textContent = runEndedNote(endedLeft, "지문") +
+      (withInfo ? " 요약 이미지도 만들지 않았습니다." : "");
+    if (okCount) showDoneGuide(`지문 ${okCount}개의 분석본`, true);
+    return;   // 끝내기를 눌렀으면 그림도 만들지 않는다 — 더 쓰지 않으려고 누른 것이다
+  }
 
   // '요약 이미지'를 켜 두었으면 분석이 끝난 뒤 이어서 만든다.
   // 분석과 한 요청에 묶지 않는 이유는 시간이다 — 그림 한 장이 8~12초라 지문 수만큼
@@ -3655,10 +3759,17 @@ async function makeInfographics(todo) {
   let okCount = 0;
   let done = 0;
   let stop = false;
+  const gate = runGate(loadingEl);
+  gate.begin();
   for (let n = 0; n < todo.length && !stop; n++) {
     const idx = todo[n];
     const job = entries[idx].job;
     for (const lang of langs) {
+      if (done > 0 && await gate.check(`요약 이미지 ${total}장 중 ${done}장까지 만들었습니다.`)) {
+        errorEl.textContent = runEndedNote(total - done, "요약 이미지");
+        stop = true;
+        break;
+      }
       done++;
       const what = langs.length > 1 ? ` [${IMG_LANG_NAME[lang]}]` : "";
       loadingTextEl.textContent =
@@ -4645,8 +4756,15 @@ briefBtn.addEventListener("click", async () => {
   // 그림 한도에 걸리면 남은 지문의 그림은 건너뛴다 — 어차피 똑같이 실패하는데
   // 시도하는 만큼 시간만 쓴다. 소책자 쪽은 이미 같은 판단으로 멈춘다.
   let imgQuota = false;
+  const gate = runGate(briefLoadingEl);
+  gate.begin();
   for (let i = 0; i < jobs.length; i++) {
     const job = jobs[i];
+    // 이 탭은 지문마다 바로 그리므로 멈춘 동안에도 만든 것이 보인다
+    if (i > 0 && await gate.check(`지문 ${jobs.length}개 중 ${i}개까지 만들었습니다.`)) {
+      briefErrorEl.textContent = runEndedNote(jobs.length - i, "지문");
+      break;
+    }
     briefLoadingTextEl.textContent =
       jobs.length > 1 ? `${job.name} 분석하는 중… (${i + 1}/${jobs.length})` : "AI가 요약분석을 만들고 있습니다…";
     try {
@@ -5801,11 +5919,21 @@ function setupQuizTab({ prefix, types, footer }) {
       batches.push(jobs);
     }
 
+    const gate = runGate(loadingEl);
+    gate.begin();
+    let jobsDone = 0;   // 묶음을 넘어 센 지문 수 — 멈췄을 때 어디까지 왔는지 알린다
     for (let b = 0; b < batches.length && !stopped; b++) {
       const batch = batches[b];
       const batchTag = batches.length > 1 ? `${b + 1}/${batches.length} 묶음 · ` : "";
       for (let i = 0; i < batch.length && !stopped; i++) {
         const job = batch[i];
+        // 지문 단위로 선다 — 이 탭은 세트마다 바로 그리므로 멈춘 동안에도 만든 것이 보인다
+        if (jobsDone > 0 && await gate.check(`지문 ${total}개 중 ${jobsDone}개까지 만들었습니다.`)) {
+          stopped = true;
+          errorEl.textContent = runEndedNote(total - jobsDone, "지문");
+          break;
+        }
+        jobsDone++;
 
         if (job.text.length < 20) {
           append(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력).", "", prefix));
@@ -7083,9 +7211,18 @@ async function generateWorkbook() {
   const total = jobs.length;
   // 지문 차례대로 {job, data}(성공) 또는 {errorHtml}(실패)을 담는다 — 그리기는 drawWorkbook이 한다
   const results = [];
+  const gate = runGate(wbLoadingEl);
+  gate.begin();
+  let wbEndedNote = "";
 
   for (let i = 0; i < total; i++) {
     const job = jobs[i];
+    // 이 탭은 끝에 한꺼번에 그리므로, 멈춘 동안 그때까지 만든 워크북을 미리 그려 보여 준다
+    if (i > 0 && await gate.check(`지문 ${total}개 중 ${i}개까지 만들었습니다.`,
+        () => drawWorkbook(results))) {
+      wbEndedNote = runEndedNote(total - i, "지문");
+      break;
+    }
     wbLoadingTextEl.textContent =
       total > 1
         ? `${job.name} 워크북 만드는 중… (${i + 1}/${total})`
@@ -7118,6 +7255,7 @@ async function generateWorkbook() {
   }
 
   const okCount = drawWorkbook(results);
+  if (wbEndedNote) wbErrorEl.textContent = wbEndedNote;
   wbLoadingEl.classList.remove("on");
   wbBtn.disabled = false;
   addPassageBtn.disabled = false;
@@ -9352,6 +9490,8 @@ savedListModalEl.addEventListener("click", (e) => {
 
    ⚠️ 여기 적은 단추 이름·차례는 화면과 같아야 한다. 탭에 단추를 더하거나 이름을
    바꾸면 이 글도 함께 고쳐라. 안내가 화면과 어긋나면 없느니만 못하다. */
+// 지문을 여러 개 차례로 만드는 탭마다 같은 안내 — runGate의 [⏸ 멈추기]
+const HOWTO_PAUSE_TIP = " 지문이 많아 오래 걸리면 진행 문구 옆의 <b>[⏸ 멈추기]</b>를 누르세요 — 지금 만드는 것까지 끝낸 뒤 멈추고, <b>[▶ 이어서 만들기]</b>로 다음 것부터 계속하거나 <b>[■ 여기서 끝내기]</b>로 그때까지 만든 것만 남길 수 있습니다. 남은 것은 값이 나가지 않습니다.";
 const HOWTO = {
   analyze: {
     title: "📖 지문 상세분석 만드는 법",
@@ -9365,7 +9505,7 @@ const HOWTO = {
       "만든 뒤에 고칠 수 있습니다 — <b>[✏️ 직접 수정]</b>은 글자를, <b>[📄 쪽 구성]</b>은 인쇄될 쪽 경계를 옮기고, 필요 없는 구역(주제 &amp; 흐름 요약·핵심 어휘 &amp; 표현·요약 이미지)은 그 구역 위의 <b>[🗑 이 구역 삭제]</b>로 지웁니다. 빈자리가 많으면 <b>[⤴ 전체 올리기]</b>로 한 번에 채우세요. <b>[↩ 되돌리기]</b>로 한 단계씩 무릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑고, <b>[💾 사이트 저장]</b>으로 남겨 두면 <b>[📂 불러오기]</b>로 지문·설정과 함께 되불러옵니다.",
     ],
-    tip: "요약 이미지는 <b>[💾 사이트 저장]</b>을 하면 글과 함께 저장되고, 불러오면 그림까지 그대로 나옵니다. 저장하지 않고 닫으면 사라지니 필요하면 먼저 저장하거나 PDF로 받아 두세요. 지문 칸의 <b>[📋 지문 전체 복사]</b>로 지문 묶음을 카톡·메일로 보내면, 받는 분은 한 번 붙여 넣어 칸마다 나눠 받습니다.",
+    tip: "요약 이미지는 <b>[💾 사이트 저장]</b>을 하면 글과 함께 저장되고, 불러오면 그림까지 그대로 나옵니다. 저장하지 않고 닫으면 사라지니 필요하면 먼저 저장하거나 PDF로 받아 두세요. 지문 칸의 <b>[📋 지문 전체 복사]</b>로 지문 묶음을 카톡·메일로 보내면, 받는 분은 한 번 붙여 넣어 칸마다 나눠 받습니다." + HOWTO_PAUSE_TIP,
   },
   brief: {
     title: "📑 지문 요약분석 만드는 법",
@@ -9378,7 +9518,7 @@ const HOWTO = {
       "<b>[📄 쪽 구성]</b>을 누르면 인쇄했을 때 쪽이 어디서 넘어가는지 보이고, 앞 쪽에 몇 mm가 비는지도 알려 줍니다. 카드 위 단추로 경계를 옮기거나 <b>[⤴ 전체 올리기]</b>로 한 번에 채우세요.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b> — 저장한 것은 <b>[📂 불러오기]</b>로 되불러옵니다.",
     ],
-    tip: "상세분석과 다른 점 셋 — 해석이 끊어읽기 직역이 아니라 문장 하나짜리 의역이고, 오른쪽 해설 칸이 없으며, 핵심 어휘표를 싣지 않습니다. 짧은 문장이 이어지면 최대 세 문장까지 한 카드에 모아 담아 쪽수를 줄입니다.",
+    tip: "상세분석과 다른 점 셋 — 해석이 끊어읽기 직역이 아니라 문장 하나짜리 의역이고, 오른쪽 해설 칸이 없으며, 핵심 어휘표를 싣지 않습니다. 짧은 문장이 이어지면 최대 세 문장까지 한 카드에 모아 담아 쪽수를 줄입니다." + HOWTO_PAUSE_TIP,
   },
   mcq: {
     title: "📝 객관식 문제 만드는 법",
@@ -9399,7 +9539,7 @@ const HOWTO = {
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b>(정답 및 해설만 인쇄) · <b>[💾 사이트 저장]</b>. <b>답지에 해설</b>을 끄면 답지에 정답만 나옵니다.",
       "(관리자 승인을 받은 선생님) <b>[🏫 반에 시험 내기]</b>로 만든 문제를 학생에게 온라인 시험으로 낼 수 있습니다. 학생은 사이트에서 풀고 제출하면 바로 점수·정답·해설을 봅니다(한 번만 응시). 답을 여러 모양으로 쓸 수 있는 문항(조건 영작·문장 전환·질문에 답하기·요약문 완성)은 모범답안과 다르면 학생 관리 탭에서 선생님이 [맞음]/[틀림]을 누릅니다. AI를 부르지 않아 <b>요금이 없습니다</b>.",
     ],
-    tip: "한 번에 200문항이 넘으면 나눠서 만들지 물어봅니다 — 한 번에 너무 많이 만들면 중간에 실패할 확률이 커지기 때문입니다.",
+    tip: "한 번에 200문항이 넘으면 나눠서 만들지 물어봅니다 — 한 번에 너무 많이 만들면 중간에 실패할 확률이 커지기 때문입니다." + HOWTO_PAUSE_TIP,
     sampleHead: "객관식은 이렇게 나옵니다 — 한 지문으로 23가지 유형을 한 문항씩 만든 시험지 중 세 쪽입니다",
   },
   saq: {
@@ -9422,7 +9562,7 @@ const HOWTO = {
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b>(정답만 인쇄) · <b>[💾 사이트 저장]</b>",
       "(관리자 승인을 받은 선생님) <b>[🏫 반에 시험 내기]</b>로 만든 문제를 학생에게 온라인 시험으로 낼 수 있습니다. 학생은 사이트에서 풀고 제출하면 바로 점수·정답·해설을 봅니다(한 번만 응시). 답을 여러 모양으로 쓸 수 있는 문항(조건 영작·문장 전환·질문에 답하기·요약문 완성)은 모범답안과 다르면 학생 관리 탭에서 선생님이 [맞음]/[틀림]을 누릅니다. AI를 부르지 않아 <b>요금이 없습니다</b>.",
     ],
-    tip: "OX 진위형은 한 지문에 최대 5개까지만 만들어집니다. 유형이 하나뿐인데 문항을 많이 잡으면 비슷한 문제가 나오기 때문입니다.",
+    tip: "OX 진위형은 한 지문에 최대 5개까지만 만들어집니다. 유형이 하나뿐인데 문항을 많이 잡으면 비슷한 문제가 나오기 때문입니다." + HOWTO_PAUSE_TIP,
     sampleHead: "주관식은 이렇게 나옵니다 — 한 지문으로 18가지 유형을 한 문항씩 만든 시험지 중 네 쪽입니다",
   },
   mix: {
@@ -9440,7 +9580,7 @@ const HOWTO = {
       "(관리자 승인을 받은 선생님) <b>[🏫 반에 시험 내기]</b>로 만든 문제를 학생에게 온라인 시험으로 낼 수 있습니다. 학생은 사이트에서 풀고 제출하면 바로 점수·정답·해설을 봅니다(한 번만 응시). 답을 여러 모양으로 쓸 수 있는 문항(조건 영작·문장 전환·질문에 답하기·요약문 완성)은 모범답안과 다르면 학생 관리 탭에서 선생님이 [맞음]/[틀림]을 누릅니다. AI를 부르지 않아 <b>요금이 없습니다</b>.",
     ],
     sampleHead: "객관식과 주관식을 한 시험지에 섞으면 두 종류가 이렇게 이어서 나옵니다 — 두 탭 결과물의 일부입니다",
-    tip: "주관식 답지는 원래 정답만 싣는데, 이 탭에서는 객관식 해설과 함께 한 표에 실립니다 — 해설이 필요 없으면 <b>답지에 해설</b>을 끄세요.",
+    tip: "주관식 답지는 원래 정답만 싣는데, 이 탭에서는 객관식 해설과 함께 한 표에 실립니다 — 해설이 필요 없으면 <b>답지에 해설</b>을 끄세요." + HOWTO_PAUSE_TIP,
   },
   workbook: {
     title: "📚 워크북 만드는 법",
@@ -9455,7 +9595,7 @@ const HOWTO = {
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>",
       "(관리자 승인을 받은 선생님) <b>[🏫 반에 시험 내기]</b>로 만든 워크북을 학생이 사이트에서 풀게 낼 수 있습니다. 단계 하나가 한 문항이 되고, <b>해석 연습하기는 답이 여러 모양이라 빠집니다</b>. 좌지문 우해석은 읽기 자료로만 나오고, 나머지 단계는 제출하면 바로 맞음·틀림과 정답이 나옵니다. 영작 연습은 모범답안과 다르게 쓰면 학생 관리 탭에서 선생님이 [맞음]/[틀림]을 누릅니다. AI를 부르지 않아 <b>요금이 없습니다</b>.",
     ],
-    tip: "워크북은 인쇄에서 1단으로 나갑니다 — 단계마다 답을 적는 칸이 있어 2단으로 좁히면 쓸 자리가 모자랍니다.",
+    tip: "워크북은 인쇄에서 1단으로 나갑니다 — 단계마다 답을 적는 칸이 있어 2단으로 좁히면 쓸 자리가 모자랍니다." + HOWTO_PAUSE_TIP,
   },
 
   vocab: {
@@ -9486,7 +9626,7 @@ const HOWTO = {
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🖨️ 답지만 인쇄]</b> · <b>[💾 사이트 저장]</b> — 사이트 저장은 만든 시험지를 저장하고, 기출 구성 저장과는 따로 쌓입니다. 저장한 시험지는 맨 위 <b>[📂 저장한 시험지 불러오기]</b>로 되불러옵니다. 불러온 시험지 말고 <b>새 시험지를 따로</b> 만들려면 <b>[🧹 만든 시험지 비우기]</b>를 누른 뒤 만드세요 — 안 비우면 새 시험지가 불러온 것 뒤에 붙습니다. 비워도 저장해 둔 것은 지워지지 않고, 새 시험지는 비운 시험지와 겹치지 않게 만들어집니다.",
       "다른 시험지를 만들려면 맨 위 <b>[🔄 새로 시작하기]</b>를 누릅니다 — 올린 기출·분석표·시험 범위 지문·만든 시험지를 모두 비우고, 학교 이름 같은 머리글은 남깁니다. 필요한 것은 먼저 저장해 두세요.",
     ],
-    tip: "2부씩 여러 번 뽑을 때는 <b>시험지 이름</b> 칸에 \"1회 A형\"처럼 적어 두세요 — 이름이 시험지 위에 찍혀 구분됩니다. 이벤트 기간에는 [📝 문제 제작] 한 번에(A형·B형 포함) 드는 포인트에 상한이 있습니다 — 상한과 기간은 문제 제작 단추 위 예상 비용 옆에 표시됩니다. 목표 어법도 이 탭의 칸을 씁니다 — 지문 칸이 따로이므로 위 공용 칸의 값은 여기에 쓰이지 않습니다. 시험 범위 지문은 <b>[💾 지문 저장]</b>으로 남겨 두면 학기 내내 되불러 쓸 수 있습니다.",
+    tip: "2부씩 여러 번 뽑을 때는 <b>시험지 이름</b> 칸에 \"1회 A형\"처럼 적어 두세요 — 이름이 시험지 위에 찍혀 구분됩니다. 이벤트 기간에는 [📝 문제 제작] 한 번에(A형·B형 포함) 드는 포인트에 상한이 있습니다 — 상한과 기간은 문제 제작 단추 위 예상 비용 옆에 표시됩니다. 목표 어법도 이 탭의 칸을 씁니다 — 지문 칸이 따로이므로 위 공용 칸의 값은 여기에 쓰이지 않습니다. 시험 범위 지문은 <b>[💾 지문 저장]</b>으로 남겨 두면 학기 내내 되불러 쓸 수 있습니다." + HOWTO_PAUSE_TIP,
   },
 
   students: {
@@ -12521,6 +12661,9 @@ async function runExamPaper() {
     }
   }
 
+  const gate = runGate(examPaperLoadingEl);
+  gate.begin();
+  let userEnded = false;
   for (let c = 0; c < copies && !stopped; c++) {
     const rows = plans[c];
     const label = names[c];
@@ -12528,6 +12671,15 @@ async function runExamPaper() {
     const failed = [];
 
     for (const r of rows) {
+      // 문항 단위로 선다 — 한 부에 30번 가까이 부르므로 지문 단위보다 잘게 끊는다.
+      // 부 도중에 끝내면 그때까지 만든 문항만으로 그 부를 남긴다(아래 if (questions.length)).
+      if (step > 0 && await gate.check(`${totalSteps}문항 중 ${step}문항까지 만들었습니다.`)) {
+        stopped = true;
+        userEnded = true;
+        examPaperErrorEl.textContent = runEndedNote(totalSteps - step, "문항") +
+          (questions.length && questions.length < rows.length ? ` 만들던 부는 그때까지 만든 ${questions.length}문항만 남겼습니다.` : "");
+        break;
+      }
       step++;
       examPaperLoadingTextEl.textContent =
         `${label ? label + " · " : ""}${r.q}번 ${r.type} 만드는 중… (${step}/${totalSteps})`;
@@ -12591,7 +12743,9 @@ async function runExamPaper() {
   examPaperLoadingEl.classList.remove("on");
   examPaperBusy = false;
   refreshTokenDisplay();
-  if (stopped) {
+  if (userEnded) {
+    // 안내는 끝내기를 누른 자리에서 이미 적었다
+  } else if (stopped) {
     examPaperErrorEl.textContent =
       "한도에 걸려 중단했습니다. 만들어진 부는 아래에 남아 있으니 저장해 두세요.";
   } else if (swapFails.length) {

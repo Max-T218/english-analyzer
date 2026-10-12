@@ -1548,6 +1548,12 @@ u{
 }
 @keyframes spin{to{transform:rotate(360deg);}}
 @media (prefers-reduced-motion:reduce){.spinner{animation:none;}}
+/* 만드는 중 멈추기 / 이어서 만들기 — app.js의 runGate가 .loading마다 붙인다 */
+.loading{flex-wrap:wrap;}
+.run-ctl{display:inline-flex; flex-wrap:wrap; align-items:center; gap:8px; margin-left:auto;}
+.run-ctl .run-paused-msg{color:var(--ink); font-weight:600;}
+.loading.paused .spinner{animation:none; opacity:.35;}
+@media print{.run-ctl{display:none !important;}}
 
 /* ── 결과 표지 ── */
 .cover{
