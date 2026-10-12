@@ -1602,8 +1602,8 @@
       </div>
       <div class="actions">
         <button type="button" class="btn ghost small" id="vocabManualBtn">✏️ 직접 입력</button>
-        <button type="button" class="btn ghost small danger" id="vocabClearBtn">🗑️ 단어장 비우기</button>
-        <span class="hint">지문 분석·직접 입력·사진·PDF로 모아 둔 단어를 전부 지우고 새로 시작합니다.</span>
+        <button type="button" class="btn ghost small danger" id="vocabClearBtn">🔄 새 단어장</button>
+        <span class="hint">모아 둔 단어·만든 단어장·제목을 비우고 새로 시작합니다. 저장해 둔 것은 그대로 남습니다.</span>
       </div>
       <div class="exam-drop" id="vocabDrop">
         <b>사진이나 PDF를 여기에 끌어다 놓으세요</b>
@@ -1678,6 +1678,7 @@
              옆에 두는 것은 결과가 없을 때도 늘 보여야 하기 때문이다 — 저장 단추는
              만든 뒤에야 나타나므로 불러오기 자리로는 못 쓴다. -->
         <button type="button" class="btn ghost" id="vocabLoadBtn">📂 불러오기</button>
+        <button type="button" class="btn ghost" id="vocabResetBtn" title="모아 둔 단어·만든 단어장·제목을 비우고 새 단어장을 시작합니다. 저장함에 저장해 둔 것은 지워지지 않습니다.">🔄 새 단어장</button>
         <button class="btn ghost" id="vocabPrintBtn" style="display:none"
                 title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
         <button class="btn ghost" id="vocabSaveBtn" style="display:none"
@@ -2114,7 +2115,7 @@
         </div>
       </div>
       <p class="hint">아이디는 앱 전체에서 하나뿐이라 다른 선생님이 쓰는 아이디는 쓸 수 없습니다. 비밀번호는 모두 <b>1234</b>로 자동 등록됩니다(영어 대소문자는 구분하지 않습니다).
-        학생이 처음 로그인하면 바꾸라고 안내하고, 학생이 바꾼 뒤에는 선생님도 볼 수 없습니다. 잊으면 [수정]의 [1234로 초기화]를 누르세요.</p>
+        학생이 처음 로그인하면 바꾸라고 안내하고, 학생이 바꾼 뒤에는 선생님도 볼 수 없습니다. 잊으면 학생 줄의 <b>[🔑 비번 초기화]</b>를 누르세요(1234로 돌아갑니다).</p>
       <div class="error" id="studentError"></div>
       <div class="table-wrap" style="margin-top:10px;">
         <table>

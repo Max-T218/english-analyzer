@@ -8356,17 +8356,24 @@ vocabManualBtn.addEventListener("click", () => {
 // 만든 결과물(#vocabDoc)이 화면에 남아 있으면 무엇이 이미 들어 있는지 헷갈려
 // 새로 만들기 어렵다는 요청으로 추가했다 — TAB_SAVE.vocab.clearResults가 결과물
 // 쪽을, 이 핸들러가 그 결과물의 재료(vocabSets) 쪽을 함께 비운다.
-vocabClearBtn.addEventListener("click", () => {
+/* 새 단어장 시작 — 단어·결과뿐 아니라 제목과 '저장함에서 이어진 자료' 표시(LOADED_SAVED.vocab)도 지운다.
+   표시를 남겨 두면 새로 만든 단어장을 저장할 때도 앞서 저장한 이름이 뜨고 [덮어쓰기]가 나와,
+   새 자료로 옛 저장본을 덮어쓸 수 있었다(2026-10-12 사용자). 저장해 둔 것은 지워지지 않는다. */
+function resetVocabTab() {
   if (!confirm(
-    "모아 둔 단어장을 모두 지우시겠습니까?\n" +
-      "지문 분석·직접 입력·사진·PDF로 만든 것이 전부 사라지며, 되돌릴 수 없습니다."
+    "새 단어장을 시작할까요?\n" +
+      "지금 화면에 모아 둔 단어와 만든 단어장, 제목이 지워집니다(저장함에 저장해 둔 것은 그대로 남습니다)."
   )) return;
   saveVocabSets([]);
   vocabEditorClose();
   vocabBuildStatus("");
   vocabErrorEl.textContent = "";
   TAB_SAVE.vocab.clearResults();
-});
+  vocabTitleEl.value = "";
+  delete LOADED_SAVED.vocab;
+}
+vocabClearBtn.addEventListener("click", resetVocabTab);
+$("vocabResetBtn").addEventListener("click", resetVocabTab);
 
 // 드롭존을 잠근다 — 사진·PDF 중 하나라도 처리 중이면 더 올리지 못하게 한다
 // (둘이 겹쳐 돌아가도 각자 안전하지만, 사용자가 처리 중인 줄 모르고 또 올리는 걸 막는다).
@@ -8743,7 +8750,7 @@ function openSaveDialog(tab) {
   saveDialogOverwriteBtn.hidden = !from;
   saveDialogFromEl.hidden = !from;
   if (from) {
-    saveDialogFromEl.textContent = `이 자료는 저장함의 "${from.title}"에서 불러온 것입니다.`;
+    saveDialogFromEl.textContent = `이 자료는 저장함의 "${from.title}"과(와) 이어져 있습니다 — [덮어쓰기]를 누르면 그 자료가 바뀝니다.`;
     saveTitleInputEl.value = from.title;
     saveDialogConfirmBtn.textContent = "새로 저장";
     saveDialogConfirmBtn.classList.add("ghost");
@@ -9435,7 +9442,7 @@ const HOWTO = {
       "시험을 낼 때 <b>합격 기준</b>을 두면, 기준에 못 미친 학생은 통과할 때까지 재시험을 봅니다. 회차마다 문제 순서와 보기 자리가 다시 섞입니다.",
       "<b>[🔗 학생에게 알려 줄 주소]</b>를 복사해 문자·알림장으로 보냅니다. 학생은 그 주소에서 <b>선생님이 정해 준 아이디와 비밀번호</b>로 로그인하고, 비밀번호는 스스로 바꿀 수도 있습니다.",
       "제출된 결과는 이 탭에서 봅니다.",
-      "학생이 비밀번호를 잊으면 학생 줄의 <b>[수정]</b>에서 새 비밀번호를 정하거나 <b>[1234로 초기화]</b>를 누르세요. 아이디·이름도, 다른 반으로 옮기는 것도 여기서 합니다.",
+      "학생이 비밀번호를 잊으면 학생 줄의 <b>[🔑 비번 초기화]</b>를 누르세요 — 1234로 돌아가고, 학생은 다시 로그인한 뒤 새 비밀번호로 바꾸면 됩니다. 원하는 비밀번호를 정해 주려면 <b>[수정]</b>에서 적으세요. 아이디·이름도, 다른 반으로 옮기는 것도 여기서 합니다.",
     ],
     tip: "이 탭은 관리자 승인을 받은 선생님에게만 보입니다. 학생 이름은 미성년자 개인정보라, 시험 삼아 넣어 보실 때는 실제 이름 대신 아무 말이나 쓰세요.",
   },
@@ -13600,6 +13607,7 @@ function renderStudents(students) {
         <td>${esc(fmtClassroomDate(s.createdAt))}</td>
         <td style="white-space:nowrap;">
           <button type="button" class="btn ghost small report-student-btn">성적표</button>
+          <button type="button" class="btn ghost small reset-student-pw-btn" title="비밀번호를 잊은 학생의 비밀번호를 1234로 되돌립니다">🔑 비번 초기화</button>
           <button type="button" class="btn ghost small edit-student-btn">수정</button>
           <button type="button" class="btn ghost small danger del-student-btn">삭제</button>
         </td>
@@ -13791,6 +13799,23 @@ studentTableBodyEl.addEventListener("click", async (e) => {
     tr.innerHTML = `<td colspan="6"></td>`;
     row.after(tr);
     loadStudentReport(tr, studentId, reportMonthDefault());
+    return;
+  }
+
+  // 비밀번호를 잊은 학생 — 한 번 눌러 1234로 되돌린다(예전에는 [수정]을 열어 칸을 채우고 [저장]까지 눌러야 했다).
+  // 서버(update_student)가 그 학생의 로그인을 끊으므로, 학생은 1234로 다시 로그인하면 바꾸라는 안내창을 본다.
+  const resetPwBtn = e.target.closest(".reset-student-pw-btn");
+  if (resetPwBtn) {
+    if (!confirm(`${row.dataset.name} 학생의 비밀번호를 1234로 초기화할까요?\n\n학생은 아이디와 1234로 다시 로그인한 뒤 새 비밀번호로 바꾸면 됩니다.`)) return;
+    resetPwBtn.disabled = true;
+    try {
+      await postJson("/api/students/update", { studentId, password: "1234" }, "초기화에 실패했습니다.");
+      alert(`${row.dataset.name} 학생의 비밀번호를 1234로 초기화했습니다.`);
+      loadStudents();
+    } catch (err) {
+      alert(err.message || "초기화에 실패했습니다.");
+      resetPwBtn.disabled = false;
+    }
     return;
   }
 
