@@ -13486,6 +13486,22 @@ function renderStudents(students) {
     : `<tr><td colspan="6" class="hint">등록된 학생이 없습니다.</td></tr>`;
 }
 
+// 학생 이름·아이디를 '이름<탭>아이디' 줄로 복사 — 엑셀·시트에 붙이면 두 칸, 메모장·카톡에는 한 줄씩 들어간다
+$("copyStudentsBtn").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  const lines = [...studentTableBodyEl.querySelectorAll("tr[data-sid]")]
+    .map((r) => `${r.dataset.name}\t${r.dataset.loginId || ""}`);
+  if (!lines.length) {
+    studentErrorEl.textContent = "복사할 학생이 없습니다.";
+    return;
+  }
+  studentErrorEl.textContent = "";
+  const ok = await copyToClipboard(lines.join("\n"));
+  const label = btn.textContent;
+  btn.textContent = ok ? `✓ ${lines.length}명 복사됨` : "복사 실패";
+  setTimeout(() => { btn.textContent = label; }, 1800);
+});
+
 addStudentBtn.addEventListener("click", async () => {
   const name = newStudentNameEl.value.trim();
   const loginId = newStudentLoginIdEl.value.trim();
