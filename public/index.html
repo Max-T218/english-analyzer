@@ -923,6 +923,31 @@
     </div>
   </div>
 
+  <!-- ══════════ 문제 시험 내기 창 — 객관식·주관식·혼합 탭에서 만든 문제를 학생이 사이트에서 푼다 ══════════ -->
+  <div class="modal-overlay" id="quizAssignModalOverlay" hidden>
+    <div class="modal-box">
+      <button type="button" class="modal-close" id="quizAssignModalClose" aria-label="닫기">&times;</button>
+      <h3 class="modal-title" id="quizAssignHeading">반에 문제 시험 내기</h3>
+      <form class="auth-panel" id="quizAssignForm">
+        <label for="quizAssignClassSelect">낼 반</label>
+        <select id="quizAssignClassSelect"></select>
+        <label for="quizAssignTargetSelect">낼 대상</label>
+        <select id="quizAssignTargetSelect"><option value="class">반 전체</option></select>
+        <label for="quizAssignTitle">시험 제목</label>
+        <input type="text" id="quizAssignTitle" placeholder="예: 3과 본문 문제">
+        <p class="hint" id="quizAssignInfo"></p>
+        <p class="hint">학생은 <b>한 번만</b> 풀 수 있고, 제출하면 바로 점수·정답·해설을 봅니다.
+          조건 영작·문장 전환·질문에 답하기·요약문 완성처럼 답을 여러 모양으로 쓸 수 있는 문항은
+          모범답안과 다르게 쓰면 '확인 대기'로 남고, 결과 화면에서 선생님이 [맞음]/[틀림]을 누릅니다.</p>
+        <div class="gate-actions">
+          <button type="submit" class="btn" id="quizAssignSubmitBtn">시험 내기</button>
+          <span class="gate-status" id="quizAssignStatus"></span>
+        </div>
+      </form>
+      <div class="error" id="quizAssignError"></div>
+    </div>
+  </div>
+
   <!-- ══════════ 작업 화면 ══════════
        탭 메뉴를 왼쪽 세로 사이드바로 둔다 — 위쪽 가로줄이면 작업 중 탭을 오가려고
        스크롤을 맨 위까지 되돌려야 해서 불편하다는 피드백을 반영했다. -->
@@ -1296,6 +1321,8 @@
                 title="워드에서 직접 고칠 수 있는 .docx 파일로 내려받습니다. 문항은 2단, 정답과 해설은 맨 뒤 별지로 들어갑니다.">📝 워드 다운로드</button>
         <button class="btn ghost" id="mcqShuffleBtn" style="display:none"
                 title="지금 만들어진 문항의 순서만 다시 섞습니다. AI를 다시 부르지 않아 요금이 들지 않습니다. 반마다 문항 순서가 다른 시험지가 필요할 때 씁니다.">🔀 문제 섞기</button>
+        <button class="btn ghost" id="mcqAssignBtn" style="display:none"
+                title="지금 만든 문제를 반 학생들이 사이트에서 풀게 냅니다. 제출하면 바로 채점되고 정답·해설이 보입니다. AI를 다시 부르지 않아 요금이 없습니다.">🏫 반에 시험 내기</button>
         <label class="chk" id="mcqExpWrap" style="display:none"
                title="끄면 답지에 번호·유형·정답만 실립니다. 해설은 이미 만들어져 있어, 껐다 켜도 요금이 들지 않습니다.">
           <input type="checkbox" id="mcqExpChk" checked> 답지에 해설 <span class="chk-sub">(끄면 정답만)</span>
@@ -1379,6 +1406,8 @@
                 title="워드에서 직접 고칠 수 있는 .docx 파일로 내려받습니다. 문항은 2단, 정답과 해설은 맨 뒤 별지로 들어갑니다.">📝 워드 다운로드</button>
         <button class="btn ghost" id="saqShuffleBtn" style="display:none"
                 title="지금 만들어진 문항의 순서만 다시 섞습니다. AI를 다시 부르지 않아 요금이 들지 않습니다. 반마다 문항 순서가 다른 시험지가 필요할 때 씁니다.">🔀 문제 섞기</button>
+        <button class="btn ghost" id="saqAssignBtn" style="display:none"
+                title="지금 만든 문제를 반 학생들이 사이트에서 풀게 냅니다. 제출하면 바로 채점되고 정답·해설이 보입니다. AI를 다시 부르지 않아 요금이 없습니다.">🏫 반에 시험 내기</button>
         <span class="hint">유형마다 <b>− +</b> 로 문항 수를 정할 수 있습니다. 학생이 직접 쓰는 서술형·단답형 문제를 만듭니다.</span>
       </div>
       <div class="error" id="saqError"></div>
@@ -1455,6 +1484,8 @@
                 title="워드에서 직접 고칠 수 있는 .docx 파일로 내려받습니다. 문항은 2단, 정답과 해설은 맨 뒤 별지로 들어갑니다.">📝 워드 다운로드</button>
         <button class="btn ghost" id="mixShuffleBtn" style="display:none"
                 title="지금 만들어진 문항의 순서만 다시 섞습니다. AI를 다시 부르지 않아 요금이 들지 않습니다.">🔀 문제 섞기</button>
+        <button class="btn ghost" id="mixAssignBtn" style="display:none"
+                title="지금 만든 문제를 반 학생들이 사이트에서 풀게 냅니다. 제출하면 바로 채점되고 정답·해설이 보입니다. AI를 다시 부르지 않아 요금이 없습니다.">🏫 반에 시험 내기</button>
         <label class="chk" id="mixExpWrap" style="display:none"
                title="끄면 답지에 번호·정답만 실립니다. 해설은 이미 만들어져 있어, 껐다 켜도 요금이 들지 않습니다.">
           <input type="checkbox" id="mixExpChk" checked> 답지에 해설 <span class="chk-sub">(끄면 정답만)</span>
@@ -1523,6 +1554,8 @@
                 title="로그인한 계정에 이 워크북과 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
         <button class="btn ghost" id="workbookDocxBtn" style="display:none"
                 title="워드에서 직접 고칠 수 있는 .docx 파일로 내려받습니다. 지금 화면에 보이는 그대로 담기므로, 정답을 넣을지는 아래 '정답 표시'로 정하세요.">📝 워드 다운로드</button>
+        <button class="btn ghost" id="wbAssignBtn" style="display:none"
+                title="지금 만든 워크북을 반 학생들이 사이트에서 풀게 냅니다. 해석 연습하기는 빠지고, 나머지 단계는 제출하면 바로 채점됩니다. AI를 다시 부르지 않아 요금이 없습니다.">🏫 반에 시험 내기</button>
         <label class="chk" title="켜면 정답이 지면에 함께 인쇄됩니다(교사용). 끄면 학생용 문제지가 됩니다.">
           <input type="checkbox" id="wbAnswerChk"> 정답 표시 <span class="chk-sub">(교사용)</span>
         </label>
@@ -2396,6 +2429,7 @@
 <!-- app.js가 만드는 그림 주소(sampleInfographicHtml)에도 같은 판 번호를 붙이려면
      그 값을 JS가 알아야 한다. %%ASSET_V%%는 index.html에서만 바뀌므로 여기서 넘긴다. -->
 <script>window.ASSET_V = "%%ASSET_V%%";</script>
+<script src="/quiztest.js?v=%%ASSET_V%%"></script>
 <script src="/app.js?v=%%ASSET_V%%"></script>
 <script src="/trend.js?v=%%ASSET_V%%"></script>
 </body>

@@ -2326,3 +2326,40 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
 .tab-sample .howto-page img{cursor:zoom-in; min-height:120px;}
 .tab-sample .howto-pages + .howto-pages-note{margin-top:2px;}
 @media print{ .tab-sample{display:none !important;} }
+
+/* ══════ 문제 시험(quiztest.js) — 학생 풀기·결과 화면과 선생님 답안 보기가 같이 쓴다 ══════ */
+/* 문제 시험 — 풀기·결과 화면 */
+.qt-card .qz-passage{font-size:15px;}
+.qt-opts{display:flex; flex-direction:column; gap:6px;}
+.qt-opt{
+  display:flex; gap:8px; align-items:flex-start; text-align:left; width:100%;
+  font:inherit; font-size:14.5px; line-height:1.5; padding:9px 12px; cursor:pointer;
+  background:var(--card); border:1px solid var(--line); border-radius:9px; color:var(--ink);
+}
+.qt-opt .qz-num{font-weight:700; color:var(--accent); font-size:1.25em; line-height:1.1;}
+.qt-opt.sel{border-color:var(--accent); background:color-mix(in srgb, var(--accent) 10%, var(--card)); font-weight:700;}
+.qt-row-opts{display:flex; gap:8px; flex-wrap:wrap;}
+.qt-row-opts .qt-opt{width:auto; min-width:52px; justify-content:center;}
+.qt-pick{display:inline-flex; gap:4px; vertical-align:baseline; margin:0 2px;}
+.qt-pick .qt-opt{width:auto; padding:1px 8px; font-size:14px; border-radius:6px; display:inline-block;}
+.qt-in{font:inherit; font-size:14.5px; padding:6px 9px; border:1px solid var(--line); border-radius:7px;
+  background:var(--card); color:var(--ink); min-width:0;}
+.qz-passage .qt-in{width:7.5em; padding:2px 6px; margin:0 2px;}
+textarea.qt-in{width:100%; min-height:3.4em; resize:vertical; box-sizing:border-box;}
+.qt-line{display:flex; align-items:center; gap:8px; margin:8px 0; flex-wrap:wrap;}
+.qt-line .qt-in{flex:1 1 140px;}
+.qt-cue{font-size:14px; line-height:1.6; margin:10px 0 4px;}
+.qt-blankno{font-weight:700; color:var(--accent);}
+.qt-submit-bar{display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+  position:sticky; bottom:8px; z-index:5;}
+.qt-mark{font-weight:800; font-size:13px; padding:2px 8px; border-radius:20px; margin-left:auto;}
+.qt-mark.ok{background:#dcfce7; color:#15803d;} .qt-mark.bad{background:#fee2e2; color:#b91c1c;}
+.qt-mark.wait{background:#fef3c7; color:#92400e;}
+.qt-opt.right{border-color:#16a34a; background:#f0fdf4; font-weight:700;}
+.qt-opt.wrong{border-color:#dc2626; background:#fef2f2;}
+.qt-units td.ok{color:#15803d; font-weight:700;} .qt-units td.bad{color:#b91c1c;}
+/* 표 기본 min-width(520px)를 풀어 휴대폰 폭에서도 옆으로 밀리지 않게 한다 */
+table.qt-units{min-width:0; width:100%;}
+table.qt-units th, table.qt-units td{padding:6px 8px; word-break:break-word;}
+.qt-exp{margin-top:10px; padding:10px 12px; border-radius:9px; background:var(--paper);
+  border-left:3px solid var(--accent); font-size:14px; line-height:1.7;}

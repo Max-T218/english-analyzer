@@ -100,6 +100,40 @@
     </div>
   </section>
 
+  <!-- ══════════ 문제 시험 풀기 ══════════
+       단어시험과 달리 한 화면에 모든 문항을 띄운다 — 지문을 읽고 푸는 시험이라 문항을
+       오가며 다시 보는 것이 자연스럽다. 쓰던 답은 이 기기에 잠시 보관해 새로고침해도 남는다. -->
+  <section id="quizWorkspace" hidden>
+    <div class="panel">
+      <button type="button" class="btn ghost small" id="quizBackBtn">← 목록으로</button>
+      <h3 id="quizTitle" style="margin:12px 0 4px;"></h3>
+      <p class="hint" id="quizHint">문항을 모두 풀고 맨 아래 [제출하기]를 누르세요. 제출은 한 번만 할 수 있어요.</p>
+      <div class="error" id="quizError"></div>
+    </div>
+    <div id="quizBody"></div>
+    <div class="panel qt-submit-bar">
+      <span class="hint" id="quizProgress"></span>
+      <button type="button" class="btn" id="quizSubmitBtn">제출하기</button>
+      <span class="gate-status" id="quizSubmitStatus"></span>
+    </div>
+  </section>
+
+  <!-- ══════════ 문제 시험 결과(정답·해설) ══════════ -->
+  <section id="quizResultWorkspace" hidden>
+    <div class="panel" style="text-align:center;">
+      <div style="font-size:15px; color:var(--ink-soft); margin-bottom:6px;" id="quizResultHeading"></div>
+      <div id="quizResultScore" style="font-size:32px; font-weight:800; color:var(--accent);"></div>
+      <p id="quizResultLead" class="hint" style="margin-top:8px;"></p>
+      <label class="chk" style="display:inline-flex; gap:6px; margin-top:6px;">
+        <input type="checkbox" id="quizWrongOnly"> 틀린 문항만 보기
+      </label>
+    </div>
+    <div id="quizResultBody"></div>
+    <div style="margin:16px 0; text-align:center;">
+      <button type="button" class="btn ghost" id="quizResultBackBtn">← 목록으로</button>
+    </div>
+  </section>
+
   <!-- ══════════ 결과 화면 ══════════ -->
   <section class="panel" id="resultWorkspace" hidden style="text-align:center; padding:40px 20px;">
     <div style="font-size:15px; color:var(--ink-soft); margin-bottom:6px;" id="resultHeading">제출 완료!</div>
@@ -141,6 +175,7 @@
     </div>
   </div>
 </div>
+<script src="/quiztest.js"></script>
 <script src="/student.js"></script>
 </body>
 </html>

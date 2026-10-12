@@ -785,6 +785,7 @@ function renderAccount(info) {
   if (isExamApproved) { examTabBtn.hidden = false; trendTabBtn.hidden = false; }
   else hideExamTab();
   updateVocabAssignBtnVisibility();
+  syncQuizAssignBtns();
   const krwText = currentKrw !== null ? ` · 잔액 ${pt(currentKrw)}` : "";
   accountNameEl.textContent = `${lastAccountLabel || "로그인됨"}님${krwText}`;
   // 서버가 이 계정이 아직 못 본 업데이트를 함께 내려준다(/api/me·로그인 응답 공통).
@@ -5075,6 +5076,10 @@ function chunkTypes(items, size = QUIZ_QUESTIONS_PER_CALL) {
 const QUIZ_SHEET_TITLE = {};
 
 // 문제 제작 탭 하나를 구성한다 (객관식·주관식이 같은 로직을 공유)
+// 문제 탭마다 [🏫 반에 시험 내기]를 보일지 다시 정하는 함수들 — 승인 여부(renderAccount)가 바뀔 때 함께 부른다
+const QUIZ_ASSIGN_SYNC = [];
+function syncQuizAssignBtns() { QUIZ_ASSIGN_SYNC.forEach((f) => f()); }
+
 function setupQuizTab({ prefix, types, footer }) {
   const gridEl = $(prefix + "TypeGrid");
   const allEl = $(prefix + "TypeAll");
@@ -6031,9 +6036,22 @@ function setupQuizTab({ prefix, types, footer }) {
 
   // 섞기 버튼은 결과가 있을 때만 보인다
   function syncShuffleBtns() {
+    syncAssignBtn();
     if (!shuffleBtn) return;
     shuffleBtn.style.display = (lastEntries || []).length ? "inline-flex" : "none";
     syncFloatPrint();
+  }
+
+  // 반에 시험 내기 — 화면에 보이는 순서(섞었으면 섞인 순서) 그대로 학생에게 낸다
+  // (syncShuffleBtns가 이 줄보다 먼저 불릴 수 있어 단추를 그때그때 찾는다)
+  function syncAssignBtn() {
+    const b = $(prefix + "AssignBtn");
+    if (b) b.style.display = isClassroomApproved && (lastEntries || []).length ? "inline-flex" : "none";
+  }
+  QUIZ_ASSIGN_SYNC.push(syncAssignBtn);
+  if ($(prefix + "AssignBtn")) {
+    $(prefix + "AssignBtn").addEventListener("click", () =>
+      openQuizAssign(quizQuestionsFromEntries(lastEntries), sheetTitle, "quiz"));
   }
 
   if (shuffleBtn) shuffleBtn.addEventListener("click", reshuffle);
@@ -7124,6 +7142,7 @@ function drawWorkbook(results) {
   workbookSaveBtn.style.display = total ? "inline-flex" : "none";
   workbookDocxBtn.style.display = total ? "inline-flex" : "none";
   lastWorkbookEntries = entries; // 저장 버튼이 이 값을 그대로 payload로 보낸다
+  syncWbAssignBtn();
   syncFloatPrint();
   // 비우는 호출일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
   if (results.length) workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -7199,6 +7218,88 @@ TAB_SAVE.workbook = {
   },
   clearResults: () => renderWorkbookEntries([]),
 };
+
+/* ── 워크북을 학생 온라인 시험으로 ──
+   단계 하나 = 문항 하나(그 단계의 문장들을 한 문항에 모은다 — 문장마다 나누면 지문 하나로 100문항이 넘는다).
+   해석 연습하기(4)는 맞는 해석이 여러 모양이라 학생 화면에서 뺀다(2026-10-12 사용자 결정).
+   모양은 서버 _qt_clean_question이 받는 그대로다 — 빈칸(fill)·동사형(verb)·고르기(pick)·고치기(fix)는
+   문제 시험과 같은 것을 쓰고, read·order·wbwrite·paraorder는 워크북에서만 쓴다. */
+function wbQuestionsForStudents(entries, stages) {
+  const out = [];
+  const total = entries.length;
+  entries.forEach(({ job, data }) => {
+    const d = data || {};
+    const name = job && (job.named || total > 1) ? job.name : "";
+    const sentences = (d.sentences || []).filter((x) => x && x.en);
+    const passage = sentences.map((x) => x.en || "").join(" ");
+    const withKo = (x, body) => `<b>${esc(x.no)}</b> ${esc(x.ko || "")}<br>${body}`;
+    const cue = (x) => x.ko || "";   // 번호는 학생 화면이 (1)(2)…로 붙인다
+    stages.forEach((id) => {
+      if (id === 4) return;
+      const meta = WB_STAGES.find((m) => m.id === id);
+      if (!meta) return;
+      const base = { type: meta.name, instruction: esc(meta.guide), passageName: name };
+      if (id === 1) {
+        if (sentences.length) {
+          out.push({ ...base, format: "read",
+            passageHtml: sentences.map((x) => `<b>${esc(x.no)}</b> ${esc(x.en)}<br>${esc(x.ko || "")}`).join("<br><br>") });
+        }
+      } else if (id === 3 || id === 5 || id === 6) {
+        const field = id === 3 ? "enBlank" : id === 5 ? "verbForm" : "grammarChoice";
+        const rx = id === 3 ? /\{\{[^{}]*\}\}/ : id === 5 ? /\([^()|]*\|[^()|]*\)/ : /\[[^\[\]|]*\|[^\[\]|]*\]/;
+        const parts = sentences.filter((x) => rx.test(x[field] || "")).map((x) => {
+          let t = esc(x[field]);
+          // 빈칸 완성의 {{정답}}을 문제 시험의 빈칸 표시 (힌트|정답)으로 — 힌트 없는 빈칸이다
+          if (id === 3) t = t.replace(/\{\{([^{}]*)\}\}/g, (_, a) => `(|${a.trim()})`);
+          return withKo(x, t);
+        });
+        if (parts.length) {
+          out.push({ ...base, format: id === 3 ? "fill" : id === 5 ? "verb" : "pick", passageHtml: parts.join("<br><br>") });
+        }
+      } else if (id === 7) {
+        const gf = d.grammarFix;
+        const fixes = ((gf && gf.fixes) || []).filter((f) => f && f.wrong && f.right);
+        if (gf && gf.text && fixes.length) out.push({ ...base, format: "fix", passageHtml: wbFixBodyHtml(gf), fixes });
+      } else if (id === 8) {
+        const lines = sentences.map((x) => {
+          const groups = autoChunkGroups(x.en, passage);
+          if (!groups.length) return null;
+          const hint = groups.map((g, i) => `(${(g.length > 1 ? seededShuffle(g, (x.no || 1) * 31 + i) : g).join(" / ")})`).join(" ");
+          return { cue: cue(x), hint, answer: x.en };
+        }).filter(Boolean);
+        if (lines.length) out.push({ ...base, instruction: esc(meta.guide + " (문장 전체를 쓰세요)"), format: "order", lines });
+      } else if (id === 10) {
+        const lines = sentences.map((x) => {
+          const keys = (x.writeKeys || []).filter(Boolean);
+          const raw = String(x.writeMask || "").indexOf("{{") >= 0 ? String(x.writeMask) : `{{${x.en}}}`;
+          const m = maskWriteKeys(raw, keys);
+          if (m.indexOf("{{") < 0) return null;
+          const pattern = m.replace(/\{\{([^{}]*)\}\}/g, (_, a) =>
+            a.trim().split(/\s+/).filter(Boolean).map(() => "____").join(" "));
+          return { cue: cue(x), hint: (keys.length ? `[보기: ${keys.join(", ")}] ` : "") + pattern, answer: x.en };
+        }).filter(Boolean);
+        if (lines.length) out.push({ ...base, instruction: esc(meta.guide + " (문장 전체를 쓰세요)"), format: "wbwrite", lines });
+      } else if (id === 9) {
+        const p = wbParaParts(d.paraOrder, sentences);
+        if (p) {
+          out.push({ ...base, format: "paraorder", head: p.head, tail: p.tail,
+            paras: p.shown.map((x) => ({ letter: x.letter, text: x.text })), seq: p.answerSeq });
+        }
+      }
+    });
+  });
+  return out;
+}
+
+function syncWbAssignBtn() {
+  const b = $("wbAssignBtn");
+  if (b) b.style.display = isClassroomApproved && lastWorkbookEntries.length ? "inline-flex" : "none";
+}
+QUIZ_ASSIGN_SYNC.push(syncWbAssignBtn);
+$("wbAssignBtn").addEventListener("click", () => {
+  const stages = [...wbStageGridEl.querySelectorAll("input:checked")].map((i) => parseInt(i.value, 10));
+  openQuizAssign(wbQuestionsForStudents(lastWorkbookEntries, stages), wbTitleEl.value, "workbook");
+});
 
 /* ── 워크북 마크업 파서 & 렌더 도우미 ── */
 
@@ -7699,7 +7800,29 @@ function buildStage7(gf) {
   if (!gf || !gf.text) return { html: "", answers: [] };
   const fixes = (gf.fixes || []).filter((f) => f && f.wrong && f.right);
   if (!fixes.length) return { html: "", answers: [] };
+  const bodyHtml = wbFixBodyHtml(gf);
+  const lines = fixes
+    .map((_, i) => `<div class="wb-fixline">(${i + 1}) ${wbBlank(200)} → ${wbBlank(200)}</div>`)
+    .join("");
+  const answers = fixes.map((f, i) => ({
+    no: i + 1,
+    text: `${f.wrong} → ${f.right}`,
+  }));
+  const ansText = answers.map((a) => `(${a.no}) ${a.text}`).join("   ");
 
+  return {
+    html: `
+      <div class="wb-q">
+        <div class="wb-para">${bodyHtml}</div>
+        ${lines}
+        ${wbAns(ansText)}
+      </div>`,
+    answers,
+  };
+}
+
+// 어색한 곳 찾기의 본문 — 밑줄 친 구간을 <u>로 감싼 HTML(학생 온라인 시험도 같은 것을 쓴다)
+function wbFixBodyHtml(gf) {
   // 밑줄 — AI가 준 구간을 본문에서 찾아 <u>로 감싼다. 앞에서부터 한 번씩만 쓴다.
   let text = String(gf.text);
   const marks = [];
@@ -7728,29 +7851,37 @@ function buildStage7(gf) {
         })
         .join("")
     : esc(text).replace(/\n{2,}/g, "<br><br>").replace(/\n/g, " ");
-
-  const lines = fixes
-    .map((_, i) => `<div class="wb-fixline">(${i + 1}) ${wbBlank(200)} → ${wbBlank(200)}</div>`)
-    .join("");
-  const answers = fixes.map((f, i) => ({
-    no: i + 1,
-    text: `${f.wrong} → ${f.right}`,
-  }));
-  const ansText = answers.map((a) => `(${a.no}) ${a.text}`).join("   ");
-
-  return {
-    html: `
-      <div class="wb-q">
-        <div class="wb-para">${bodyHtml}</div>
-        ${lines}
-        ${wbAns(ansText)}
-      </div>`,
-    answers,
-  };
+  return bodyHtml;
 }
 
 // 워크북9 — 문단 (A)(B)(C) 순서 배열
 function buildStage9(po, sentences) {
+  const p = wbParaParts(po, sentences);
+  if (!p) return { html: "", answers: [] };
+  const { head, tail, shown, answerSeq, count } = p;
+  const blocks = shown
+    .map(
+      (x) =>
+        `<div class="wb-parablock"><b>(${x.letter})</b> <span>${esc(x.text).replace(/\n+/g, " ")}</span></div>`
+    )
+    .join("");
+  const slots = Array.from({ length: count }, () => `<span class="wb-blank" style="min-width:70px"></span>`).join(" → ");
+
+  return {
+    html: `
+      <div class="wb-q">
+        ${head ? `<div class="wb-en wb-para-head">${esc(head).replace(/\n+/g, " ")}</div>` : ""}
+        ${blocks}
+        ${tail ? `<div class="wb-en wb-para-tail">${esc(tail).replace(/\n+/g, "<br>")}</div>` : ""}
+        <div class="wb-orderline">${slots}</div>
+        ${wbAns(answerSeq.join(" → "))}
+      </div>`,
+    answers: [{ no: 1, text: answerSeq.join(" → ") }],
+  };
+}
+
+// 문단 배열의 재료 — 보이는 순서(shown: 글자·본문)와 정답 글자 순서(answerSeq). 못 만들면 null
+function wbParaParts(po, sentences) {
   let head = "";
   let tail = "";
   let paras = [];
@@ -7761,11 +7892,11 @@ function buildStage9(po, sentences) {
   } else {
     // AI가 문단을 못 줬으면 문장을 3덩이로 나눠 만든다
     const list = sentences.map((s) => s.en).filter(Boolean);
-    if (list.length < 3) return { html: "", answers: [] };
+    if (list.length < 3) return null;
     const size = Math.ceil(list.length / 3);
     for (let i = 0; i < list.length; i += size) paras.push(list.slice(i, i + size).join(" "));
   }
-  if (paras.length < 2) return { html: "", answers: [] };
+  if (paras.length < 2) return null;
 
   const letters = ["A", "B", "C", "D", "E"];
   // 원문 순서 i가 화면에서 letters[j]로 보이도록 섞는다.
@@ -7779,29 +7910,8 @@ function buildStage9(po, sentences) {
   }
   const shown = order.map((origIdx, j) => ({ letter: letters[j], origIdx, text: paras[origIdx] }));
   // 정답 = 원문 순서대로 읽었을 때의 글자 나열
-  const answerSeq = paras
-    .map((_, origIdx) => shown.find((x) => x.origIdx === origIdx).letter)
-    .join(" → ");
-
-  const blocks = shown
-    .map(
-      (x) =>
-        `<div class="wb-parablock"><b>(${x.letter})</b> <span>${esc(x.text).replace(/\n+/g, " ")}</span></div>`
-    )
-    .join("");
-  const slots = paras.map(() => `<span class="wb-blank" style="min-width:70px"></span>`).join(" → ");
-
-  return {
-    html: `
-      <div class="wb-q">
-        ${head ? `<div class="wb-en wb-para-head">${esc(head).replace(/\n+/g, " ")}</div>` : ""}
-        ${blocks}
-        ${tail ? `<div class="wb-en wb-para-tail">${esc(tail).replace(/\n+/g, "<br>")}</div>` : ""}
-        <div class="wb-orderline">${slots}</div>
-        ${wbAns(answerSeq)}
-      </div>`,
-    answers: [{ no: 1, text: answerSeq }],
-  };
+  const answerSeq = paras.map((_, origIdx) => shown.find((x) => x.origIdx === origIdx).letter);
+  return { head, tail, shown, answerSeq, count: paras.length };
 }
 
 /* ══════════════════════════ 단어장 탭 ══════════════════════════ */
@@ -9222,6 +9332,7 @@ const HOWTO = {
       "<b>[문제 만들기]</b>를 누릅니다.",
       "만든 뒤 <b>[🔀 문제 섞기]</b>로 순서만 다시 섞을 수 있습니다. AI를 다시 부르지 않아 <b>요금이 들지 않습니다</b> — 반마다 문항 순서가 다른 시험지가 필요할 때 쓰세요.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b>(정답 및 해설만 인쇄) · <b>[💾 사이트 저장]</b>. <b>답지에 해설</b>을 끄면 답지에 정답만 나옵니다.",
+      "(관리자 승인을 받은 선생님) <b>[🏫 반에 시험 내기]</b>로 만든 문제를 학생에게 온라인 시험으로 낼 수 있습니다. 학생은 사이트에서 풀고 제출하면 바로 점수·정답·해설을 봅니다(한 번만 응시). 답을 여러 모양으로 쓸 수 있는 문항(조건 영작·문장 전환·질문에 답하기·요약문 완성)은 모범답안과 다르면 학생 관리 탭에서 선생님이 [맞음]/[틀림]을 누릅니다. AI를 부르지 않아 <b>요금이 없습니다</b>.",
     ],
     tip: "한 번에 200문항이 넘으면 나눠서 만들지 물어봅니다 — 한 번에 너무 많이 만들면 중간에 실패할 확률이 커지기 때문입니다.",
     sampleHead: "객관식은 이렇게 나옵니다 — 한 지문으로 23가지 유형을 한 문항씩 만든 시험지 중 세 쪽입니다",
@@ -9244,6 +9355,7 @@ const HOWTO = {
       "<b>[문제 만들기]</b>를 누릅니다.",
       "만든 뒤 <b>[🔀 문제 섞기]</b>로 순서만 다시 섞을 수 있습니다(요금 없음).",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b>(정답만 인쇄) · <b>[💾 사이트 저장]</b>",
+      "(관리자 승인을 받은 선생님) <b>[🏫 반에 시험 내기]</b>로 만든 문제를 학생에게 온라인 시험으로 낼 수 있습니다. 학생은 사이트에서 풀고 제출하면 바로 점수·정답·해설을 봅니다(한 번만 응시). 답을 여러 모양으로 쓸 수 있는 문항(조건 영작·문장 전환·질문에 답하기·요약문 완성)은 모범답안과 다르면 학생 관리 탭에서 선생님이 [맞음]/[틀림]을 누릅니다. AI를 부르지 않아 <b>요금이 없습니다</b>.",
     ],
     tip: "OX 진위형은 한 지문에 최대 5개까지만 만들어집니다. 유형이 하나뿐인데 문항을 많이 잡으면 비슷한 문제가 나오기 때문입니다.",
     sampleHead: "주관식은 이렇게 나옵니다 — 한 지문으로 18가지 유형을 한 문항씩 만든 시험지 중 네 쪽입니다",
@@ -9260,6 +9372,7 @@ const HOWTO = {
       "(선택) <b>지문 변형</b>과 <b>시험지 제목</b>을 정합니다.",
       "<b>[문제 만들기]</b>를 누릅니다. 요금은 유형마다 객관식·주관식 단가대로 합산되어, 같은 유형을 각 탭에서 따로 만들 때와 같습니다.",
       "<b>[🔀 문제 섞기]</b>(요금 없음) · <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>. <b>답지에 해설</b>을 끄면 답지에 정답만 나옵니다(객관식·주관식 모두).",
+      "(관리자 승인을 받은 선생님) <b>[🏫 반에 시험 내기]</b>로 만든 문제를 학생에게 온라인 시험으로 낼 수 있습니다. 학생은 사이트에서 풀고 제출하면 바로 점수·정답·해설을 봅니다(한 번만 응시). 답을 여러 모양으로 쓸 수 있는 문항(조건 영작·문장 전환·질문에 답하기·요약문 완성)은 모범답안과 다르면 학생 관리 탭에서 선생님이 [맞음]/[틀림]을 누릅니다. AI를 부르지 않아 <b>요금이 없습니다</b>.",
     ],
     sampleHead: "객관식과 주관식을 한 시험지에 섞으면 두 종류가 이렇게 이어서 나옵니다 — 두 탭 결과물의 일부입니다",
     tip: "주관식 답지는 원래 정답만 싣는데, 이 탭에서는 객관식 해설과 함께 한 표에 실립니다 — 해설이 필요 없으면 <b>답지에 해설</b>을 끄세요.",
@@ -9275,6 +9388,7 @@ const HOWTO = {
       "<b>[워크북 만들기]</b>를 누릅니다.",
       "<b>[정답 표시]</b>를 끄면 학생용으로, 켜면 선생님용으로 인쇄됩니다. 뒤쪽 <b>정답 별지</b>는 만들 때 정해집니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>",
+      "(관리자 승인을 받은 선생님) <b>[🏫 반에 시험 내기]</b>로 만든 워크북을 학생이 사이트에서 풀게 낼 수 있습니다. 단계 하나가 한 문항이 되고, <b>해석 연습하기는 답이 여러 모양이라 빠집니다</b>. 좌지문 우해석은 읽기 자료로만 나오고, 나머지 단계는 제출하면 바로 맞음·틀림과 정답이 나옵니다. 영작 연습은 모범답안과 다르게 쓰면 학생 관리 탭에서 선생님이 [맞음]/[틀림]을 누릅니다. AI를 부르지 않아 <b>요금이 없습니다</b>.",
     ],
     tip: "워크북은 인쇄에서 1단으로 나갑니다 — 단계마다 답을 적는 칸이 있어 2단으로 좁히면 쓸 자리가 모자랍니다.",
   },
@@ -9317,6 +9431,7 @@ const HOWTO = {
       "<b>[+ 새 반 만들기]</b>로 반을 만듭니다. 이름은 <b>[이름 변경]</b>으로, 필요 없어진 반은 <b>[반 삭제]</b>로 지웁니다(학생·시험·답안이 함께 지워집니다).",
       "학생을 등록합니다. <b>이름과 아이디만 선생님이 정해 줍니다.</b> 아이디는 앱 전체에서 하나뿐이라 겹치면 등록되지 않습니다(이름은 겹쳐도 됩니다). 비밀번호는 입력하지 않아도 <b>1234</b>로 자동 등록됩니다(영어 대소문자는 구분하지 않습니다). 학생이 처음 로그인하면 바꾸라고 안내하고, 스스로 바꾼 뒤에는 선생님도 볼 수 없습니다.",
       "<b>단어장 탭</b>에서 단어장을 만든 뒤 <b>[🏫 반에 시험 내기]</b>를 누릅니다. 반 전체에도, 학생 한 명에게만도 낼 수 있습니다.",
+      "<b>객관식·주관식·객관식+주관식 탭</b>에서 문제를 만든 뒤에도 <b>[🏫 반에 시험 내기]</b>로 <b>문제 시험</b>을 낼 수 있습니다. 학생은 한 번만 풀고, 제출하면 바로 정답·해설을 봅니다. 결과의 <b>[답안 보기]</b>에서 학생 답을 보고, 모범답안과 다르게 쓴 서술형 답(확인 대기)은 <b>[맞음]/[틀림]</b>으로 채점합니다. <b>문항별 정답률</b>도 함께 나옵니다.",
       "시험을 낼 때 <b>합격 기준</b>을 두면, 기준에 못 미친 학생은 통과할 때까지 재시험을 봅니다. 회차마다 문제 순서와 보기 자리가 다시 섞입니다.",
       "<b>[🔗 학생에게 알려 줄 주소]</b>를 복사해 문자·알림장으로 보냅니다. 학생은 그 주소에서 <b>선생님이 정해 준 아이디와 비밀번호</b>로 로그인하고, 비밀번호는 스스로 바꿀 수도 있습니다.",
       "제출된 결과는 이 탭에서 봅니다.",
@@ -13149,6 +13264,7 @@ const SCORE_STATUS = {
   passed: ["✅ 합격", "var(--accent)"],
   failed: ["❌ 미통과", "var(--g)"],
   none: ["미제출", "var(--ink-soft)"],
+  done: ["📝 제출", "var(--accent)"],
 };
 function roundsText(rounds) {
   return (rounds || []).map((r) => `${r.round}회 ${r.score}/${r.total}${r.passed ? " ✅" : ""}`).join(" · ");
@@ -13171,7 +13287,8 @@ function studentLastScoreHtml(s) {
   const sub = `<span class="hint">응시 ${s.done}/${s.tests} · 합격 ${s.passed}</span>`;
   if (!s.last) return `<span class="hint">아직 응시 안 함</span><br>${sub}`;
   const st = SCORE_STATUS[s.last.status] || SCORE_STATUS.none;
-  return `${esc(s.last.title)} <b>${s.last.score}/${s.last.total}</b> <span style="color:${st[1]};">${st[0]}</span><br>${sub}`;
+  const result = s.last.qc ? QT.countsText(s.last.qc, true) : `<b>${s.last.score}/${s.last.total}</b>`;
+  return `${esc(s.last.title)} ${result} <span style="color:${st[1]};">${st[0]}</span><br>${sub}`;
 }
 /* ── 성적표 디자인 ──
    시험지 분석 리포트(public/trend.js)와 같은 틀을 쓴다 — 표지 머리(.rp-head) · 숫자 카드
@@ -13217,8 +13334,10 @@ function reportTilesHtml(tiles) {
       <b>${t.value}<small>${t.unit || ""}</small></b><em>${t.sub || "&nbsp;"}</em></div>`).join("")}</div></div>`;
 }
 function statusTagHtml(status, passedRound) {
-  const label = { passed: "합격", failed: "미통과", none: "미제출" }[status] || "미제출";
-  const cls = { passed: "pass", failed: "fail", none: "none" }[status] || "none";
+  // done — 문제 시험(합격 기준 없이 한 번 푸는 시험)을 냈다
+  const label = { passed: "합격", failed: "미통과", none: "미제출", done: "제출" }[status] || "미제출";
+  const cls = { passed: "pass", failed: "fail", none: "none", done: "pass" }[status] || "none";
+  if (status === "done") passedRound = null;
   return `<span class="tag ${cls}">${label}${passedRound ? ` (${passedRound}회차)` : ""}</span>`;
 }
 
@@ -13249,6 +13368,7 @@ function openPrintWindow(title, bodyHtml) {
 
 // 시험 하나의 성적표 — 요약 카드 + 학생별 한 줄(안 낸 학생도) + 틀린 단어 펼치기
 function renderTestResults(data, title) {
+  if (data.kind === "quiz") return renderQuizTestResults(data, title);
   const rows = data.attempts || [];
   const sm = data.summary || {};
   if (!rows.length) return `<p class="hint">이 시험을 볼 학생이 없습니다.</p>`;
@@ -13329,7 +13449,7 @@ function reportChartSvg(tests, avg) {
   }
   done.forEach((t, i) => {
     const cx = L + slot * i + slot / 2, bw = 36;
-    const col = t.status === "passed" ? "#4d94ec" : "#ff8a4c";
+    const col = t.status === "failed" ? "#ff8a4c" : "#4d94ec";
     const top = y(t.bestPercent), h = y(0) - top;
     const name = t.title.length > 7 ? t.title.slice(0, 7) + "…" : t.title;
     g += `<rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${h}" rx="4" fill="${col}"/>
@@ -13405,7 +13525,9 @@ function renderStudentReport(data, period) {
   const missing = sm.tests - sm.done;
   const testRows = tests.length ? tests.map((t) => `<tr><td class="tk">${esc(t.title)}</td>
       <td>${statusTagHtml(t.status, t.passedRound)}</td>
-      <td class="tk">${esc(roundsText(t.rounds)) || "—"}</td><td>${esc(fmtDateTime(t.lastAt))}</td></tr>`).join("")
+      <td class="tk">${t.kind === "quiz"
+        ? (t.qc ? `📝 ${QT.countsText(t.qc)}` : "—")
+        : esc(roundsText(t.rounds)) || "—"}</td><td>${esc(fmtDateTime(t.lastAt))}</td></tr>`).join("")
     : `<tr><td colspan="4" class="hint">이 기간에 해당하는 시험이 없습니다.</td></tr>`;
   const freq = data.frequentWrong || [];
   const freqHtml = freq.length
@@ -13752,16 +13874,18 @@ function renderAssignedTests(tests) {
     <div class="panel" data-aid="${esc(t.id)}" style="margin-bottom:10px;">
       <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
         <div>
-          <b>${esc(t.title)}</b>
-          <span class="hint">· ${esc(FORMAT_LABEL_KO[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개
+          <b>${esc(t.title || (t.kind !== "quiz" ? "단어시험" : t.source === "workbook" ? "워크북" : "문제 시험"))}</b>
+          <span class="hint">· ${t.kind === "quiz"
+            ? (t.source === "workbook" ? `📚 워크북 · ${t.questionCount}단계` : `📝 문제 시험 · ${t.questionCount}문항`)
+            : `${esc(FORMAT_LABEL_KO[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개`}
             · ${t.studentId ? `👤 ${esc(t.studentName || "학생 1명")}` : "반 전체"}
             ${t.maxWrong != null ? `· 합격 기준 ${t.wordCount - t.maxWrong}/${t.wordCount}(오답 ${t.maxWrong}개까지)` : ""}</span>
         </div>
         <span style="display:inline-flex; gap:6px;">
           <button type="button" class="btn ghost small view-results-btn">결과 보기</button>
-          <button type="button" class="btn ghost small edit-retest-btn"
+          ${t.kind === "quiz" ? "" : `<button type="button" class="btn ghost small edit-retest-btn"
                   data-max-wrong="${t.maxWrong == null ? "" : t.maxWrong}"
-                  data-word-count="${t.wordCount}">재시험 기준 수정</button>
+                  data-word-count="${t.wordCount}">재시험 기준 수정</button>`}
           <button type="button" class="btn ghost small danger del-test-btn">삭제</button>
         </span>
       </div>
@@ -13773,6 +13897,17 @@ function renderAssignedTests(tests) {
 }
 
 assignedTestListEl.addEventListener("click", async (e) => {
+  // 문제 시험 — 학생 답안 펼치기 / 선생님 채점
+  const ansBtn = e.target.closest(".quiz-answers-btn");
+  if (ansBtn) {
+    const row = ansBtn.closest("tr").nextElementSibling;
+    if (!row.hidden) { row.hidden = true; return; }
+    row.hidden = false;
+    loadQuizAnswers(row, ansBtn.closest("[data-aid]").dataset.aid, ansBtn.dataset.sid);
+    return;
+  }
+  const gradeBtn = e.target.closest(".qt-grade");
+  if (gradeBtn) { gradeQuizUnit(gradeBtn); return; }
   const toggleBtn = e.target.closest(".toggle-wrong-btn");
   if (toggleBtn) {
     const detail = toggleBtn.closest("tr").nextElementSibling;
@@ -13901,6 +14036,11 @@ assignedTestListEl.addEventListener("click", async (e) => {
 });
 
 assignedTestListEl.addEventListener("change", (e) => {
+  const qf = e.target.closest(".quiz-answers-filter");
+  if (qf) {
+    qf.closest("td").querySelectorAll(".qt-card").forEach((c) => { c.hidden = qf.checked && c.dataset.status === "ok"; });
+    return;
+  }
   const chk = e.target.closest(".edit-retest-chk");
   if (!chk) return;
   const inner = chk.closest(".edit-body").querySelector(".edit-retest-inner");
@@ -14084,3 +14224,193 @@ assignFormEl.addEventListener("submit", async (e) => {
     $("assignSubmitBtn").disabled = false;
   }
 });
+
+/* ══════ 문제 시험 내기 — 객관식·주관식·혼합 탭에서 만든 문제를 학생이 사이트에서 푼다 ══════
+   서버(create_quiz_assignment)가 정답을 쥐고 학생에게는 정답을 뺀 문제만 보낸다. 채점·정답 공개도
+   서버가 한다(grade_and_submit_attempt → submit_quiz_attempt). AI를 부르지 않아 요금이 없다. */
+const quizAssignModalEl = $("quizAssignModalOverlay");
+const quizAssignClassEl = $("quizAssignClassSelect");
+const quizAssignTargetEl = $("quizAssignTargetSelect");
+const QUIZ_TEST_MAX_QUESTIONS = 100;   // server.py QUIZ_TEST_MAX_QUESTIONS와 같은 값
+let quizAssignQuestions = [];
+let quizAssignSource = "quiz";   // "quiz"(문제 탭) | "workbook"(워크북 탭) — 목록의 이름표만 다르다
+
+// 저장 모양(entries)을 학생에게 낼 문항 목록으로 펼친다 — 화면 전용 표시(__로 시작)는 뺀다.
+// 지문이 여럿이면 어느 지문의 문항인지 이름을 함께 싣는다.
+function quizQuestionsFromEntries(entries) {
+  const out = [];
+  (entries || []).forEach(({ job, label, set, total }) => {
+    const name = job && (total > 1 || job.named) ? [job.name, label].filter(Boolean).join(" · ") : (label || "");
+    ((set && set.questions) || []).forEach((q) => {
+      const c = {};
+      Object.keys(q).forEach((k) => { if (!k.startsWith("__")) c[k] = q[k]; });
+      c.passageName = name;
+      out.push(c);
+    });
+  });
+  return out;
+}
+
+async function refreshQuizAssignTargets() {
+  const classId = quizAssignClassEl.value;
+  let students = [];
+  if (classId) {
+    try {
+      students = (await getJson(`/api/students?classId=${encodeURIComponent(classId)}`, "")).students || [];
+    } catch (_) { students = []; }
+  }
+  quizAssignTargetEl.innerHTML = `<option value="class">반 전체</option>` +
+    students.map((s) => `<option value="${esc(s.id)}">👤 ${esc(s.name)}</option>`).join("");
+}
+quizAssignClassEl.addEventListener("change", refreshQuizAssignTargets);
+
+async function openQuizAssign(questions, title, source) {
+  quizAssignQuestions = questions || [];
+  quizAssignSource = source === "workbook" ? "workbook" : "quiz";
+  $("quizAssignHeading").textContent = quizAssignSource === "workbook" ? "반에 워크북 내기" : "반에 문제 시험 내기";
+  $("quizAssignError").textContent = "";
+  $("quizAssignStatus").textContent = "";
+  $("quizAssignTitle").value = String(title || "").trim();
+  const n = quizAssignQuestions.length;
+  $("quizAssignInfo").textContent = n > QUIZ_TEST_MAX_QUESTIONS
+    ? `문항이 ${n}개라 한 번에 낼 수 없습니다(${QUIZ_TEST_MAX_QUESTIONS}문항까지). 지문을 나눠 만들어 내 주세요.`
+    : quizAssignSource === "workbook"
+      ? `${n}단계를 냅니다(단계 하나가 한 문항). 해석 연습하기는 답이 여러 모양이라 학생 화면에서 빠집니다.`
+      : `${n}문항을 냅니다. 화면에 보이는 순서 그대로 나갑니다.`;
+  try {
+    classesCache = (await getJson("/api/classes", "")).classes || [];
+  } catch (_) { classesCache = []; }
+  quizAssignClassEl.innerHTML = classesCache.length
+    ? classesCache.map((c) => `<option value="${esc(c.id)}"${c.id === selectedClassId ? " selected" : ""}>${esc(c.name)}</option>`).join("")
+    : `<option value="">먼저 '학생 관리' 탭에서 반을 만들어 주세요</option>`;
+  await refreshQuizAssignTargets();
+  openModal(quizAssignModalEl);
+}
+$("quizAssignModalClose").addEventListener("click", () => closeModal(quizAssignModalEl));
+
+$("quizAssignForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errEl = $("quizAssignError");
+  errEl.textContent = "";
+  const classId = quizAssignClassEl.value;
+  if (!classId) { errEl.textContent = "반을 먼저 만들어 주세요."; return; }
+  if (!quizAssignQuestions.length) { errEl.textContent = "낼 문제가 없습니다. 먼저 문제를 만들어 주세요."; return; }
+  if (quizAssignQuestions.length > QUIZ_TEST_MAX_QUESTIONS) {
+    errEl.textContent = `한 시험에는 ${QUIZ_TEST_MAX_QUESTIONS}문항까지 낼 수 있습니다.`;
+    return;
+  }
+  const target = quizAssignTargetEl.value;
+  const btn = $("quizAssignSubmitBtn");
+  btn.disabled = true;
+  $("quizAssignStatus").textContent = "내는 중…";
+  try {
+    const r = await postJson("/api/quiz-tests", {
+      classId, studentId: target === "class" ? null : target,
+      title: $("quizAssignTitle").value, questions: quizAssignQuestions, source: quizAssignSource,
+    }, "시험 내기에 실패했습니다.");
+    closeModal(quizAssignModalEl);
+    alert(`${r.questions}${quizAssignSource === "workbook" ? "단계" : "문항"}을 냈습니다.` +
+      (r.skipped ? ` (학생 화면에서 풀 수 없는 모양의 문항 ${r.skipped}개는 뺐습니다.)` : "") +
+      " '학생 관리' 탭의 시험 목록에서 결과를 확인할 수 있습니다.");
+    if (classId === selectedClassId && typeof loadAssignedTests === "function") loadAssignedTests();
+  } catch (err) {
+    errEl.textContent = err.message || "시험 내기에 실패했습니다.";
+  } finally {
+    btn.disabled = false;
+    $("quizAssignStatus").textContent = "";
+  }
+});
+
+// 시험별 성적표(문제 시험) — 학생별 점수·확인 대기 + 문항별 정답률. [답안 보기]로 학생 답안을 펼쳐 채점한다.
+function renderQuizTestResults(data, title) {
+  const rows = data.attempts || [];
+  const sm = data.summary || {};
+  if (!rows.length) return `<p class="hint">이 시험을 볼 학생이 없습니다.</p>`;
+  const cls = (classesCache.find((c) => c.id === selectedClassId) || {}).name || "";
+  const body = rows.map((r) => {
+    const score = r.qc ? QT.countsText(r.qc, true) : "—";
+    const pend = r.qc && r.qc.pending ? ` <span class="tag fail">채점 필요</span>` : "";
+    const btn = r.status === "none" ? "" :
+      `<button type="button" class="btn ghost small quiz-answers-btn no-print" data-sid="${esc(r.studentId)}">답안 보기${r.pending ? " · 채점" : ""}</button>`;
+    return `<tr>
+        <td class="tk">${esc(r.studentName)}${r.removed ? ' <span class="hint">(삭제된 학생)</span>' : ""}</td>
+        <td>${statusTagHtml(r.status)}</td>
+        <td class="tk qt-score-cell">${score}${pend}</td>
+        <td>${esc(fmtDateTime(r.lastAt))}</td>
+        <td class="no-print">${btn}</td>
+      </tr>
+      <tr class="quiz-answer-row no-print" hidden><td colspan="5" class="tk"></td></tr>`;
+  }).join("");
+  const stats = data.questionStats || [];
+  // 문항마다 맞힌 학생·틀린 학생 수 — 반 전체가 많이 틀린 문항이 눈에 띄게 틀림 칸을 굵게
+  const statRows = stats.filter((s) => s.format !== "read").map((s) => `<tr><td>${s.no}</td><td class="tk">${esc(s.type)}</td>
+      <td style="color:#15803d">${s.right}명</td>
+      <td style="color:#b91c1c;${s.wrong > s.right ? "font-weight:700;" : ""}">${s.wrong}명</td>
+      <td>${s.pending ? `${s.pending}명` : ""}</td></tr>`).join("");
+  const missing = sm.targets - sm.submitted;
+  return `<div class="trend-report results-printable">
+    ${reportHeadHtml("문제 시험 성적표", title, [["시험", esc(title)], ["반", esc(cls || "—")]])}
+    ${reportTilesHtml([
+      { label: "대상 학생", value: sm.targets, unit: "명", sub: missing ? `미제출 ${missing}명` : "모두 제출", color: "#4d94ec" },
+      { label: "제출", value: sm.submitted, unit: `/${sm.targets}명`, sub: "", color: "#ff8a4c" },
+      { label: "문항", value: sm.questionCount, unit: "문항", sub: "", color: "#2fd197" },
+      { label: "채점 필요", value: rows.filter((r) => r.qc && r.qc.pending).length, unit: "명", sub: sm.pending ? "[답안 보기]에서 채점" : "모두 채점됨", color: "#ffc02e" },
+    ])}
+    <h4 class="sec">학생별 결과</h4>
+    <table>
+      <thead><tr><th>학생</th><th>결과</th><th>맞음 · 틀림</th><th>제출</th><th class="no-print"></th></tr></thead>
+      <tbody>${body}</tbody></table>
+    ${stats.length ? `<h4 class="sec">문항별 결과</h4>
+    <table><thead><tr><th>번호</th><th>유형</th><th>맞힌 학생</th><th>틀린 학생</th><th>확인 대기</th></tr></thead>
+      <tbody>${statRows}</tbody></table>` : ""}</div>
+    <button type="button" class="btn ghost small print-results-btn">🖨️ 성적표 인쇄</button>
+    <button type="button" class="btn ghost small close-report-btn">✕ 성적표 닫기</button>`;
+}
+
+// 학생 한 명의 답안 — 문항마다 학생 답·정답·해설, 답을 여러 모양으로 쓸 수 있는 문항에는 [맞음]/[틀림]
+async function loadQuizAnswers(row, assignmentId, studentId) {
+  const cell = row.querySelector("td");
+  row.dataset.aid = assignmentId;
+  row.dataset.sid = studentId;
+  cell.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  try {
+    const r = await getJson(
+      `/api/quiz-tests/attempt?assignmentId=${encodeURIComponent(assignmentId)}&studentId=${encodeURIComponent(studentId)}`,
+      "답안을 불러오지 못했습니다.");
+    row._quiz = r;
+    cell.innerHTML = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 10px;">
+        <b>${esc(r.studentName)} 답안</b><span class="hint qt-ans-counts">${QT.countsText(r.qc)}</span>
+        <label class="chk"><input type="checkbox" class="quiz-answers-filter"> 틀린 문항·확인 대기만</label>
+      </div>
+      <div class="quiz-answers-list">${(r.items || []).map((q, i) => QT.questionHtml(q, i, "review", { grading: true })).join("")}</div>`;
+  } catch (err) {
+    cell.innerHTML = `<p class="error">${esc(err.message || "답안을 불러오지 못했습니다.")}</p>`;
+  }
+}
+
+async function gradeQuizUnit(btn) {
+  const row = btn.closest("tr.quiz-answer-row");
+  if (!row) return;
+  const qi = Number(btn.dataset.q), u = Number(btn.dataset.u);
+  btn.disabled = true;
+  try {
+    const res = await postJson("/api/quiz-tests/grade", {
+      assignmentId: row.dataset.aid, studentId: row.dataset.sid,
+      no: qi + 1, unit: u, ok: btn.dataset.ok === "1",
+    }, "채점을 저장하지 못했습니다.");
+    // 그 문항 카드만 다시 그리고, 위 줄의 점수를 고친다
+    const item = row._quiz && row._quiz.items[qi];
+    if (item && item.units[u]) item.units[u].ok = btn.dataset.ok === "1";
+    const card = row.querySelector(`.qt-card[data-q="${qi}"]`);
+    if (card && item) card.outerHTML = QT.questionHtml(item, qi, "review", { grading: true });
+    const cell = row.previousElementSibling && row.previousElementSibling.querySelector(".qt-score-cell");
+    if (cell) {
+      cell.innerHTML = QT.countsText(res.qc, true) + (res.qc.pending ? ` <span class="tag fail">채점 필요</span>` : "");
+    }
+    const head = row.querySelector(".qt-ans-counts");
+    if (head) head.textContent = QT.countsText(res.qc);
+  } catch (err) {
+    alert(err.message || "채점을 저장하지 못했습니다.");
+    btn.disabled = false;
+  }
+}

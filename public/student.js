@@ -32,11 +32,15 @@ const studyWorkspaceEl = $("studyWorkspace");
 const takeWorkspaceEl = $("takeWorkspace");
 const resultWorkspaceEl = $("resultWorkspace");
 const pwWorkspaceEl = $("pwWorkspace");
+const quizWorkspaceEl = $("quizWorkspace");
+const quizResultWorkspaceEl = $("quizResultWorkspace");
 
 function showOnly(el) {
-  [codeGateEl, listWorkspaceEl, studyWorkspaceEl, takeWorkspaceEl, resultWorkspaceEl, pwWorkspaceEl].forEach((s) => {
+  [codeGateEl, listWorkspaceEl, studyWorkspaceEl, takeWorkspaceEl, resultWorkspaceEl, pwWorkspaceEl,
+   quizWorkspaceEl, quizResultWorkspaceEl].forEach((s) => {
     s.hidden = s !== el;
   });
+  window.scrollTo(0, 0);
 }
 
 // 이미 로그인된 세션이면(student_session 쿠키) 코드 입력 없이 바로 목록으로
@@ -163,6 +167,7 @@ function renderTests(tests) {
     return;
   }
   $("testList").innerHTML = tests.map((t) => {
+    if (t.kind === "quiz") return quizListRowHtml(t);
     let rightSide;
     if (!t.submitted) {
       rightSide = `<button type="button" class="btn small take-btn" data-id="${esc(t.id)}">응시하기</button>`;
@@ -254,6 +259,7 @@ async function openResult(assignmentId) {
   try {
     const r = await getJson(`/api/student/tests/result?assignmentId=${encodeURIComponent(assignmentId)}`);
     currentAssignmentId = assignmentId;
+    if (r.kind === "quiz") { showQuizResult(r); return; }
     showResultScreen(r, { title: `${r.title}${r.round > 1 ? ` (${r.round}회차)` : ""} 결과` });
   } catch (err) {
     errEl.textContent = err.message || "결과를 불러오지 못했습니다.";
@@ -276,6 +282,7 @@ async function openTest(assignmentId) {
   $("takeForm").innerHTML = "";
   try {
     const data = await getJson(`/api/student/tests/detail?assignmentId=${encodeURIComponent(assignmentId)}`);
+    if (data.kind === "quiz") { openQuiz(assignmentId, data); return; }
     $("takeTitle").textContent = data.round > 1 ? `${data.title} (${data.round}회차)` : data.title;
     $("takeHint").textContent =
       data.format === "mcq" ? "보기 중 하나를 고르세요." : "직접 입력하세요.";
@@ -403,7 +410,8 @@ function closeSubmitConfirm() {
 $("submitConfirmNoBtn").addEventListener("click", closeSubmitConfirm);
 $("submitConfirmYesBtn").addEventListener("click", () => {
   closeSubmitConfirm();
-  submitTest();
+  if (!quizWorkspaceEl.hidden) submitQuiz();
+  else submitTest();
 });
 
 function goNext() {
@@ -448,4 +456,115 @@ $("takeForm").addEventListener("click", (e) => {
     autoAdvanceTimer = null;
     goNext();
   }, 220);   // 고른 표시가 잠깐 보이게 (마지막 문항이면 goNext가 제출 확인창을 연다)
+});
+
+/* ══════ 문제 시험 — 객관식·주관식 탭에서 선생님이 낸 문제를 푼다 ══════
+   문항 그리기는 quiztest.js(window.QT)가 하고, 여기서는 화면 전환·임시 보관·제출만 한다.
+   한 번만 낼 수 있고, 내면 바로 점수·정답·해설을 보여 준다(답을 여러 모양으로 쓸 수 있는
+   문항은 모범답안과 다르면 '선생님 확인 중'으로 남는다). */
+function quizListRowHtml(t) {
+  let right;
+  if (!t.submitted) {
+    right = `<button type="button" class="btn small take-btn" data-id="${esc(t.id)}">문제 풀기</button>`;
+  } else {
+    right = `
+      <div style="text-align:right;">
+        <div style="font-weight:700;">${QT.countsText(t.qc, true)}</div>
+        <button type="button" class="btn ghost small result-btn" data-id="${esc(t.id)}" style="margin-top:4px;">정답·해설 보기</button>
+      </div>`;
+  }
+  return `
+    <div class="panel" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+      <div>
+        <div style="font-weight:700;">${esc(t.title || (t.source === "workbook" ? "워크북" : "문제 시험"))}</div>
+        <div class="hint">${t.source === "workbook" ? `📚 워크북 · ${t.questionCount}단계` : `📝 문제 시험 · ${t.questionCount}문항`}</div>
+      </div>
+      ${right}
+    </div>`;
+}
+
+let quizQuestions = [];
+let quizDraftTimer = null;
+const quizDraftKey = () => `qt_draft_${currentAssignmentId}`;
+
+function saveQuizDraft() {
+  clearTimeout(quizDraftTimer);
+  quizDraftTimer = setTimeout(() => {
+    const answers = QT.collect($("quizBody"), quizQuestions);
+    try { localStorage.setItem(quizDraftKey(), JSON.stringify(answers)); } catch (_) {}
+    updateQuizProgress(answers);
+  }, 300);
+}
+
+function updateQuizProgress(answers) {
+  const total = quizQuestions.reduce((n, q) => n + QT.unitCount(q), 0);
+  const blank = QT.blankCount(answers || QT.collect($("quizBody"), quizQuestions));
+  $("quizProgress").textContent = `${total - blank} / ${total}칸 답함`;
+}
+
+function openQuiz(assignmentId, data) {
+  currentAssignmentId = assignmentId;
+  quizQuestions = data.questions || [];
+  $("quizTitle").textContent = data.title || "문제 시험";
+  $("quizError").textContent = "";
+  $("quizBody").innerHTML = quizQuestions.map((q, i) => QT.questionHtml(q, i, "take")).join("");
+  let draft = null;
+  try { draft = JSON.parse(localStorage.getItem(quizDraftKey()) || "null"); } catch (_) {}
+  if (draft) QT.restore($("quizBody"), quizQuestions, draft);
+  updateQuizProgress();
+  showOnly(quizWorkspaceEl);
+}
+
+QT.bind($("quizBody"), saveQuizDraft);
+$("quizBackBtn").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
+$("quizResultBackBtn").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
+
+$("quizSubmitBtn").addEventListener("click", () => {
+  const blank = QT.blankCount(QT.collect($("quizBody"), quizQuestions));
+  $("submitConfirmMsg").textContent = blank
+    ? `아직 비어 있는 답이 ${blank}칸 있어요. 그대로 제출하면 틀린 것으로 처리돼요. 제출은 한 번만 할 수 있어요.`
+    : "모든 칸에 답했어요. 제출은 한 번만 할 수 있어요.";
+  const el = $("submitConfirm");
+  el.hidden = false;
+  el.style.display = "flex";
+});
+
+async function submitQuiz() {
+  const btn = $("quizSubmitBtn");
+  $("quizError").textContent = "";
+  btn.disabled = true;
+  $("quizSubmitStatus").textContent = "채점 중…";
+  try {
+    const r = await postJson("/api/student/tests/submit", {
+      assignmentId: currentAssignmentId, answers: QT.collect($("quizBody"), quizQuestions),
+    });
+    try { localStorage.removeItem(quizDraftKey()); } catch (_) {}
+    showQuizResult(r);
+  } catch (err) {
+    $("quizError").textContent = err.message || "제출에 실패했습니다.";
+    window.scrollTo(0, 0);
+  } finally {
+    btn.disabled = false;
+    $("quizSubmitStatus").textContent = "";
+  }
+}
+
+function showQuizResult(r) {
+  $("quizResultHeading").textContent = r.title || "문제 시험";
+  const items = r.items || [];
+  const qc = r.qc || { right: 0, wrong: 0, pending: 0 };
+  $("quizResultScore").innerHTML = QT.countsText(qc, true);
+  $("quizResultLead").textContent =
+    (qc.wrong ? "아래에서 틀린 문항의 정답과 해설을 확인하세요." : qc.pending ? "" : "모두 맞혔어요! 🎉") +
+    (qc.pending ? ` 선생님이 확인할 문항이 ${qc.pending}개 있어요.` : "");
+  $("quizWrongOnly").checked = false;
+  $("quizResultBody").innerHTML = items.map((q, i) => QT.questionHtml(q, i, "review")).join("");
+  showOnly(quizResultWorkspaceEl);
+}
+
+$("quizWrongOnly").addEventListener("change", (e) => {
+  const only = e.target.checked;
+  $("quizResultBody").querySelectorAll(".qt-card").forEach((c) => {
+    c.hidden = only && c.dataset.status === "ok";
+  });
 });

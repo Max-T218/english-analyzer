@@ -132,6 +132,25 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 방향·객관식 보기를 다시 섞습니다 — 떨어진 회차의 보기 위치를 외워 통과하는 것을
 막기 위해서입니다.
 
+**문제 시험**(2026-10-12): 객관식·주관식·혼합 탭의 `[🏫 반에 시험 내기]`(`<prefix>AssignBtn`, 승인된 선생님 +
+결과가 있을 때만 보인다 — `syncQuizAssignBtns`)로 만든 문제를 학생이 사이트에서 푼다. 단어시험과 **같은 컬렉션**
+(`test_assignments`/`test_attempts`)에 `kind:"quiz"`로 들어가 반 삭제·학생 표·성적표가 그대로 함께 다룬다. 서버는
+`create_quiz_assignment`(문항을 `_qt_clean_question`으로 다시 거른다 — HTML은 `sanitize_quiz_html`)·`_qt_student_view`(정답을 뺀
+모양 — pick/verb/fill은 지문을 `segments`로 쪼개 칸 자리만 남긴다)·`submit_quiz_attempt`·`quiz_review`·`grade_quiz_unit`.
+채점은 답 칸 하나씩(`_qt_units`) 하지만 **화면에는 점수를 보이지 않고 문항 단위 맞음·틀림 개수만**
+보인다(`_qt_q_counts` → `qc`, 화면 `QT.countsText` — 사용자 결정. 문제 시험은 성적표의 점수 그래프·평균에서도 빠진다). 비교는 `_qt_key`(대소문자·따옴표·문장부호 무시, 철자는 본다).
+`QUIZ_TEST_FREE_FORMATS`(조건 영작·문장 전환·질문에 답하기·짧은 서술)는 모범답안과 다르면 `ok:None`(확인 대기)로 두고
+선생님이 결과의 [답안 보기]에서 [맞음]/[틀림]을 누른다(`/api/quiz-tests/grade`). **한 번만 응시**하고 제출 즉시 정답·해설을
+보여 준다(사용자 결정). 답안은 `qdetails`에 담는다 — 단어시험의 `details`와 이름을 나눈 까닭은 `_wrong_items`·자주 틀린 단어가
+`details`를 단어 기록으로 읽기 때문이다. 상태값은 합격/불합격 대신 `done`(제출). 문항 그리기는 `public/quiztest.js`(`window.QT`)
+한 벌을 학생 화면(`student.js`의 `openQuiz`/`showQuizResult`)과 선생님 화면(`renderQuizTestResults`/`loadQuizAnswers`)이 같이 쓴다.
+상한 `QUIZ_TEST_MAX_QUESTIONS`(100) — 화면 `app.js`에도 같은 이름의 값이 있다.
+**워크북도 같은 길로 낸다**(`wbAssignBtn` → `wbQuestionsForStudents`, `source:"workbook"` — 목록 이름표만 다르다).
+단계 하나 = 문항 하나로 그 단계의 문장을 모은다. 빈칸 완성·동사형·어법 고르기·어색한 곳 찾기는 문제 시험의
+fill·verb·pick·fix 모양을 그대로 쓰고, 워크북 전용 모양 `QUIZ_TEST_WB_FORMATS`(read=좌지문 우해석·채점 없음 /
+order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / paraorder=문단 배열)를 더했다. **해석 연습하기는 뺀다**(답이
+여러 모양 — 2026-10-12 사용자 결정). 문단 배열 섞기는 인쇄본과 같아야 해서 `wbParaParts`, 어색한 곳 본문은 `wbFixBodyHtml`로 떼어 함께 쓴다.
+
 ## 코드 지도
 
 줄 번호는 수정할 때마다 밀리니 **심볼 이름으로 찾으세요.**
@@ -337,6 +356,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 GET=조회/POST=생성. `/api/vocab-tests`에 `studentId`를 실으면 그 학생 한 명에게만 낸다)
 `/api/student/login`(`loginId`+`password`) `/api/student/logout` `/api/student/password`(학생 본인 비밀번호 변경) `/api/students/update`(선생님이 이름·아이디·비밀번호 수정)
 `/api/student/tests/submit`
+`/api/quiz-tests`(문제 시험 내기) `/api/quiz-tests/grade`(확인 대기 칸 채점) — GET `/api/quiz-tests/attempt`(학생 한 명 답안)
 
 ## 업데이트 소식(로그인 시 플로팅 창)
 

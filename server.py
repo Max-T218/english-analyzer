@@ -906,7 +906,7 @@ def _asset_version():
     stamp = 0.0
     # 만드는 법·결과물 예시 그림(howto-*)도 본다 — 2026-10-07에 그림만 갈아 끼웠다가 표식이 그대로여서
     # 옛 그림('홍보용' 제목)이 계속 보였다.
-    names = ["app.js", "trend.js", "style.css"] + [
+    names = ["app.js", "trend.js", "quiztest.js", "style.css"] + [
         p.name for pat in ("sample-*.jpg", "howto-*.jpg", "howto-*.png") for p in sorted(PUBLIC_DIR.glob(pat))
     ]
     for name in names:
@@ -11408,7 +11408,7 @@ def list_students(teacher_id, class_id):
             "passed": sum(1 for t in tests if t["status"] == "passed"),
             "last": ({"title": last["title"], "score": last["rounds"][-1]["score"],
                       "total": last["rounds"][-1]["total"], "status": last["status"],
-                      "at": last["lastAt"]} if last else None),
+                      "qc": last.get("qc"), "at": last["lastAt"]} if last else None),
         })
     rows.sort(key=lambda r: r["createdAt"])
     return rows
@@ -11669,6 +11669,8 @@ def update_assignment_retest(teacher_id, assignment_id, max_wrong):
     snap = ref.get()
     if not snap.exists or snap.to_dict().get("teacher_id") != teacher_id:
         raise ValueError("시험을 찾을 수 없습니다.")
+    if snap.to_dict().get("kind") == "quiz":
+        raise ValueError("문제 시험은 한 번만 응시해 재시험 기준이 없습니다.")
     word_count = len(snap.to_dict().get("vocab") or [])
     if max_wrong is not None:
         try:
@@ -11691,6 +11693,8 @@ def list_assignments_for_class(teacher_id, class_id):
         d = doc.to_dict() or {}
         rows.append({
             "id": doc.id, "title": d.get("title", ""), "format": d.get("format"),
+            "kind": d.get("kind") or "vocab", "source": d.get("source") or "",
+            "questionCount": len(d.get("questions") or []), "unitCount": d.get("unit_count") or 0,
             "wordCount": len(d.get("vocab") or []), "createdAt": d.get("created_at", ""),
             "maxWrong": d.get("max_wrong"),
             # None이면 반 전체, 있으면 그 학생 한 명에게만 낸 시험
@@ -11801,6 +11805,8 @@ def get_test_detail_for_student(student_id, assignment_id):
     assignment = a_snap.to_dict()
     if not _assignment_targets_student(assignment, student_id, s_snap.to_dict()):
         raise ValueError("이 시험은 이 학생에게 배정되지 않았습니다.")
+    if assignment.get("kind") == "quiz":
+        return get_quiz_for_student(assignment_id, assignment, student_id)
     attempts = _get_student_attempts(assignment_id, student_id)
     progress = _attempt_progress(assignment, attempts)
     if progress["passed"]:
@@ -11860,6 +11866,10 @@ def list_tests_for_student(student_id):
         last = attempts[-1] if attempts else None
         rows.append({
             "id": doc.id, "title": d.get("title", ""), "format": d.get("format"),
+            "kind": d.get("kind") or "vocab", "source": d.get("source") or "",
+            "questionCount": len(d.get("questions") or []),
+            "pending": (last.get("pending") or 0) if last else 0,
+            "qc": _qt_q_counts(last.get("qdetails")) if last else None,
             "wordCount": len(d.get("vocab") or []), "createdAt": d.get("created_at", ""),
             "maxWrong": d.get("max_wrong"),
             "submitted": bool(attempts),
@@ -11888,6 +11898,8 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
     student = s_snap.to_dict()
     if not _assignment_targets_student(assignment, student_id, student):
         raise ValueError("이 시험은 이 학생에게 배정되지 않았습니다.")
+    if assignment.get("kind") == "quiz":
+        return submit_quiz_attempt(assignment_id, assignment, student_id, student, answers)
 
     attempts = _get_student_attempts(assignment_id, student_id)
     progress = _attempt_progress(assignment, attempts)
@@ -11977,6 +11989,8 @@ def get_result_for_student(student_id, assignment_id):
     attempts = _get_student_attempts(assignment_id, student_id)
     if not attempts:
         raise ValueError("아직 제출하지 않은 시험입니다.")
+    if assignment.get("kind") == "quiz":
+        return quiz_review(assignment_id, assignment, attempts[0])
     last = attempts[-1]
     progress = _attempt_progress(assignment, attempts)
     return {
@@ -12014,11 +12028,18 @@ def _student_test_rows(student_id, assignments, attempts_by):
         atts = attempts_by.get((aid, student_id), [])
         progress = _attempt_progress(a, atts)
         last = atts[-1] if atts else None
+        quiz = a.get("kind") == "quiz"
         rows.append({
             "assignmentId": aid, "title": a.get("title", ""), "format": a.get("format"),
+            "kind": "quiz" if quiz else "vocab", "source": a.get("source") or "",
+            "questionCount": len(a.get("questions") or []),
+            "pending": (last.get("pending") or 0) if (quiz and last) else 0,
+            "qc": _qt_q_counts(last.get("qdetails")) if (quiz and last) else None,
             "wordCount": len(a.get("vocab") or []), "maxWrong": a.get("max_wrong"),
             "createdAt": a.get("created_at", ""),
-            "status": "passed" if progress["passed"] else ("failed" if atts else "none"),
+            # 문제 시험은 합격/불합격이 없다 — 냈으면 'done'(제출)
+            "status": ("done" if atts else "none") if quiz else
+                      ("passed" if progress["passed"] else ("failed" if atts else "none")),
             "passedRound": progress["passedRound"],
             "rounds": [{
                 "round": x.get("round", 1), "score": x.get("score", 0), "total": x.get("total", 0),
@@ -12064,7 +12085,8 @@ def get_student_report(teacher_id, student_id, start=None, end=None):
             rounds = [r for r in t["rounds"] if in_range(r["submittedAt"])]
             if rounds:
                 t["rounds"] = rounds
-                t["status"] = "passed" if any(r["passed"] for r in rounds) else "failed"
+                t["status"] = ("done" if t["kind"] == "quiz" else
+                               "passed" if any(r["passed"] for r in rounds) else "failed")
                 t["passedRound"] = next((r["round"] for r in rounds if r["passed"]), None)
                 t["lastAt"] = rounds[-1]["submittedAt"]
                 kept.append(t)
@@ -12072,7 +12094,8 @@ def get_student_report(teacher_id, student_id, start=None, end=None):
                 kept.append(t)          # 이 기간에 나왔는데 아직 안 본 시험
         tests = kept
     for t in tests:
-        pcts = [r["score"] / r["total"] for r in t["rounds"] if r["total"]]
+        # 문제 시험은 점수로 나타내지 않는다(맞음·틀림 개수만) — 그래프·평균 점수에서 뺀다
+        pcts = [] if t["kind"] == "quiz" else [r["score"] / r["total"] for r in t["rounds"] if r["total"]]
         t["firstPercent"] = round(100 * pcts[0]) if pcts else None
         t["bestPercent"] = round(100 * max(pcts)) if pcts else None
         t["retried"] = len(t["rounds"]) > 1
@@ -12137,6 +12160,7 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
         for doc in DB.collection("students").where("class_id", "==", assignment.get("class_id")).stream():
             targets[doc.id] = (doc.to_dict() or {}).get("name", "")
 
+    quiz = assignment.get("kind") == "quiz"
     rows = []
     for sid in list(targets) + [x for x in by_student if x not in targets]:
         atts = by_student.get(sid, [])
@@ -12146,7 +12170,10 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
         rows.append({
             "studentId": sid, "studentName": name,
             "removed": sid not in targets,
-            "status": "passed" if progress["passed"] else ("failed" if atts else "none"),
+            "pending": (last.get("pending") or 0) if (quiz and last) else 0,
+            "qc": _qt_q_counts(last.get("qdetails")) if (quiz and last) else None,
+            "status": ("done" if atts else "none") if quiz else
+                      ("passed" if progress["passed"] else ("failed" if atts else "none")),
             "passed": progress["passed"], "passedRound": progress["passedRound"],
             "rounds": [{
                 "round": x.get("round", 1), "score": x.get("score", 0), "total": x.get("total", 0),
@@ -12157,20 +12184,28 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
             "wrongItems": _wrong_items(last.get("details")) if last else [],
             "hasDetails": bool(last and "details" in last),
         })
-    order = {"failed": 0, "passed": 1, "none": 2}
+    order = {"failed": 0, "done": 1, "passed": 1, "none": 2}
     rows.sort(key=lambda r: (order[r["status"]], r["studentName"]))
     submitted = [r for r in rows if r["status"] != "none"]
     best_pct = [max(x["score"] / x["total"] for x in r["rounds"] if x["total"]) for r in submitted
                 if any(x["total"] for x in r["rounds"])]
-    return {
+    out = {
         "attempts": rows,
+        "kind": "quiz" if quiz else "vocab",
         "summary": {
             "targets": len(rows), "submitted": len(submitted),
             "passed": sum(1 for r in rows if r["status"] == "passed"),
             "avgPercent": round(100 * sum(best_pct) / len(best_pct)) if best_pct else None,
             "wordCount": len(assignment.get("vocab") or []),
+            "questionCount": len(assignment.get("questions") or []),
+            "unitCount": assignment.get("unit_count") or 0,
+            "pending": sum(r["pending"] for r in rows),
         },
     }
+    if quiz:
+        out["questionStats"] = _qt_question_stats(
+            assignment, [a for atts in by_student.values() for a in atts])
+    return out
 
 
 def delete_assignment(teacher_id, assignment_id):
@@ -12184,6 +12219,477 @@ def delete_assignment(teacher_id, assignment_id):
     for doc in DB.collection("test_attempts").where("assignment_id", "==", assignment_id).stream():
         doc.reference.delete()
     ref.delete()
+
+
+# ══════ 문제 시험 — 객관식·주관식·혼합 탭에서 만든 문제를 학생이 사이트에서 푼다 ══════
+# 단어시험과 같은 컬렉션(test_assignments / test_attempts)을 쓰고 kind="quiz"로 가른다 —
+# 반 삭제·학생 표·성적표·학생 목록이 따로 손대지 않아도 이 시험을 함께 다룬다.
+# AI를 부르지 않는다(요금 없음). 정답은 서버에만 두고 학생에게는 정답을 뺀 문제만 내려보낸다.
+#
+# 채점 단위(unit) — 문항이 아니라 '답 하나'를 1점으로 센다. 객관식은 문항당 1점이지만
+# 빈칸 쓰기처럼 칸이 다섯이면 5점이다(하나만 틀렸다고 문항 전체를 0점으로 하지 않는다).
+# 답을 여러 모양으로 쓸 수 있는 유형(QUIZ_TEST_FREE_FORMATS)은 모범답안과 똑같으면 정답,
+# 다르면 '확인 대기'(ok=None)로 두고 선생님이 [맞음]/[틀림]을 누른다(grade_quiz_unit).
+# 한 번만 응시한다(재시험 없음). 제출하면 정답·해설을 바로 보여 준다(2026-10-12 사용자 결정).
+QUIZ_TEST_MAX_QUESTIONS = 100
+# 칸이 많은 유형이 섞여도 이 이상은 받지 않는다. 워크북은 문장마다 단계가 붙어 지문 하나로도
+# 100칸이 넘으므로(20문장 × 5단계) 넉넉히 둔다 — 실제 한도는 아래 바이트 상한이 먼저 건다.
+QUIZ_TEST_MAX_UNITS = 1500
+QUIZ_TEST_MAX_BYTES = 800_000      # Firestore 문서 1MiB 한도보다 넉넉히 낮게
+QUIZ_TEST_FREE_FORMATS = {"short", "compose", "convert", "answer"}
+# 워크북에서 온 모양 — read(좌지문 우해석, 채점 없음) · order(순서 배열) · wbwrite(영작 연습)
+# · paraorder(문단 배열). order·wbwrite는 문장 여러 개를 한 문항에 lines로 담는다.
+QUIZ_TEST_WB_FORMATS = {"read", "order", "wbwrite", "paraorder"}
+QUIZ_TEST_FORMATS = ({"mc", "tf", "pick", "verb", "fill", "find", "gloss", "fix", "write"}
+                     | QUIZ_TEST_FREE_FORMATS | QUIZ_TEST_WB_FORMATS)
+_QT_PICK_RE = re.compile(r"\[([^\[\]|]*)\|([^\[\]|]*)\]")
+_QT_VERB_RE = re.compile(r"\(([^()|]*)\|([^()|]*)\)")
+_QT_CIRCLED = ["①", "②", "③", "④", "⑤"]
+
+
+def _qt_s(v, limit):
+    return str(v if v is not None else "")[:limit]
+
+
+def _qt_list(v):
+    return v if isinstance(v, list) else []
+
+
+def _qt_clean_question(q):
+    """선생님 화면이 보낸 문항 하나를 검사·정리한다. 학생 화면에 그대로 그려지므로
+    HTML 칸은 모두 sanitize_quiz_html(br·u·b만 남김)을 다시 거친다 — 브라우저가 보낸
+    값이라 서버가 만들 때 거른 것을 믿을 수 없다. 낼 수 없는 문항이면 None."""
+    if not isinstance(q, dict):
+        return None
+    fmt = q.get("format") or "mc"
+    if fmt not in QUIZ_TEST_FORMATS:
+        return None
+    s = sanitize_quiz_html
+    out = {
+        "format": fmt,
+        "type": _norm_text(_qt_s(q.get("type"), 60)),
+        "instruction": s(_qt_s(q.get("instruction"), 3000)),
+        "passageHtml": s(_qt_s(q.get("passageHtml"), 12000)),
+        "explanation": s(_qt_s(q.get("explanation"), 4000)),
+        "passageName": _norm_text(_qt_s(q.get("passageName"), 80)),
+    }
+    if fmt == "mc":
+        choices = [s(_qt_s(c, 1000)) for c in _qt_list(q.get("choices"))][:5]
+        try:
+            ans = int(q.get("answer"))
+        except (TypeError, ValueError):
+            return None
+        if len(choices) < 2 or not (1 <= ans <= len(choices)):
+            return None
+        out["choices"], out["answer"] = choices, ans
+    elif fmt == "tf":
+        items = [{"text": s(_qt_s(it.get("text"), 1000)), "isTrue": bool(it.get("isTrue"))}
+                 for it in _qt_list(q.get("tfItems")) if isinstance(it, dict) and it.get("text")]
+        if not items:
+            return None
+        out["tfItems"] = items[:10]
+    elif fmt == "pick":
+        if not _QT_PICK_RE.search(out["passageHtml"]):
+            return None
+    elif fmt in ("verb", "fill"):
+        if not _QT_VERB_RE.search(out["passageHtml"]):
+            return None
+    elif fmt in ("find", "gloss"):
+        key, cue = ("findItems", "ko") if fmt == "find" else ("glossItems", "def")
+        items = [{cue: _norm_text(_qt_s(it.get(cue), 600)), "en": _norm_text(_qt_s(it.get("en"), 200))}
+                 for it in _qt_list(q.get(key)) if isinstance(it, dict) and it.get(cue) and it.get("en")]
+        if not items:
+            return None
+        out[key] = items[:15]
+    elif fmt == "fix":
+        fixes = [{"wrong": _norm_text(_qt_s(f.get("wrong"), 200)), "right": _norm_text(_qt_s(f.get("right"), 200))}
+                 for f in _qt_list(q.get("fixes")) if isinstance(f, dict) and f.get("wrong")]
+        if not fixes:
+            return None
+        out["fixes"] = fixes[:10]
+    elif fmt == "read":
+        if not out["passageHtml"].strip():
+            return None
+    elif fmt in ("order", "wbwrite"):
+        lines = [{"cue": _norm_text(_qt_s(l.get("cue"), 600)), "hint": _norm_text(_qt_s(l.get("hint"), 600)),
+                  "answer": _norm_text(_qt_s(l.get("answer"), 600))}
+                 for l in _qt_list(q.get("lines")) if isinstance(l, dict) and l.get("answer")]
+        if not lines:
+            return None
+        out["lines"] = lines[:60]
+    elif fmt == "paraorder":
+        paras = [{"letter": _norm_text(_qt_s(x.get("letter"), 2)), "text": _norm_text(_qt_s(x.get("text"), 3000))}
+                 for x in _qt_list(q.get("paras")) if isinstance(x, dict) and x.get("letter")]
+        letters = {x["letter"] for x in paras}
+        seq = [_norm_text(_qt_s(x, 2)) for x in _qt_list(q.get("seq"))]
+        if len(paras) < 2 or sorted(seq) != sorted(letters):
+            return None
+        out["paras"], out["seq"] = paras[:6], seq[:6]
+        out["head"] = _norm_text(_qt_s(q.get("head"), 3000))
+        out["tail"] = _norm_text(_qt_s(q.get("tail"), 3000))
+    else:   # write · short · compose · convert · answer — 정답이 문장 하나
+        ans = _norm_text(_qt_s(q.get("answerText"), 1000))
+        if not ans:
+            return None
+        out["answerText"] = ans
+        out["wordBank"] = [_norm_text(_qt_s(w, 80)) for w in _qt_list(q.get("wordBank")) if str(w or "").strip()][:30]
+        out["conditions"] = [_norm_text(_qt_s(c, 300)) for c in _qt_list(q.get("conditions")) if str(c or "").strip()][:8]
+    return out
+
+
+def _qt_units(q):
+    """문항의 채점 단위들 — 각 단위의 정답 글자."""
+    fmt = q["format"]
+    if fmt == "mc":
+        return [{"correct": str(q["answer"])}]
+    if fmt == "tf":
+        return [{"correct": "O" if it["isTrue"] else "X"} for it in q["tfItems"]]
+    if fmt == "pick":
+        return [{"correct": m.group(1).strip()} for m in _QT_PICK_RE.finditer(q["passageHtml"])]
+    if fmt in ("verb", "fill"):
+        return [{"correct": m.group(2).strip()} for m in _QT_VERB_RE.finditer(q["passageHtml"])]
+    if fmt in ("find", "gloss"):
+        return [{"correct": it["en"]} for it in q["findItems" if fmt == "find" else "glossItems"]]
+    if fmt == "fix":
+        return [{"correct": f"{f['wrong']} → {f['right']}", "wrong": f["wrong"], "right": f["right"]}
+                for f in q["fixes"]]
+    if fmt == "read":
+        return []
+    if fmt in ("order", "wbwrite"):
+        return [{"correct": l["answer"]} for l in q["lines"]]
+    if fmt == "paraorder":
+        return [{"correct": x} for x in q["seq"]]
+    return [{"correct": q["answerText"]}]
+
+
+def _qt_key(s):
+    """채점 비교 키 — 대소문자·따옴표 모양·문장부호(. , ! ? ; : ")·띄어쓰기 수를 무시한다.
+    철자는 그대로 본다(철자도 실력이다). 어퍼스트로피(can't)는 남긴다."""
+    s = str(s or "").replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+    s = re.sub(r"<[^>]+>", " ", s).lower()
+    s = re.sub(r"[.,!?;:\"]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _qt_accepts(given, correct):
+    g = _qt_key(given)
+    if not g:
+        return False
+    options = [correct] + ([p for p in re.split(r"\s*/\s*", correct) if p] if "/" in correct else [])
+    return any(g == _qt_key(o) for o in options)
+
+
+def _qt_scramble(answer, seed):
+    """서술형 배열의 <보기> — 화면의 scrambleSentence와 같은 규칙(끝 부호를 떼고 첫 낱말을
+    소문자로, 고유명사처럼 보이는 것은 그대로)."""
+    text = re.sub(r"\s*[.?!]+\s*$", "", str(answer or "").strip())
+    words = text.split()
+    if len(words) < 2:
+        return words
+    w0 = words[0]
+    core = re.sub(r"^[^A-Za-z]+|[^A-Za-z'’]+$", "", w0)
+    if core and core[0].isupper() and core != "I" and not re.match(r"^I['’]", core) and not core.isupper():
+        words[0] = w0.replace(core, core[0].lower() + core[1:], 1)
+    rng = random.Random(seed)
+    rng.shuffle(words)
+    return words
+
+
+def _qt_segments(html, regex, slot_of):
+    """지문을 [글 조각, 칸, 글 조각, 칸 …]으로 나눈다 — 학생 화면이 칸 자리에 입력칸이나
+    고르기 단추를 끼워 넣는다. 정답이 든 표시(…|…)는 여기서 사라진다."""
+    segs, last, n = [], 0, 0
+    for m in regex.finditer(html):
+        if m.start() > last:
+            segs.append({"html": html[last:m.start()]})
+        n += 1
+        segs.append(slot_of(m, n))
+        last = m.end()
+    if last < len(html):
+        segs.append({"html": html[last:]})
+    return segs
+
+
+def _qt_student_view(q, seed):
+    """학생에게 보여 줄 문항 — 정답·해설을 뺀 모양."""
+    fmt = q["format"]
+    v = {"format": fmt, "type": q.get("type", ""), "instruction": q.get("instruction", ""),
+         "passageName": q.get("passageName", "")}
+    if fmt == "pick":
+        def pick_slot(m, n):
+            pair = [m.group(1).strip(), m.group(2).strip()]
+            random.Random(f"{seed}:{n}").shuffle(pair)
+            return {"slot": n, "options": pair}
+        v["segments"] = _qt_segments(q["passageHtml"], _QT_PICK_RE, pick_slot)
+        return v
+    if fmt in ("verb", "fill"):
+        v["segments"] = _qt_segments(q["passageHtml"], _QT_VERB_RE,
+                                     lambda m, n: {"slot": n, "hint": m.group(1).strip()})
+        return v
+    v["passageHtml"] = q.get("passageHtml", "")
+    if fmt in ("order", "wbwrite"):
+        v["lines"] = [{"cue": l["cue"], "hint": l["hint"]} for l in q["lines"]]
+        return v
+    if fmt == "paraorder":
+        v.update({"paras": q["paras"], "head": q.get("head", ""), "tail": q.get("tail", "")})
+        return v
+    if fmt == "mc":
+        choices = q["choices"]
+        marker_only = all(str(c).strip() in _QT_CIRCLED for c in choices)
+        v["choices"] = [] if marker_only else choices
+        v["choiceCount"] = len(choices)
+    elif fmt == "tf":
+        v["statements"] = [it["text"] for it in q["tfItems"]]
+    elif fmt == "find":
+        v["prompts"] = [it["ko"] for it in q["findItems"]]
+    elif fmt == "gloss":
+        v["prompts"] = [it["def"] for it in q["glossItems"]]
+    elif fmt == "fix":
+        v["fixCount"] = len(q["fixes"])
+    elif fmt == "write":
+        v["wordBank"] = _qt_scramble(q["answerText"], seed)
+    else:
+        bank = list(q.get("wordBank") or [])
+        random.Random(seed).shuffle(bank)
+        v["wordBank"] = bank
+        v["conditions"] = q.get("conditions") or []
+    return v
+
+
+def create_quiz_assignment(teacher_id, class_id, title, questions, student_id=None, source="quiz"):
+    _require_db()
+    c_snap = DB.collection("classes").document(class_id or "-").get()
+    if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("반을 찾을 수 없습니다.")
+    student_name = None
+    if student_id:
+        s_snap = DB.collection("students").document(student_id).get()
+        if not s_snap.exists or s_snap.to_dict().get("class_id") != class_id:
+            raise ValueError("학생을 찾을 수 없습니다.")
+        student_name = s_snap.to_dict().get("name", "")
+    raw = _qt_list(questions)
+    if len(raw) > QUIZ_TEST_MAX_QUESTIONS:
+        raise ValueError(f"한 시험에는 {QUIZ_TEST_MAX_QUESTIONS}문항까지 낼 수 있습니다. 문항을 나눠 내 주세요.")
+    clean = [c for c in (_qt_clean_question(q) for q in raw) if c]
+    if not clean:
+        raise ValueError("낼 수 있는 문항이 없습니다.")
+    units = sum(len(_qt_units(q)) for q in clean)
+    if units > QUIZ_TEST_MAX_UNITS:
+        raise ValueError(f"답 칸이 너무 많습니다({units}칸 — {QUIZ_TEST_MAX_UNITS}칸까지). 문항을 나눠 내 주세요.")
+    if len(json.dumps(clean, ensure_ascii=False).encode("utf-8")) > QUIZ_TEST_MAX_BYTES:
+        raise ValueError("문제 분량이 너무 커서 한 번에 낼 수 없습니다. 문항을 나눠 내 주세요.")
+    ref = DB.collection("test_assignments").document()
+    ref.set({
+        "kind": "quiz", "source": "workbook" if source == "workbook" else "quiz",
+        "teacher_id": teacher_id, "class_id": class_id,
+        "student_id": student_id, "student_name": student_name,
+        "title": _norm_text(_qt_s(title, 100)),
+        "questions": clean, "unit_count": units,
+        "skipped": len(raw) - len(clean),
+        "max_wrong": None, "created_at": _now_iso(),
+    })
+    return ref.id, len(clean), len(raw) - len(clean)
+
+
+def _qt_load(student_id, assignment_id):
+    _require_db()
+    s_snap = DB.collection("students").document(student_id).get()
+    if not s_snap.exists:
+        raise ValueError("학생 정보를 찾을 수 없습니다.")
+    a_snap = DB.collection("test_assignments").document(assignment_id or "-").get()
+    if not a_snap.exists:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    assignment = a_snap.to_dict()
+    if not _assignment_targets_student(assignment, student_id, s_snap.to_dict()):
+        raise ValueError("이 시험은 이 학생에게 배정되지 않았습니다.")
+    return assignment, s_snap.to_dict()
+
+
+def _qt_seed(assignment_id, i):
+    # 학생마다 다르게 섞을 까닭이 없다(보기 순서를 바꾸지 않으므로) — 시험·문항으로만 정한다.
+    # 그래야 채점·결과 화면이 다시 만들어도 같은 모양이 나온다.
+    return f"{assignment_id}:{i}"
+
+
+def get_quiz_for_student(assignment_id, assignment, student_id):
+    if _get_student_attempts(assignment_id, student_id):
+        raise ValueError("이미 제출한 시험입니다. 목록에서 [결과 보기]를 누르세요.")
+    qs = assignment.get("questions") or []
+    return {
+        "kind": "quiz", "source": assignment.get("source") or "quiz", "title": assignment.get("title", ""),
+        "questions": [_qt_student_view(q, _qt_seed(assignment_id, i)) for i, q in enumerate(qs)],
+    }
+
+
+def _qt_grade_question(q, given):
+    """문항 하나를 채점해 단위별 (내 답, 정답, 맞음[True/False/None=확인 대기])을 돌려준다."""
+    fmt = q["format"]
+    units = _qt_units(q)
+    given = _qt_list(given)
+    rows = []
+    if fmt == "fix":
+        pairs = []
+        for g in given[:20]:
+            g = _qt_list(g)
+            pairs.append((_norm_text(_qt_s(g[0] if g else "", 200)),
+                          _norm_text(_qt_s(g[1] if len(g) > 1 else "", 200))))
+        # 고친 곳을 어느 순서로 적어도 된다 — 먼저 맞는 짝을 찾고, 남은 답은 남은 칸에 차례로 보여 준다
+        used, hits = set(), {}
+        for i, u in enumerate(units):
+            hit = next((j for j, (w, r) in enumerate(pairs)
+                        if j not in used and _qt_accepts(w, u["wrong"]) and _qt_accepts(r, u["right"])), None)
+            if hit is not None:
+                used.add(hit)
+                hits[i] = hit
+        rest = [j for j in range(len(pairs)) if j not in used and any(pairs[j])]
+        for i, u in enumerate(units):
+            j = hits.get(i)
+            if j is None and rest:
+                j = rest.pop(0)
+            w, r = pairs[j] if j is not None else ("", "")
+            rows.append({"given": f"{w} → {r}" if (w or r) else "", "correct": u["correct"], "ok": i in hits})
+        return rows
+    for i, u in enumerate(units):
+        g = _norm_text(_qt_s(given[i] if i < len(given) else "", 1000))
+        if fmt == "mc":
+            ok = g == u["correct"]
+        elif fmt in ("tf", "paraorder"):
+            ok = g.upper() == u["correct"].upper()
+        elif _qt_accepts(g, u["correct"]):
+            ok = True
+        elif (fmt in QUIZ_TEST_FREE_FORMATS or fmt == "wbwrite") and g:
+            ok = None          # 모범답안과 다르게 썼다 — 선생님이 본다
+        else:
+            ok = False
+        rows.append({"given": g, "correct": u["correct"], "ok": ok})
+    return rows
+
+
+def _qt_q_counts(qdetails):
+    """문항 단위의 맞음·틀림·확인 대기 개수 — 화면에는 점수 대신 이것만 보인다(2026-10-12 사용자:
+    "점수 표기는 필요 없고 맞고 틀리고만"). 칸이 여럿인 문항은 모두 맞아야 '맞음', 하나라도
+    확인 대기면 '확인 대기'다."""
+    c = {"right": 0, "wrong": 0, "pending": 0}
+    for d in qdetails or []:
+        us = d.get("units") or []
+        if not us:
+            continue
+        if any(u.get("ok") is None for u in us):
+            c["pending"] += 1
+        elif all(u.get("ok") is True for u in us):
+            c["right"] += 1
+        else:
+            c["wrong"] += 1
+    return c
+
+
+def _qt_totals(qdetails):
+    units = [u for d in qdetails for u in d.get("units") or []]
+    score = sum(1 for u in units if u.get("ok") is True)
+    pending = sum(1 for u in units if u.get("ok") is None)
+    return score, len(units), pending
+
+
+def submit_quiz_attempt(assignment_id, assignment, student_id, student, answers):
+    qs = assignment.get("questions") or []
+    answers = _qt_list(answers)
+    qdetails = []
+    for i, q in enumerate(qs):
+        units = _qt_grade_question(q, answers[i] if i < len(answers) else [])
+        qdetails.append({"no": i + 1, "units": units})
+    score, total, pending = _qt_totals(qdetails)
+    row = {
+        "assignment_id": assignment_id, "student_id": student_id, "round": 1,
+        "teacher_id": assignment.get("teacher_id"), "student_name": student.get("name", ""),
+        "score": score, "total": total, "pending": pending,
+        "wrong": total - score - pending, "passed": True, "submitted_at": _now_iso(),
+        "qdetails": qdetails,
+    }
+    ref = DB.collection("test_attempts").document(f"{assignment_id}_{student_id}_1")
+    try:
+        ref.create(row)          # 이미 있으면(두 번 누름) 처음 낸 것을 그대로 둔다
+    except Exception:
+        pass
+    return quiz_review(assignment_id, assignment, ref.get().to_dict() or row)
+
+
+def quiz_review(assignment_id, assignment, attempt):
+    """제출한 답안을 문제와 함께 — 학생 결과 화면과 선생님의 답안 보기가 같이 쓴다.
+    여기서는 정답·해설을 싣는다(이미 제출한 뒤라서)."""
+    qs = assignment.get("questions") or []
+    by_no = {d.get("no"): d for d in attempt.get("qdetails") or []}
+    items = []
+    for i, q in enumerate(qs):
+        view = _qt_student_view(q, _qt_seed(assignment_id, i))
+        view["explanation"] = q.get("explanation", "")
+        view["units"] = (by_no.get(i + 1) or {}).get("units") or []
+        if q["format"] == "mc":
+            view["answer"] = q["answer"]
+        items.append(view)
+    score, total, pending = _qt_totals(attempt.get("qdetails") or [])
+    return {
+        "kind": "quiz", "title": assignment.get("title", ""),
+        "score": score, "total": total, "pending": pending,
+        "wrong": total - score - pending, "passed": True, "round": 1,
+        "qc": _qt_q_counts(attempt.get("qdetails")),
+        "submittedAt": attempt.get("submitted_at", ""), "items": items,
+    }
+
+
+def get_quiz_attempt_for_teacher(teacher_id, assignment_id, student_id):
+    _require_db()
+    a_snap = DB.collection("test_assignments").document(assignment_id or "-").get()
+    if not a_snap.exists or a_snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    att = DB.collection("test_attempts").document(f"{assignment_id}_{student_id}_1").get()
+    if not att.exists:
+        raise ValueError("아직 제출하지 않았습니다.")
+    out = quiz_review(assignment_id, a_snap.to_dict(), att.to_dict() or {})
+    out["studentName"] = (att.to_dict() or {}).get("student_name", "")
+    return out
+
+
+def grade_quiz_unit(teacher_id, assignment_id, student_id, no, unit, ok):
+    """확인 대기 칸(또는 자동 채점한 칸)을 선생님이 맞음/틀림으로 정한다. 점수를 다시 센다."""
+    _require_db()
+    a_snap = DB.collection("test_assignments").document(assignment_id or "-").get()
+    if not a_snap.exists or a_snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    ref = DB.collection("test_attempts").document(f"{assignment_id}_{student_id}_1")
+    snap = ref.get()
+    if not snap.exists:
+        raise ValueError("답안을 찾을 수 없습니다.")
+    d = snap.to_dict() or {}
+    qdetails = d.get("qdetails") or []
+    try:
+        no, unit = int(no), int(unit)
+        target = next(x for x in qdetails if x.get("no") == no)["units"][unit]
+    except (TypeError, ValueError, StopIteration, IndexError, KeyError):
+        raise ValueError("채점할 칸을 찾을 수 없습니다.")
+    target["ok"] = bool(ok)
+    target["by_teacher"] = True
+    score, total, pending = _qt_totals(qdetails)
+    ref.update({"qdetails": qdetails, "score": score, "pending": pending,
+                "wrong": total - score - pending})
+    return {"score": score, "total": total, "pending": pending, "qc": _qt_q_counts(qdetails)}
+
+
+def _qt_question_stats(assignment, attempts):
+    """문항별 정답률 — 어느 문항을 반 전체가 많이 틀렸는지(선생님 결과 화면)."""
+    # 문항마다 맞힌 학생·틀린 학생·확인 대기 학생 수
+    qs = assignment.get("questions") or []
+    stats = [{"no": i + 1, "type": q.get("type", ""), "format": q.get("format", ""),
+              "right": 0, "wrong": 0, "pending": 0}
+             for i, q in enumerate(qs)]
+    for att in attempts:
+        for d in att.get("qdetails") or []:
+            n = d.get("no")
+            if not isinstance(n, int) or not (1 <= n <= len(stats)):
+                continue
+            c = _qt_q_counts([d])
+            for k in ("right", "wrong", "pending"):
+                stats[n - 1][k] += c[k]
+    return stats
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -12511,6 +13017,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 404)
             return
 
+        if path == "/api/quiz-tests/attempt":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            try:
+                self._send_json(get_quiz_attempt_for_teacher(
+                    user_id, (query.get("assignmentId") or [""])[0], (query.get("studentId") or [""])[0]))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+            return
+
         # --- 반 · 학생 · 단어시험 (학생 쪽 GET) ---
         if path == "/api/student/me":
             student_id = _student_session_user(self)
@@ -12681,7 +13203,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/students",
                         "/api/students/delete", "/api/students/update", "/api/student/password",
                         "/api/vocab-tests", "/api/vocab-tests/delete",
-                        "/api/vocab-tests/update",
+                        "/api/vocab-tests/update", "/api/quiz-tests", "/api/quiz-tests/grade",
                         "/api/student/login", "/api/student/logout", "/api/student/tests/submit"):
             self.send_error(404, "Not found")
             return
@@ -13330,6 +13852,31 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 400)
                 return
             self._send_json({"maxWrong": max_wrong})
+            return
+
+        # --- 문제 시험(객관식·주관식 탭에서 만든 문제를 학생이 푼다) ---
+        if path in ("/api/quiz-tests", "/api/quiz-tests/grade"):
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                if path == "/api/quiz-tests":
+                    aid, made, skipped = create_quiz_assignment(
+                        user_id, req.get("classId"), req.get("title"), req.get("questions"),
+                        student_id=(req.get("studentId") or None), source=req.get("source") or "quiz",
+                    )
+                    self._send_json({"assignmentId": aid, "questions": made, "skipped": skipped})
+                else:
+                    self._send_json(grade_quiz_unit(
+                        user_id, req.get("assignmentId"), req.get("studentId"),
+                        req.get("no"), req.get("unit"), req.get("ok"),
+                    ))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
             return
 
         # --- 반 · 학생 · 단어시험 (학생 쪽 POST) ---
