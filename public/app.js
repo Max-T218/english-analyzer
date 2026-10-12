@@ -3928,6 +3928,28 @@ function infoKeyOf(img) {
   return sec && fig ? `${sec.dataset.entry}_${fig.dataset.lang}` : "";
 }
 
+/* 서버(SAVED_IMAGE_MAX_CHARS)는 한 장을 base64 1,000,000자까지만 받는다 — Firestore 문서
+   하나가 1MiB라서다. 요약 이미지는 보통 0.5~0.7MB인데 그림이 촘촘하면 750KB를 넘어,
+   그 그림은 몇 번을 다시 저장해도 '저장하지 못했습니다'로 막혔다(2026-10-13). 넘으면
+   화질을 조금씩 낮춰(그래도 안 되면 크기도 줄여) 상한 안으로 다시 굽는다. 인쇄에서
+   눈에 띄는 차이는 없다. 화면의 그림은 그대로 두고 올리는 것만 줄인다. */
+const SAVED_IMAGE_SAFE_CHARS = 950000;
+async function fitImageForSave(blob) {
+  let b64 = await blobToBase64(blob);
+  if (b64.length <= SAVED_IMAGE_SAFE_CHARS) return { b64, mime: blob.type || "image/jpeg" };
+  const bmp = await createImageBitmap(blob);
+  for (const [scale, q] of [[1, 0.85], [1, 0.75], [1, 0.65], [0.85, 0.7], [0.7, 0.7], [0.55, 0.65], [0.4, 0.6]]) {
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(bmp.width * scale);
+    cv.height = Math.round(bmp.height * scale);
+    cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
+    const out = await new Promise((r) => cv.toBlob(r, "image/jpeg", q));
+    b64 = await blobToBase64(out);
+    if (b64.length <= SAVED_IMAGE_SAFE_CHARS) return { b64, mime: "image/jpeg" };
+  }
+  throw new Error("그림이 너무 커서 줄여도 저장 한도에 들어가지 않습니다.");
+}
+
 // 저장본이 만들어진 뒤 그림을 올린다 — 서로 기다릴 까닭이 없어 한꺼번에 보낸다.
 // 실패한 장수만 알려 주려고 오류는 모아서 던진다.
 async function uploadInfographics(itemId, metas, onProgress) {
@@ -3939,6 +3961,7 @@ async function uploadInfographics(itemId, metas, onProgress) {
   });
   let failed = 0;
   let done = 0;
+  const reasons = new Set();   // 실패한 까닭 — 예전에는 버려서 무엇 때문인지 알 수 없었다
   if (onProgress && todo.length) onProgress(0, todo.length);
   await Promise.all(todo.map(async (m) => {
     const img = resultEl.querySelector(
@@ -3948,20 +3971,23 @@ async function uploadInfographics(itemId, metas, onProgress) {
       if (!img) throw new Error("그림을 찾지 못했습니다.");
       const src = img.src;
       const blob = await fetch(src).then((r) => r.blob());
+      const fit = await fitImageForSave(blob);
       await postJson(
         "/api/saved-image",
-        { id: itemId, key: m.key, mime: blob.type || "image/jpeg", image: await blobToBase64(blob) },
+        { id: itemId, key: m.key, mime: fit.mime, image: fit.b64 },
         "그림 저장에 실패했습니다."
       );
       infoSavedSrc.set(itemId + "|" + m.key, src);
-    } catch (_e) {
+    } catch (e) {
       failed++;
+      reasons.add((e && e.message) || String(e));
+      console.error("요약 이미지 저장 실패", m.key, e);
     }
     done++;
     if (onProgress) onProgress(done, todo.length);
   }));
   if (failed) {
-    throw new Error(`글은 저장됐지만 요약 이미지 ${failed}장은 저장하지 못했습니다. 다시 저장해 보세요.`);
+    throw new Error(`글은 저장됐지만 요약 이미지 ${failed}장은 저장하지 못했습니다 — ${[...reasons].join(" / ")} 다시 저장해 보세요.`);
   }
 }
 
