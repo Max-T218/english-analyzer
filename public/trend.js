@@ -74,7 +74,11 @@ const trendSchoolEl = $("trendSchool");
 const trendSubjectEl = $("trendSubject");
 const trendSchool = () => (trendSchoolEl ? trendSchoolEl.value.trim() : "");
 const trendSubject = () => (trendSubjectEl ? trendSubjectEl.value.trim() : "");
-[trendSchoolEl, trendSubjectEl].forEach((el) => el && el.addEventListener("input", () => {
+// 목표 문법 — 적으면 보고서가 그 문법이 시험지마다 몇 번 문항으로 나왔는지 대조한다(trendGrammarHtml)
+const trendGrammarEl = $("trendGrammar");
+const trendGrammarTargets = () => String(trendGrammarEl ? trendGrammarEl.value : "")
+  .split(/[,，、/]/).map((t) => t.trim()).filter(Boolean).slice(0, 12);
+[trendSchoolEl, trendSubjectEl, trendGrammarEl].forEach((el) => el && el.addEventListener("input", () => {
   clearTimeout(trendHeadTimer);
   trendHeadTimer = setTimeout(() => trendRender(), 300);
 }));
@@ -559,6 +563,7 @@ async function trendRun() {
           const pg = q.page >= 1 && q.page <= idx.length ? idx[q.page - 1] : -1;
           acc.push({ no: q.no, format: q.format, category: q.category, category_raw: q.category_raw || "",
                      kind: q.kind, engine: q.engine, fit: q.fit, basis: q.basis || "",
+                     grammar: Array.isArray(q.grammar) ? q.grammar : [],
                      prompt: String(q.prompt || "").slice(0, 60),
                      pg, box: Array.isArray(q.box) && q.box.length === 4 ? q.box : null });
         }
@@ -1268,6 +1273,78 @@ function trendKeyFindings(st, cv) {
   return out;
 }
 
+/* ── 목표 문법 대조 ──
+   /api/examscan이 문항마다 묻는 문법 포인트(grammar — "관계대명사 whose", "가정법 과거"…)를 돌려준다.
+   선생님이 적은 목표 문법과 낱말로 맞대어 시험지마다 몇 번 문항으로 나왔는지 보인다(2026-10-12 사용자).
+   이름이 학교·모델마다 조금씩 달라("강조구문" · "It is ~ that 강조") 띄어쓰기·기호를 떼고 서로 품는지
+   보고, 흔한 다른 이름은 TREND_GRAMMAR_ALIASES로 묶는다. grammar가 없는 분석(이 기능 전에 읽은 것)은
+   다시 분석해야 나온다. */
+const TREND_GRAMMAR_ALIASES = [
+  ["강조", "itisthat", "it~that", "it-that"],
+  ["the비교급", "할수록", "비례비교"],
+  ["가정법", "iwish", "asif", "ifonly"],
+  ["to부정사", "부정사", "tov"],
+  ["동명사", "v-ing", "ving"],
+  ["관계대명사", "whose", "whom", "which", "who"],
+  ["과거완료", "hadp.p", "hadpp"],
+  ["현재완료", "havep.p", "havepp"],
+  ["수동태", "bep.p", "bepp"],
+  ["간접의문문", "의문사+주어+동사"],
+];
+const trendGNorm = (t) => String(t || "").toLowerCase().replace(/[\s·,()（）'"“”‘’]/g, "");
+function trendGrammarHit(target, g) {
+  const a = trendGNorm(target), b = trendGNorm(g);
+  if (!a || !b) return false;
+  // 목표에 영어 낱말을 짚었으면(관계대명사 whose) 문항 쪽에도 그 낱말이 있어야 한다 — that(관계대명사)는 아니다
+  const words = (t) => (String(t || "").toLowerCase().match(/[a-z]+/g) || []);
+  const tw = words(target), gw = words(g);
+  if (tw.length && gw.length && !tw.every((w) => gw.includes(w))) return false;
+  if (a.includes(b) || b.includes(a)) return true;
+  return TREND_GRAMMAR_ALIASES.some((grp) => grp.some((k) => a.includes(k)) && grp.some((k) => b.includes(k)) &&
+    // 관계대명사 무리는 who/which 같은 낱말이 의문사에도 쓰이므로 '관계'가 양쪽에 있을 때만 묶는다
+    (grp[0] !== "관계대명사" || (a.includes("관계") && b.includes("관계"))));
+}
+const trendHasGrammarData = (src) => src.questions.some((q) => Array.isArray(q.grammar));
+
+function trendGrammarHtml(st) {
+  const src = trendSourceNow();
+  const targets = trendGrammarTargets();
+  if (!targets.length) return "";
+  if (!trendHasGrammarData(src)) {
+    return `<h4 class="sec">목표 문법 출제 확인</h4>
+      <p class="rp-body" style="color:#8a5a12">이 분석에는 문항별 문법 정보가 없습니다 — 이 기능이 생기기 전에 분석한 것입니다. 시험지를 다시 올려 분석하면 목표 문법(${targets.map(esc).join(", ")})이 몇 번 문항으로 나왔는지 표시됩니다.</p>`;
+  }
+  const sn = trendShortNames(st.names);
+  const nos = (doc, tg) => src.questions
+    .filter((q) => q.doc === doc && (q.grammar || []).some((g) => trendGrammarHit(tg, g)))
+    .map((q) => String(q.no || "").replace(/번$/, ""));
+  const rows = targets.map((tg) => {
+    const per = st.names.map((_n, i) => nos(i, tg));
+    return { tg, per, total: per.reduce((a, l) => a + l.length, 0) };
+  });
+  const missed = rows.filter((r) => !r.total).map((r) => r.tg);
+  // 목표 밖에서 나온 문법 — 목표를 빠뜨렸거나 학교가 따로 강조한 문법을 알아보게
+  const other = new Map();
+  src.questions.forEach((q) => (q.grammar || []).forEach((g) => {
+    if (targets.some((tg) => trendGrammarHit(tg, g))) return;
+    other.set(g, (other.get(g) || 0) + 1);
+  }));
+  const otherList = [...other.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+  const heads = st.names.map((nm, i) => `<th title="${esc(nm)}">${esc(sn[i].length > 12 ? sn[i].slice(0, 11) + "…" : sn[i])}</th>`).join("");
+  const body = rows.map((r) => `<tr>
+      <td class="tk"><b>${esc(r.tg)}</b></td>
+      ${r.per.map((l) => l.length ? `<td>✔ ${esc(l.join("·"))}번</td>` : `<td class="zero">출제 안 됨</td>`).join("")}
+      <td><b>${r.total}</b></td></tr>`).join("");
+  return `<div class="rp-keep"><h4 class="sec">목표 문법 출제 확인</h4>
+    <div style="overflow-x:auto"><table class="rp-types">
+      <thead><tr><th>목표 문법</th>${heads}<th>합계</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>
+    <p class="rp-body">목표 문법 ${targets.length}가지 중 <b>${targets.length - missed.length}가지</b>가 출제되었습니다${missed.length ? ` — 출제되지 않은 문법: ${missed.map(esc).join(", ")}` : ""}.
+    ${otherList.length ? `<br>목표 밖에서 출제된 문법: ${otherList.map(([g, n]) => `${esc(g)}${n > 1 ? `(${n})` : ""}`).join(", ")}` : ""}</p>
+    </div>`;
+}
+
 function trendHtml(st, ai) {
   if (!st || !st.list.length) {
     return `<div class="trend-report"><p class="trend-empty">집계할 문항 유형이 없습니다.</p></div>`;
@@ -1349,6 +1426,7 @@ function trendHtml(st, ai) {
         return `${top}
           <div class="trend-pg">
           ${findings}
+          ${trendGrammarHtml(st)}
           ${extra ? `<h4 class="sec">지문 출처</h4>${extra}` : ""}
           ${aiHtml}
         </div>`;
@@ -1928,6 +2006,7 @@ TAB_SAVE.trend = {
     v: 2,
     school: trendSchool(),
     subject: trendSubject(),
+    targetGrammar: trendGrammarEl ? trendGrammarEl.value : "",
     docs: (() => {
       let crops = 0;
       return trendDocs.filter((d) => d.questions).map((d) => ({
@@ -1973,6 +2052,7 @@ TAB_SAVE.trend = {
       trendOrderManual = !!payload.manualOrder;
       if (trendSchoolEl) trendSchoolEl.value = String(payload.school || "");
       if (trendSubjectEl) trendSubjectEl.value = String(payload.subject || "");
+      if (trendGrammarEl) trendGrammarEl.value = String(payload.targetGrammar || "");
       // 범위가 없는 저장본이면 지금 칸을 그대로 둔다(범위만 따로 넣어 둔 경우를 지우지 않는다)
       if (range.length) trendRangeMgr.setJobs(range);
       trendRangeSig = trendRangeJobs().map((j) => passageKey(j.text, false) + passageKey(j.text, true)).join("|");
@@ -1993,6 +2073,7 @@ HOWTO.trend = {
   steps: [
     "<b>학교 이름</b>과 <b>학년·과목</b>을 적습니다 — 보고서 제목에 찍힙니다(예: 전주제일고등학교 출제경향 분석 보고서 · 2학년 영어Ⅱ).",
     "기출 시험지 <b>PDF·사진</b>을 끌어다 놓습니다. <b>PDF 한 파일이 한 부</b>입니다 — 해마다의 경향을 보려면 여러 부를 올리세요. 부 이름은 칸에서 고칠 수 있고(예: 2024 1학기 중간), <b>✕</b>로 뺄 수 있습니다. 부는 <b>위에서부터 이른 시험 → 나중 시험</b> 차례로 놓입니다 — 이름에 학기·차수(예: 2026학년도 1학기 2차, 중간·기말)가 있으면 저절로 맞추고, 틀렸으면 <b>↑↓</b>로 고치세요. 보고서의 '시험지별 유형 변화'가 이 차례로 늘고 준 것을 셉니다.",
+    "(선택) <b>목표 문법</b>을 쉼표로 나눠 적습니다(예: 관계대명사 whose, 가정법 과거, 강조구문) — 보고서에 <b>목표 문법 출제 확인</b> 표가 생겨 시험지마다 그 문법이 몇 번 문항으로 나왔는지, 안 나온 문법과 목표 밖에서 나온 문법이 무엇인지 보입니다. 분석한 뒤에 적어도 됩니다(이 기능 전에 분석·저장한 것은 시험지를 다시 분석해야 나옵니다).",
     "(선택) <b>시험 범위 지문</b>을 넣습니다 — 다른 탭과 같은 지문 칸에 붙여넣거나 <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b>로 채웁니다. 저장함에서 가져오면 <b>저장본 제목이 이름 앞에 붙어</b>(예: 공통영어2 비상(홍) 1단원 본문 · 본문1) 보고서에 <b>범위(저장본)별로 몇 개 중 몇 개가 나왔는지</b>도 묶여 나옵니다. 이름은 칸에서 고칠 수 있고, <b>[💾 지문 저장]</b>으로 이름째 저장해 둘 수 있습니다. 넣어 두면 보고서에 <b>범위의 어느 지문이 몇 번 문항으로 나왔는지</b>가 나옵니다. 분석한 뒤에 넣어도 됩니다.",
     "<b>[분석하기]</b>를 누르면 AI가 부마다 문항 유형을 읽습니다. <b>시험 범위 지문을 넣어 두었을 때만</b> 시험지의 지문도 옮겨 적어 범위와 대조합니다 — 범위를 비워 두면 유형만 읽어 훨씬 빠릅니다. 여러 해 시험지를 모아 경향만 볼 때는 범위를 비워 두세요. 시험지 한 부에 몇 분 걸립니다. 못 읽은 것이 있으면 다시 누르세요 — 못 읽은 것만 다시 읽습니다.",
     "분석이 끝나면 아래에 <b>보고서</b>가 나옵니다 — 요약, 부별 유형 표, 비중 그래프, 그리고 <b>매회 출제 / 가끔 출제 / 한 번만</b> 구분이 들어 있습니다.",

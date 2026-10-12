@@ -5037,11 +5037,13 @@ EXAM_SCAN_SCHEMA = {
                     "box": {"type": "ARRAY", "items": {"type": "INTEGER"}},
                     # 대화문 기반인가 본문 기반인가 — 동형 모의고사가 기출의 대화/본문 비율을 그대로 따른다
                     "basis": {"type": "STRING"},
+                    # 이 문항이 묻는 문법 포인트 — 시험지 분석 리포트가 '목표 문법이 출제됐나'를 대조한다
+                    "grammar": {"type": "ARRAY", "items": {"type": "STRING"}},
                 },
                 "required": ["no", "group", "format", "prompt", "category", "kind", "fit", "note",
-                             "page", "box", "basis"],
+                             "page", "box", "basis", "grammar"],
                 "propertyOrdering": ["no", "group", "format", "prompt", "category",
-                                     "kind", "fit", "note", "page", "box", "basis"],
+                                     "kind", "fit", "note", "page", "box", "basis", "grammar"],
             },
         },
         "note": {"type": "STRING"},
@@ -5140,6 +5142,17 @@ irrelevant here and copying them wastes the whole output. Read the Korean questi
   ("B …/G …", "A:/B:", "Minho: …"), a set of short A/B exchanges (짝지어진 대화), or the 발문 says
   대화 — otherwise "본문" (a reading passage, a graph/notice text, or a sentence-rewriting item).
   Judge by the material the student reads for THAT question, not by the exam as a whole.
+- `grammar`: the GRAMMAR POINTS this question tests, as short standard Korean 문법 names — e.g.
+  "관계대명사 whose", "관계대명사 what", "관계부사", "가정법 과거", "가정법 과거완료", "I wish 가정법",
+  "강조구문(It is ~ that)", "the 비교급, the 비교급", "비교급·최상급", "과거완료", "현재완료",
+  "수동태", "to부정사", "동명사", "분사(현재·과거분사)", "분사구문", "사역동사", "지각동사",
+  "간접의문문", "접속사 that", "가주어 it", "수 일치", "조동사", "전치사", "대명사". Fill it for
+  어법 questions (list the point behind EACH underlined/boxed/choice item you can read — up to 5, no
+  duplicates; for "~와 쓰임이 같은 것" give the use, e.g. "that(관계대명사)"), for 서술형 that
+  require a structure (조건 영작, 문장 전환 "~로 바꾸어 쓰시오", 배열 with a stated 문법 조건), and
+  for selective items that ask for a structure (가정법으로 바르게 바꾼 것, 강조한 것). Judge from the
+  question's choices/conditions and model answer pattern, not from the passage alone.
+  Use [] for questions that do not test grammar (내용 일치, 주제, 순서, 어휘 뜻, 빈칸 추론…).
 - `kind`: the closest type from the ALLOWED LIST given in the user message, copied EXACTLY.
   Use "" when nothing on the list is close.
   The list has three groups (객관식 / 주관식 / 워크북). Korean 내신 서답형 — 영작, 우리말
@@ -5504,6 +5517,16 @@ def _exam_box(v):
     return [y0, x0, y1, x1]
 
 
+def _exam_grammar(v):
+    """문항이 묻는 문법 포인트 목록 — 짧은 글자 5개까지, 겹친 것은 뺀다."""
+    out = []
+    for g in v if isinstance(v, list) else []:
+        g = re.sub(r"\s+", " ", str(g or "")).strip()[:30]
+        if g and g not in out:
+            out.append(g)
+    return out[:5]
+
+
 def normalize_exam_scan(result):
     """모델 응답을 화면이 믿고 쓸 수 있는 모양으로 정리한다.
 
@@ -5570,6 +5593,7 @@ def normalize_exam_scan(result):
             "category": category,
             "category_raw": category_raw,
             "basis": (str(raw.get("basis") or "").strip() if str(raw.get("basis") or "").strip() in ("대화", "본문") else ""),
+            "grammar": _exam_grammar(raw.get("grammar")),
             "page": _exam_int(raw.get("page"), 1, 64),
             "box": _exam_box(raw.get("box")),
             "kind": kind,
@@ -9815,6 +9839,15 @@ CHANGELOG = [
             "영영풀이 오류 찾기의 영어 풀이가 지문 속 괄호에서 ①~⑤ 선택지로 옮겨졌습니다.",
             "동형 모의고사 — 시험지 이름을 직접 정할 수 있습니다(예: 1회 A형). 쪽이 많은 단어장 "
             "PDF도 이제 잘리지 않고 읽힙니다.",
+        ],
+    },
+    {
+        "version": 64,
+        "date": "2026-10-12",
+        "items": [
+            "시험지 분석 리포트에 '목표 문법' 칸이 생겼습니다. 가르친 문법(예: 관계대명사 whose, "
+            "가정법 과거, 강조구문)을 적으면 보고서에 시험지마다 그 문법이 몇 번 문항으로 나왔는지, "
+            "안 나온 문법과 목표 밖에서 나온 문법이 표로 나옵니다(새로 분석한 시험지부터).",
         ],
     },
 ]
