@@ -11619,7 +11619,7 @@ def create_test_assignment(teacher_id, class_id, title, vocab, fmt, student_id=N
     ref.set({
         "teacher_id": teacher_id, "class_id": class_id,
         "student_id": student_id, "student_name": student_name,
-        "title": (title or "").strip() or "단어시험",
+        "title": (title or "").strip(),
         "vocab": clean_vocab, "format": fmt, "max_wrong": max_wrong,
         "created_at": _now_iso(),
     })

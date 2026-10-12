@@ -13977,6 +13977,8 @@ vocabAssignBtn.addEventListener("click", async () => {
   assignRetestChkEl.checked = false;
   assignRetestFieldEl.hidden = true;
   assignMaxWrongEl.value = "";
+  // 단어장 제목 칸에 적어 둔 이름을 시험 제목으로 가져온다(비어 있으면 비운다).
+  $("assignTitle").value = ($("vocabTitle").value || "").trim();
   await Promise.all([refreshClassSelectForModal(), refreshAssignVocabSourceSelect()]);
   openModal(assignModalEl);
 });
