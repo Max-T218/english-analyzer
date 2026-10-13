@@ -1623,7 +1623,8 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
         : "";
     }
     // 상한에 닿으면 '지문 추가' 버튼을 잠그고 이유를 화면에 띄운다 (삭제하면 다시 풀린다)
-    addBtn.disabled = full;
+    // 만드는 중이면(lockPassagePanel) 상한과 상관없이 잠근 채로 둔다
+    addBtn.disabled = full || addBtn.dataset.locked === "1";
     addBtn.title = full ? `한 번에 넣을 수 있는 지문은 ${limit}개입니다.` : "";
     if (maxNoteEl) {
       maxNoteEl.textContent = full ? `한 번에 넣을 수 있는 지문은 ${limit}개입니다.` : "";
@@ -2042,12 +2043,58 @@ function runActiveTab() {
   if (btn && !btn.disabled) btn.click();
 }
 
+/* 만드는 동안 [지문 추가]·[모두 지우기]를 잠근다. 탭마다 따로 켜고 끄면 지문 분석과 워크북을
+   함께 돌릴 때 먼저 끝난 쪽이 잠금을 풀어, 다른 쪽이 아직 만드는 중인데도 지문을 지울 수
+   있었다. 그래서 돌고 있는 작업 수를 세어 마지막 작업이 끝날 때만 푼다.
+   풀 때는 renumber로 '지문 추가'를 다시 정한다 — 칸이 상한에 닿아 있으면 잠긴 채로 둬야 한다. */
+let passageLocks = 0;
+function lockPassagePanel(on) {
+  passageLocks = Math.max(0, passageLocks + (on ? 1 : -1));
+  const locked = passageLocks > 0;
+  addPassageBtn.dataset.locked = locked ? "1" : "";
+  clearPassagesBtn.disabled = locked;
+  newWorkBtn.disabled = locked;
+  passageMgr.renumber();
+}
+
 // 지문은 저장하지 않는다 (파일 맨 위 localStorage.clear()와 같은 취지)
 passageMgr.addRow(false); // 시작 시 지문 입력칸 1개
 clearPassagesBtn.addEventListener("click", () => {
   if (confirm("입력한 지문을 모두 지우시겠습니까?\n되돌릴 수 없습니다.")) {
     passageMgr.clearAll();
   }
+});
+
+/* 🆕 새로 만들기 — 지문 하나로 자료를 다 만든 뒤 다른 지문으로 넘어갈 때 누른다.
+   '지문 전체 지우기'는 지문만 지워서, 앞 지문으로 만든 결과물·제목·'저장함의 어느 자료와
+   이어져 있는가'(LOADED_SAVED)가 그대로 남았다. 그래서 새 지문으로 만든 자료를 저장하면
+   앞 자료에 덮어쓸지를 물었다(2026-10-13 사용자). 여기서는 그것들을 함께 비운다 —
+   저장함에서 지문을 통째로 불러올 때(loadSavedItem)와 같은 정리를, 빈 지문으로 하는 것이다.
+   이 지문칸을 쓰는 탭만 비운다. 동형 모의고사·시험지 분석 리포트·단어장은 칸이 따로라
+   거기서 하던 작업은 건드리지 않는다(각 탭에 자기 비우기 단추가 있다). */
+const SHARED_PASSAGE_TABS = ["analyze", "brief", "mcq", "saq", "mix", "workbook"];
+const newWorkBtn = $("newWorkBtn");
+newWorkBtn.addEventListener("click", () => {
+  if (!confirm(
+    "지문과 지문 분석·문제 제작·워크북에서 만든 자료를 모두 비우고 처음부터 시작합니다.\n" +
+    "저장함에 저장해 둔 자료는 그대로 남습니다. 아직 저장하지 않은 자료는 사라집니다.\n\n" +
+    "새로 시작할까요?"
+  )) return;
+  passageMgr.clearAll();
+  grammarEl.value = "";
+  quizVocab.value = "";
+  SHARED_PASSAGE_TABS.forEach((tab) => {
+    const entry = TAB_SAVE[tab];
+    if (entry && typeof entry.clearResults === "function") entry.clearResults();
+    if (DOC_TITLES[tab]) DOC_TITLES[tab].set("");
+    delete LOADED_SAVED[tab];
+  });
+  delete LOADED_SAVED[PASSAGE_TAB];
+  const wbTitle = $("wbTitle");
+  if (wbTitle) wbTitle.value = "";
+  syncDocCovers();
+  ocrStatus("새로 시작합니다. 지문을 입력하거나 불러와 주세요.", "ok");
+  passageListEl.scrollIntoView({ behavior: "smooth", block: "start" });
 });
 
 /* 📋 지문 전체 복사 — 지금 입력칸에 있는 지문을 전부 텍스트 한 덩어리로 만들어
@@ -3489,8 +3536,8 @@ async function analyze() {
   }
 
   analyzeBtn.disabled = true;
-  addPassageBtn.disabled = true;
-  clearPassagesBtn.disabled = true;
+  lockPassagePanel(true);
+  dropStaleSavedLink("analyze");
   loadingEl.classList.add("on");
   setEditMode(false); // 새로 분석하면 이전 수정 상태를 끈다 (내용도 새로 덮어써진다)
   setPagingMode(false);
@@ -3574,8 +3621,7 @@ async function analyze() {
   syncFloatPrint();
   loadingEl.classList.remove("on");
   analyzeBtn.disabled = false;
-  addPassageBtn.disabled = false;
-  clearPassagesBtn.disabled = false;
+  lockPassagePanel(false);
   resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
   refreshTokenDisplay(); // 성공한 만큼 차감됐을 잔액 표시를 갱신
   if (endedLeft) {
@@ -4775,6 +4821,8 @@ briefBtn.addEventListener("click", async () => {
         )))) return;
   }
   briefBtn.disabled = true;
+  lockPassagePanel(true);
+  dropStaleSavedLink("brief");
   briefLoadingEl.classList.add("on");
   briefDocEl.innerHTML = "";
   renderBriefEntries([]);
@@ -4845,6 +4893,7 @@ briefBtn.addEventListener("click", async () => {
   }
   briefLoadingEl.classList.remove("on");
   briefBtn.disabled = false;
+  lockPassagePanel(false);
   refreshTokenDisplay();
   const okCount = entries.filter((e) => !e.error).length;
   if (okCount) showDoneGuide(`지문 ${okCount}개의 요약분석`, false);
@@ -4899,6 +4948,17 @@ const MCQ_TYPES = [
   { id: "대화 어법·어휘 선택", def: false }, { id: "짝지어진 대화 어법", def: false },
   { id: "대화 상황 파악", def: false },
 ];
+/* 객관식 칸을 '수능·고등 내신'과 '중학교 내신'으로 묶어 보인다(group → setupQuizTab의 type-group-head).
+   목록 순서는 그대로다 — 중학교 유형이 이미 뒤에 모여 있다. 묶음은 보기만 나눌 뿐,
+   학교급과 상관없이 어느 쪽 유형이든 고를 수 있다(주제·내용일치처럼 중학교에서도 나오는 것이 앞 묶음에 있다). */
+const MCQ_MIDDLE_IDS = new Set([
+  "대화 순서", "어색한 응답", "대화 빈칸", "대화 내용 일치", "대화 내용 불일치", "답할 수 없는 질문",
+  "문법 쓰임 같은 것", "문법 쓰임 다른 것", "다의어 같은 뜻", "짝지어진 대화",
+  "대화 어법·어휘 선택", "짝지어진 대화 어법", "대화 상황 파악",
+]);
+const MCQ_GROUP_HIGH = "수능·고등 내신형 (중학교에서도 씁니다)";
+const MCQ_GROUP_MIDDLE = "중학교 내신형 (대화문 · 낱말·문법 쓰임)";
+MCQ_TYPES.forEach((t) => (t.group = MCQ_MIDDLE_IDS.has(t.id) ? MCQ_GROUP_MIDDLE : MCQ_GROUP_HIGH));
 // 주관식(서술형·단답형) 유형
 const SAQ_TYPES = [
   { id: "서술형배열", def: true },
@@ -5238,7 +5298,8 @@ const SAQ_HARD_TYPES = new Set([
 const MCQ_ID_SET = new Set(MCQ_TYPES.map((t) => t.id));
 const MIX_DEFAULT_ON = new Set(["빈칸", "서술형배열"]);
 const MIX_TYPES = [
-  ...MCQ_TYPES.map((t) => ({ id: t.id, def: MIX_DEFAULT_ON.has(t.id), group: "객관식 (5지선다)" })),
+  ...MCQ_TYPES.map((t) => ({ id: t.id, def: MIX_DEFAULT_ON.has(t.id),
+    group: "객관식 (5지선다) — " + (MCQ_MIDDLE_IDS.has(t.id) ? MCQ_GROUP_MIDDLE : MCQ_GROUP_HIGH) })),
   ...SAQ_TYPES.map((t) => ({ id: t.id, def: MIX_DEFAULT_ON.has(t.id), group: "주관식 (서술형·단답형)" })),
 ];
 // 고난도가 되는 유형 — 객관식은 전부, 주관식은 SAQ_HARD_TYPES만(탭 둘의 규칙을 그대로 합친다)
@@ -5875,8 +5936,8 @@ function setupQuizTab({ prefix, types, footer }) {
     }
 
     btn.disabled = true;
-    addPassageBtn.disabled = true;
-    clearPassagesBtn.disabled = true;
+    lockPassagePanel(true);
+    dropStaleSavedLink(prefix);
     loadingEl.classList.add("on");
     resultEl.innerHTML = "";
     printBtn.style.display = "none";
@@ -6180,8 +6241,7 @@ function setupQuizTab({ prefix, types, footer }) {
     syncFloatPrint();
     loadingEl.classList.remove("on");
     btn.disabled = false;
-    addPassageBtn.disabled = false;
-    clearPassagesBtn.disabled = false;
+    lockPassagePanel(false);
     resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
     refreshTokenDisplay();
     // 문제 탭에는 '직접 수정'이 없다 — 고칠 곳이 있으면 다시 만들라고 안내한다
@@ -7223,8 +7283,8 @@ async function generateWorkbook() {
   }
 
   wbBtn.disabled = true;
-  addPassageBtn.disabled = true;
-  clearPassagesBtn.disabled = true;
+  lockPassagePanel(true);
+  dropStaleSavedLink("workbook");
   wbLoadingEl.classList.add("on");
   workbookDocEl.innerHTML = "";
   syncWbTight();
@@ -7284,8 +7344,7 @@ async function generateWorkbook() {
   if (wbEndedNote) wbErrorEl.textContent = wbEndedNote;
   wbLoadingEl.classList.remove("on");
   wbBtn.disabled = false;
-  addPassageBtn.disabled = false;
-  clearPassagesBtn.disabled = false;
+  lockPassagePanel(false);
   refreshTokenDisplay();
   // 워크북에도 '직접 수정'은 없다
   if (okCount) showDoneGuide(`지문 ${okCount}개의 워크북`, false);
@@ -8920,6 +8979,21 @@ let pendingSaveTab = null;
    {탭: {id, title}} */
 const LOADED_SAVED = {};
 
+/* 공용 지문칸의 지문을 한 줄 표식으로 — 이어진 자료가 '같은 지문으로 만든 것'인지 가린다.
+   LOADED_SAVED에 이어 둘 때(불러오기·저장) 함께 적어 두고(sig), 다시 만들기를 시작할 때 견준다. */
+function passageSig() {
+  return passageMgr.getJobs().map((j) => String(j.text || "").trim()).join("\u0001");
+}
+/* 만들기를 시작할 때 부른다. 지문이 이어진 자료를 만들 때와 달라졌으면 그 연결을 끊는다 —
+   A 지문 자료를 저장한 뒤 지문을 지우고 B 지문으로 새로 만들었는데, 저장창이 "A에 덮어쓸까요?"를
+   물었다(2026-10-13 사용자). 같은 지문으로 다시 만든 것이면(설정만 바꿔 다시 뽑기) 그대로 두어
+   덮어쓸 수 있게 한다. 지문을 지우기만 하고 다시 만들지 않았으면 화면의 결과는 여전히 A의 것이라
+   여기서는 건드리지 않는다. */
+function dropStaleSavedLink(tab) {
+  const link = LOADED_SAVED[tab];
+  if (link && link.sig !== passageSig()) delete LOADED_SAVED[tab];
+}
+
 // 각 탭이 등록해 둔 clearResults()를 모두 불러 화면의 제작 결과물을 비운다.
 // (지문 탭은 결과물이 따로 없으므로 등록하지 않는다)
 function clearAllTabResults() {
@@ -9012,7 +9086,7 @@ async function doSaveDialog(overwriteId) {
       "저장에 실패했습니다."
     );
     // 새로 저장했으면 이제부터 그 자료를 고치는 중이다 — 다음 저장에서 덮어쓸 수 있게 기억한다
-    if (res && res.id) LOADED_SAVED[tab] = { id: res.id, title };
+    if (res && res.id) LOADED_SAVED[tab] = { id: res.id, title, sig: passageSig() };
     // 탭에 딸린 파일(요약 이미지)이 있으면 저장본이 만들어진 뒤 올린다
     if (res && res.id && TAB_SAVE[tab].afterSave) {
       await TAB_SAVE[tab].afterSave(res.id, payload, (done, total) => {
@@ -9297,8 +9371,14 @@ async function loadSavedItem(id, mode) {
          않는다 — 앞서 불러온 지문에 맞춰 적어 둔 어법이 조용히 사라진다
          (공용 지문칸의 applyPayload와 같은 규칙). */
       const gEl = passageLoadTo.grammarEl;
-      if (gEl && (!append || !gEl.value.trim())) {
-        gEl.value = (item.payload || {}).targetGrammar || "";
+      const tg = String((item.payload || {}).targetGrammar || "").trim();
+      if (gEl && passageLoadTo.grammarMerge) {
+        // 시험지 분석 리포트처럼 여러 단원을 차례로 불러오는 칸은 덮어쓰지 않고 없는 것만 더한다
+        const have = gEl.value.split(/[,，、]/).map((t) => t.trim()).filter(Boolean);
+        const add = tg.split(/[,，、]/).map((t) => t.trim()).filter((t) => t && !have.includes(t));
+        if (add.length) { gEl.value = have.concat(add).join(", "); gEl.dispatchEvent(new Event("input")); }
+      } else if (gEl && (!append || !gEl.value.trim())) {
+        gEl.value = tg;
       }
       // 단어장 칸 — 통째로 바꿀 때는 갈아 끼우고, 이어 붙일 때는 없는 단어만 더한다
       const vBox = passageLoadTo.vocab;
@@ -9367,7 +9447,7 @@ async function loadSavedItem(id, mode) {
     /* 이 자료를 고치는 중이라고 기억해 둔다 — 저장할 때 '덮어쓰기'가 뜬다.
        뒤에 붙인 경우는 두 자료가 섞인 것이라 어느 쪽도 아니므로 기억하지 않는다. */
     if (append) delete LOADED_SAVED[tab];
-    else LOADED_SAVED[tab] = { id, title: item.title || "제목 없음" };
+    else LOADED_SAVED[tab] = { id, title: item.title || "제목 없음", sig: passageSig() };
     /* 표지 제목을 되살린다. 제목을 담기 전에 저장한 옛 저장본은 빈칸으로 남는데,
        앞 자료의 이름이 남아 있는 것보다 낫다 — 탭 위 칸에 새로 적으면 된다. */
     if (!append && DOC_TITLES[tab]) DOC_TITLES[tab].set((item.payload || {}).coverTitle || "");
@@ -9552,7 +9632,7 @@ const HOWTO = {
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. (선택) <b>목표 어법</b>을 적으면 어법 문항의 정답 자리를 그 문법으로 냅니다.",
       "(선택) 지문 칸 아래 <b>단어장</b>에 학교가 정한 단어장 단어를 적거나 붙여넣으면(한 줄에 한 단어, 단어장 쪽 <b>사진·PDF</b>도 됩니다 · <b>📒 저장한 단어장에서 가져오기</b>도 됩니다) 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 씁니다. <b>유의어로 바꿔 싣기</b> · <b>단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문을 단어장으로 바꿔 씁니다(지문 변형이 '원문 그대로'일 때만) — 바뀐 낱말은 화면에서만 형광으로 보입니다.",
-      "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추). 중학교 내신 유형 — <b>문법 쓰임 같은 것·다른 것</b>(that·as 등의 쓰임), <b>다의어 같은 뜻</b>은 아무 지문에서나 만들고, 대화문 유형(<b>대화 순서·어색한 응답·대화 빈칸·대화 내용 일치·대화 내용 불일치·답할 수 없는 질문·짝지어진 대화·대화 어법·어휘 선택·짝지어진 대화 어법·대화 상황 파악</b> — 실제 중학교 시험지의 대화문 문제 모양을 따랐습니다)은 줄마다 \"A:\", \"B:\"처럼 말하는 사람이 적힌 <b>대화문</b>을 넣었을 때만 만들어집니다 — 대화문이 아니면 빼고 값도 받지 않습니다.",
+      "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추). 유형 칸은 <b>수능·고등 내신형</b>과 <b>중학교 내신형</b> 두 묶음으로 나뉘어 있습니다(묶음과 상관없이 무엇이든 고를 수 있습니다). 중학교 내신 유형 —<b>문법 쓰임 같은 것·다른 것</b>(that·as 등의 쓰임), <b>다의어 같은 뜻</b>은 아무 지문에서나 만들고, 대화문 유형(<b>대화 순서·어색한 응답·대화 빈칸·대화 내용 일치·대화 내용 불일치·답할 수 없는 질문·짝지어진 대화·대화 어법·어휘 선택·짝지어진 대화 어법·대화 상황 파악</b> — 실제 중학교 시험지의 대화문 문제 모양을 따랐습니다)은 줄마다 \"A:\", \"B:\"처럼 말하는 사람이 적힌 <b>대화문</b>을 넣었을 때만 만들어집니다 — 대화문이 아니면 빼고 값도 받지 않습니다.",
       "<b>학교급</b>을 고릅니다 — <b>중학교</b>를 고르면 보기·오답·문법 포인트를 중학생 수준으로 쉽게 만듭니다. 요금은 같습니다.",
       "<b>난이도</b>를 고릅니다 — 보기를 얼마나 까다롭게 만들지 정합니다. 둘의 요금은 같고, <b>둘 다 고르면</b> 같은 지문으로 기본 한 벌·고난도 한 벌이 나옵니다(요금도 두 벌).<br>" +
         "· <b>기본</b>: 정답은 지문의 표현을 <b>살려</b> 쓰고, 오답은 지문 내용과 <b>뚜렷이 어긋나게</b> 만듭니다. 지문 내용을 알면 고를 수 있습니다.<br>" +
@@ -9597,7 +9677,7 @@ const HOWTO = {
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. (선택) <b>목표 어법</b>을 적으면 어법 계열 문항이 그 문법으로 나옵니다.",
       "(선택) 지문 칸 아래 <b>단어장</b>에 학교가 정한 단어장 단어를 적거나 붙여넣으면(한 줄에 한 단어, 단어장 쪽 <b>사진·PDF</b>도 됩니다 · <b>📒 저장한 단어장에서 가져오기</b>도 됩니다) 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 씁니다. <b>유의어로 바꿔 싣기</b> · <b>단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문을 단어장으로 바꿔 씁니다(지문 변형이 '원문 그대로'일 때만) — 바뀐 낱말은 화면에서만 형광으로 보입니다.",
-      "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추). 칸은 <b>객관식 (5지선다)</b>와 <b>주관식 (서술형·단답형)</b> 두 묶음으로 나뉘어 있고, 두 묶음에서 자유롭게 고르면 됩니다.",
+      "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추). 칸은 <b>객관식 (5지선다)</b>와 <b>주관식 (서술형·단답형)</b>으로 나뉘어 있고, 객관식은 다시 <b>수능·고등 내신형</b>과 <b>중학교 내신형</b>(대화문·낱말·문법 쓰임)으로 묶여 있습니다. 어느 묶음에서든 자유롭게 고르면 됩니다.",
       "<b>학교급</b>·<b>난이도</b>를 고릅니다. 고난도는 객관식 전 유형과 주관식 중 <b>OX진위·질문에 답하기·표현 찾아 쓰기·영영풀이 쓰기·조건 영작</b>에서만 됩니다 — <b>기본 + 고난도</b>를 같이 고르면 고난도가 안 되는 주관식은 기본 벌에만 들어가고, <b>고난도만</b> 고르면 그 유형은 새로 고를 수 없게 막힙니다.",
       "<b>출제 순서</b>를 고릅니다 — <b>유형 순서대로</b>는 객관식 → 주관식 순으로 나오고, <b>지문 내 유형 섞기</b>·<b>전체 문항 섞기</b>를 고르면 두 종류가 한 시험지 안에서 뒤섞입니다.",
       "(선택) <b>지문 변형</b>과 <b>시험지 제목</b>을 정합니다.",
@@ -9671,6 +9751,11 @@ const HOWTO = {
     tip: "이 탭은 관리자 승인을 받은 선생님에게만 보입니다. 학생 이름은 미성년자 개인정보라, 시험 삼아 넣어 보실 때는 실제 이름 대신 아무 말이나 쓰세요.",
   },
 };
+// 공용 지문칸을 쓰는 탭마다 같은 안내 — 지문칸의 [🆕 새로 만들기](newWorkBtn)
+SHARED_PASSAGE_TABS.forEach((t) => {
+  if (HOWTO[t]) HOWTO[t].tip = (HOWTO[t].tip || "") +
+    " 다른 지문으로 넘어갈 때는 지문 칸의 <b>[🆕 새로 만들기]</b>를 누르세요 — 지문과 이 탭들에서 만든 자료가 비워져, 새로 만든 자료를 저장할 때 앞 자료에 덮어쓸지 묻지 않습니다.";
+});
 
 /* ── 만드는 법에 붙는 '이런 게 나옵니다' 예시 ──
    두 가지 방식이 섞여 있다.

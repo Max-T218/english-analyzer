@@ -827,6 +827,15 @@ GEMINI_VIA_VERTEX = os.environ.get("GEMINI_VIA_VERTEX", "").strip().lower() in (
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "global").strip() or "global"
 # Vertex가 잠깐 붐빌 때 AI Studio로 넘기기 전에 다시 보내며 버티는 시간(초) — _vertex_try 참고
 VERTEX_RETRY_BUDGET = float(os.environ.get("VERTEX_RETRY_BUDGET", "120") or 120)
+# 한 요청 안에서 둘째 이후의 호출(분석 보정·워크북 다시 채우기 등)이 버티는 시간(초).
+# 2026-10-13 로그: 1차 분석은 51초에 끝났는데 보정 한 번이 Vertex 429에 걸려 300초를
+# 버틴 뒤에야 AI Studio로 넘어가 분석 하나가 345초 걸렸다. 화면은 8분쯤까지만 기다리므로
+# 조금만 더 길었으면 값은 나가고 결과는 못 받았다. 1차 호출은 크레딧을 쓰려고 오래
+# 버티되(선생님 결정), 이미 시간을 쓴 뒤의 호출은 짧게 버티고 넘긴다.
+VERTEX_LATER_RETRY_BUDGET = float(os.environ.get("VERTEX_LATER_RETRY_BUDGET", "30") or 30)
+# 이번 요청에서 Vertex로 몇 번째 보내는지 — 요청마다 do_POST가 0으로 되돌린다.
+# 요청 하나는 스레드 하나에서만 돈다(ThreadingHTTPServer)라 스레드별 값으로 센다.
+_VERTEX_CALLS = threading.local()
 _VERTEX_LOCK = threading.Lock()
 _VERTEX_CREDS = None
 # 권한·설정 문제로 실패하면 한동안 Vertex를 건너뛴다 — 요청마다 헛걸음하면 그만큼 느려진다
@@ -878,6 +887,9 @@ def _vertex_try(model, data):
     응답 시간 초과는 넘기지 않고 그대로 올린다 — 이미 몇 분을 기다린 요청을 다른 길로
     처음부터 다시 보내면 선생님은 그 두 배를 기다리게 된다."""
     global _VERTEX_PAUSED_UNTIL
+    nth = getattr(_VERTEX_CALLS, "n", 0)
+    _VERTEX_CALLS.n = nth + 1
+    budget = VERTEX_RETRY_BUDGET if nth == 0 else min(VERTEX_RETRY_BUDGET, VERTEX_LATER_RETRY_BUDGET)
     # 429는 몇 초 뒤 다시 보내면 대개 받아 준다. 우리 요청이 많아서가 아니다 — 1분에
     # 두 건꼴로 차례차례 보내는데도 났다. Vertex는 사용량 약정이 없으면 구글 전체가
     # 함께 쓰는 여유분에서 처리해 주므로, 그 순간 붐비면 거절되고 조금 뒤면 풀린다.
@@ -887,7 +899,8 @@ def _vertex_try(model, data):
     #
     # 이 길의 목적이 크레딧을 쓰는 것이라 **제작 시간이 늘어도 Vertex에서 버틴다**
     # (2026-09-26 선생님 결정: "오래 걸려도 되니 Vertex로"). 잠깐 붐빔(429)·서버
-    # 과부하(5xx)·네트워크 끊김은 VERTEX_RETRY_BUDGET(기본 120초) 동안 간격을 늘려 가며
+    # 과부하(5xx)·네트워크 끊김은 VERTEX_RETRY_BUDGET(기본 120초 — 둘째 이후 호출은
+    # VERTEX_LATER_RETRY_BUDGET, 기본 30초) 동안 간격을 늘려 가며
     # 다시 보내고, 그래도 안 될 때만 AI Studio로 넘긴다 — 결과물을 못 주는 것보다는
     # 원래 요금으로라도 만드는 편이 낫다.
     started = time.time()
@@ -910,13 +923,14 @@ def _vertex_try(model, data):
         if transient:
             # 3·6·12·20·30·30…초 + 흩기(여러 요청이 같은 순간 다시 부딪히지 않게)
             wait = min(3 * (2 ** attempt), 30) * random.uniform(0.8, 1.2)
-            if time.time() - started + wait <= VERTEX_RETRY_BUDGET:
+            if time.time() - started + wait <= budget:
                 attempt += 1
                 print(f"[vertex] {model} {why} → {wait:.0f}초 뒤 Vertex로 다시 ({attempt}회)",
                       flush=True)
                 time.sleep(wait)
                 continue
-            print(f"[vertex] {model} {why} {VERTEX_RETRY_BUDGET:.0f}초 동안 안 됨"
+            print(f"[vertex] {model} {why} {budget:.0f}초 동안 안 됨"
+                  f"{'' if nth == 0 else f' ({nth + 1}번째 호출)'}"
                   f" → AI Studio로 다시 보냄: {detail}", flush=True)
             return None
         # 권한·모델 없음은 곧바로 풀리지 않으니 10분 쉰다 — 요청마다 헛걸음하지 않게.
@@ -9969,6 +9983,17 @@ CHANGELOG = [
             "문제 제작·워크북·동형 모의고사).",
         ],
     },
+    {
+        "version": 66,
+        "date": "2026-10-13",
+        "items": [
+            "지문 칸에 [🆕 새로 만들기]가 생겼습니다. 다른 지문으로 넘어갈 때 누르면 지문과 지문 분석·"
+            "문제 제작·워크북에서 만든 자료가 함께 비워집니다(저장함의 자료는 그대로입니다). 새 지문으로 "
+            "만든 자료를 저장할 때 앞 자료에 덮어쓸지 묻던 일도 이제 없습니다.",
+            "객관식 유형 칸이 '수능·고등 내신형'과 '중학교 내신형(대화문·낱말·문법 쓰임)'으로 나뉘어 "
+            "보입니다. 묶음과 상관없이 어느 유형이든 고를 수 있습니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -13296,6 +13321,7 @@ class Handler(BaseHTTPRequestHandler):
         여기서 터지면 화면은 'JSON 대신 HTML' 같은 엉뚱한 메시지밖에 볼 수 없어
         원인을 찾기가 매우 어렵다(실제로 그런 사고가 있었다)."""
         self._inflight_key = None
+        _VERTEX_CALLS.n = 0   # 이번 요청의 Vertex 호출 차례를 처음부터 센다(_vertex_try)
         try:
             self._handle_post()
         except Exception as e:

@@ -93,6 +93,10 @@ const TREND_CSS = `
 .trend-etc h5{margin:0 0 6px;font-size:13.5px}.trend-etc h5 small{font-weight:400;color:#8a5a12}
 .trend-etc table{width:100%;border-collapse:collapse;font-size:12.5px}
 .trend-etc th,.trend-etc td{border-bottom:1px solid #eee3cc;padding:4px 6px;text-align:left}
+.trend-g-chip{font-size:12px;padding:2px 8px;margin:0 4px 4px 0;border:1px solid #d9c9a3;border-radius:12px;background:#fff;color:#6b5a35;cursor:pointer}
+.trend-g-chip.on{background:#2f6fde;border-color:#2f6fde;color:#fff}
+.trend-g-in{width:100%;box-sizing:border-box;font-size:12.5px;padding:3px 6px;margin-top:2px}
+@media print{.trend-screen-only{display:none}}
 .trend-etc select{font-size:12.5px;padding:2px 4px;max-width:180px}
 .trend-etc-img{display:block;margin-top:5px;max-height:120px;max-width:100%;border:1px solid #e1d6bd;border-radius:4px;cursor:zoom-in;background:#fff}
 .trend-etc-img.big{max-height:none;cursor:zoom-out}
@@ -1310,10 +1314,9 @@ function trendGrammarHtml(st) {
   const src = trendSourceNow();
   const targets = trendGrammarTargets();
   if (!targets.length) return "";
-  if (!trendHasGrammarData(src)) {
-    return `<h4 class="sec">목표 문법 출제 확인</h4>
-      <p class="rp-body" style="color:#8a5a12">이 분석에는 문항별 문법 정보가 없습니다 — 이 기능이 생기기 전에 분석한 것입니다. 시험지를 다시 올려 분석하면 목표 문법(${targets.map(esc).join(", ")})이 몇 번 문항으로 나왔는지 표시됩니다.</p>`;
-  }
+  // 문법 정보가 하나도 없는 시험지(이 기능 전에 분석한 저장본) — '출제 안 됨'이 아니라 '정보 없음'으로 적는다.
+  // 아래 화면 전용 표(trendGrammarEditHtml)에서 문항마다 문법을 고르면 그 시험지도 셈에 들어간다.
+  const noInfo = st.names.map((_n, i) => !src.questions.some((q) => q.doc === i && Array.isArray(q.grammar)));
   const sn = trendShortNames(st.names);
   const nos = (doc, tg) => src.questions
     .filter((q) => q.doc === doc && (q.grammar || []).some((g) => trendGrammarHit(tg, g)))
@@ -1322,7 +1325,7 @@ function trendGrammarHtml(st) {
     const per = st.names.map((_n, i) => nos(i, tg));
     return { tg, per, total: per.reduce((a, l) => a + l.length, 0) };
   });
-  const missed = rows.filter((r) => !r.total).map((r) => r.tg);
+  const missed = noInfo.every(Boolean) ? [] : rows.filter((r) => !r.total).map((r) => r.tg);
   // 목표 밖에서 나온 문법 — 목표를 빠뜨렸거나 학교가 따로 강조한 문법을 알아보게
   const other = new Map();
   src.questions.forEach((q) => (q.grammar || []).forEach((g) => {
@@ -1333,16 +1336,49 @@ function trendGrammarHtml(st) {
   const heads = st.names.map((nm, i) => `<th title="${esc(nm)}">${esc(sn[i].length > 12 ? sn[i].slice(0, 11) + "…" : sn[i])}</th>`).join("");
   const body = rows.map((r) => `<tr>
       <td class="tk"><b>${esc(r.tg)}</b></td>
-      ${r.per.map((l) => l.length ? `<td>✔ ${esc(l.join("·"))}번</td>` : `<td class="zero">출제 안 됨</td>`).join("")}
+      ${r.per.map((l, i) => l.length ? `<td>✔ ${esc(l.join("·"))}번</td>` : `<td class="zero">${noInfo[i] ? "정보 없음" : "출제 안 됨"}</td>`).join("")}
       <td><b>${r.total}</b></td></tr>`).join("");
   return `<div class="rp-keep"><h4 class="sec">목표 문법 출제 확인</h4>
     <div style="overflow-x:auto"><table class="rp-types">
       <thead><tr><th>목표 문법</th>${heads}<th>합계</th></tr></thead>
       <tbody>${body}</tbody>
     </table></div>
+    ${noInfo.some(Boolean) ? `<p class="rp-body trend-screen-only" style="color:#8a5a12">'정보 없음'은 이 기능이 생기기 전에 분석한 시험지입니다 — 아래 <b>문항별 문법</b> 표에서 어법·서술형 문항의 문법을 눌러 고르면 바로 반영됩니다(시험지를 다시 분석해도 됩니다).</p>` : ""}
     <p class="rp-body">목표 문법 ${targets.length}가지 중 <b>${targets.length - missed.length}가지</b>가 출제되었습니다${missed.length ? ` — 출제되지 않은 문법: ${missed.map(esc).join(", ")}` : ""}.
     ${otherList.length ? `<br>목표 밖에서 출제된 문법: ${otherList.map(([g, n]) => `${esc(g)}${n > 1 ? `(${n})` : ""}`).join(", ")}` : ""}</p>
     </div>`;
+}
+
+/* 문항별 문법 고치기 — 화면에만(인쇄 창에는 trendHtml만 들어간다). 어법·서술형 문항과 문법이 붙은 문항을
+   늘어놓고, 목표 문법을 단추로 켜고 끄거나 칸에 직접 적는다. 고친 값은 q.grammar에 그대로 들어가
+   [💾 분석 저장]으로 남는다. AI가 문법을 읽기 전(2026-10-12 전)에 저장한 분석도 이 표로 채울 수 있다. */
+const TREND_GRAMMAR_CATS = new Set(["어법", "서술형: 영작·배열", "서술형: 어법 고쳐 쓰기", "영어 표현 고르기"]);
+function trendGrammarEditHtml() {
+  const targets = trendGrammarTargets();
+  if (!targets.length) return "";
+  const src = trendDocs.filter((d) => d.questions && d.questions.length);
+  const short = trendShortNames(src.map((d) => d.name));
+  const rows = [];
+  src.forEach((d, di) => d.questions.forEach((q, qi) => {
+    if (TREND_GRAMMAR_CATS.has(trendCat(q)) || (q.grammar || []).length) rows.push({ di, qi, q, d });
+  }));
+  if (!rows.length) return "";
+  return `<div class="trend-etc">
+    <h5>문항별 문법 ${rows.length}문항 <small>(화면에만 보입니다 — 목표 문법 단추를 눌러 켜고 끄거나 칸에 직접 적으면(쉼표로 여럿) 위 '목표 문법 출제 확인'에 바로 반영되고, [💾 분석 저장]으로 남습니다)</small></h5>
+    <table><thead><tr><th>시험지</th><th>번호</th><th>발문</th><th>묻는 문법</th></tr></thead><tbody>
+    ${rows.map((r) => {
+      const di = trendDocs.indexOf(src[r.di]);
+      const g = r.q.grammar || [];
+      return `<tr>
+      <td>${esc(src.length > 1 ? short[r.di] : src[r.di].name)}</td><td>${esc(r.q.no || "")}</td>
+      <td class="tk">${esc(r.q.prompt || "(발문 없음)")}${r.q.crop ? `<br><img class="trend-etc-img" src="${esc(r.q.crop)}" alt="${esc(r.q.no || "")}번 문항" title="누르면 크게 봅니다">` : ""}</td>
+      <td>${targets.map((tg) => {
+        const on = g.some((x) => trendGrammarHit(tg, x));
+        return `<button type="button" class="trend-g-chip${on ? " on" : ""}" data-d="${di}" data-q="${r.qi}" data-t="${esc(tg)}">${on ? "✔ " : ""}${esc(tg)}</button>`;
+      }).join("")}
+        <input type="text" class="trend-g-in" data-d="${di}" data-q="${r.qi}" value="${esc(g.join(", "))}" placeholder="직접 적기 (예: 수동태, 분사구문)"></td></tr>`;
+    }).join("")}
+    </tbody></table></div>`;
 }
 
 function trendHtml(st, ai) {
@@ -1539,6 +1575,7 @@ function trendRender() {
       ${trendAi && trendAiStale ? `<p class="hint" style="color:#8a5a12">⚠️ 총평을 쓴 뒤에 시험지나 시험 범위가 바뀌었습니다 — 총평은 예전 내용을 기준으로 쓴 것입니다. 새로 쓰려면 [✨ 총평 다시 쓰기]를 누르세요.</p>` : ""}
       <p class="hint" id="trendAiErr" style="color:#c0392b"></p>
       ${trendEtcHtml()}
+      ${trendGrammarEditHtml()}
       ${trendBrandOptsHtml()}
       <div class="trend-tools">
         <button type="button" class="btn small" id="trendAiBtn">${trendAi ? "✨ 총평 다시 쓰기" : "✨ 시험지 분석 총평 쓰기"}</button>
@@ -1556,6 +1593,21 @@ function trendRender() {
     q.category = sel.value;
     q.catManual = true;
     if (trendAi) trendAiStale = true;   // 총평은 고치기 전 분류로 쓴 것이다
+    trendRender();
+  }));
+  // 문항별 문법 — 단추는 목표 문법 하나를 켜고 끄고, 칸은 목록을 통째로 바꾼다(다 적고 칸을 벗어날 때)
+  const gq = (el) => { const d = trendDocs[Number(el.dataset.d)]; return d && d.questions[Number(el.dataset.q)]; };
+  trendResultEl.querySelectorAll(".trend-g-chip").forEach((b) => b.addEventListener("click", () => {
+    const q = gq(b), tg = b.dataset.t;
+    if (!q) return;
+    const g = Array.isArray(q.grammar) ? q.grammar.slice() : [];
+    q.grammar = g.some((x) => trendGrammarHit(tg, x)) ? g.filter((x) => !trendGrammarHit(tg, x)) : g.concat(tg).slice(0, 5);
+    trendRender();
+  }));
+  trendResultEl.querySelectorAll(".trend-g-in").forEach((inp) => inp.addEventListener("change", () => {
+    const q = gq(inp);
+    if (!q) return;
+    q.grammar = [...new Set(inp.value.split(/[,，、]/).map((t) => t.trim().slice(0, 30)).filter(Boolean))].slice(0, 5);
     trendRender();
   }));
   onTrend();
@@ -1922,13 +1974,16 @@ $("trendRangeList").addEventListener("input", trendRangeChanged);
 new MutationObserver(trendRangeChanged).observe($("trendRangeList"), { childList: true });
 
 $("trendRangeSaveBtn").addEventListener("click", () => {
-  passageSaveFrom = { mgr: trendRangeMgr, grammarEl: null, label: "시험 범위 지문 칸" };
+  passageSaveFrom = { mgr: trendRangeMgr, grammarEl: trendGrammarEl, label: "시험 범위 지문 칸" };
   openSaveDialog(PASSAGE_TAB);
 });
 $("trendRangeLoadBtn").addEventListener("click", () => {
   openSavedList("passage", {
     mgr: trendRangeMgr,
     label: "시험 범위 지문 칸",
+    // 지문 저장본의 목표 어법을 목표 문법 칸에 더한다 — 단원마다 불러오므로 덮어쓰지 않고 합친다
+    grammarEl: trendGrammarEl,
+    grammarMerge: true,
     after: (msg) => trendRangeStatus(msg, "ok"),
     /* 저장본 제목(예: "공통영어2 비상(홍) 1단원 본문")을 지문 이름 앞에 붙인다 — 선생님이
        저장함에 단원·교재 이름으로 저장해 두므로, 그 이름이 곧 '어느 범위의 지문인가'다.
@@ -1965,19 +2020,30 @@ document.querySelectorAll("[data-trend-proxy]").forEach((b) => {
 
 /* ── 저장 · 불러오기 · 새로 시작 ── */
 const trendHasWork = () => trendDocs.length > 0;
+// 새로 시작할 때 지울 것이 하나라도 있나 — 시험지가 없어도 범위 지문·학교 이름·목표 문법이 남아 있을 수 있다
+const trendHasAnyInput = () => trendHasWork() || trendRangeJobs().length > 0 ||
+  !!(trendSchool() || trendSubject() || (trendGrammarEl && trendGrammarEl.value.trim()));
 
+/* 새로 시작 — 이 탭에 넣은 것을 모두 지운다: 시험지·분석 결과·총평에 더해 시험 범위 지문, 학교 이름,
+   학년·과목, 목표 문법까지(2026-10-12 사용자: "애초에 입력돼 있는 모든 걸 다 지워 줘"). 예전에는 범위
+   지문을 남겼는데, 다른 학교 보고서를 만들 때 앞 학교의 범위·이름이 그대로 남았다.
+   학원 마크(학원명·로고·워터마크)는 모든 탭이 같이 쓰는 설정이라 남긴다. */
 function trendReset() {
   trendDocs = [];
   trendOrderManual = false;
   trendAi = null;
+  trendAiStale = false;
   trendErrorEl.textContent = "";
+  trendRangeMgr.clearAll();
+  trendRangeSig = "";
+  [trendSchoolEl, trendSubjectEl, trendGrammarEl].forEach((el) => { if (el) el.value = ""; });
   delete LOADED_SAVED.trend;   // 새로 시작했으니 이전 저장본을 고치는 중이 아니다
   trendSync();
 }
 
 $("trendResetBtn").addEventListener("click", () => {
   if (trendBusy) { alert("분석이 진행 중입니다. 끝난 뒤에 눌러 주세요."); return; }
-  if (trendHasWork() && !confirm("올린 시험지와 분석 결과가 모두 사라집니다(시험 범위 지문은 남습니다).\n아직 저장하지 않았다면 [취소]를 누르고 먼저 저장하세요.\n\n지우고 새로 시작할까요?")) return;
+  if (trendHasAnyInput() && !confirm("이 탭에 넣은 것이 모두 사라집니다 — 올린 시험지, 분석 결과·총평, 시험 범위 지문, 학교 이름, 학년·과목, 목표 문법.\n(학원 마크는 모든 탭이 같이 쓰는 설정이라 남습니다.)\n아직 저장하지 않았다면 [취소]를 누르고 먼저 저장하세요.\n\n지우고 새로 시작할까요?")) return;
   trendReset();
 });
 $("trendLoadBtn").addEventListener("click", () => { trendLoadMode = "replace"; openSavedList("tab", null, "trend"); });
@@ -2073,7 +2139,7 @@ HOWTO.trend = {
   steps: [
     "<b>학교 이름</b>과 <b>학년·과목</b>을 적습니다 — 보고서 제목에 찍힙니다(예: 전주제일고등학교 출제경향 분석 보고서 · 2학년 영어Ⅱ).",
     "기출 시험지 <b>PDF·사진</b>을 끌어다 놓습니다. <b>PDF 한 파일이 한 부</b>입니다 — 해마다의 경향을 보려면 여러 부를 올리세요. 부 이름은 칸에서 고칠 수 있고(예: 2024 1학기 중간), <b>✕</b>로 뺄 수 있습니다. 부는 <b>위에서부터 이른 시험 → 나중 시험</b> 차례로 놓입니다 — 이름에 학기·차수(예: 2026학년도 1학기 2차, 중간·기말)가 있으면 저절로 맞추고, 틀렸으면 <b>↑↓</b>로 고치세요. 보고서의 '시험지별 유형 변화'가 이 차례로 늘고 준 것을 셉니다.",
-    "(선택) <b>목표 문법</b>을 쉼표로 나눠 적습니다(예: 관계대명사 whose, 가정법 과거, 강조구문) — 보고서에 <b>목표 문법 출제 확인</b> 표가 생겨 시험지마다 그 문법이 몇 번 문항으로 나왔는지, 안 나온 문법과 목표 밖에서 나온 문법이 무엇인지 보입니다. 분석한 뒤에 적어도 됩니다(이 기능 전에 분석·저장한 것은 시험지를 다시 분석해야 나옵니다).",
+    "(선택) <b>목표 문법</b>을 쉼표로 나눠 적습니다(예: 관계대명사 whose, 가정법 과거, 강조구문) — 보고서에 <b>목표 문법 출제 확인</b> 표가 생겨 시험지마다 그 문법이 몇 번 문항으로 나왔는지, 안 나온 문법과 목표 밖에서 나온 문법이 무엇인지 보입니다. 분석한 뒤에 적어도 됩니다. 보고서 아래 <b>문항별 문법</b> 표에서 어법·서술형 문항마다 목표 문법 단추를 눌러 고치거나 직접 적을 수 있습니다 — 이 기능 전에 저장한 분석도 불러와서 여기서 채우면 됩니다. <b>[📄 저장함에서 가져오기]</b>로 시험 범위 지문을 불러오면 그 지문에 적어 둔 목표 어법도 이 칸에 더해집니다.",
     "(선택) <b>시험 범위 지문</b>을 넣습니다 — 다른 탭과 같은 지문 칸에 붙여넣거나 <b>[📄 저장함에서 가져오기]</b> · <b>[📄 PDF에서 가져오기]</b>로 채웁니다. 저장함에서 가져오면 <b>저장본 제목이 이름 앞에 붙어</b>(예: 공통영어2 비상(홍) 1단원 본문 · 본문1) 보고서에 <b>범위(저장본)별로 몇 개 중 몇 개가 나왔는지</b>도 묶여 나옵니다. 이름은 칸에서 고칠 수 있고, <b>[💾 지문 저장]</b>으로 이름째 저장해 둘 수 있습니다. 넣어 두면 보고서에 <b>범위의 어느 지문이 몇 번 문항으로 나왔는지</b>가 나옵니다. 분석한 뒤에 넣어도 됩니다.",
     "<b>[분석하기]</b>를 누르면 AI가 부마다 문항 유형을 읽습니다. <b>시험 범위 지문을 넣어 두었을 때만</b> 시험지의 지문도 옮겨 적어 범위와 대조합니다 — 범위를 비워 두면 유형만 읽어 훨씬 빠릅니다. 여러 해 시험지를 모아 경향만 볼 때는 범위를 비워 두세요. 시험지 한 부에 몇 분 걸립니다. 못 읽은 것이 있으면 다시 누르세요 — 못 읽은 것만 다시 읽습니다.",
     "분석이 끝나면 아래에 <b>보고서</b>가 나옵니다 — 요약, 부별 유형 표, 비중 그래프, 그리고 <b>매회 출제 / 가끔 출제 / 한 번만</b> 구분이 들어 있습니다.",
