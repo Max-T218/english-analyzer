@@ -1431,11 +1431,13 @@ function trendHtml(st, ai) {
   const aiHtml = ai ? `
       <h4 class="sec">시험지 분석 총평</h4>
       <p class="rp-body">${esc(ai.overview)}</p>
-      ${ai.strategies.length ? `<h4 class="sec">유형별 대비 전략</h4>
+      ${/* 표를 제목과 함께 .rp-keep으로 묶는다 — 많아야 6줄이라 한 쪽에 들어가는데, 묶지 않으니
+           쪽 끝에서 4줄·2줄로 갈라져 둘째 쪽에 제목 없는 표 조각만 남았다(2026-10-13 사용자) */ ""}
+      ${ai.strategies.length ? `<div class="rp-keep"><h4 class="sec">유형별 대비 전략</h4>
       <table class="rp-strat">
         <thead><tr><th>유형</th><th>출제</th><th>대비 전략</th></tr></thead>
         <tbody>${ai.strategies.slice(0, 6).map((s) => `<tr><td class="tk"><b>${esc(s.kind)}</b></td><td>${countOf(s.kind)}</td><td class="tk">${esc(s.advice)}</td></tr>`).join("")}</tbody>
-      </table>` : ""}` : "";
+      </table></div>` : ""}` : "";
   return `
     <div class="trend-report">
       ${head}
