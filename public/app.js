@@ -579,6 +579,9 @@ function closeAllModals() {
 function showSignupStep(step) {
   signupPanelEl.hidden = step !== "form";
   verifyPanelEl.hidden = step !== "verify";
+  // 인증코드 단계에서는 [이메일로 가입하기]를 다시 보이지 않는다
+  const openBtn = document.getElementById("signupEmailOpen");
+  if (openBtn && step !== "form") openBtn.hidden = true;
 }
 
 /* ── 가입 동의 ──
@@ -646,20 +649,29 @@ function resetAgree() {
 
 // 시작 화면이 길어져서 로그인 버튼을 위아래 두 곳에 둔다 — 처음 온 사람은 소개를
 // 읽고 아래에서, 다시 온 사람은 위에서 바로 누른다. id는 하나뿐이라 클래스로 건다.
-document.querySelectorAll(".js-open-login").forEach((btn) =>
-  btn.addEventListener("click", () => {
-    loginErrorEl.textContent = "";
-    openModal(loginModalEl);
-  })
-);
-document.querySelectorAll(".js-open-signup").forEach((btn) =>
-  btn.addEventListener("click", () => {
-    signupErrorEl.textContent = "";
-    resetAgree();   // 동의는 창을 열 때마다 처음부터
-    showSignupStep("form");
-    openModal(signupModalEl);
-  })
-);
+document.querySelectorAll(".js-open-login").forEach((btn) => btn.addEventListener("click", () => openLoginModal()));
+function openSignupModal() {
+  signupErrorEl.textContent = "";
+  resetAgree();   // 동의는 창을 열 때마다 처음부터
+  showSignupStep("form");
+  // 이메일 가입 칸은 [이메일로 가입하기] 뒤로 접어 둔다 — 창을 열자마자 칸이 셋이면 무거워 보인다
+  signupPanelEl.hidden = true;
+  signupEmailOpenEl.hidden = false;
+  openModal(signupModalEl);
+}
+function openLoginModal() {
+  loginErrorEl.textContent = "";
+  openModal(loginModalEl);
+}
+const signupEmailOpenEl = $("signupEmailOpen");
+signupEmailOpenEl.addEventListener("click", () => {
+  signupEmailOpenEl.hidden = true;
+  showSignupStep("form");
+  $("signupEmail").focus();
+});
+document.querySelectorAll(".js-open-signup").forEach((btn) => btn.addEventListener("click", openSignupModal));
+$("signupToLogin").addEventListener("click", () => { closeModal(signupModalEl); openLoginModal(); });
+$("loginToSignup").addEventListener("click", () => { closeModal(loginModalEl); openSignupModal(); });
 $("loginModalClose").addEventListener("click", () => closeModal(loginModalEl));
 $("signupModalClose").addEventListener("click", () => closeModal(signupModalEl));
 $("rechargeModalClose").addEventListener("click", () => closeModal(rechargeModalEl));
@@ -950,11 +962,21 @@ async function refreshAccount() {
     renderAccount(info);
     // 세션이 살아 있으면(예: 새로고침) 로그인 화면을 다시 거치지 않고 바로 들여보낸다
     if (info.loggedIn) enterWorkspace();
-    else showGate();
+    else { showGate(); openAuthFromUrl(); }
   } catch (_) {
     renderAccount({ loggedIn: false });
     showGate();
   }
+}
+// 소개 쪽(analyze.html 등)의 [무료로 시작하기]는 /?signup=1로 온다 — 첫 화면을 거치지 않고
+// 가입 창을 바로 연다(?login=1은 로그인 창). 새로고침해도 다시 뜨지 않게 주소에서 지운다.
+function openAuthFromUrl() {
+  const q = new URLSearchParams(location.search);
+  const want = q.has("signup") ? "signup" : q.has("login") ? "login" : "";
+  if (!want) return;
+  q.delete("signup"); q.delete("login");
+  history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : "") + location.hash);
+  if (want === "signup") openSignupModal(); else openLoginModal();
 }
 refreshAccount();
 
@@ -2940,6 +2962,55 @@ TAB_GROUPS.forEach((g) => {
 // 처음에는 열린 탭이 없다 — 지문 입력칸(탭 바깥 공용)만 보이고, 지문을 넣은 뒤 탭을 고른다.
 // index.html의 .active도 모두 빼 두었으니 둘이 같아야 한다.
 syncTabGroups(null);
+
+/* ── 탭을 고르기 전의 '기능 둘러보기' (2026-10-14) ──
+   로그인하면 열린 탭이 없어 지문 칸만 덩그러니 보였다 — 무엇을 만들 수 있는지는 탭을 하나씩
+   눌러 봐야 알았다. 그 빈자리에 기능마다 실제 결과물 그림 한 장(만드는 법 창·소개 쪽과 같은
+   howto-*.jpg)을 늘어놓고, 누르면 그 탭을 연다. 탭을 하나라도 고르면 감춘다.
+   승인이 필요한 탭(단추가 hidden)은 카드도 감춘다 — renderAccount가 단추를 켜고 끄므로
+   보일 때마다 다시 맞춘다. */
+const START_TOUR = [
+  { tab: "analyze", title: "📖 지문 상세분석", text: "끊어읽기·어법/어휘 색 구분·문장별 해설과 출제 포인트", img: "howto-analyze-1.jpg" },
+  { tab: "brief", title: "📑 지문 요약분석", text: "같은 색 구분에 한 줄 의역 — 학생이 들고 다니는 얇은 정리", img: "howto-brief-1.png" },
+  { tab: "mcq", title: "📝 객관식 문제", text: "수능형 23 · 중학교 내신 13유형, 정답·해설 포함", img: "howto-mcq-1.jpg" },
+  { tab: "saq", title: "✍️ 주관식 문제", text: "서술형 배열·조건 영작 등 18유형", img: "howto-saq-1.jpg" },
+  { tab: "workbook", title: "📚 워크북", text: "좌지문 우해석부터 영작까지 9단계 학습지", img: "howto-workbook-1.jpg" },
+  { tab: "exam", title: "🧾 동형 모의고사", text: "기출 시험지의 유형 구성 그대로, 내 시험 범위로", img: "howto-exam-1.jpg" },
+  { tab: "trend", title: "📊 시험지 분석 리포트", text: "기출 PDF를 올리면 출제경향 보고서와 총평까지", img: "howto-trend-1.jpg" },
+];
+const startTourEl = (() => {
+  const anchor = document.querySelector(".passage-panel");
+  if (!anchor) return null;
+  const sec = document.createElement("section");
+  sec.className = "panel start-tour";
+  sec.innerHTML =
+    `<h2 class="start-tour-head">무엇을 만들까요? <span>지문을 넣고 아래에서 고르세요 — 눌러서 실제 결과물을 볼 수 있습니다</span></h2>` +
+    `<div class="start-tour-grid">` +
+    START_TOUR.map((c) =>
+      `<button type="button" class="start-tour-card" data-tour="${c.tab}">` +
+      `<span class="start-tour-shot"><img src="/${c.img}" alt="" loading="lazy"></span>` +
+      `<b>${c.title}</b><small>${c.text}</small></button>`).join("") +
+    `</div>`;
+  anchor.after(sec);
+  sec.addEventListener("click", (e) => {
+    const card = e.target.closest(".start-tour-card");
+    if (!card) return;
+    const b = document.querySelector(`.tab-btn[data-tab="${card.dataset.tour}"]`);
+    if (b) b.click();
+  });
+  return sec;
+})();
+function syncStartTour() {
+  if (!startTourEl) return;
+  startTourEl.hidden = tabBtns.some((b) => b.classList.contains("active"));
+  startTourEl.querySelectorAll(".start-tour-card").forEach((card) => {
+    const b = document.querySelector(`.tab-btn[data-tab="${card.dataset.tour}"]`);
+    card.hidden = !b || b.hidden;
+  });
+}
+syncStartTour();
+// 승인 탭 단추의 hidden이 바뀌면(로그인·승인 변경) 카드도 맞춘다
+tabBtns.forEach((b) => new MutationObserver(syncStartTour).observe(b, { attributes: true, attributeFilter: ["hidden", "class"] }));
 
 tabBtns.forEach((btn) => {
   btn.addEventListener("click", () => {

@@ -110,19 +110,23 @@
 
   <!-- ══════════ 시작 화면 (소개 + 키 입력) ══════════ -->
   <section class="gate" id="gate">
-    <div class="gate-intro">
-      <h2>영어 지문 하나로, 수업 자료 여섯 가지를 만듭니다</h2>
+    <!-- 첫 화면 머리(2026-10-14) — 소개 쪽(analyze.html 등)과 같은 짜임으로 바꿨다:
+         큰 제목 → [지문 넣어 보기](= 회원가입 창) → 실제 결과물 그림. 예전에는 글 소개와
+         쓰는 순서가 먼저 나와, 무엇이 나오는지 보려면 한참 내려가야 했다.
+         그림 카드는 기능별 소개 쪽으로 잇는다(검색 로봇이 그 쪽들을 찾아가는 길이기도 하다). -->
+    <div class="gate-hero">
+      <span class="gate-kicker">영어 선생님 수업 자료</span>
+      <h2>영어 지문 붙여 넣기 한 번으로<br>분석본·변형문제·워크북까지</h2>
       <p class="gate-lead">
-        교과서·모의고사 지문을 붙여 넣으면 AI가 <b>구문 단위 직독직해 분석본</b>부터
-        <b>수능형 문제</b>, <b>단계별 워크북</b>, <b>단어장</b>까지 자동으로 만들어 줍니다.
-        만들어진 자료는 그대로 <b>인쇄하거나 PDF로 저장</b>해 수업에 쓰실 수 있습니다.
+        교과서·모의고사 지문을 넣으면 AI가 <b>직독직해 분석본</b>, <b>수능형·내신형 변형문제</b>,
+        <b>단계별 워크북</b>, <b>단어장</b>, <b>동형 모의고사</b>까지 만들어 줍니다.
+        만든 자료는 그대로 <b>인쇄하거나 PDF로 저장</b>해 수업에 쓰시면 됩니다.
       </p>
-
-      <ol class="gate-flow">
-        <li><b>지문을 붙여 넣습니다</b><span>타이핑해도 되고, 교재를 사진으로 찍거나 글자가 들어 있는 PDF를 올려도 글자만 뽑아 옵니다(스캔한 PDF는 사진으로 올려 주세요). 한 번에 최대 40개.</span></li>
-        <li><b>만들 자료를 고릅니다</b><span>분석본·객관식·주관식·워크북·단어장. 유형과 문항 수까지 직접 정합니다.</span></li>
-        <li><b>인쇄하거나 PDF로 저장합니다</b><span>화면이 아니라 종이에 맞춰 짠 지면이라, 그대로 뽑아 학생에게 나눠 주면 됩니다.</span></li>
-      </ol>
+      <div class="gate-auth-launch">
+        <button type="button" class="btn js-open-signup">무료로 시작하기</button>
+        <button type="button" class="btn ghost js-open-login">로그인</button>
+      </div>
+      <p class="gate-auth-note">쓰시려면 회원가입이 필요합니다. 가입만 하면 바로 써 보실 수 있는 포인트를 드립니다.</p>
     </div>
 
     <!-- 가입 축하금 이벤트 띠. 서버(/api/pricing)가 이벤트가 살아 있다고 할 때만 채워진다 —
@@ -130,10 +134,48 @@
          비어 있으면 hidden이라 아무 자리도 차지하지 않는다(app.js의 renderSignupBonus). -->
     <div class="bonus-banner" id="signupBonusBanner" hidden></div>
 
-    <!-- 다시 오는 사람이 소개를 지나 한참 내려가지 않도록 위에도 둔다 -->
-    <div class="gate-auth-launch">
-      <button type="button" class="btn js-open-login">로그인</button>
-      <button type="button" class="btn ghost js-open-signup">회원가입</button>
+    <div class="gate-tour">
+      <h3 class="gate-showcase-title">이렇게 나옵니다</h3>
+      <p class="gate-showcase-lead">모두 실제로 만든 결과물입니다. 눌러서 기능마다 자세히 보세요.</p>
+      <div class="gate-tour-grid">
+        <a class="gate-tour-card" href="/analyze.html">
+          <span class="gate-tour-shot"><img src="/howto-analyze-1.jpg?v=%%ASSET_V%%" alt="영어 지문 분석본 예시 — 색 구분과 문장별 해설" loading="lazy"></span>
+          <b>📖 지문 상세분석</b><small>끊어읽기·어법/어휘 색 구분·문장별 해설과 출제 포인트</small>
+        </a>
+        <a class="gate-tour-card" href="/brief.html">
+          <span class="gate-tour-shot"><img src="/howto-brief-1.png?v=%%ASSET_V%%" alt="영어 지문 요약분석 예시" loading="lazy"></span>
+          <b>📑 지문 요약분석</b><small>같은 색 구분에 한 줄 의역 — 시험 직전 복습용</small>
+        </a>
+        <a class="gate-tour-card" href="/quiz.html">
+          <span class="gate-tour-shot"><img src="/howto-mcq-1.jpg?v=%%ASSET_V%%" alt="수능형 객관식 변형문제 예시" loading="lazy"></span>
+          <b>📝 객관식 변형문제</b><small>수능형 23 · 중학교 내신 13유형, 정답·해설 포함</small>
+        </a>
+        <a class="gate-tour-card" href="/quiz.html">
+          <span class="gate-tour-shot"><img src="/howto-saq-1.jpg?v=%%ASSET_V%%" alt="서술형 조건 영작 문제 예시" loading="lazy"></span>
+          <b>✍️ 주관식 · 서술형</b><small>서술형 배열·조건 영작 등 18유형</small>
+        </a>
+        <a class="gate-tour-card" href="/workbook.html">
+          <span class="gate-tour-shot"><img src="/howto-workbook-1.jpg?v=%%ASSET_V%%" alt="영어 워크북 예시" loading="lazy"></span>
+          <b>📚 워크북</b><small>좌지문 우해석부터 영작까지 9단계</small>
+        </a>
+        <a class="gate-tour-card" href="/exam.html">
+          <span class="gate-tour-shot"><img src="/howto-exam-1.jpg?v=%%ASSET_V%%" alt="동형 모의고사 기출 구성 분석 예시" loading="lazy"></span>
+          <b>🧾 동형 모의고사</b><small>기출 시험지의 유형 구성 그대로, 내 시험 범위로</small>
+        </a>
+        <a class="gate-tour-card" href="/trend.html">
+          <span class="gate-tour-shot"><img src="/howto-trend-1.jpg?v=%%ASSET_V%%" alt="영어 내신 기출 출제경향 분석 보고서 예시" loading="lazy"></span>
+          <b>📊 기출 분석 리포트</b><small>기출 PDF를 올리면 출제경향 보고서와 총평까지</small>
+        </a>
+      </div>
+    </div>
+
+    <div class="gate-intro">
+      <h3 class="gate-showcase-title">이렇게 만듭니다</h3>
+      <ol class="gate-flow">
+        <li><b>지문을 붙여 넣습니다</b><span>타이핑해도 되고, 교재를 사진으로 찍거나 글자가 들어 있는 PDF를 올려도 글자만 뽑아 옵니다(스캔한 PDF는 사진으로 올려 주세요). 한 번에 최대 40개.</span></li>
+        <li><b>만들 자료를 고릅니다</b><span>분석본·객관식·주관식·워크북·단어장. 유형과 문항 수까지 직접 정합니다.</span></li>
+        <li><b>인쇄하거나 PDF로 저장합니다</b><span>화면이 아니라 종이에 맞춰 짠 지면이라, 그대로 뽑아 학생에게 나눠 주면 됩니다.</span></li>
+      </ol>
     </div>
 
     <!-- ══════════ 결과물 미리보기 ══════════
@@ -141,7 +183,7 @@
          화면이 바뀌면 미리보기도 같이 바뀌므로 낡지 않고, 어둠 모드도 자동으로 맞는다.
          지문은 저작권 문제가 없도록 직접 쓴 문장을 쓴다. -->
     <div class="gate-showcase">
-      <h3 class="gate-showcase-title">이런 자료가 만들어집니다</h3>
+      <h3 class="gate-showcase-title">더 자세히 — 결과물 미리보기</h3>
       <p class="gate-showcase-lead">아래는 실제 출력물의 일부입니다. 지문 한 개를 넣으면 여섯 가지가 모두 나오고, 시험 범위 지문을 모으면 동형 모의고사 한 벌까지 만듭니다.</p>
 
       <article class="gate-show gate-show-wide">
@@ -746,7 +788,11 @@
   <div class="modal-overlay" id="loginModalOverlay" hidden>
     <div class="modal-box">
       <button type="button" class="modal-close" id="loginModalClose" aria-label="닫기">&times;</button>
-      <h3 class="modal-title">로그인</h3>
+      <div class="auth-brand">
+        <span class="auth-logo"><img src="/mark.png" alt="" width="34" height="34">English Lab</span>
+        <h3 class="auth-headline">다시 오셨네요</h3>
+        <p class="auth-sub">구글 계정이나 이메일로 로그인하세요</p>
+      </div>
 
       <div id="g_id_onload"
            data-client_id="%%GOOGLE_CLIENT_ID%%"
@@ -769,6 +815,7 @@
         </div>
         <div class="error" id="loginError"></div>
       </form>
+      <p class="auth-switch">처음이신가요? <button type="button" class="link-btn" id="loginToSignup">무료로 시작하기</button></p>
     </div>
   </div>
 
@@ -776,7 +823,13 @@
   <div class="modal-overlay" id="signupModalOverlay" hidden>
     <div class="modal-box">
       <button type="button" class="modal-close" id="signupModalClose" aria-label="닫기">&times;</button>
-      <h3 class="modal-title">회원가입</h3>
+      <!-- 창 머리(2026-10-14) — 가입 창이 동의 칸·이메일 칸을 한꺼번에 펼쳐 무거워 보였다.
+           무엇을 얻는지 한 줄로 먼저 말하고, 구글 가입을 크게, 이메일 가입은 단추 뒤로 접는다. -->
+      <div class="auth-brand">
+        <span class="auth-logo"><img src="/mark.png" alt="" width="34" height="34">English Lab</span>
+        <h3 class="auth-headline">지문 한 번 붙여 넣기로 완성하는<br>분석본 · 변형문제 · 동형 모의고사</h3>
+        <p class="auth-sub">가입하면 바로 써 볼 수 있는 포인트를 드립니다</p>
+      </div>
 
       <!-- 동의는 구글·이메일 두 방법 위에 한 번만 둔다. 방법을 고르기 전에 먼저
            동의하는 순서라, 어느 쪽으로 가입해도 빠지지 않는다.
@@ -805,6 +858,7 @@
                 aria-label="먼저 위 항목에 동의해 주세요"></button>
       </div>
       <div class="auth-divider"><span>또는</span></div>
+      <button type="button" class="btn ghost auth-wide" id="signupEmailOpen">이메일로 가입하기</button>
 
       <form class="auth-panel" id="signupPanel">
         <label for="signupName">이름 <span class="opt-sub">(선택)</span></label>
@@ -831,6 +885,7 @@
         </div>
         <div class="error" id="verifyError"></div>
       </form>
+      <p class="auth-switch">이미 계정이 있으신가요? <button type="button" class="link-btn" id="signupToLogin">로그인</button></p>
     </div>
   </div>
 

@@ -254,6 +254,13 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 단추만 감추면 화면이 남아 계속 쓸 수 있는 것처럼 보이기 때문입니다.
 각각 `#tab-<id>` 섹션과 `#analyzeBtn` / `#mcqBtn` / `#saqBtn` / `#wbBtn` 실행 버튼을 가집니다.
 
+**첫 화면(로그인 전 `#gate`)과 로그인·가입 창**(2026-10-14): 첫 화면 머리는 소개 쪽과 같은 짜임이다 —
+큰 제목(`.gate-hero`) → [무료로 시작하기](가입 창) → 기능별 실제 결과물 그림 카드(`.gate-tour`, 누르면 그 기능의 소개 쪽).
+가입 창은 로고·한 줄 제목(`.auth-brand`) → 동의 → 구글 → [이메일로 가입하기](`signupEmailOpen`, 눌러야 이메일 칸이 펼쳐진다)
+순이고, 두 창 아래에서 서로 오간다(`signupToLogin`/`loginToSignup`). 소개 쪽의 단추는 `/?signup=1`로 와서 가입 창을 바로 연다
+(`openAuthFromUrl`, `?login=1`은 로그인 창). 로그인 뒤 탭을 아직 안 고른 화면에는 같은 그림 카드(`START_TOUR`/`.start-tour`)가
+지문 칸 아래에 나오고, 탭을 고르면 감춘다 — 승인이 필요한 탭은 단추가 숨으면 카드도 숨는다.
+
 ### 검색으로 들어오는 문 — `public/*.html` 소개 페이지
 
 `analyze` · `brief` · `quiz` · `workbook` · `vocab` · `exam` · `trend` · `faq` 여덟 쪽(`brief`·`trend`는 2026-10-14에 더했다). 앱이 아니라
