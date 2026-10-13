@@ -17,6 +17,11 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://englishlab.ai.kr/brief.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://englishlab.ai.kr/quiz.html</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -33,6 +38,11 @@
   </url>
   <url>
     <loc>https://englishlab.ai.kr/exam.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://englishlab.ai.kr/trend.html</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>

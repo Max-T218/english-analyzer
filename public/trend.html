@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- 앱의 '시험지 분석 리포트' 탭(public/trend.js) 소개. 화면을 바꾸면 여기 적은 단추·
+     보고서 구성도 함께 고칠 것. 요금 숫자는 적지 않는다(서버가 유일한 출처). -->
+
+<title>영어 내신 기출 분석 · 출제경향 분석 보고서 자동 작성 — English Lab</title>
+<meta name="description" content="학교 영어 기출 시험지 PDF를 올리면 문항마다 유형을 읽어 출제경향 분석 보고서를 만듭니다. 시험지별 유형 변화 그래프, 시험 범위 지문별 출제율, 목표 문법 출제 확인, 총평과 대비 전략까지 인쇄용으로 나옵니다.">
+<link rel="canonical" href="https://englishlab.ai.kr/trend.html">
+<link rel="icon" href="/mark.png">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="English Lab">
+<meta property="og:locale" content="ko_KR">
+<meta property="og:url" content="https://englishlab.ai.kr/trend.html">
+<meta property="og:title" content="영어 내신 기출 분석 보고서 자동 작성 — English Lab">
+<meta property="og:description" content="기출 시험지를 올리면 유형별 출제 현황·시험지별 변화·범위 출제율·총평까지 담은 출제경향 보고서가 나옵니다.">
+<meta property="og:image" content="https://englishlab.ai.kr/howto-trend-1.jpg">
+
+<link rel="stylesheet" href="/page.css">
+</head>
+<body>
+
+<div class="topbar"><div class="wrap">
+  <a class="home" href="/">English Lab</a>
+  <nav>
+    <a href="/analyze.html">지문 분석</a>
+    <a href="/brief.html">요약분석</a>
+    <a href="/quiz.html">변형문제</a>
+    <a href="/workbook.html">워크북</a>
+    <a href="/vocab.html">단어장</a>
+    <a href="/exam.html">모의고사</a>
+    <a href="/trend.html">기출 분석</a>
+    <a href="/faq.html">자주 묻는 질문</a>
+  </nav>
+</div></div>
+
+<header class="hero"><div class="wrap">
+  <span class="kicker">기출 분석 리포트</span>
+  <h1>학교 기출 시험지를 올리면 출제경향 보고서가 나옵니다</h1>
+  <p class="lead">
+    지난 중간·기말고사 시험지 PDF를 올리면 AI가 문항마다 유형을 읽어
+    몇 번이 무슨 유형이었는지, 해마다 무엇이 늘고 줄었는지, 시험 범위 지문 중
+    어느 것이 나왔는지를 표와 그래프로 정리합니다. 학부모 설명회 자료나
+    내신 대비반 안내문으로 그대로 인쇄해 쓰실 수 있습니다.
+  </p>
+  <a class="cta" href="/">기출 분석해 보기</a>
+  <p class="cta-note">쓰시려면 회원가입이 필요합니다. 시험지 유형 분석에는 포인트가 들지 않고, AI 총평을 쓸 때만 보고서 1건당 값이 매겨집니다.</p>
+</div></header>
+
+<main class="wrap">
+
+<section>
+  <h2>이런 보고서가 나옵니다</h2>
+  <div class="shots">
+    <figure class="shot">
+      <img src="/howto-trend-1.jpg" width="909" height="1195" loading="lazy"
+           alt="중학교 영어 기출 세 부를 분석한 출제경향 보고서 — 시험지별 문항 수·영역 도넛 그래프·유형별 막대와, 시험지마다 유형이 늘고 준 것을 겹친 막대그래프">
+      <figcaption>시험지 세 부를 합친 보고서 — 시험지별 분석 카드와 유형 변화 그래프</figcaption>
+    </figure>
+  </div>
+  <div class="shots two">
+    <figure class="shot">
+      <img src="/howto-trend-2.jpg" width="909" height="600" loading="lazy"
+           alt="시험지별 유형 출제 현황 표 — 유형마다 시험지별 문항 수·비율·매회 출제/가끔 출제/한 번만 구분, 그 아래 핵심 요약">
+      <figcaption>유형 출제 현황 표와 핵심 요약</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="/howto-trend-3.jpg" width="909" height="290" loading="lazy"
+           alt="AI가 쓴 시험지 분석 총평과 유형별 대비 전략 표">
+      <figcaption>시험지 분석 총평과 유형별 대비 전략</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <h2>보고서에 들어가는 것</h2>
+  <ul class="ticks">
+    <li><b>한눈에 보는 출제 현황</b>총 문항 수, 선다형·서답형 비율, 유형별 막대그래프, 대의·세부·논리·어법·서술 영역별 비중.</li>
+    <li><b>시험지별 분석</b>시험지마다 카드 한 장 — 문항 수, 영역 비중, 유형 막대, 그 시험에서만 나온 유형.</li>
+    <li><b>시험지별 유형 변화</b>1학기 중간 → 기말 → 2학기 중간처럼 차례대로 놓고, 유형마다 늘었는지 줄었는지 ▲▼로 표시합니다.</li>
+    <li><b>매회 출제 · 가끔 출제 · 한 번만</b>여러 해 시험지를 넣으면 꼭 대비해야 할 유형과 가끔 나오는 유형이 갈립니다.</li>
+    <li><b>시험 범위 지문별 출제율</b>교과서·부교재 지문을 넣어 두면 그중 어느 지문이 시험에 나왔는지, 몇 번 문항으로 나왔는지 표로 대조합니다.</li>
+    <li><b>목표 문법 출제 확인</b>"관계대명사 whose, 가정법 과거"처럼 적어 두면 시험지마다 그 문법이 나온 문항 번호와, 안 나온 문법이 보입니다.</li>
+    <li><b>시험지 분석 총평 · 유형별 대비 전략</b>집계표를 바탕으로 AI가 총평과 대비 전략을 씁니다. 화면에서 고친 뒤 인쇄하면 됩니다.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>이렇게 만듭니다</h2>
+  <ol class="steps">
+    <li><b>학교 이름과 학년·과목을 적습니다</b>보고서 제목에 찍힙니다.</li>
+    <li><b>기출 시험지 PDF나 사진을 올립니다</b>PDF 한 파일이 시험지 한 부입니다. 여러 해, 여러 학기 것을 함께 올리면 경향이 보입니다. 이름에 학기·차수가 있으면 이른 시험부터 저절로 정렬합니다.</li>
+    <li><b>(선택) 시험 범위 지문과 목표 문법을 넣습니다</b>범위를 비워 두면 유형만 읽어 훨씬 빠릅니다.</li>
+    <li><b>[분석하기]를 누릅니다</b>시험지 한 부에 몇 분 걸립니다. 끝나면 보고서와 총평이 이어서 나옵니다.</li>
+    <li><b>인쇄하거나 PDF로 저장합니다</b>학원 이름·로고·워터마크를 넣어 두면 보고서에 함께 찍힙니다.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>중학교 시험지도 됩니다</h2>
+  <p>
+    유형은 수능 번호가 아니라 중·고등 내신에서 두루 쓰는 이름으로 셉니다.
+    대화문 내용 파악, 영영풀이, 어법 개수 세기, 서술형 영작·배열처럼
+    중학교 시험에 많은 문항도 빠짐없이 세어집니다. 분류가 애매해 '기타'로 남은 문항은
+    문항 그림과 함께 따로 모아 보여 주고, 선생님이 분류를 골라 주면 보고서에 바로 반영됩니다.
+  </p>
+</section>
+
+<section>
+  <h2>카드뉴스로도 뽑습니다</h2>
+  <p>
+    같은 분석 결과를 정사각형 그림 여러 장으로 만들어 줍니다 — 표지, 많이 나온 유형,
+    영역별 비중, 늘고 준 유형, 범위 출제율, 한 줄 정리. 학부모 단톡방이나 학원 블로그에
+    바로 올리실 수 있고, 이 기능에는 요금이 없습니다.
+  </p>
+</section>
+
+<section>
+  <h2>분석한 기출로 동형 모의고사까지</h2>
+  <p>
+    저장해 둔 분석은 <a href="/exam.html">동형 모의고사</a> 탭에서 그대로 불러올 수 있습니다.
+    기출과 같은 유형 구성으로, 올해 시험 범위 지문을 넣어 시험지 한 벌을 만듭니다.
+    기출을 분석하고, 경향을 보여 주고, 같은 모양으로 연습시키는 흐름이 한 곳에서 이어집니다.
+  </p>
+  <a class="cta" href="/">지금 기출 분석해 보기</a>
+</section>
+
+</main>
+
+<div class="more"><div class="wrap">
+  <h2>다른 기능도 보기</h2>
+  <ul>
+    <li><a href="/exam.html"><b>동형 모의고사</b><span>기출 시험지 구성을 읽어 같은 모양으로</span></a></li>
+    <li><a href="/quiz.html"><b>변형문제</b><span>객관식 23 · 중학교 13 · 주관식 18유형</span></a></li>
+    <li><a href="/analyze.html"><b>지문 분석</b><span>끊어읽기·색 구분·문장별 해설과 출제 포인트</span></a></li>
+    <li><a href="/brief.html"><b>요약분석</b><span>얇게 들고 다니는 지문 요약 학습지</span></a></li>
+    <li><a href="/workbook.html"><b>워크북</b><span>빈칸·해석·영작까지 9단계 학습지</span></a></li>
+    <li><a href="/vocab.html"><b>단어장</b><span>지문에서 뽑은 어휘, 단어 시험지까지</span></a></li>
+    <li><a href="/faq.html"><b>자주 묻는 질문</b><span>요금·저작권·인쇄에 대한 답</span></a></li>
+  </ul>
+</div></div>
+
+<footer><div class="wrap">
+  <nav>
+    <a href="/">홈</a>
+    <a href="/terms.html">이용약관</a>
+    <a href="/privacy.html">개인정보처리방침</a>
+    <a href="/refund.html">환불정책</a>
+  </nav>
+  <div>English Lab — 영어 지문 분석·내신 변형문제 자동 제작</div>
+</div></footer>
+
+</body>
+</html>

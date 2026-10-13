@@ -142,3 +142,13 @@ ul.ticks b{display:block;}
 footer{padding:26px 0 50px; color:var(--ink-soft); font-size:14px;}
 footer nav{display:flex; gap:14px; flex-wrap:wrap; margin-bottom:10px;}
 footer a{color:var(--ink-soft);}
+
+/* ── 결과물 예시 그림 ──
+   '무엇이 나오는지'를 글보다 먼저 보여 주는 자리. 그림은 앱의 [❓ 만드는 법] 창이 쓰는
+   howto-*.jpg를 그대로 쓴다(그림을 갈아 끼우면 여기도 함께 바뀐다).
+   이미지 검색으로 들어오는 길이기도 해서 alt에 무엇을 보여 주는지 적는다. */
+.shots{display:grid; gap:14px; margin:4px 0 14px;}
+.shots.two{grid-template-columns:repeat(auto-fit,minmax(260px,1fr));}
+.shot{margin:0; background:var(--card); border-radius:12px; box-shadow:var(--shadow); overflow:hidden;}
+.shot img{display:block; width:100%; height:auto;}
+.shot figcaption{font-size:13px; color:var(--ink-soft); padding:8px 12px; border-top:1px solid var(--line-soft);}

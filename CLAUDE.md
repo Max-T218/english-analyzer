@@ -256,7 +256,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 
 ### 검색으로 들어오는 문 — `public/*.html` 소개 페이지
 
-`analyze` · `quiz` · `workbook` · `vocab` · `exam` · `faq` 여섯 쪽. 앱이 아니라
+`analyze` · `brief` · `quiz` · `workbook` · `vocab` · `exam` · `trend` · `faq` 여덟 쪽(`brief`·`trend`는 2026-10-14에 더했다). 앱이 아니라
 **검색 결과에서 눌러 들어오는 자리**라 `app.js`를 부르지 않고 가벼운 `page.css`
 하나만 씁니다(까닭은 그 파일 맨 위 주석).
 
@@ -267,6 +267,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 - **새 쪽을 만들면 `public/sitemap.xml`에 반드시 함께 적으세요.**
 - **어디서도 연결되지 않은 쪽은 사이트맵에 적어도 좀처럼 순위에 오르지 않습니다.**
   `index.html` 푸터(`site-footer-links`)와 각 쪽의 `.more` 칸이 그 연결입니다.
+- 결과물 예시 그림은 앱의 `howto-*.jpg`를 그대로 쓴다(`page.css`의 `.shots`) — 그림을 갈아 끼우면 소개 쪽도 함께 바뀐다.
 - `%%ASSET_V%%` 같은 치환 표시를 쓰면 안 됩니다 — `server.py`는 그 치환을
   `index.html`에만 해 주므로 다른 쪽에서는 글자 그대로 남아 깨진 주소가 됩니다.
 - **요금 숫자를 적지 마세요.** 아래 '가격은 예외입니다' 항목과 같은 이유입니다.
