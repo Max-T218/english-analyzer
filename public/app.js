@@ -650,6 +650,20 @@ function resetAgree() {
 // 시작 화면이 길어져서 로그인 버튼을 위아래 두 곳에 둔다 — 처음 온 사람은 소개를
 // 읽고 아래에서, 다시 온 사람은 위에서 바로 누른다. id는 하나뿐이라 클래스로 건다.
 document.querySelectorAll(".js-open-login").forEach((btn) => btn.addEventListener("click", () => openLoginModal()));
+// 첫 화면 오른쪽 '넣은 지문 → 나온 결과물' 미리보기 — 탭을 누르면 같은 지문으로 만든 결과물 그림을 바꿔 보인다
+(function gateDemo() {
+  const box = document.getElementById("gateDemo");
+  const img = document.getElementById("gateDemoImg");
+  if (!box || !img) return;
+  box.querySelectorAll(".gate-demo-tabs button").forEach((b) =>
+    b.addEventListener("click", () => {
+      box.querySelectorAll(".gate-demo-tabs button").forEach((x) => x.classList.toggle("on", x === b));
+      img.src = b.dataset.img;
+      img.parentElement.scrollTop = 0;
+    })
+  );
+})();
+
 function openSignupModal() {
   signupErrorEl.textContent = "";
   resetAgree();   // 동의는 창을 열 때마다 처음부터
