@@ -12944,6 +12944,36 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+    def do_HEAD(self):
+        """HEAD는 GET과 같은 머리말을 주고 본문만 뺀다. 없을 때는 http.server가 501로 답해,
+        HEAD로 주소를 확인하는 검색·링크 점검 도구가 사이트를 '열리지 않음'으로 보았다(2026-10-15).
+        /api/*는 로그인·과금이 걸린 것이 있어 HEAD로는 돌리지 않는다."""
+        if self.path.split("?", 1)[0].startswith("/api/"):
+            self.send_error(405)
+            return
+        real = self.wfile
+
+        class _Discard:
+            def write(self, b):
+                return len(b)
+
+            def flush(self):
+                pass
+
+        # 머리말(send_response/end_headers)은 그대로 real로 나가고, 본문 쓰기만 버린다
+        orig_end = self.end_headers
+
+        def end_headers_then_discard():
+            orig_end()
+            self.wfile = _Discard()
+
+        self.end_headers = end_headers_then_discard
+        try:
+            self.do_GET()
+        finally:
+            self.end_headers = orig_end
+            self.wfile = real
+
     def _handle_get(self):
         path = self.path.split("?", 1)[0]
 
