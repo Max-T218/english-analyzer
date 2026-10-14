@@ -2199,17 +2199,18 @@ TAB_SAVE.passage = {
   /* mode "append"면 지금 입력칸을 비우지 않고 뒤에 이어 붙인다 (저장함의 [뒤에 붙이기]).
      목표 어법은 그때 덮어쓰지 않는다 — 이어 붙이는 저장본의 값으로 지금 것을 바꾸면,
      앞서 불러온 지문에 맞춰 적어 둔 어법이 조용히 사라진다. 비어 있을 때만 채운다. */
-  applyPayload: (payload, mode) => {
+  applyPayload: (payload, mode, info) => {
     if (mode === "append") {
       const { added, full } = passageMgr.appendJobs(payload.passages || []);
       if (!grammarEl.value.trim()) grammarEl.value = payload.targetGrammar || "";
       if (payload.targetVocab) quizVocab.append(parseVocabLines(payload.targetVocab).map((e) => ({
         word: e.word, meaning: e.meaning, synonym: e.syn })));
       const total = passageMgr.getJobs().length;
+      const skipped = dupSkipNote((info || {}).dupSkipped);
       ocrStatus(
         full
-          ? `지문 ${added}개를 뒤에 붙였습니다 (총 ${total}개). 칸이 가득 차 나머지는 넣지 못했습니다 — 필요 없는 지문을 지우고 다시 붙여 주세요.`
-          : `지문 ${added}개를 뒤에 붙였습니다 (총 ${total}개).`,
+          ? `지문 ${added}개를 뒤에 붙였습니다 (총 ${total}개).${skipped} 칸이 가득 차 나머지는 넣지 못했습니다 — 필요 없는 지문을 지우고 다시 붙여 주세요.`
+          : `지문 ${added}개를 뒤에 붙였습니다 (총 ${total}개).${skipped}`,
         full ? "warn" : "ok"
       );
     } else {
@@ -9448,6 +9449,23 @@ async function loadSavedItem(id, mode) {
     const append = mode === "append";
     // 탭이 불러오기 전에 확인할 일이 있으면 맡긴다(시험지 분석 리포트: 하던 분석이 사라지므로 묻는다)
     if (TAB_SAVE[tab].beforeLoad && TAB_SAVE[tab].beforeLoad() === false) return;
+    /* 뒤에 붙일 지문 중 이미 칸에 있는 것과 같은 지문이 있으면 건너뛸지 묻는다.
+       같은 저장본을 두 번 붙이거나, '1과'·'1~2과'처럼 겹치는 저장본을 둘 다 붙이면
+       같은 지문이 두 번 들어가 결과물에도 두 번 나온다. */
+    let dupSkipped = 0;
+    if (append && tab === PASSAGE_TAB) {
+      const payload = item.payload || {};
+      const mgr = passageLoadTo ? passageLoadTo.mgr : passageMgr;
+      const { fresh, dup } = splitDupPassages(mgr.getJobs(), payload.passages || []);
+      if (dup) {
+        const pick = await askDupSkip(dup, (payload.passages || []).length);
+        if (!pick) return;   // 취소 — 아무것도 안 바뀐다(저장함은 그대로 열려 있다)
+        if (pick === "skip") {
+          item.payload = { ...payload, passages: fresh };
+          dupSkipped = dup;
+        }
+      }
+    }
     savedListModalEl.hidden = true;
     /* 목적지가 따로 정해져 있으면(시험지 탭의 시험 범위 칸) 그 칸에만 넣고 끝낸다.
        아래 본줄기를 타면 안 된다 — 통째로 바꿀 때 clearAllTabResults()가 화면의
@@ -9484,6 +9502,7 @@ async function loadSavedItem(id, mode) {
         msg = full
           ? `지문 ${added}개를 뒤에 붙였습니다 (총 ${mgr.getJobs().length}개). 칸이 가득 차 나머지는 넣지 못했습니다.`
           : `지문 ${added}개를 뒤에 붙였습니다 (총 ${mgr.getJobs().length}개).`;
+        msg += dupSkipNote(dupSkipped);
       } else {
         const { added, dropped } = mgr.setJobs(list);
         msg = dropped
@@ -9534,7 +9553,7 @@ async function loadSavedItem(id, mode) {
       // 다른 탭에 남아 있던 '어느 자료에서 왔는가'도 함께 잊는다 — 결과물을 다 지웠으므로
       Object.keys(LOADED_SAVED).forEach((k) => delete LOADED_SAVED[k]);
     }
-    TAB_SAVE[tab].applyPayload(item.payload || {}, append ? "append" : "replace");
+    TAB_SAVE[tab].applyPayload(item.payload || {}, append ? "append" : "replace", { dupSkipped });
     /* 이 자료를 고치는 중이라고 기억해 둔다 — 저장할 때 '덮어쓰기'가 뜬다.
        뒤에 붙인 경우는 두 자료가 섞인 것이라 어느 쪽도 아니므로 기억하지 않는다. */
     if (append) delete LOADED_SAVED[tab];
@@ -9570,6 +9589,52 @@ function openLoadModeDialog(id, currentCount) {
     `불러올 지문을 그 뒤에 이어 붙일까요, 아니면 지금 것을 지우고 새로 넣을까요?`;
   loadModeDialogEl.hidden = false;
 }
+/* 같은 지문인지 가리는 열쇠 — 띄어쓰기·줄바꿈·문장부호·대소문자만 다른 것은 같은 지문으로 본다.
+   앞머리만 보는 passageKey(시험지 읽기용)와 달리 본문 전체를 본다 — 선생님이 조금 고쳐 둔
+   변형 지문까지 같은 것으로 잡으면 안 되기 때문이다. */
+function passageTextKey(text) {
+  return String(text || "").replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+}
+// 붙일 지문(jobs)을 이미 칸에 있는 것(have)과 견주어 새 것(fresh)과 겹친 수(dup)로 나눈다.
+// 붙일 지문끼리 겹치는 것도 센다(한 저장본 안에 같은 지문이 두 번 있는 경우).
+function splitDupPassages(have, jobs) {
+  const seen = new Set((have || []).map((j) => passageTextKey(j && j.text)).filter(Boolean));
+  const fresh = [];
+  let dup = 0;
+  for (const job of jobs || []) {
+    const k = passageTextKey(job && job.text);
+    if (k && seen.has(k)) { dup++; continue; }
+    if (k) seen.add(k);
+    fresh.push(job);
+  }
+  return { fresh, dup };
+}
+const dupSkipNote = (n) => (n ? ` 이미 들어 있는 지문과 같은 ${n}개는 건너뛰었습니다.` : "");
+
+// 같은 지문을 건너뛸지 묻는다 — "skip"(건너뛰기) · "all"(그대로 모두) · null(취소)
+const dupSkipDialogEl = $("dupSkipDialog");
+let dupSkipResolve = null;
+function askDupSkip(dup, total) {
+  const where = passageLoadTo ? passageLoadTo.label : "입력칸";
+  $("dupSkipLead").textContent =
+    `불러올 지문 ${total}개 중 ${dup}개는 지금 ${where}에 있는 지문과 같습니다. ` +
+    `같은 지문은 건너뛰고 붙일까요?`;
+  dupSkipDialogEl.hidden = false;
+  return new Promise((resolve) => { dupSkipResolve = resolve; });
+}
+function closeDupSkip(answer) {
+  dupSkipDialogEl.hidden = true;
+  const r = dupSkipResolve;
+  dupSkipResolve = null;
+  if (r) r(answer);
+}
+$("dupSkipYes").addEventListener("click", () => closeDupSkip("skip"));
+$("dupSkipAll").addEventListener("click", () => closeDupSkip("all"));
+$("dupSkipCancel").addEventListener("click", () => closeDupSkip(null));
+dupSkipDialogEl.addEventListener("click", (e) => {
+  if (e.target === dupSkipDialogEl) closeDupSkip(null);
+});
+
 $("loadModeCancel").addEventListener("click", closeLoadModeDialog);
 loadModeDialogEl.addEventListener("click", (e) => {
   if (e.target === loadModeDialogEl) closeLoadModeDialog();
@@ -10390,6 +10455,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   // 불러오기 방식 창은 저장함 위에 겹쳐 있다 — 겹쳤을 때는 위엣것만 닫는다
   if (!loadModeDialogEl.hidden) { closeLoadModeDialog(); return; }
+  if (!dupSkipDialogEl.hidden) { closeDupSkip(null); return; }
   if (!saveDialogEl.hidden) closeSaveDialog();
   if (!savedListModalEl.hidden) closeSavedList();   // 목적지(passageLoadTo)도 함께 잊는다
   if (!usageModalEl.hidden) usageModalEl.hidden = true;

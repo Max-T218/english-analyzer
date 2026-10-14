@@ -2509,6 +2509,19 @@
   </div>
 </div>
 
+<!-- 뒤에 붙일 지문 중 이미 칸에 있는 것과 같은 지문이 있으면 건너뛸지 묻는다 -->
+<div class="print-guide" id="dupSkipDialog" hidden>
+  <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="dupSkipTitle">
+    <h3 id="dupSkipTitle">📄 같은 지문이 있습니다</h3>
+    <p class="print-guide-lead" id="dupSkipLead"></p>
+    <div class="print-guide-actions">
+      <button type="button" class="btn ghost" id="dupSkipCancel">취소</button>
+      <button type="button" class="btn ghost" id="dupSkipAll">그대로 모두 붙이기</button>
+      <button type="button" class="btn" id="dupSkipYes">같은 지문은 건너뛰기</button>
+    </div>
+  </div>
+</div>
+
 <div class="print-guide" id="usageModal" hidden>
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="usageTitle">
     <h3 id="usageTitle">🧾 이용 내역</h3>
