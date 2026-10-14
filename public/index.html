@@ -1081,16 +1081,16 @@
     </div>
 
     <!-- 학원 마크 칸 — 탭마다 실행 단추 바로 위(각 탭의 [data-brand-slot])로 옮겨 가서 보인다.
-         평소에는 한 줄(지금 넣은 것 요약)로 접어 두고, 누르면 펼친다. 예전에 <details>로 접었을 때
+         처음에는 펼쳐 두고(2026-10-14 사용자), 줄을 누르면 한 줄 요약으로 접힌다. 예전에 <details>로 접었을 때
          접힌 줄이 눈에 안 띄어 '사라졌다'는 오해가 있었으므로, 접힌 줄도 강조색 상자 그대로 두고
          오른쪽에 [펼치기 ▾]를 글자로 적는다(2026-10-14). -->
     <div class="brand-panel">
-      <button type="button" class="brand-toggle" id="brandToggle" aria-expanded="false" aria-controls="brandBody">
+      <button type="button" class="brand-toggle" id="brandToggle" aria-expanded="true" aria-controls="brandBody">
         <span class="brand-title">🏫 학원 마크</span>
         <span class="brand-summary" id="brandSummary"></span>
-        <span class="brand-toggle-act" id="brandToggleAct">펼치기 ▾</span>
+        <span class="brand-toggle-act" id="brandToggleAct">접기 ▴</span>
       </button>
-      <div class="brand-body" id="brandBody" hidden>
+      <div class="brand-body" id="brandBody">
         <div class="hint brand-where">학원명은 인쇄물 좌측 하단, 로고는 우측 하단, 워터마크는 쪽 전체 뒷배경에 찍힙니다. 모든 탭이 같은 마크를 쓰며, 창을 닫으면 지워집니다.</div>
         <div class="row">
           <div class="field">

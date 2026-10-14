@@ -1242,7 +1242,7 @@ const brandSummaryEl = $("brandSummary");
 const brandToggleEl = $("brandToggle");
 const brandBodyEl = $("brandBody");
 
-// 접기/펼치기 — 기본은 접힘(한 줄 요약만). 탭을 옮겨도 칸은 하나라 펼친 상태가 그대로 따라간다.
+// 접기/펼치기 — 기본은 펼침(2026-10-14 사용자). 접으면 한 줄 요약만 남는다. 탭을 옮겨도 칸은 하나라 펼친 상태가 그대로 따라간다.
 if (brandToggleEl && brandBodyEl) {
   brandToggleEl.addEventListener("click", () => {
     const open = brandBodyEl.hidden;
