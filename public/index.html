@@ -1080,9 +1080,18 @@
       </div>
     </div>
 
+    <!-- 학원 마크 칸 — 탭마다 실행 단추 바로 위(각 탭의 [data-brand-slot])로 옮겨 가서 보인다.
+         평소에는 한 줄(지금 넣은 것 요약)로 접어 두고, 누르면 펼친다. 예전에 <details>로 접었을 때
+         접힌 줄이 눈에 안 띄어 '사라졌다'는 오해가 있었으므로, 접힌 줄도 강조색 상자 그대로 두고
+         오른쪽에 [펼치기 ▾]를 글자로 적는다(2026-10-14). -->
     <div class="brand-panel">
-      <div class="brand-title">🏫 학원 마크 <span class="sub">(학원명은 인쇄물 좌측 하단, 로고는 우측 하단, 워터마크는 쪽 전체 뒷배경 · 창을 닫으면 지워집니다)</span></div>
-      <div class="brand-body">
+      <button type="button" class="brand-toggle" id="brandToggle" aria-expanded="false" aria-controls="brandBody">
+        <span class="brand-title">🏫 학원 마크</span>
+        <span class="brand-summary" id="brandSummary"></span>
+        <span class="brand-toggle-act" id="brandToggleAct">펼치기 ▾</span>
+      </button>
+      <div class="brand-body" id="brandBody" hidden>
+        <div class="hint brand-where">학원명은 인쇄물 좌측 하단, 로고는 우측 하단, 워터마크는 쪽 전체 뒷배경에 찍힙니다. 모든 탭이 같은 마크를 쓰며, 창을 닫으면 지워집니다.</div>
         <div class="row">
           <div class="field">
             <label for="brandName">학원명 (선택)</label>
@@ -1106,9 +1115,9 @@
         </div>
       </div>
     </div>
-    <!-- 학원 마크 칸이 원래 있던 자리 표시.
-         시험지 제작은 이 칸을 '만들기 직전' 단계로 옮겨서 보여 주는데(단계별 흐름),
-         탭을 벗어나면 여기로 돌려놓아야 한다. 입력칸을 하나 더 만드는 대신 같은
+    <!-- 학원 마크 칸이 원래 있던 자리 표시(여기서는 보이지 않는다 — 탭을 고르기 전에만 머문다).
+         탭마다 '만들기 직전' 자리로 옮겨서 보여 주고,
+         탭을 벗어나면 여기로 돌려놓는다. 입력칸을 하나 더 만드는 대신 같은
          DOM을 옮기는 이유는 값이 localStorage 하나에 걸려 있어 입력칸이 둘이 되면
          서로 동기화해야 하기 때문이다. -->
     <span id="brandHome" hidden></span>
@@ -1237,6 +1246,7 @@
           <span class="chk-sub img-langs-note" id="infoLangNote"></span>
         </div>
       </div>
+      <div class="brand-slot" id="analyzeBrandSlot"></div>
       <div class="actions">
         <button class="btn" id="analyzeBtn">분석하기</button>
         <!-- 이 탭에서 저장한 자료만 모아 연다(openSavedList의 "tab" 창). 실행 단추
@@ -1303,6 +1313,7 @@
           <span class="chk-sub img-langs-note" id="briefLangNote"></span>
         </div>
       </div>
+      <div class="brand-slot" id="briefBrandSlot"></div>
       <div class="actions">
         <button class="btn" id="briefBtn">요약분석 만들기</button>
         <!-- 이 탭에서 저장한 자료만 모아 연다(openSavedList의 "tab" 창). 실행 단추
@@ -1384,6 +1395,7 @@
           <div class="hint">시험지 맨 위와 정답지에 이 이름이 찍히고, 인쇄·PDF 첫 장에는 제목과 날짜만 담긴 표지가 한 장 붙습니다. 인쇄창·저장창에서 적는 이름과 같은 칸입니다.</div>
         </div>
       </div>
+      <div class="brand-slot" id="mcqBrandSlot"></div>
       <div class="actions">
         <button class="btn" id="mcqBtn">문제 만들기</button>
         <!-- 이 탭에서 저장한 자료만 모아 연다(openSavedList의 "tab" 창). 실행 단추
@@ -1469,6 +1481,7 @@
           <div class="hint">시험지 맨 위와 정답지에 이 이름이 찍히고, 인쇄·PDF 첫 장에는 제목과 날짜만 담긴 표지가 한 장 붙습니다. 인쇄창·저장창에서 적는 이름과 같은 칸입니다.</div>
         </div>
       </div>
+      <div class="brand-slot" id="saqBrandSlot"></div>
       <div class="actions">
         <button class="btn" id="saqBtn">문제 만들기</button>
         <!-- 이 탭에서 저장한 자료만 모아 연다(openSavedList의 "tab" 창). 실행 단추
@@ -1550,6 +1563,7 @@
           <div class="hint">시험지 맨 위와 정답지에 이 이름이 찍히고, 인쇄·PDF 첫 장에는 제목과 날짜만 담긴 표지가 한 장 붙습니다. 인쇄창·저장창에서 적는 이름과 같은 칸입니다.</div>
         </div>
       </div>
+      <div class="brand-slot" id="mixBrandSlot"></div>
       <div class="actions">
         <button class="btn" id="mixBtn">문제 만들기</button>
         <button type="button" class="btn ghost" id="mixLoadBtn">📂 불러오기</button>
@@ -1619,6 +1633,7 @@
         </div>
       </div>
 
+      <div class="brand-slot" id="wbBrandSlot"></div>
       <div class="actions">
         <button class="btn" id="wbBtn">워크북 만들기</button>
         <!-- 이 탭에서 저장한 자료만 모아 연다(openSavedList의 "tab" 창). 실행 단추
@@ -1751,6 +1766,7 @@
         </div>
       </div>
 
+      <div class="brand-slot" id="vocabBrandSlot"></div>
       <div class="actions">
         <button class="btn" id="vocabBtn">단어장 만들기</button>
         <!-- 이 탭에서 저장한 자료만 모아 연다(openSavedList의 "tab" 창). 실행 단추

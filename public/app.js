@@ -1238,6 +1238,19 @@ const brandRemoveBtn = $("brandRemoveBtn");
 const brandMarkEl = $("brandMark");
 const brandNameOutEl = $("printBrandName");
 const printWatermarkEl = $("printWatermark");
+const brandSummaryEl = $("brandSummary");
+const brandToggleEl = $("brandToggle");
+const brandBodyEl = $("brandBody");
+
+// 접기/펼치기 — 기본은 접힘(한 줄 요약만). 탭을 옮겨도 칸은 하나라 펼친 상태가 그대로 따라간다.
+if (brandToggleEl && brandBodyEl) {
+  brandToggleEl.addEventListener("click", () => {
+    const open = brandBodyEl.hidden;
+    brandBodyEl.hidden = !open;
+    brandToggleEl.setAttribute("aria-expanded", String(open));
+    $("brandToggleAct").textContent = open ? "접기 ▴" : "펼치기 ▾";
+  });
+}
 
 function renderBrand() {
   const img = localStorage.getItem(BRAND_IMG_STORE) || "";
@@ -1264,6 +1277,15 @@ function renderBrand() {
   // 비어 있으면 CSS가 자동으로 숨긴다
   if (brandMarkEl) {
     brandMarkEl.innerHTML = img ? `<img src="${esc(img)}" alt="">` : "";
+  }
+
+  // 접힌 줄에 보이는 요약 — 펼치지 않아도 지금 무엇이 찍히는지 알게 한다
+  if (brandSummaryEl) {
+    const parts = [name, img && "로고", wm && "워터마크"].filter(Boolean);
+    brandSummaryEl.textContent = parts.length
+      ? `${parts.join(" · ")} — 인쇄물에 찍힙니다`
+      : "넣지 않음 — 넣으면 인쇄물마다 학원명·로고가 찍힙니다";
+    brandSummaryEl.classList.toggle("on", parts.length > 0);
   }
 
   // 설정 패널 미리보기
@@ -2905,9 +2927,8 @@ syncPager();
      · 단어장은 지문칸을 아예 읽지 않는다 — 지문 분석 결과(이미 저장된 값)나
        직접 입력·사진·PDF로만 채운다. 지문칸이 떠 있으면 '여기다 지문을 넣어야
        하나' 하고 헷갈리게 되므로, 쓰지도 않는 칸을 보여줄 이유가 없다.
-   학원 마크는 기출 탭에서만 '만들기 직전' 단계로 옮겨 보여 준다(#examBrandSlot) —
-   단어장도 인쇄 문서를 만들므로 마크 칸은 그대로 둔다.
-   탭을 벗어나면 원래 자리(#brandHome 앞)로 돌려놓는다 — 다른 탭은 이 칸을 계속 쓴다. */
+   학원 마크는 탭마다 '만들기 직전' 자리(실행 단추 위)로 옮겨 보여 준다 — 칸은 하나뿐이고
+   자리만 옮긴다. 탭을 고르기 전에는 원래 자리(#brandHome 앞)에서 감춰 둔다. */
 const sharedPassagePanel = document.querySelector(".passage-panel");
 const brandPanelEl = document.querySelector(".brand-panel");
 const brandHomeEl = $("brandHome");
@@ -2931,11 +2952,18 @@ function syncTabChrome(tab) {
      시험지 분석 리포트는 보고서가 나온 뒤 인쇄 단추 위(#trendBrandSlot, trendRender가 그린다)로
      옮긴다 — 보고서에도 학원 마크를 넣게 되면서(2026-09-29) 칸이 이 탭에서 안 보여 어디서
      넣는지 몰랐다. 보고서가 아직 없으면 감춘다. */
-  const examSlot = onExam && !examPaperPanelEl.hidden ? $("examBrandSlot") : null;
-  const trendSlot = onTrend ? $("trendBrandSlot") : null;
-  moveBrandPanel(examSlot || trendSlot);
-  if (brandPanelEl) brandPanelEl.hidden = (onExam && !examSlot) || (onTrend && !trendSlot);
+  /* 나머지 탭은 실행 단추 바로 위(#<탭>BrandSlot)로 옮긴다 — 화면 맨 위에 두었더니 지문을 넣기도
+     전에 큰 칸이 먼저 보였고, 인쇄물에 찍히는 제목 칸과 떨어져 있었다(2026-10-14 사용자).
+     자리가 없는 화면(탭을 고르기 전, 반/학생 관리)에서는 감춘다. */
+  const SLOT_ID = { analyze: "analyzeBrandSlot", brief: "briefBrandSlot", mcq: "mcqBrandSlot",
+    saq: "saqBrandSlot", mix: "mixBrandSlot", workbook: "wbBrandSlot", vocab: "vocabBrandSlot" };
+  const slot = onExam ? (!examPaperPanelEl.hidden ? $("examBrandSlot") : null)
+    : onTrend ? $("trendBrandSlot")
+    : SLOT_ID[tab] ? $(SLOT_ID[tab]) : null;
+  moveBrandPanel(slot);
+  if (brandPanelEl) brandPanelEl.hidden = !slot;
 }
+syncTabChrome(null);   // 탭을 고르기 전에는 마크 칸을 감춘다
 
 function hideExamTab() {
   examTabBtn.hidden = true;
