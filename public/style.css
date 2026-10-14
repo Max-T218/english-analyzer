@@ -1450,19 +1450,8 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 }
 .brand-title{font-weight:700; color:var(--brand); font-size:13px;}
 .brand-title .sub{color:var(--ink-soft); font-weight:600; font-size:11px;}
-/* 2026-10-14부터 탭마다 실행 단추 위로 옮겨 와 접어 둔다. 접힌 줄도 강조색 상자 그대로라
-   예전 <details>처럼 '사라졌다'고 보이지 않는다. 줄 전체가 누르는 자리다. */
+/* 2026-10-14부터 탭마다 실행 단추 위로 옮겨 온다 */
 .brand-slot .brand-panel{margin:4px 0 12px;}
-.brand-toggle{
-  display:flex; align-items:center; gap:10px; width:100%;
-  background:none; border:0; padding:0; font:inherit; text-align:left; cursor:pointer;
-}
-.brand-summary{flex:1; min-width:0; font-size:12px; color:var(--ink-soft);
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-.brand-summary.on{color:var(--ink); font-weight:600;}
-.brand-toggle-act{flex:0 0 auto; font-size:12px; font-weight:700; color:var(--brand);}
-.brand-toggle:hover .brand-toggle-act{text-decoration:underline;}
-.brand-where{margin:0 0 8px;}
 .brand-body{margin-top:8px;}
 .brand-body .row{margin-top:0;}
 .brand-body label{font-size:12px; margin-bottom:4px;}

@@ -1238,19 +1238,6 @@ const brandRemoveBtn = $("brandRemoveBtn");
 const brandMarkEl = $("brandMark");
 const brandNameOutEl = $("printBrandName");
 const printWatermarkEl = $("printWatermark");
-const brandSummaryEl = $("brandSummary");
-const brandToggleEl = $("brandToggle");
-const brandBodyEl = $("brandBody");
-
-// 접기/펼치기 — 기본은 펼침(2026-10-14 사용자). 접으면 한 줄 요약만 남는다. 탭을 옮겨도 칸은 하나라 펼친 상태가 그대로 따라간다.
-if (brandToggleEl && brandBodyEl) {
-  brandToggleEl.addEventListener("click", () => {
-    const open = brandBodyEl.hidden;
-    brandBodyEl.hidden = !open;
-    brandToggleEl.setAttribute("aria-expanded", String(open));
-    $("brandToggleAct").textContent = open ? "접기 ▴" : "펼치기 ▾";
-  });
-}
 
 function renderBrand() {
   const img = localStorage.getItem(BRAND_IMG_STORE) || "";
@@ -1277,15 +1264,6 @@ function renderBrand() {
   // 비어 있으면 CSS가 자동으로 숨긴다
   if (brandMarkEl) {
     brandMarkEl.innerHTML = img ? `<img src="${esc(img)}" alt="">` : "";
-  }
-
-  // 접힌 줄에 보이는 요약 — 펼치지 않아도 지금 무엇이 찍히는지 알게 한다
-  if (brandSummaryEl) {
-    const parts = [name, img && "로고", wm && "워터마크"].filter(Boolean);
-    brandSummaryEl.textContent = parts.length
-      ? `${parts.join(" · ")} — 인쇄물에 찍힙니다`
-      : "넣지 않음 — 넣으면 인쇄물마다 학원명·로고가 찍힙니다";
-    brandSummaryEl.classList.toggle("on", parts.length > 0);
   }
 
   // 설정 패널 미리보기
