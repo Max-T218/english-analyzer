@@ -2921,6 +2921,51 @@ def _strip_own_marker(text, idx):
     return text
 
 
+# 순서 문항의 보기 다섯 — 수능·내신이 쓰는 그 다섯이다. (A)-(B)-(C)는 없다(읽은 순서가 곧 답이 되므로).
+_ORDER_CHOICES = ("(A)-(C)-(B)", "(B)-(A)-(C)", "(B)-(C)-(A)", "(C)-(A)-(B)", "(C)-(B)-(A)")
+_ORDER_BLOCK_RE = re.compile(r"<b>\s*\(([ABC])\)\s*</b>")
+
+
+def _normalize_order_question(q):
+    """순서 문항의 (A)(B)(C) 덩이를 다시 이름 붙여, 지면에 실린 차례가 정답이 되는 일을 막는다.
+
+    지시문은 덩이를 섞어 실으라고 하지만, 모델이 원래 차례 그대로 (A)(B)(C)를 붙이고
+    보기에 '(A)-(B)-(C)'를 넣어 정답으로 삼는 일이 있었다(2026-10-15 샘플 세트) — 읽은 차례가
+    곧 답이라 문제가 되지 않는다. 덩이의 참 차례는 정답 보기에서 읽어 내고, 정답 번호는 그대로
+    둔 채 보기를 위 다섯으로 바꾸고 그 번호의 차례가 참 차례가 되도록 이름을 다시 붙인다.
+    해설 속 (A)(B)(C)도 같은 짝으로 바꾼다. 모양을 못 읽으면 손대지 않는다."""
+    html = q.get("passageHtml") or ""
+    parts = _ORDER_BLOCK_RE.split(html)
+    # parts = [머리, 이름1, 글1, 이름2, 글2, 이름3, 글3]
+    if len(parts) != 7 or sorted(parts[1::2]) != ["A", "B", "C"]:
+        return
+    try:
+        ans = int(q.get("answer"))
+        true_order = re.findall(r"\(([ABC])\)", (q.get("choices") or [])[ans - 1])
+    except (TypeError, ValueError, IndexError):
+        return
+    if not 1 <= ans <= 5 or sorted(true_order) != ["A", "B", "C"]:
+        return
+    head = parts[0]
+    body = {parts[i]: parts[i + 1] for i in (1, 3, 5)}
+    # 참 차례로 i번째 덩이에 새 이름 _ORDER_CHOICES[ans-1]의 i번째 글자를 준다
+    new_names = re.findall(r"\(([ABC])\)", _ORDER_CHOICES[ans - 1])
+    rename = {old: new for old, new in zip(true_order, new_names)}
+    blocks = sorted(((rename[old], txt) for old, txt in body.items()), key=lambda b: b[0])
+    # 덩이 앞뒤 공백·줄바꿈은 원래 모양을 따르되, 덩이 사이는 <br><br>로 맞춘다
+    pieces = []
+    for name, txt in blocks:
+        txt = re.sub(r"^\s+", " ", txt)
+        txt = re.sub(r"(\s*<br\s*/?>\s*)+$", "", txt)
+        pieces.append(f"<b>({name})</b>{txt}")
+    q["passageHtml"] = head + "<br><br>".join(pieces)
+    q["choices"] = list(_ORDER_CHOICES)
+    if q.get("explanation"):
+        q["explanation"] = re.sub(
+            r"\(([ABC])\)", lambda m: f"({rename[m.group(1)]})", q["explanation"]
+        )
+
+
 def sanitize_quiz_html(html):
     """문제 지문 HTML에서 <br>/<u>/<b> 만 남기고 나머지 태그는 제거한다."""
     if not html:
@@ -3099,6 +3144,9 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
             marks = _INSERT_MARK_RE.findall(re.sub(r"<[^>]*>", " ", q.get("passageHtml") or ""))
             if INSERTION_MIN_CHOICES <= len(marks) <= 5 and "".join(marks) == "①②③④⑤"[:len(marks)]:
                 q["choices"] = marks
+        # 순서는 지면 차례가 곧 답이 되지 않게 (A)(B)(C)를 다시 이름 붙인다
+        if q.get("type") == "순서":
+            _normalize_order_question(q)
         # 조건 영작의 낱말 수 조건은 모델이 아니라 여기서 붙인다
         if q.get("type") == "조건 영작":
             attach_word_count_condition(q)
