@@ -221,7 +221,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 `exam`으로 들어갔는데, `savedTabOf`가 내용(시험지 없이 구성표만)·제목('기출구성')으로 가려 `examspec`으로 다룬다. 창 문구는 글자일 수도 함수일
 수도 있어 `libWord`로 꺼내고, 기본 문구와 달라야 하는 탭만 `TAB_LIBRARY_WORDS`에
 적는다) ·
-`openSavedList` / `loadSavedItem` / `passageLoadTo` / `passageSaveFrom`(저장함도 저장
+`savedPick`/`loadPickedItems`(지문 저장함에서 **여러 저장본을 체크한 차례대로** 한꺼번에 불러온다 — 체크박스 번호표가 곧 차례이고, 받은 저장본을 한 덩어리 가짜 저장본(`_multi`)으로 합쳐 `loadSavedItem`에 한 번만 넘기므로 '이어 붙일까'·'같은 지문 건너뛸까'도 한 번만 묻는다. 목록 응답 `n`=지문 개수, 입력칸 상한 40개[시험 범위 칸 100개]를 선택 바가 미리 알린다. 합친 저장본은 `LOADED_SAVED`에 기억하지 않는다) · `openSavedList` / `loadSavedItem` / `passageLoadTo` / `passageSaveFrom`(저장함도 저장
 종류도 한 벌인데 **담고 꺼내는 칸만 바꾼다**. 불러온 지문이
 들어갈 칸만 바꾼다 — 기본은 공용 지문칸이고, 시험지 탭의 '📄 저장함에서 가져오기'로
 열었을 때만 시험 범위 칸으로 간다. 이 길은 `clearAllTabResults`를 타지 않는다 —

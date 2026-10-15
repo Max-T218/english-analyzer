@@ -9297,10 +9297,14 @@ function savedDateText(iso) {
 
 function savedItemRowHtml(item) {
   const label = TAB_LABELS[item.tab] || item.tab;
-  const date = savedDateText(item.updated_at);
+  const date = savedDateText(item.updated_at) + (typeof item.n === "number" ? ` · 지문 ${item.n}개` : "");
+  // 지문 저장함에서만 체크박스를 둔다 — 체크한 차례가 번호로 보이고, 그 차례대로 입력칸에 들어간다
+  const at = openLibrary === "passage" ? savedPick.indexOf(item.id) : -2;
+  const pick = at === -2 ? "" :
+    `<label class="saved-pick" title="체크한 차례대로 입력칸에 들어갑니다."><input type="checkbox" class="saved-pick-cb"${at >= 0 ? " checked" : ""}><span class="saved-pick-no">${at >= 0 ? at + 1 : ""}</span></label>`;
   return `
     <div class="saved-list-item" data-id="${esc(item.id)}">
-      <span class="saved-list-tag">${esc(label)}</span>
+      ${pick}<span class="saved-list-tag">${esc(label)}</span>
       <div class="saved-list-info">
         <div class="saved-list-title" title="${esc(item.title || "제목 없음")}">${esc(item.title || "제목 없음")}</div>
         <div class="saved-list-date">${esc(date)}</div>
@@ -9345,6 +9349,7 @@ const LIBRARY = {
     title: "📄 지문 저장함",
     lead: "저장해 둔 지문입니다. [불러오기]를 누르면 입력칸으로 가져옵니다 — 이미 입력해 둔 " +
           "지문이 있으면, 뒤에 이어 붙일지 지우고 새로 넣을지 그때 물어봅니다. " +
+          "여러 개를 한꺼번에 쓰려면 앞의 체크박스를 쓸 차례대로 누르고(차례는 아래 목록의 ↑↓나 [이름순 정렬]로 고칠 수 있습니다) [선택한 N개 불러오기]를 누르세요. " +
           "[✏️ 이름]으로 저장본 이름을 바꿀 수 있습니다.",
     empty: "아직 저장한 지문이 없습니다. 지문을 입력한 뒤 “💾 지문 저장”을 눌러 보세요.",
     match: (item) => item.tab === PASSAGE_TAB,
@@ -9393,6 +9398,7 @@ let savedItemsCache = [];
 let openLibrary = "passage";
 let savedKindFilter = "";   // "" = 전체
 let savedSearchText = "";
+let savedPick = [];         // 지문 저장함에서 체크한 저장본 id — 체크한 차례 그대로(= 불러올 차례)
 
 // 묶음 순서는 TAB_LABELS에 적은 차례를 그대로 따른다 — 화면 탭 차례와 같아서
 // "워크북은 단어장 앞" 같은 감각이 저장함에서도 그대로 통한다.
@@ -9412,9 +9418,56 @@ function savedItemMatches(item) {
   return hay.includes(savedSearchText);
 }
 
+/* 선택 바 — 체크한 개수·지문 합계·입력칸 상한을 보여 주고 [불러오기]를 켠다.
+   상한은 공용 지문칸 40개, 시험지 탭의 시험 범위 칸은 100개다. 넘으면 빨갛게 알린다(넘어도 막지는 않는다 —
+   뒤쪽이 잘린다는 안내가 불러온 뒤에 따로 나온다). */
+function updatePickBar() {
+  const bar = $("savedPickBar");
+  const on = openLibrary === "passage";
+  bar.hidden = !on;
+  if (!on) return;
+  const picked = savedPick.map((id) => savedItemsCache.find((it) => it.id === id)).filter(Boolean);
+  const total = picked.reduce((n, it) => n + (typeof it.n === "number" ? it.n : 0), 0);
+  const limit = passageLoadTo ? EXAM_PAPER_MAX_PASSAGES : MAX_PASSAGES;
+  const info = $("savedPickInfo");
+  info.classList.toggle("over", total > limit);
+  info.textContent = picked.length
+    ? `${picked.length}개 선택 · 지문 합계 ${total}개 (입력칸 최대 ${limit}개)` +
+      (total > limit ? " — 넘는 뒤쪽 지문은 들어가지 않습니다." : "")
+    : "저장본 앞의 체크박스를 누른 차례대로 입력칸에 들어갑니다.";
+  $("savedPickLoad").disabled = !picked.length;
+  $("savedPickLoad").textContent = picked.length ? `선택한 ${picked.length}개 불러오기` : "선택한 저장본 불러오기";
+  $("savedPickClear").disabled = !picked.length;
+  $("savedPickSort").disabled = picked.length < 2;
+  // 불러올 차례 목록 — 두 개 이상일 때만 순서를 고칠 일이 있다
+  const orderEl = $("savedPickOrder");
+  orderEl.hidden = picked.length < 2;
+  orderEl.innerHTML = picked.length < 2 ? "" : picked.map((it, i) => `<li data-id="${esc(it.id)}">
+      <span class="saved-pick-no">${i + 1}</span>
+      <span class="saved-pick-name" title="${esc(it.title || "제목 없음")}">${esc(it.title || "제목 없음")}</span>
+      <button type="button" class="btn ghost small" data-act="up" title="앞으로"${i === 0 ? " disabled" : ""}>↑</button>
+      <button type="button" class="btn ghost small" data-act="down" title="뒤로"${i === picked.length - 1 ? " disabled" : ""}>↓</button>
+      <button type="button" class="btn ghost small" data-act="del" title="선택에서 뺍니다.">✕</button>
+    </li>`).join("");
+}
+// 목록을 다시 그리지 않고 번호표만 고친다 — 다시 그리면 스크롤 위치가 맨 위로 돌아간다
+function refreshPickBadges() {
+  savedListBodyEl.querySelectorAll(".saved-list-item").forEach((row) => {
+    const at = savedPick.indexOf(row.dataset.id);
+    const cb = row.querySelector(".saved-pick-cb");
+    if (!cb) return;
+    cb.checked = at >= 0;
+    row.querySelector(".saved-pick-no").textContent = at >= 0 ? String(at + 1) : "";
+  });
+  updatePickBar();
+}
+
 function renderSavedList() {
   const lib = LIBRARY[openLibrary];
   const all = savedItemsCache.filter(lib.match);
+  // 지워졌거나 다른 목록에서 온 id는 선택에서 뺀다
+  savedPick = savedPick.filter((id) => all.some((it) => it.id === id));
+  updatePickBar();
 
   // 거르개는 실제로 저장된 종류만 내놓는다. 없는 종류를 0개로 늘어놓아 봐야
   // 누를 일이 없고 줄만 길어진다.
@@ -9491,13 +9544,16 @@ async function openSavedList(kind, target, onlyTab) {
   savedListTitleEl.textContent = libWord(lib.title);
   savedListLeadEl.textContent = passageLoadTo
     ? `저장해 둔 지문입니다. [불러오기]를 누르면 ${passageLoadTo.label}에 들어갑니다 — ` +
-      "이미 넣어 둔 지문이 있으면, 뒤에 이어 붙일지 지우고 새로 넣을지 그때 물어봅니다."
+      "이미 넣어 둔 지문이 있으면, 뒤에 이어 붙일지 지우고 새로 넣을지 그때 물어봅니다. " +
+      "여러 개를 한꺼번에 쓰려면 앞의 체크박스를 쓸 차례대로 누르고(차례는 ↑↓나 [이름순 정렬]로 고칠 수 있습니다) [선택한 N개 불러오기]를 누르세요."
     : libWord(lib.lead);
   savedKindFilter = "";
   savedSearchText = "";
+  savedPick = [];
   if (savedSearchEl) savedSearchEl.value = "";
   savedListCountEl.textContent = "";
   savedListToolsEl.hidden = true;
+  updatePickBar();
   savedListModalEl.hidden = false;
   savedListBodyEl.innerHTML = `<p class="saved-list-empty">불러오는 중…</p>`;
   try {
@@ -9513,9 +9569,10 @@ async function openSavedList(kind, target, onlyTab) {
 
 /* 저장본 하나를 실제로 입력칸에 넣는다. mode는 "replace"(통째로 갈아 끼우기) 또는
    "append"(지금 것을 두고 뒤에 이어 붙이기) — 지문 저장본만 append를 받는다. */
-async function loadSavedItem(id, mode) {
+async function loadSavedItem(id, mode, preItem) {
   try {
-    const item = await getJson(`/api/saved/${encodeURIComponent(id)}`, "불러오기에 실패했습니다.");
+    // preItem — 저장본 여러 개를 합쳐 만든 가짜 저장본(loadPickedItems). 이때는 어느 한 저장본을 고치는 중이 아니다
+    const item = preItem || await getJson(`/api/saved/${encodeURIComponent(id)}`, "불러오기에 실패했습니다.");
     const tab = savedTabOf(item);
     // 동형 모의고사 탭의 [📂 분석 리포트에서 불러오기]로 열었으면 리포트 탭이 아니라 그 탭으로 보낸다
     if (savedLoadIntoExam && tab === "trend") {
@@ -9530,12 +9587,13 @@ async function loadSavedItem(id, mode) {
        같은 저장본을 두 번 붙이거나, '1과'·'1~2과'처럼 겹치는 저장본을 둘 다 붙이면
        같은 지문이 두 번 들어가 결과물에도 두 번 나온다. */
     let dupSkipped = 0;
-    if (append && tab === PASSAGE_TAB) {
+    if ((append || item._multi) && tab === PASSAGE_TAB) {
       const payload = item.payload || {};
       const mgr = passageLoadTo ? passageLoadTo.mgr : passageMgr;
-      const { fresh, dup } = splitDupPassages(mgr.getJobs(), payload.passages || []);
+      // 여러 저장본을 지우고 새로 넣을 때는 칸이 비게 되므로, 고른 저장본끼리 겹치는 것만 본다
+      const { fresh, dup } = splitDupPassages(append ? mgr.getJobs() : [], payload.passages || []);
       if (dup) {
-        const pick = await askDupSkip(dup, (payload.passages || []).length);
+        const pick = await askDupSkip(dup, (payload.passages || []).length, !append);
         if (!pick) return;   // 취소 — 아무것도 안 바뀐다(저장함은 그대로 열려 있다)
         if (pick === "skip") {
           item.payload = { ...payload, passages: fresh };
@@ -9590,7 +9648,7 @@ async function loadSavedItem(id, mode) {
       refitPassages();
       /* 이 저장본을 고치는 중이라고 기억해 둔다 — 다음 '지문 저장'에서 덮어쓰기가
          뜬다. 뒤에 이어 붙인 경우는 두 자료가 섞인 것이라 어느 쪽도 아니다. */
-      if (append) delete LOADED_SAVED[PASSAGE_TAB];
+      if (append || item._multi) delete LOADED_SAVED[PASSAGE_TAB];
       else LOADED_SAVED[PASSAGE_TAB] = { id, title: item.title || "제목 없음" };
       passageLoadTo = null;
       return;
@@ -9633,13 +9691,13 @@ async function loadSavedItem(id, mode) {
     TAB_SAVE[tab].applyPayload(item.payload || {}, append ? "append" : "replace", { dupSkipped });
     /* 이 자료를 고치는 중이라고 기억해 둔다 — 저장할 때 '덮어쓰기'가 뜬다.
        뒤에 붙인 경우는 두 자료가 섞인 것이라 어느 쪽도 아니므로 기억하지 않는다. */
-    if (append) delete LOADED_SAVED[tab];
+    if (append || item._multi) delete LOADED_SAVED[tab];
     else LOADED_SAVED[tab] = { id, title: item.title || "제목 없음", sig: passageSig() };
     /* 표지 제목을 되살린다. 제목을 담기 전에 저장한 옛 저장본은 빈칸으로 남는데,
        앞 자료의 이름이 남아 있는 것보다 낫다 — 탭 위 칸에 새로 적으면 된다. */
     if (!append && DOC_TITLES[tab]) DOC_TITLES[tab].set((item.payload || {}).coverTitle || "");
     // 글을 먼저 보여 준 뒤 딸린 그림을 받아 붙인다 (받는 동안 화면을 막지 않는다)
-    if (!append && TAB_SAVE[tab].afterLoad) TAB_SAVE[tab].afterLoad(id, item.payload || {});
+    if (!append && !item._multi && TAB_SAVE[tab].afterLoad) TAB_SAVE[tab].afterLoad(id, item.payload || {});
   } catch (err) {
     alert(err.message || "불러오기에 실패했습니다.");
   }
@@ -9658,13 +9716,54 @@ function closeLoadModeDialog() {
   pendingLoadId = null;
 }
 function openLoadModeDialog(id, currentCount) {
-  pendingLoadId = id;
+  pendingLoadId = id;   // 저장본 하나면 id, 여럿이면 id 배열(체크한 차례)
   // 어느 칸 얘기인지 밝힌다 — 시험지 탭에서 부르면 공용 입력칸이 아니라 시험 범위 칸이다
   const where = passageLoadTo ? passageLoadTo.label : "입력칸";
   loadModeLeadEl.textContent =
     `지금 ${where}에 지문 ${currentCount}개가 들어 있습니다. ` +
-    `불러올 지문을 그 뒤에 이어 붙일까요, 아니면 지금 것을 지우고 새로 넣을까요?`;
+    `불러올 ${Array.isArray(id) ? `저장본 ${id.length}개의 ` : ""}지문을 그 뒤에 이어 붙일까요, 아니면 지금 것을 지우고 새로 넣을까요?`;
   loadModeDialogEl.hidden = false;
+}
+
+/* 체크한 저장본 여러 개를 체크한 차례대로 이어 붙여 한 번에 불러온다. 저장본마다 따로 불러오면
+   '이어 붙일까'·'같은 지문 건너뛸까'를 저장본 수만큼 묻게 되므로, 모두 받아 한 덩어리로 합친 뒤
+   기존의 한 저장본 불러오기(loadSavedItem)에 한 번만 넘긴다. 목표 어법은 겹치지 않게 합치고,
+   단어장 칸은 줄로 이어 붙인다. */
+async function loadPickedItems(ids, mode) {
+  const btn = $("savedPickLoad");
+  const label = btn.textContent;
+  btn.disabled = true;
+  const items = [];
+  try {
+    for (let i = 0; i < ids.length; i++) {
+      btn.textContent = `불러오는 중… ${i + 1}/${ids.length}`;
+      items.push(await getJson(`/api/saved/${encodeURIComponent(ids[i])}`, "저장본을 불러오지 못했습니다."));
+    }
+  } catch (err) {
+    alert(err.message || "저장본을 불러오지 못했습니다.");
+    btn.textContent = label;
+    updatePickBar();
+    return;
+  }
+  const ps = items.map((it) => it.payload || {});
+  const grammar = [];
+  ps.forEach((p) => String(p.targetGrammar || "").split(/[,，、]/).map((t) => t.trim()).forEach((t) => {
+    if (t && !grammar.includes(t)) grammar.push(t);
+  }));
+  const merged = {
+    ...items[0],
+    title: `저장본 ${items.length}개`,
+    _multi: true,
+    payload: {
+      passages: ps.flatMap((p) => p.passages || []),
+      targetGrammar: grammar.join(", "),
+      targetVocab: ps.map((p) => String(p.targetVocab || "").trim()).filter(Boolean).join("\n"),
+    },
+  };
+  btn.textContent = label;
+  await loadSavedItem(null, mode, merged);
+  if (savedListModalEl.hidden) savedPick = [];   // 실제로 불러왔으면(취소하지 않았으면) 선택을 비운다
+  updatePickBar();
 }
 /* 같은 지문인지 가리는 열쇠 — 띄어쓰기·줄바꿈·문장부호·대소문자만 다른 것은 같은 지문으로 본다.
    앞머리만 보는 passageKey(시험지 읽기용)와 달리 본문 전체를 본다 — 선생님이 조금 고쳐 둔
@@ -9691,11 +9790,13 @@ const dupSkipNote = (n) => (n ? ` 이미 들어 있는 지문과 같은 ${n}개�
 // 같은 지문을 건너뛸지 묻는다 — "skip"(건너뛰기) · "all"(그대로 모두) · null(취소)
 const dupSkipDialogEl = $("dupSkipDialog");
 let dupSkipResolve = null;
-function askDupSkip(dup, total) {
+function askDupSkip(dup, total, within) {
   const where = passageLoadTo ? passageLoadTo.label : "입력칸";
-  $("dupSkipLead").textContent =
-    `불러올 지문 ${total}개 중 ${dup}개는 지금 ${where}에 있는 지문과 같습니다. ` +
-    `같은 지문은 건너뛰고 붙일까요?`;
+  $("dupSkipLead").textContent = within
+    ? `고른 저장본의 지문 ${total}개 중 ${dup}개는 저장본끼리 겹치는 같은 지문입니다. ` +
+      `한 번씩만 넣을까요?`
+    : `불러올 지문 ${total}개 중 ${dup}개는 지금 ${where}에 있는 지문과 같습니다. ` +
+      `같은 지문은 건너뛰고 붙일까요?`;
   dupSkipDialogEl.hidden = false;
   return new Promise((resolve) => { dupSkipResolve = resolve; });
 }
@@ -9716,15 +9817,70 @@ $("loadModeCancel").addEventListener("click", closeLoadModeDialog);
 loadModeDialogEl.addEventListener("click", (e) => {
   if (e.target === loadModeDialogEl) closeLoadModeDialog();
 });
+const runPendingLoad = (id, mode) => {
+  if (!id) return;
+  if (Array.isArray(id)) loadPickedItems(id, mode);
+  else loadSavedItem(id, mode);
+};
 $("loadModeAppend").addEventListener("click", () => {
   const id = pendingLoadId;
   closeLoadModeDialog();
-  if (id) loadSavedItem(id, "append");
+  runPendingLoad(id, "append");
 });
 $("loadModeReplace").addEventListener("click", () => {
   const id = pendingLoadId;
   closeLoadModeDialog();
-  if (id) loadSavedItem(id, "replace");
+  runPendingLoad(id, "replace");
+});
+
+// 체크박스 — 누른 차례가 불러올 차례. 다시 누르면 빠지고 뒤의 번호가 한 칸씩 당겨진다
+savedListBodyEl.addEventListener("change", (e) => {
+  const cb = e.target.closest(".saved-pick-cb");
+  if (!cb) return;
+  const id = cb.closest(".saved-list-item").dataset.id;
+  const at = savedPick.indexOf(id);
+  if (cb.checked && at < 0) savedPick.push(id);
+  else if (!cb.checked && at >= 0) savedPick.splice(at, 1);
+  refreshPickBadges();
+});
+$("savedPickVisible").addEventListener("click", () => {
+  // 지금 목록에 보이는 것(검색·종류 거르개 반영)을 보이는 차례대로 더한다
+  savedListBodyEl.querySelectorAll(".saved-list-item").forEach((row) => {
+    if (!savedPick.includes(row.dataset.id)) savedPick.push(row.dataset.id);
+  });
+  refreshPickBadges();
+});
+$("savedPickClear").addEventListener("click", () => { savedPick = []; refreshPickBadges(); });
+// 차례 고치기 — ↑↓로 한 칸씩, ✕로 선택에서 뺀다. 번호표(목록 쪽)도 같이 바뀐다
+$("savedPickOrder").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const id = b.closest("li").dataset.id;
+  const i = savedPick.indexOf(id);
+  if (i < 0) return;
+  if (b.dataset.act === "del") savedPick.splice(i, 1);
+  else {
+    const j = b.dataset.act === "up" ? i - 1 : i + 1;
+    if (j < 0 || j >= savedPick.length) return;
+    [savedPick[i], savedPick[j]] = [savedPick[j], savedPick[i]];
+  }
+  refreshPickBadges();
+});
+// 이름순 정렬 — 숫자는 크기대로(1과 < 2과 < 10과). 이름이 같으면 체크한 차례를 지킨다
+$("savedPickSort").addEventListener("click", () => {
+  const title = (id) => String((savedItemsCache.find((it) => it.id === id) || {}).title || "");
+  const rank = new Map(savedPick.map((id, i) => [id, i]));
+  savedPick.sort((a, b) =>
+    title(a).localeCompare(title(b), "ko", { numeric: true, sensitivity: "base" }) || rank.get(a) - rank.get(b));
+  refreshPickBadges();
+});
+$("savedPickLoad").addEventListener("click", () => {
+  if (!savedPick.length) return;
+  const target = passageLoadTo ? passageLoadTo.mgr : passageMgr;
+  const current = target.getJobs().length;
+  const ids = savedPick.slice();
+  if (current) openLoadModeDialog(ids, current);
+  else loadPickedItems(ids, "replace");
 });
 
 savedListBodyEl.addEventListener("click", async (e) => {

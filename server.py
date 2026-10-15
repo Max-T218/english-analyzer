@@ -10251,6 +10251,15 @@ CHANGELOG = [
             "시험을 낼 단원만 체크하세요.",
         ],
     },
+    {
+        "version": 69,
+        "date": "2026-10-15",
+        "items": [
+            "📄 지문 저장함에서 저장본을 한꺼번에 여러 개 불러올 수 있습니다. 저장본 앞의 체크박스를 "
+            "쓸 차례대로 누르면 번호가 붙고, 아래 [선택한 N개 불러오기]를 누르면 그 차례대로 입력칸에 "
+            "들어갑니다. 목록에는 저장본마다 지문 개수도 보입니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -11337,15 +11346,21 @@ def list_saved_items(user_id):
         .where("user_id", "==", user_id)
         .order_by("updated_at", direction=firestore.Query.DESCENDING)
     )
-    return [
-        {
+    out = []
+    for doc in q.stream():
+        d = doc.to_dict() or {}
+        row = {
             "id": doc.id,
-            "tab": doc.get("tab"),
-            "title": doc.get("title"),
-            "updated_at": doc.get("updated_at"),
+            "tab": d.get("tab"),
+            "title": d.get("title"),
+            "updated_at": d.get("updated_at"),
         }
-        for doc in q.stream()
-    ]
+        # 지문 저장본은 지문 개수를 함께 준다 — 저장함에서 여러 개를 골라 불러올 때 입력칸 상한을 미리 알려 주려고.
+        # 문서는 이미 통째로 읽혀 있어 따로 드는 비용이 없다.
+        if d.get("tab") == "passage":
+            row["n"] = len((d.get("payload") or {}).get("passages") or [])
+        out.append(row)
+    return out
 
 
 def get_saved_item(item_id, user_id):

@@ -2444,3 +2444,18 @@ table.qt-units th, table.qt-units td{padding:6px 8px; word-break:break-word;}
 .vocab-pick-list{display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:4px 14px; max-height:280px; overflow:auto;}
 .vocab-pick-item{display:flex; align-items:baseline; gap:6px; margin:0; font-size:13px; font-weight:400; cursor:pointer;}
 .vocab-pick-item input{width:auto; margin:0;}
+
+/* 지문 저장함 — 여러 저장본 체크해서 불러오기 */
+.saved-pick{display:inline-flex; align-items:center; gap:4px; margin:0; cursor:pointer;}
+.saved-pick input{width:auto; margin:0;}
+.saved-pick-no{display:inline-block; min-width:20px; padding:1px 5px; border-radius:10px; background:var(--accent, #2563eb); color:#fff; font-size:11.5px; font-weight:700; text-align:center;}
+.saved-pick-no:empty{display:none;}
+.saved-pick-bar{margin-top:8px; padding:8px 10px; border:1px solid var(--line-soft); border-radius:8px; background:var(--panel-soft, #f6f8fc);}
+.saved-pick-info{font-size:12.5px; margin-bottom:6px;}
+.saved-pick-info.over{color:#b91c1c; font-weight:700;}
+.saved-pick-btns{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;}
+.saved-pick-order{list-style:none; margin:0 0 8px; padding:0; max-height:150px; overflow:auto; border:1px solid var(--line-soft); border-radius:6px; background:#fff;}
+.saved-pick-order li{display:flex; align-items:center; gap:6px; padding:3px 8px; border-bottom:1px solid var(--line-soft);}
+.saved-pick-order li:last-child{border-bottom:none;}
+.saved-pick-order .saved-pick-name{flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px;}
+.saved-pick-order .btn.small{padding:1px 8px; font-size:12px; min-width:28px;}
