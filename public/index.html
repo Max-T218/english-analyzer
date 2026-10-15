@@ -2211,6 +2211,13 @@
           <tbody id="studentTableBody"></tbody>
         </table>
       </div>
+      <div class="row" style="align-items:center; gap:8px; margin-top:12px;">
+        <label for="classReportMonth" style="margin:0;">반 전체 월간 성적표</label>
+        <input type="month" id="classReportMonth" style="width:auto;">
+        <button type="button" class="btn small" id="classReportPrintBtn">🖨️ 반 전체 성적표 인쇄</button>
+        <span class="error" id="classReportStatus"></span>
+      </div>
+      <p class="hint">고른 달의 성적표를 학생마다 한 장씩 이어서 인쇄합니다. 코멘트는 기본 초안이 들어가고, 학생 줄의 [성적표]를 같은 달로 열어 코멘트를 고쳐 두었으면 고친 글이 들어갑니다.</p>
     </section>
 
     <section class="panel" id="assignedTestsPanel" hidden>

@@ -9901,7 +9901,8 @@ const HOWTO = {
       "<b>객관식·주관식·객관식+주관식 탭</b>에서 문제를 만든 뒤에도 <b>[🏫 반에 시험 내기]</b>로 <b>문제 시험</b>을 낼 수 있습니다. 학생은 한 번만 풀고, 제출하면 바로 정답·해설을 봅니다. 결과의 <b>[답안 보기]</b>에서 학생 답을 보고, 모범답안과 다르게 쓴 서술형 답(확인 대기)은 <b>[맞음]/[틀림]</b>으로 채점합니다. <b>문항별 정답률</b>도 함께 나옵니다.",
       "시험을 낼 때 <b>합격 기준</b>을 두면, 기준에 못 미친 학생은 통과할 때까지 재시험을 봅니다. 회차마다 문제 순서와 보기 자리가 다시 섞입니다.",
       "<b>[🔗 학생에게 알려 줄 주소]</b>를 복사해 문자·알림장으로 보냅니다. 학생은 그 주소에서 <b>선생님이 정해 준 아이디와 비밀번호</b>로 로그인하고, 비밀번호는 스스로 바꿀 수도 있습니다.",
-      "제출된 결과는 이 탭에서 봅니다.",
+      "제출된 결과는 이 탭에서 봅니다. 시험마다 <b>[결과 보기]</b>를 누르면 성적표가 나오고, <b>[🖨️ 성적표 인쇄]</b>에는 결과만 실립니다(틀린 단어는 화면에서만 보입니다).",
+      "학생 한 명의 한 달 성적은 학생 줄의 <b>[성적표]</b>로 보고, 반 학생 모두의 성적표는 학생 목록 아래 달을 고르고 <b>[🖨️ 반 전체 성적표 인쇄]</b>를 누르면 학생마다 한 장씩 한 번에 인쇄됩니다.",
       "학생이 비밀번호를 잊으면 학생 줄의 <b>[🔑 비번 초기화]</b>를 누르세요 — 1234로 돌아가고, 학생은 다시 로그인한 뒤 새 비밀번호로 바꾸면 됩니다. 여러 번 틀려 '5분 뒤 다시 시도'로 막힌 학생도 이 단추로 바로 풀립니다. 원하는 비밀번호를 정해 주려면 <b>[수정]</b>에서 적으세요. 아이디·이름도, 다른 반으로 옮기는 것도 여기서 합니다.",
     ],
     tip: "이 탭은 관리자 승인을 받은 선생님에게만 보입니다. 학생 이름은 미성년자 개인정보라, 시험 삼아 넣어 보실 때는 실제 이름 대신 아무 말이나 쓰세요.",
@@ -13791,6 +13792,7 @@ const REPORT_CSS = `
 .trend-report td.tk{text-align:left}
 .trend-report .rp-sub-table{margin:4px 0 8px;font-size:12px}
 .trend-report .rp-chart{display:block;margin:0 auto}
+.rp-batch-page + .rp-batch-page{break-before:page}
 `;
 (function injectReportStyle() {
   const st = document.createElement("style");
@@ -13830,8 +13832,9 @@ function statusTagHtml(status, passedRound) {
 
 // 성적표를 새 창에서 인쇄한다 — 분석 리포트와 같은 CSS, 학원 마크(아래)·워터마크(뒷배경)
 // 설정(trendBrand)도 그대로 따른다. 화면의 버튼·토글은 .no-print로 숨긴다.
-function openPrintWindow(title, bodyHtml) {
-  const w = window.open("", "_blank");
+// win: 미리 열어 둔 창(서버에서 받아 오는 동안 팝업 차단을 피하려고 누른 즉시 연 창)
+function openPrintWindow(title, bodyHtml, win) {
+  const w = win || window.open("", "_blank");
   if (!w) {
     alert("팝업이 막혀 있어 인쇄 창을 열지 못했습니다. 팝업을 허용해 주세요.");
     return;
@@ -13841,6 +13844,7 @@ function openPrintWindow(title, bodyHtml) {
   const css = typeof TREND_CSS === "string" ? TREND_CSS : "";
   const brandCss = typeof trendBrandPrintCss === "function" ? trendBrandPrintCss(foot) : "";
   const body = typeof trendBrandPrintBody === "function" ? trendBrandPrintBody(bodyHtml, foot, brand.wm) : bodyHtml;
+  w.document.open();   // 미리 연 창에 써 둔 '불러오는 중' 글을 지운다
   w.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${esc(title)}</title>
     <style>@page{size:A4;margin:14mm}body{margin:0;padding:0}${css}${REPORT_CSS}
     .trend-report{-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -13870,7 +13874,7 @@ function renderTestResults(data, title) {
         <td>${esc(fmtDateTime(r.lastAt))}</td>
         <td class="no-print">${wrongBtn}</td>
       </tr>
-      <tr class="wrong-row" hidden><td colspan="5" class="tk">
+      <tr class="wrong-row no-print" hidden><td colspan="5" class="tk">
         <b>마지막 시도의 틀린 단어</b>${wrongItemsHtml(r.wrongItems, r.hasDetails)}
       </td></tr>`;
   }).join("");
@@ -14002,8 +14006,9 @@ function aiPriceLabel() {
   return won > 0 ? ` (${won.toLocaleString()}P)` : "";
 }
 
-// 학생 한 명의 성적표 본문(월 선택 칸은 따로 — 인쇄에는 안 들어간다)
-function renderStudentReport(data, period) {
+// 학생 한 명의 성적표 중 인쇄되는 부분 — 학생 줄의 [성적표]와 반 전체 인쇄가 같이 쓴다.
+// commentHtml: 화면에서는 고칠 수 있는 입력칸, 반 전체 인쇄에서는 글 상자
+function studentReportPrintableHtml(data, period, commentHtml) {
   const st = data.student, sm = data.summary;
   const tests = data.tests || [];
   const cls = (classesCache.find((c) => c.id === selectedClassId) || {}).name || "";
@@ -14016,11 +14021,6 @@ function renderStudentReport(data, period) {
         ? (t.qc ? `📝 ${QT.countsText(t.qc)}` : "—")
         : esc(roundsText(t.rounds)) || "—"}</td><td>${esc(fmtDateTime(t.lastAt))}</td></tr>`).join("")
     : `<tr><td colspan="4" class="hint">이 기간에 해당하는 시험이 없습니다.</td></tr>`;
-  const freq = data.frequentWrong || [];
-  const freqHtml = freq.length
-    ? `<table><thead><tr><th>단어</th><th>뜻</th><th>틀린 횟수</th></tr></thead><tbody>${freq.map((w) =>
-        `<tr><td class="tk"><b>${esc(w.word)}</b></td><td class="tk">${esc(w.meaning)}</td><td>${w.wrong}번 / ${w.tried}번 출제</td></tr>`).join("")}</tbody></table>`
-    : `<p class="hint">틀린 단어 기록이 없습니다.</p>`;
   return `<div class="trend-report results-printable">
     ${reportHeadHtml("월간 성적표", `${st.name} 학생 학습 성적표`, [
       ["학생", `${esc(st.name)}${st.loginId ? ` (${esc(st.loginId)})` : ""}`],
@@ -14036,11 +14036,22 @@ function renderStudentReport(data, period) {
     <h4 class="sec">시험별 점수</h4>
     <div class="trend-dash">${reportChartSvg(tests, sm.avgPercent)}</div>
     <h4 class="sec">선생님 코멘트</h4>
-    <textarea class="report-comment rp-comment" rows="4">${esc(buildReportComment(data))}</textarea>
+    ${commentHtml}
     <h4 class="sec">시험별 결과</h4>
     <table>
       <thead><tr><th>시험</th><th>결과</th><th>회차별 점수</th><th>마지막 제출</th></tr></thead>
-      <tbody>${testRows}</tbody></table></div>
+      <tbody>${testRows}</tbody></table></div>`;
+}
+
+// 학생 한 명의 성적표 본문(월 선택 칸은 따로 — 인쇄에는 안 들어간다)
+function renderStudentReport(data, period) {
+  const freq = data.frequentWrong || [];
+  const freqHtml = freq.length
+    ? `<table><thead><tr><th>단어</th><th>뜻</th><th>틀린 횟수</th></tr></thead><tbody>${freq.map((w) =>
+        `<tr><td class="tk"><b>${esc(w.word)}</b></td><td class="tk">${esc(w.meaning)}</td><td>${w.wrong}번 / ${w.tried}번 출제</td></tr>`).join("")}</tbody></table>`
+    : `<p class="hint">틀린 단어 기록이 없습니다.</p>`;
+  return `${studentReportPrintableHtml(data, period,
+      `<textarea class="report-comment rp-comment" rows="4">${esc(buildReportComment(data))}</textarea>`)}
     <!-- 자주 틀린 단어는 선생님이 화면에서만 본다 — .results-printable 밖에 두어 인쇄본에 안 실린다 -->
     <div class="trend-report report-frequent"><h4>자주 틀린 단어 <span class="hint">(화면에서만 보이며 인쇄되지 않습니다)</span></h4>${freqHtml}
       ${(data.wrongAll || []).length ? `<button type="button" class="btn small wrong-to-vocab-btn" style="margin-top:8px;">📒 틀린 단어 ${data.wrongAll.length}개로 단어장 만들기</button>` : ""}</div>
@@ -14345,6 +14356,65 @@ studentTableBodyEl.addEventListener("click", async (e) => {
   }
 });
 
+/* 반 전체 월간 성적표 — 학생마다 한 장씩 이어 붙여 인쇄 창 하나로 연다.
+   코멘트는 규칙으로 쓴 기본 초안(AI를 안 불러 요금 없음)이고, 학생 줄의 [성적표]를 같은 달로
+   열어 코멘트를 고쳐 두었으면 그 글을 쓴다. 자주 틀린 단어는 학생 한 명 인쇄처럼 싣지 않는다. */
+$("classReportMonth").value = reportMonthDefault();
+$("classReportPrintBtn").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  const statusEl = $("classReportStatus");
+  const period = reportPeriod($("classReportMonth").value);
+  const rows = [...studentTableBodyEl.querySelectorAll("tr[data-sid]")];
+  statusEl.textContent = "";
+  if (!rows.length) {
+    statusEl.textContent = "이 반에 등록된 학생이 없습니다.";
+    return;
+  }
+  // 팝업 차단을 피하려면 누른 즉시 창을 열어야 한다 — 다 불러온 뒤 내용을 채운다
+  const win = window.open("", "_blank");
+  if (!win) {
+    statusEl.textContent = "팝업이 막혀 있어 인쇄 창을 열지 못했습니다. 팝업을 허용해 주세요.";
+    return;
+  }
+  win.document.write(`<p style="font-family:sans-serif;padding:20px;">성적표를 불러오는 중입니다…</p>`);
+  btn.disabled = true;
+  const label = btn.textContent;
+  let done = 0;
+  const results = new Array(rows.length);
+  try {
+    const queue = rows.map((r, i) => i);
+    const worker = async () => {
+      while (queue.length) {
+        const i = queue.shift();
+        const sid = rows[i].dataset.sid;
+        const qs = `studentId=${encodeURIComponent(sid)}` +
+          (period ? `&start=${encodeURIComponent(period.start)}&end=${encodeURIComponent(period.end)}` : "");
+        results[i] = await getJson(`/api/students/report?${qs}`, `${rows[i].dataset.name} 학생의 성적표를 불러오지 못했습니다.`);
+        done++;
+        btn.textContent = `불러오는 중… ${done}/${rows.length}`;
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+  } catch (err) {
+    statusEl.textContent = err.message || "성적표를 불러오지 못했습니다.";
+    win.close();
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+  const pages = results.map((data, i) => {
+    const open = studentTableBodyEl.querySelector(`tr.report-row[data-for="${rows[i].dataset.sid}"]`);
+    const ta = open && open.dataset.period === (period ? period.label : "전체 기간")
+      ? open.querySelector("textarea.report-comment") : null;
+    const comment = ta ? ta.value : buildReportComment(data);
+    return `<div class="rp-batch-page">${studentReportPrintableHtml(data, period,
+      `<div class="rp-comment">${esc(comment)}</div>`)}</div>`;
+  });
+  const cls = (classesCache.find((c) => c.id === selectedClassId) || {}).name || "";
+  openPrintWindow(`${cls ? cls + " " : ""}월간 성적표${period ? ` (${period.label})` : ""}`, pages.join(""), win);
+});
+
 // 월 선택을 바꾸면 그 달 성적표로 다시 불러온다
 studentTableBodyEl.addEventListener("change", (e) => {
   const m = e.target.closest(".report-month");
@@ -14427,9 +14497,9 @@ assignedTestListEl.addEventListener("click", async (e) => {
   const printBtn = e.target.closest(".print-results-btn");
   if (printBtn) {
     const body = printBtn.closest(".results-body");
-    // 인쇄본에는 틀린 단어를 모두 펼쳐서 싣는다
+    // 인쇄본에는 결과만 싣는다 — 틀린 단어·답안은 선생님이 화면에서만 본다(2026-10-15 사용자 결정)
     const clone = body.querySelector(".results-printable").cloneNode(true);
-    clone.querySelectorAll(".wrong-row").forEach((r) => (r.hidden = false));
+    clone.querySelectorAll(".wrong-row, .no-print").forEach((r) => r.remove());
     openPrintWindow(body.dataset.title || "성적표", clone.outerHTML);
     return;
   }
