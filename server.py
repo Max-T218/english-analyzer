@@ -4480,7 +4480,7 @@ def call_gemini_infographic(passage, api_key, model=None, lang="mix"):
 # 어느 쪽으로도 안 나뉘면 화면이 'AI로 다시 시도'를 권한다(call_gemini_pdf_split).
 try:
     from pdfminer.high_level import extract_pages as _pdf_extract_pages
-    from pdfminer.layout import LAParams, LTTextContainer, LTTextLine
+    from pdfminer.layout import LAParams, LTChar, LTContainer, LTTextContainer, LTTextLine
     PDF_READY = True
 except ImportError:
     # pdfminer.six가 없으면 이 기능만 꺼진다 — 서버는 그대로 뜨고 나머지 기능도 그대로다.
@@ -4849,6 +4849,195 @@ def parse_vocab_lines_rule(pages):
     if total and len(items) >= 3 and len(items) >= total * 0.35:
         return items
     return []
+
+
+# ── 번호 붙은 단어장 책(예: 어휘끝) — 쪽마다 단원 하나, 단어 칸과 뜻 칸이 따로 놓인 배치 ──
+# 위의 줄 규칙은 "단어  뜻"이 한 줄에 붙어 있어야 잡는다. 이런 책은 단어(8.5pt)와 뜻(6pt)이
+# 서로 다른 칸에 놓이고 뜻이 여러 줄이라, 줄로 읽으면 한 단어도 못 뽑는다. 그래서 글자 하나하나의
+# 위치로 짝을 짓는다 — 단어 앞의 4자리 번호(0001…)를 닻으로 삼아, 같은 칸에서 그 닻의 높이부터
+# 다음 닻 전까지의 작은 글자를 그 단어의 뜻·품사로 본다. 쪽 맨 위의 머리글('Unit 01 수능 고빈출…')은
+# 그 쪽 단어장의 이름이 된다. Gemini를 부르지 않는다(요금 0원).
+_BOOK_NUM_RE = re.compile(r"^\d{3,5}$")
+
+
+def _book_join(cs):
+    """한 줄의 글자들을 왼쪽부터 잇는다. 이 책은 공백·탭 글자가 같은 자리에 겹쳐 찍혀 있어
+    글자로는 띄어쓰기를 못 믿는다 — 공백 글자는 버리고 글자 사이의 실제 간격으로 정한다
+    (낱말 안의 글자는 서로 닿거나 겹치고, 띄어 쓴 곳은 글자 크기의 12% 이상 벌어진다)."""
+    cs = sorted((c for c in cs if not c.get_text().isspace()), key=lambda c: c.x0)
+    out = ""
+    prev = None
+    for c in cs:
+        if prev is not None and c.x0 - prev.x1 > 0.12 * c.size:
+            out += " "
+        out += c.get_text()
+        prev = c
+    return out
+
+
+def _book_text(chars):
+    """글자 목록(위치 정보 포함)을 줄 단위로 읽어 한 줄의 글로 잇는다 — 연속 공백은 하나로."""
+    # 같은 줄이어도 번호(5.3pt)·괄호·본문(6pt)은 기준선이 조금씩 달라서, 가운데 높이가 3.2pt 안이면 한 줄로 묶는다
+    # (뜻의 줄 간격은 8.75pt라 다음 줄과 섞이지 않는다)
+    rows = []
+    for c in sorted(chars, key=lambda c: -(c.y0 + c.y1)):
+        cy = (c.y0 + c.y1) / 2
+        if rows and abs(rows[-1][0] - cy) <= 3.2:
+            rows[-1][1].append(c)
+        else:
+            rows.append((cy, [c]))
+    out = [_book_join(cs) for _, cs in rows]
+    text = re.sub(r"\s+", " ", " ".join(out)).strip()
+    # 괄호·문장부호 둘레에 낀 공백 정리: "( 군사 )" → "(군사)", "외모 ," → "외모,"
+    text = re.sub(r"([(\[]) +", r"\1", text)
+    text = re.sub(r" +([)\],;.])", r"\1", text)
+    return text
+
+
+def _book_title(chars):
+    """쪽 맨 위 머리글 → 'Unit 01 수능 고빈출 최중요 어휘'. 쪽에 써 있는 대로 잇는다."""
+    head = [c for c in chars if c.y0 > 500]   # 띄어쓰기도 글자로 들어 있어 남긴다
+    if not head:
+        return ""
+    # 글자 크기가 같고 높이가 비슷한 것끼리 한 조각 — 라벨(Unit) · 큰 번호 · 제목이 서로 다른 크기다
+    groups = {}
+    for c in head:
+        groups.setdefault((round(c.size, 1), round(c.y0 / 4)), []).append(c)
+    frags = []
+    for (size, _), cs in groups.items():
+        cs.sort(key=lambda c: c.x0)
+        frags.append({"size": size, "x0": cs[0].x0, "y": max(c.y1 for c in cs),
+                      "text": re.sub(r"\s+", " ", _book_join(cs)).strip()})
+    frags = [f for f in frags if f["text"]]
+    if not frags:
+        return ""
+    label = next((f for f in frags if re.fullmatch(r"[A-Za-z]{2,8}", f["text"])), None)
+    rest = [f for f in frags if f is not label]
+    title = max(rest, key=lambda f: f["size"]) if rest else None
+    nums = [f for f in rest if f is not title and re.fullmatch(r"\d{1,3}", f["text"])]
+    others = [f for f in rest if f is not title and f not in nums]
+    parts = []
+    if label:
+        parts.append(label["text"])
+    for n in nums:
+        # 번호 상자가 제목보다 왼쪽이면 '제목 앞', 오른쪽이면 '제목 뒤'에 쓴다
+        if title is None or n["x0"] <= title["x0"]:
+            parts.append(n["text"])
+    if title:
+        parts.append(title["text"])
+    for n in nums:
+        if title is not None and n["x0"] > title["x0"]:
+            parts.append(n["text"])
+    parts.extend(f["text"] for f in sorted(others, key=lambda f: -f["y"]))
+    return " ".join(parts).strip()
+
+
+def _book_page_items(chars):
+    """한 쪽의 글자들에서 번호 붙은 단어 항목을 뽑는다. 못 뽑으면 빈 목록."""
+    chars = [c for c in chars if c.y0 > 60]   # 쪽 번호·인쇄 정보(맨 아래)는 뺀다
+    # 번호 닻 — 작은 글자(5.0pt)로 찍힌 4자리 숫자. 뜻 안의 '1.' '2.' 번호와 괄호는 5.3pt라 섞이지 않는다
+    small = sorted((c for c in chars if c.size < 5.15 and c.get_text().isdigit()),
+                   key=lambda c: (-round(c.y0), c.x0))
+    anchors = []
+    for c in small:
+        for a in anchors:
+            if abs(a["y0"] - c.y0) < 1.0 and 0 <= c.x0 - a["x1"] < 2.0:
+                a["text"] += c.get_text()
+                a["x1"] = c.x1
+                break
+        else:
+            anchors.append({"text": c.get_text(), "x0": c.x0, "x1": c.x1, "y0": c.y0})
+    anchors = [a for a in anchors if _BOOK_NUM_RE.match(a["text"])]
+    if len(anchors) < 5:
+        return []
+    # 칸 나누기 — 번호의 가로 위치가 같은 것끼리 한 칸
+    xs = sorted({round(a["x0"]) for a in anchors})
+    cols = []
+    for x in xs:
+        if cols and x - cols[-1] < 8:
+            continue
+        cols.append(x)
+    def col_of(x):
+        k = 0
+        for i, cx in enumerate(cols):
+            if x >= cx - 6:
+                k = i
+        return k
+    by_col = {}
+    for a in anchors:
+        by_col.setdefault(col_of(a["x0"]), []).append(a)
+    for lst in by_col.values():
+        lst.sort(key=lambda a: -a["y0"])
+    owner = {}   # id(anchor) → 그 단어에 속한 글자
+    for a in anchors:
+        owner[id(a)] = {"word": [], "mean": [], "pos": [], "a": a}
+    for c in chars:
+        t = c.get_text()
+        lst = by_col.get(col_of(c.x0))
+        if not lst:
+            continue
+        cy = (c.y0 + c.y1) / 2
+        # 이 글자가 속하는 닻 — 글자 높이가 닻 높이 + 5.5 이상 내려오면 그 닻 것, 아니면 다음 닻 것
+        mine = None
+        for i, a in enumerate(lst):
+            nxt = lst[i + 1] if i + 1 < len(lst) else None
+            if nxt is None or cy >= nxt["y0"] + 5.5:
+                mine = a
+                break
+        if mine is None or cy > mine["y0"] + 12:
+            continue   # 맨 위 닻보다 한참 위 — 머리글
+        if c.size > 8:
+            owner[id(mine)]["word"].append(c)
+        elif c.size < 5.15:
+            if _HANGUL_RE.search(t):
+                owner[id(mine)]["pos"].append(c)   # 명·동·형·부… 품사 — 뜻 칸 왼쪽 가장자리에 찍힌다
+            # 5.0pt 숫자는 단어 번호 자신이라 버린다
+        elif c.x0 > mine["x1"] + 10:
+            owner[id(mine)]["mean"].append(c)
+    items = []
+    for lst in sorted(by_col.items()):
+        for a in lst[1]:
+            o = owner[id(a)]
+            word = _book_text(o["word"])
+            meaning = _book_text(o["mean"])
+            if not word or not meaning:
+                continue
+            pos = []
+            for t in _book_text(o["pos"]).split(" "):
+                if t and t not in pos:
+                    pos.append(t)
+            items.append({"no": int(a["text"]), "word": word, "pos": "·".join(pos),
+                          "meaning": meaning, "synonym": "", "antonym": "", "definition": ""})
+    items.sort(key=lambda v: v["no"])
+    return items
+
+
+def parse_vocab_book_pdf(raw):
+    """번호 붙은 단어장 책을 쪽(단원)별로 나눠 [{title, page, items}]로 돌려준다.
+    이 모양의 책이 아니면 빈 목록 — 호출한 쪽이 기존 규칙·AI 길로 넘어간다."""
+    if not PDF_READY:
+        return []
+    def walk(o):
+        if isinstance(o, LTChar):
+            yield o
+        elif isinstance(o, LTContainer):
+            for c in o:
+                yield from walk(c)
+    sections = []
+    try:
+        for pno, page in enumerate(_pdf_extract_pages(io.BytesIO(raw), maxpages=PDF_MAX_PAGES), 1):
+            chars = list(walk(page))
+            items = _book_page_items(chars)
+            if items:
+                sections.append({"title": _book_title(chars) or f"{pno}쪽", "page": pno, "items": items})
+    except Exception:
+        return []
+    if sum(len(s["items"]) for s in sections) < 20:
+        return []
+    for s in sections:
+        for v in s["items"]:
+            v.pop("no", None)
+    return sections
 
 
 # ── AI 보조: 규칙이 못 나눈 PDF의 경계만 찾아 준다 ──
@@ -10057,6 +10246,9 @@ CHANGELOG = [
             "🏫 반/학생 관리 — 학생 목록 아래 [🖨️ 반 전체 성적표 인쇄]로 고른 달의 성적표를 "
             "학생마다 한 장씩 한 번에 인쇄할 수 있습니다.",
             "시험별 성적표를 인쇄하면 이제 결과만 실립니다. 틀린 단어는 화면에서만 볼 수 있습니다.",
+            "📒 단어장 탭 — 'Unit 01'처럼 쪽마다 번호가 매겨진 단어장 책 PDF를 올리면 쪽별로 단어장이 "
+            "하나씩 만들어지고, 이름은 쪽에 써 있는 제목 그대로 붙습니다. 위 [📚 쓸 단어장 고르기]에서 "
+            "시험을 낼 단원만 체크하세요.",
         ],
     },
 ]
@@ -14431,6 +14623,17 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json({"error": str(e)}, 502)
                     return
                 self._charge_and_send(path, req, {"mode": "ai", "items": found["items"], "note": found["note"]})
+                return
+            # 번호 붙은 단어장 책(쪽마다 단원 하나)이면 쪽별로 나눠 돌려준다 — 제목은 쪽에 써 있는 그대로
+            sections = parse_vocab_book_pdf(raw_pdf)
+            if sections:
+                self._send_json({
+                    "mode": "book",
+                    "items": [],
+                    "sections": sections,
+                    "canAi": False,
+                    "note": "",
+                })
                 return
             items = parse_vocab_lines_rule(pages)
             self._send_json({

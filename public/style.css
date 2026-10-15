@@ -2436,3 +2436,11 @@ table.qt-units{min-width:0; width:100%;}
 table.qt-units th, table.qt-units td{padding:6px 8px; word-break:break-word;}
 .qt-exp{margin-top:10px; padding:10px 12px; border-radius:9px; background:var(--paper);
   border-left:3px solid var(--accent); font-size:14px; line-height:1.7;}
+
+/* 단어장 탭 — 쓸 단어장 고르기(단어장이 둘 이상일 때) */
+.vocab-pick{margin:8px 0 12px; padding:8px 12px; border:1px solid var(--line-soft); border-radius:8px; background:var(--panel, #fff);}
+.vocab-pick summary{cursor:pointer; font-weight:700;}
+.vocab-pick-tools{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:8px 0;}
+.vocab-pick-list{display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:4px 14px; max-height:280px; overflow:auto;}
+.vocab-pick-item{display:flex; align-items:baseline; gap:6px; margin:0; font-size:13px; font-weight:400; cursor:pointer;}
+.vocab-pick-item input{width:auto; margin:0;}

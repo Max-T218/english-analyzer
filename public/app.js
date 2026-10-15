@@ -8365,15 +8365,58 @@ function appendVocabSet(set) {
   saveVocabSets([...getVocabSets(), set]);
 }
 
-// 현재 쓸 수 있는 어휘가 얼마나 되는지 안내
+// 지금 쓰기로 고른 단어장 — 단어장이 여럿일 때(예: 단어장 책 PDF를 단원별로 나눈 것) 체크를 푼 것은 `off`로 표시돼 빠진다
+function activeVocabSets() {
+  return getVocabSets().filter((s) => !s.off);
+}
+
+// 현재 쓸 수 있는 어휘가 얼마나 되는지 안내 + 쓸 단어장 고르기
+const vocabPickEl = $("vocabSetPick");
+let vocabPickOpen = false;
 function renderVocabSource() {
   if (!vocabSourceEl) return;
   const sets = getVocabSets();
-  const words = sets.reduce((n, s) => n + (s.vocab || []).length, 0);
+  const on = sets.filter((s) => !s.off);
+  const words = on.reduce((n, s) => n + (s.vocab || []).length, 0);
   vocabSourceEl.textContent = sets.length
-    ? `📖 단어장 ${sets.length}개 · 어휘 ${words}개를 쓸 수 있습니다. ` +
+    ? (on.length === sets.length
+        ? `📖 단어장 ${sets.length}개 · 어휘 ${words}개를 쓸 수 있습니다. `
+        : `📖 단어장 ${sets.length}개 중 ${on.length}개를 골랐습니다 · 어휘 ${words}개. `) +
       `(지문을 다시 분석하면 그 결과만 갱신되고, 직접 만든 단어장은 남습니다)`
     : "아직 단어장이 없습니다. '지문 분석'을 실행하거나, 아래에서 직접 만들어 보세요.";
+  if (!vocabPickEl) return;
+  vocabPickEl.innerHTML = sets.length < 2 ? "" : `<details class="vocab-pick"${vocabPickOpen ? " open" : ""}>
+    <summary>📚 쓸 단어장 고르기 (${on.length}/${sets.length}개 선택)</summary>
+    <div class="vocab-pick-tools">
+      <button type="button" class="btn ghost small" data-pick="all">모두 선택</button>
+      <button type="button" class="btn ghost small" data-pick="none">모두 해제</button>
+      <span class="hint">고른 단어장의 단어만 모아 단어장·시험지를 만듭니다.</span>
+    </div>
+    <div class="vocab-pick-list">${sets.map((s, i) => `<label class="vocab-pick-item">
+      <input type="checkbox" data-i="${i}"${s.off ? "" : " checked"}>
+      <span>${esc(s.name)} <span class="hint">${(s.vocab || []).length}단어</span></span></label>`).join("")}</div>
+  </details>`;
+}
+if (vocabPickEl) {
+  vocabPickEl.addEventListener("toggle", (e) => {
+    if (e.target.matches("details.vocab-pick")) vocabPickOpen = e.target.open;
+  }, true);
+  vocabPickEl.addEventListener("change", (e) => {
+    const cb = e.target.closest("input[data-i]");
+    if (!cb) return;
+    const sets = getVocabSets();
+    const s = sets[Number(cb.dataset.i)];
+    if (!s) return;
+    if (cb.checked) delete s.off; else s.off = true;
+    saveVocabSets(sets);
+  });
+  vocabPickEl.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-pick]");
+    if (!b) return;
+    const sets = getVocabSets();
+    sets.forEach((s) => { if (b.dataset.pick === "all") delete s.off; else s.off = true; });
+    saveVocabSets(sets);
+  });
 }
 renderVocabSource();
 
@@ -8395,10 +8438,11 @@ vocabPrintBtn.addEventListener("click", () => printDoc(() => titledName("단어�
 // 화면이 따라 내려가면 옵션을 연달아 만지기 불편하다.
 function buildVocab(scroll) {
   vocabErrorEl.textContent = "";
-  const sets = getVocabSets();
+  const sets = activeVocabSets();
   if (!sets.length) {
-    vocabErrorEl.textContent =
-      "쓸 수 있는 단어장이 없습니다. '지문 분석'을 실행하거나, 위에서 직접 만들어 보세요.";
+    vocabErrorEl.textContent = getVocabSets().length
+      ? "쓸 단어장을 골라 주세요. 위 '📚 쓸 단어장 고르기'에서 체크하면 됩니다."
+      : "쓸 수 있는 단어장이 없습니다. '지문 분석'을 실행하거나, 위에서 직접 만들어 보세요.";
     return;
   }
 
@@ -8440,7 +8484,9 @@ function buildVocab(scroll) {
   }
 
   const fmt = vocabFormatEl.value;
-  const title = vocabTitleEl.value.trim();
+  // 제목 칸이 비어 있고 단어장 책의 단원 하나만 골랐으면, 쪽에 써 있던 제목('Unit 01 …')을 그대로 쓴다
+  const title = vocabTitleEl.value.trim() ||
+    (sets.length === 1 && sets[0].src === "book" ? sets[0].name : "");
 
   // 시험지 문항 수 — 목록 앞에서부터 그만큼 쓴다(무작위로 뽑으려면 정렬을 '무작위 섞기'로).
   // 섞어서는 유형별 개수를 따로 받고, 합이 단어 수를 넘으면 뒤쪽을 줄여 안내한다.
@@ -8823,6 +8869,7 @@ async function runVocabPdf(fileList) {
   syncVocabDropBusy();
 
   const rows = [];
+  const bookSections = [];
   const notes = [];
   const fails = [];
   for (let i = 0; i < files.length; i++) {
@@ -8837,6 +8884,11 @@ async function runVocabPdf(fileList) {
       }
       const payload = { file: { mime: "application/pdf", data } };
       let res = await postGenerate("/api/vocabpdf", payload, "PDF에서 단어 목록을 꺼내지 못했습니다.");
+      if (res.sections && res.sections.length) {
+        // 번호 붙은 단어장 책 — 쪽(단원)마다 단어장 하나, 이름은 쪽에 써 있는 제목 그대로
+        bookSections.push(...res.sections);
+        continue;
+      }
       if (!res.items.length && res.canAi) {
         if (!(await costConfirmed(PRICING ? PRICING.vocabPdf : 0,
                            `${who}\n\n표 모양을 규칙으로 읽지 못했습니다. AI로 다시 찾아볼까요?`))) {
@@ -8874,10 +8926,35 @@ async function runVocabPdf(fileList) {
   const parts = [];
   notes.forEach((n) => parts.push(`⚠️ ${esc(n)}`));
   fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
+  if (bookSections.length) {
+    // 같은 책을 다시 올리면 같은 제목의 단어장을 새로 바꿔 끼운다. 여럿으로 나뉘면 처음엔 아무것도
+    // 고르지 않은 채로 둔다 — 합쳐서 1,800단어짜리 하나가 나오는 것보다, 쓸 단원을 직접 고르는 편이 낫다.
+    const many = bookSections.length > 1;
+    const stamp = Date.now();
+    const fresh = bookSections.map((s, i) => ({
+      name: s.title, vocab: s.items, src: "book", off: many ? true : undefined,
+      _id: `v${stamp}${i}${Math.floor(Math.random() * 1e6)}`,
+    }));
+    fresh.forEach((s) => { if (s.off === undefined) delete s.off; });
+    const names = new Set(fresh.map((s) => s.name));
+    saveVocabSets([...getVocabSets().filter((s) => !(s.src === "book" && names.has(s.name))), ...fresh]);
+    const total = bookSections.reduce((n, s) => n + s.items.length, 0);
+    parts.push(many
+      ? `<b>${bookSections.length}개 단어장</b>(${esc(bookSections[0].title)} … ${esc(bookSections[bookSections.length - 1].title)}) · ${total}단어를 쪽별로 나눠 저장했습니다. ` +
+        `위 <b>'📚 쓸 단어장 고르기'</b>에서 쓸 단원을 체크한 뒤 [단어장 만들기]를 누르세요.`
+      : `<b>${esc(bookSections[0].title)}</b> · ${total}단어를 저장했습니다. PDF와 대조해 확인하세요.`);
+    if (many) {
+      vocabPickOpen = true;
+      renderVocabSource();
+      if (vocabPickEl) vocabPickEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
   if (rows.length) {
     parts.push(`<b>${rows.length}단어</b>를 단어장에 저장했습니다. PDF와 대조해 확인하세요.`);
     vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
     vocabEditorAdd(rows, `${files[0].name.replace(/\.pdf$/i, "")} · ${todayStr()}`, "pdf");
+  } else if (bookSections.length) {
+    vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
   } else {
     if (!parts.length) parts.push("단어를 찾지 못했습니다.");
     vocabBuildStatus(parts.join("<br>"), "warn");
@@ -9867,6 +9944,7 @@ const HOWTO = {
       "<b>지문 상세분석</b>을 돌리면 그 지문의 핵심 어휘가 <b>저절로</b> 여기 모입니다.",
       "그 밖에 <b>[✏️ 직접 입력]</b> · 사진 · PDF로도 넣을 수 있습니다 — 사진과 PDF는 이 탭 위 칸에 끌어다 놓거나 붙여넣기(Ctrl+V) 하면 됩니다.",
       "사진·PDF로 읽은 결과는 바로 들어가지 않습니다. <b>편집 표</b>에서 확인·수정한 뒤 <b>[이 단어장에 추가]</b>를 눌러야 확정됩니다.",
+      "<b>'Unit 01', 'Day 22'처럼 쪽마다 번호가 매겨진 단어장 책 PDF</b>는 <b>쪽별로 단어장이 하나씩</b> 만들어지고 이름은 쪽에 써 있는 제목 그대로 붙습니다(편집 표 없이 바로 저장). 단어장이 둘 이상이면 위에 <b>[📚 쓸 단어장 고르기]</b>가 생기니 시험·인쇄할 단원만 체크하세요. 한 단원만 고르고 제목 칸을 비워 두면 그 단원 제목이 단어장 제목이 됩니다.",
       "<b>시험지 형식</b>으로 바꾸면 뜻(또는 영어) 칸이 빈칸이 됩니다. <b>문항 수</b>를 적으면 목록 앞에서부터 그 개수만 냅니다(비우면 전체 — 무작위로 뽑으려면 정렬을 '무작위 섞기'로). <b>시험지 · 섞어서</b>는 '영어 보고 뜻 쓰기'와 '뜻 보고 영어 쓰기'를 각각 몇 개씩 낼지 정해 한 시험지에 두 구역으로 냅니다. <b>[정답 표시]</b>를 켜면 교사용으로 답이 함께 찍힙니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> — 단어장은 <b>2단</b>으로 인쇄됩니다.",
       "(관리자 승인을 받은 선생님) <b>[🏫 반에 시험 내기]</b>로 학생에게 온라인 단어시험을 낼 수 있습니다. AI를 부르지 않아 <b>요금이 없습니다</b>.",
@@ -12542,7 +12620,7 @@ function createVocabBox(p, getTexts, scope) {
     } catch (_) {
       items = [];
     }
-    const cur = getVocabSets().reduce((n, s) => n + (s.vocab || []).length, 0);
+    const cur = activeVocabSets().reduce((n, s) => n + (s.vocab || []).length, 0);
     fromEl.innerHTML =
       `<option value="">📒 저장한 단어장에서 가져오기…</option>` +
       (cur ? `<option value="current">지금 단어장 탭에 있는 단어 (${cur}개)</option>` : "") +
@@ -12558,7 +12636,7 @@ function createVocabBox(p, getTexts, scope) {
       if (!val) return;
       let rows = [];
       try {
-        if (val === "current") rows = flattenVocabSets(getVocabSets());
+        if (val === "current") rows = flattenVocabSets(activeVocabSets());
         else {
           const item = await getJson(`/api/saved/${encodeURIComponent(val)}`, "단어장을 불러오지 못했습니다.");
           rows = flattenVocabSets((item.payload && item.payload.vocabSets) || []);
