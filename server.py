@@ -11351,11 +11351,26 @@ def list_pending_signups():
     한동안 아무도 몰랐다. 그래서 관리자 화면에 함께 띄운다.
 
     인증코드와 비밀번호 해시는 절대 내보내지 않는다 — 코드가 새면 남의 계정을
-    대신 만들어 버릴 수 있다."""
+    대신 만들어 버릴 수 있다.
+
+    코드가 만료된(VERIFY_CODE_TTL) 기록은 보여 주지 않고 그 자리에서 지운다 —
+    만료되면 그 코드로는 어차피 가입할 수 없고, 다시 가입하면 새 기록이 생긴다.
+    안 지우면 끝내 가입 안 한 사람의 이름·이메일·비밀번호 해시가 계속 쌓인다."""
     _require_db()
     rows = []
+    now = datetime.now(timezone.utc)
     for doc in DB.collection("pending_signups").stream():
         d = doc.to_dict() or {}
+        try:
+            expired = now >= datetime.fromisoformat(d["expires_at"])
+        except Exception:
+            expired = True
+        if expired:
+            try:
+                doc.reference.delete()
+            except Exception:
+                pass
+            continue
         rows.append({
             "email": d.get("email", "") or doc.id,
             "name": d.get("name", ""),
