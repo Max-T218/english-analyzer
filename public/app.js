@@ -7100,6 +7100,10 @@ document.addEventListener("click", (e) => {
 // 1(지문 연습하기)·2(빈칸 완성하기·우리말)는 제외한 3~10단계만 만든다.
 const WB_STAGES = [
   { id: 1,  name: "좌지문 우해석",         guide: "지문 원문(왼쪽)과 우리말 해석(오른쪽)을 나란히 놓고 읽어 보세요.", def: true },
+  /* 12 — 내용 O/X(2026-10-16). 워크북 AI 호출이 아니라 주관식 탭의 OX진위(/api/quiz)를 불러 만든다.
+     그래서 server.py의 WORKBOOK_STAGE_IDS에 없다 — 워크북 값(단계 수)에 안 들어가고 주관식 OX 값을 따로 받는다.
+     개수는 #wbOxBox(우리말·영어 × 기본·고난도), 해독제 내용이해 워크북 차례대로 지문 바로 뒤에 둔다. */
+  { id: 12, name: "내용 O/X",              guide: "글의 내용과 일치하면 O, 일치하지 않으면 X를 고르세요.", def: false },
   { id: 3,  name: "빈칸 완성하기(영문)",   guide: "우리말 해석을 읽고 영문의 빈칸을 완성해 보세요.", def: true },
   { id: 4,  name: "해석 연습하기",         guide: "문장 전체의 자연스러운 해석을 써 보세요.", def: true },
   { id: 5,  name: "동사형 연습하기",       guide: "괄호 안에 주어진 단어를 알맞게 고쳐 쓰세요.", def: true },
@@ -7108,6 +7112,10 @@ const WB_STAGES = [
   { id: 8,  name: "순서 배열하기",         guide: "우리말과 같은 뜻이 되도록 주어진 단어를 바르게 배열해 보세요.", def: true },
   { id: 9,  name: "문단 배열하기",         guide: "다음 문단을 흐름상 알맞게 배열해 보세요.", def: true },
   { id: 10, name: "영작 연습하기",         guide: "우리말과 같은 뜻이 되도록 주어진 단어를 순서대로 사용하여 영작하세요.", def: true },
+  /* 11 — 해독제식 '내용이해 워크북'의 배열 영작(2026-10-16). 지문 문장 2개 + 목표 어법을 쓴 새 문장 3개.
+     목표 어법은 지문칸 아래 공용 '목표 어법' 칸을 쓰고, 비어 있으면 AI가 지문에서 고른다.
+     이 단계를 골랐을 때만 서버가 재료(grammarArrange)를 만든다 — 그래서 기본은 꺼 둔다. */
+  { id: 11, name: "목표어법 배열 영작",    guide: "다음 우리말과 같은 뜻이 되도록 괄호 안의 단어를 배열하여 영어 문장을 쓰세요.", def: false },
 ];
 
 const wbStageGridEl = $("wbStageGrid");
@@ -7148,6 +7156,7 @@ wbStageAllEl.addEventListener("change", () => {
   wbStageGridEl.querySelectorAll("input").forEach((b) => (b.checked = check));
   syncWbAll();
   renumberWbStages();
+  syncWbOxBox();
   updateWbCostHint();
 });
 /* 워크북 값 — 고른 단계 수 × 단계 단가, 상한까지. server.py의 _workbook_cost와 같은 식이다.
@@ -7175,23 +7184,129 @@ function workbookCost(stageCount) {
   return max ? Math.min(sum, max) : sum;
 }
 
+/* ── 내용 O/X(단계 12) — 주관식 탭의 OX진위를 불러 쓴다 ──
+   지문마다 기본·고난도 한 번씩(개수가 있는 쪽만) /api/quiz를 부른다. 한 호출 안에 우리말·영어를
+   함께 넣어야 서버 지시문이 '둘이 같은 사실을 묻지 않게' 맞춰 준다. */
+const WB_OX_STAGE = 12;
+const wbOxBoxEl = $("wbOxBox");
+const wbOxGridEl = $("wbOxGrid");
+const wbOxLevelEl = checkGroup("wbOxLevel");
+/* 고르는 모양은 주관식 탭과 같다 — 유형 칸(체크 + −/+ 개수) 둘과 난이도 체크(기본·고난도).
+   주관식 칸(setupQuizTab)은 탭 하나를 통째로 맡는 덩어리라 떼어 쓸 수 없어 같은 모양·같은 클래스로 그린다.
+   −를 1에서 누르면 꺼지고, 꺼진 칸에서 +를 누르면 켜고 1부터 — 주관식과 같은 규칙이다. */
+const WB_OX_TYPES = ["OX진위(한)", "OX진위(영)"];   // 해독제 차례 — 우리말 먼저
+WB_OX_TYPES.forEach((id) => {
+  const chip = document.createElement("div");
+  chip.className = "type-chip";
+  chip.dataset.id = id;
+  chip.innerHTML =
+    `<label><input type="checkbox" value="${esc(id)}" checked><span class="type-name">${esc(id)}</span></label>` +
+    `<div class="type-count" title="${esc(typeMaxNote(id))}">` +
+    `<button type="button" class="type-step" data-step="-1" aria-label="${esc(id)} 문항 수 줄이기">−</button>` +
+    `<span class="type-n" aria-live="polite" data-n="1"></span>` +
+    `<button type="button" class="type-step" data-step="1" aria-label="${esc(id)} 문항 수 늘리기">+</button></div>`;
+  chip.querySelector(".type-n").dataset.max = TYPE_MAX[id] || 5;
+  wbOxGridEl.appendChild(chip);
+});
+function syncWbOxChips() {
+  wbOxGridEl.querySelectorAll(".type-chip").forEach((chip) => {
+    const on = chip.querySelector("input").checked;
+    const nEl = chip.querySelector(".type-n");
+    if (!on) nEl.dataset.n = "1";
+    const n = Number(nEl.dataset.n) || 1;
+    chip.classList.toggle("picked", on);
+    chip.querySelector(".type-count").classList.toggle("off", !on);
+    nEl.textContent = on ? String(n) : "";
+    chip.querySelector('.type-step[data-step="1"]').disabled = on && n >= (Number(nEl.dataset.max) || 5);
+    chip.querySelector('.type-step[data-step="-1"]').disabled = !on;
+  });
+  updateWbCostHint();
+}
+wbOxGridEl.addEventListener("click", (e) => {
+  const step = e.target.closest(".type-step");
+  if (!step) return;
+  const chip = step.closest(".type-chip");
+  const box = chip.querySelector("input");
+  const nEl = chip.querySelector(".type-n");
+  const n = Number(nEl.dataset.n) || 1;
+  const delta = Number(step.dataset.step);
+  if (!box.checked) {
+    if (delta < 0) return;
+    box.checked = true;
+    nEl.dataset.n = "1";
+  } else if (delta < 0 && n <= 1) {
+    box.checked = false;
+  } else {
+    nEl.dataset.n = String(Math.min(Number(nEl.dataset.max) || 5, Math.max(1, n + delta)));
+  }
+  syncWbOxChips();
+});
+wbOxGridEl.addEventListener("change", syncWbOxChips);
+if (wbOxLevelEl) wbOxLevelEl.addEventListener("change", () => updateWbCostHint());
+// 지금 고른 것 — {types:[{id, count}], levels:["normal"|"hard"]}. 저장본 설정에도 이 모양으로 담는다.
+function wbOxPick() {
+  const types = [...wbOxGridEl.querySelectorAll(".type-chip")]
+    .filter((c) => c.querySelector("input").checked)
+    .map((c) => ({ id: c.dataset.id, count: Number(c.querySelector(".type-n").dataset.n) || 1 }));
+  const levels = wbOxLevelEl ? wbOxLevelEl.values.filter((v) => v === "normal" || v === "hard") : ["normal"];
+  return { types, levels };
+}
+function wbOxApply(p) {
+  if (!p || !Array.isArray(p.types)) return;
+  wbOxGridEl.querySelectorAll(".type-chip").forEach((chip) => {
+    const t = p.types.find((x) => x.id === chip.dataset.id);
+    chip.querySelector("input").checked = !!t;
+    chip.querySelector(".type-n").dataset.n = String(t ? t.count : 1);
+  });
+  if (wbOxLevelEl && Array.isArray(p.levels)) wbOxLevelEl.values = p.levels;
+  syncWbOxChips();
+}
+// 난이도마다 한 번의 /api/quiz 요청 — [{difficulty, types:[{id, count}]}]. 난이도를 둘 다 고르면 같은 개수로 두 번.
+function wbOxCalls(p = wbOxPick()) {
+  if (!p.types.length) return [];
+  return ["normal", "hard"].filter((lv) => p.levels.includes(lv))
+    .map((difficulty) => ({ difficulty, types: p.types.map((t) => ({ ...t })) }));
+}
+// 지문 1개의 O/X 값 — 주관식 탭 costPerSet과 같은 식(server.py _quiz_action_cost). 고난도도 값은 같다.
+function wbOxCost(calls = wbOxCalls()) {
+  if (!PRICING) return 0;
+  const extra = PRICING.extraQuestion || 0;
+  return calls.reduce((s, call) =>
+    s + call.types.reduce((a, t) => a + (PRICING.saq || 0) + extra * (t.count - 1), 0), 0);
+}
+const wbPickedStages = () =>
+  [...wbStageGridEl.querySelectorAll("input:checked")].map((i) => parseInt(i.value, 10));
+// 워크북 AI 호출(/api/workbook)로 만드는 단계만 — 값이 이 수에 걸린다
+const wbServerStages = (stages) => stages.filter((id) => id !== WB_OX_STAGE);
+function wbPassageCost(stages) {
+  const n = wbServerStages(stages).length;
+  return (n ? workbookCost(n) : 0) + (stages.includes(WB_OX_STAGE) ? wbOxCost() : 0);
+}
+function syncWbOxBox() {
+  if (wbOxBoxEl) wbOxBoxEl.hidden = !wbPickedStages().includes(WB_OX_STAGE);
+}
+
 // 단계를 켜고 끌 때마다 지문 1개당 예상 금액을 바로 보여 준다 (문제 제작 탭과 같은 방식).
 // 지문 수는 이 탭 밖에서 바뀌므로 '지문 1개당'으로 적고, 최종 금액은 확인창이 보여 준다.
 const wbCostHintEl = $("wbCostHint");
 function updateWbCostHint() {
   if (!wbCostHintEl) return;
-  const n = wbStageGridEl.querySelectorAll("input:checked").length;
+  const stages = wbPickedStages();
+  const n = stages.length;
   if (!n) {
     wbCostHintEl.textContent = "";
     return;
   }
   const parts = [`선택 <b>${n}단계</b>`];
   if (PRICING) {
-    const cost = workbookCost(n);
-    parts.push(`— 지문 1개당 <b>${pt(cost)}</b>`);
+    const sn = wbServerStages(stages).length;
+    const cost = sn ? workbookCost(sn) : 0;
+    const ox = stages.includes(WB_OX_STAGE) ? wbOxCost() : 0;
+    parts.push(`— 지문 1개당 <b>${pt(cost + ox)}</b>`);
     // 상한에 걸렸으면 왜 단계 수 × 단가와 다른지 밝힌다
     const per = PRICING.workbookStage || 0;
-    if (per && cost < per * n) parts.push(`<span class="cost-hint-note">(전체 선택 상한)</span>`);
+    if (per && cost < per * sn) parts.push(`<span class="cost-hint-note">(전체 선택 상한)</span>`);
+    if (ox) parts.push(`<span class="cost-hint-note">(내용 O/X ${pt(ox)} 포함 — 주관식 OX와 같은 값)</span>`);
   }
   wbCostHintEl.innerHTML = parts.join(" ");
 }
@@ -7199,10 +7314,13 @@ function updateWbCostHint() {
 wbStageGridEl.addEventListener("change", () => {
   syncWbAll();
   renumberWbStages();
+  syncWbOxBox();
   updateWbCostHint();
 });
 syncWbAll();
 renumberWbStages();
+syncWbOxBox();
+syncWbOxChips();
 onPricingReady(updateWbCostHint);
 
 const wbBtn = $("wbBtn");
@@ -7368,9 +7486,16 @@ async function generateWorkbook() {
     wbErrorEl.textContent = "포함할 단계를 하나 이상 선택하세요.";
     return;
   }
-  if (!(await costConfirmed(billableJobCount() * workbookCost(stages.length),
-                     "워크북을 만듭니다.", jobs.length,
-      reduceAdvice(jobs.length, workbookStageAdvice(stages.length))))) {
+  const serverStages = wbServerStages(stages);
+  const oxCalls = stages.includes(WB_OX_STAGE) ? wbOxCalls() : [];
+  if (stages.includes(WB_OX_STAGE) && !oxCalls.length && !serverStages.length) {
+    wbErrorEl.textContent = "내용 O/X의 유형과 난이도를 하나 이상 고르세요.";
+    return;
+  }
+  if (!(await costConfirmed(billableJobCount() * wbPassageCost(stages),
+                     oxCalls.length ? "워크북을 만듭니다. (내용 O/X는 주관식 OX와 같은 값)" : "워크북을 만듭니다.",
+                     jobs.length,
+      reduceAdvice(jobs.length, workbookStageAdvice(serverStages.length))))) {
     return;
   }
 
@@ -7411,24 +7536,62 @@ async function generateWorkbook() {
       continue;
     }
 
-    try {
-      const data = await postGenerate(
-        "/api/workbook",
-        // stages는 요금 계산에 쓰인다 — 서버가 단계 수로 값을 매기므로 반드시 보낸다.
-        // (만들어지는 내용은 8단계분이 통째로 오고, 고른 것만 화면이 그린다.)
-        { passage: job.text, stages },
-        "워크북 생성에 실패했습니다."
-      );
-      results.push({ job, data });
-    } catch (err) {
-      const msg = err.message || String(err);
-      results.push({ errorHtml: buildErrorHtml(job, total, msg) });
-      // 한도 소진은 기다려도 안 풀린다 — 남은 지문을 시도하지 않고 즉시 멈춘다
-      if (isQuotaError(err)) {
-        const left = total - (i + 1);
-        if (left > 0) results.push({ errorHtml: quotaStopHtml(left, err) });
-        break;
+    let data = null;
+    let quotaErr = null;
+    const fails = [];
+    if (serverStages.length) {
+      try {
+        data = await postGenerate(
+          "/api/workbook",
+          // stages는 요금 계산에 쓰인다 — 서버가 단계 수로 값을 매기므로 반드시 보낸다.
+          // (만들어지는 내용은 여러 단계분이 통째로 오고, 고른 것만 화면이 그린다.
+          //  목표어법 배열 영작(11)만은 골랐을 때만 만들어지므로, 만든 뒤 켜면 비어 있다.)
+          // 내용 O/X(12)는 여기 싣지 않는다 — 아래에서 주관식 OX로 따로 만들고 값도 따로다.
+          { passage: job.text, stages: serverStages, targetGrammar: grammarEl.value },
+          "워크북 생성에 실패했습니다."
+        );
+      } catch (err) {
+        fails.push(err.message || String(err));
+        if (isQuotaError(err)) quotaErr = err;
       }
+    }
+    // 내용 O/X — 워크북 호출이 실패해도 따로 만든다(값도 따로 매겨진다). 한도 소진이면 건너뛴다.
+    const ox = [];
+    for (const call of quotaErr ? [] : oxCalls) {
+      wbLoadingTextEl.textContent =
+        `${total > 1 ? `${job.name} ` : ""}내용 O/X ${call.difficulty === "hard" ? "고난도" : "기본"} 만드는 중…`;
+      try {
+        const res = await postGenerate(
+          "/api/quiz",
+          { passage: job.text, types: call.types, variation: "verbatim", difficulty: call.difficulty, school: "high" },
+          "내용 O/X 생성에 실패했습니다."
+        );
+        (res.questions || []).filter((q) => q && (q.tfItems || []).length).forEach((q) =>
+          ox.push({ level: call.difficulty, lang: q.type === "OX진위(영)" ? "en" : "ko",
+                    type: q.type || "", instruction: q.instruction || "",
+                    tfItems: q.tfItems, explanation: q.explanation || "" }));
+      } catch (err) {
+        fails.push(err.message || String(err));
+        if (isQuotaError(err)) { quotaErr = err; break; }
+      }
+    }
+    if (ox.length) {
+      // 해독제 차례 — 우리말 기본 → 영어 기본 → 우리말 고난도 → 영어 고난도
+      const rank = (q) => (q.level === "hard" ? 2 : 0) + (q.lang === "en" ? 1 : 0);
+      ox.sort((a, b) => rank(a) - rank(b));
+      data = Object.assign(data || { sentences: [] }, { ox });
+    }
+    if (data) {
+      results.push({ job, data });
+      if (fails.length) results.push({ errorHtml: buildErrorHtml(job, total, "일부만 만들었습니다 — " + fails.join(" / ")) });
+    } else {
+      results.push({ errorHtml: buildErrorHtml(job, total, fails.join(" / ") || "만들어진 것이 없습니다.") });
+    }
+    // 한도 소진은 기다려도 안 풀린다 — 남은 지문을 시도하지 않고 즉시 멈춘다
+    if (quotaErr) {
+      const left = total - (i + 1);
+      if (left > 0) results.push({ errorHtml: quotaStopHtml(left, quotaErr) });
+      break;
     }
   }
 
@@ -7547,6 +7710,7 @@ function getWorkbookSettings() {
     answer: wbAnswerChk.checked,
     answerBook: wbAnswerBookChk ? wbAnswerBookChk.checked : true,
     order: wbOrderEl ? wbOrderEl.value : "passage",
+    ox: wbOxPick(),
   };
 }
 function applyWorkbookSettings(settings) {
@@ -7555,8 +7719,11 @@ function applyWorkbookSettings(settings) {
   wbStageGridEl.querySelectorAll("input").forEach((b) => {
     b.checked = wanted.has(parseInt(b.value, 10));
   });
+  // 내용 O/X 고르기 — 담지 않은 옛 저장본은 지금 값을 그대로 둔다
+  wbOxApply(settings.ox);
   syncWbAll();
   renumberWbStages();
+  syncWbOxBox();
   updateWbCostHint(); // 불러온 설정의 단계 수에 맞춰 금액 안내도 다시 그린다
   wbTitleEl.value = settings.title || "";
   if (wbExamEl) wbExamEl.value = settings.exam || "";
@@ -7633,6 +7800,21 @@ function wbQuestionsForStudents(entries, stages) {
           return { cue: cue(x), hint, answer: x.en };
         }).filter(Boolean);
         if (lines.length) out.push({ ...base, instruction: esc(meta.guide + " (문장 전체를 쓰세요)"), format: "order", lines });
+      } else if (id === WB_OX_STAGE) {
+        // 주관식 OX 문항(진술 5개) 하나를 학생 문항 하나로 — 문제 시험의 tf 모양 그대로
+        const body = sentences.length ? passage : (job && job.text) || "";
+        (d.ox || []).filter((q) => q && (q.tfItems || []).length).forEach((q) => {
+          out.push({ ...base, format: "tf", passageHtml: esc(body).replace(/\n/g, "<br>"),
+            tfItems: q.tfItems.map((it) => ({ text: it.text, isTrue: !!it.isTrue })),
+            explanation: q.explanation || "" });
+        });
+      } else if (id === 11) {
+        const ga = d.grammarArrange;
+        const lines = wbArrangeItems(ga).map((x, i) =>
+          ({ cue: x.ko, hint: `(${wbArrangeScramble(x.en, strSeed(x.en) + i + 1)})`, answer: x.en }));
+        if (lines.length) {
+          out.push({ ...base, format: "order", lines, instruction: esc(meta.guide + " (문장 전체를 쓰세요)") });
+        }
       } else if (id === 10) {
         const lines = sentences.map((x) => {
           const keys = (x.writeKeys || []).filter(Boolean);
@@ -7767,16 +7949,19 @@ function lowerFirstWord(word, passage) {
 // 참고 자료처럼 ① 끝 문장부호는 떼고 ② 첫 단어는 소문자로 바꿔
 // 문장의 시작·끝이 드러나지 않게 한다(고유명사처럼 보이는 말은 그대로 둔다).
 function scrambleSentence(en, seed) {
+  return esc(scrambleWords(en, seed));
+}
+// 위와 같되 HTML로 바꾸지 않은 글자 그대로 — 학생 화면(quiztest.js)이 직접 이스케이프하는 자리에 쓴다
+function scrambleWords(en, seed) {
   let text = String(en || "").trim();
   if (!text) return "";
   // 끝 문장부호(. ? !) 제거 — 어느 낱말이 끝자리인지 알려 주는 단서다.
   // 의문문이라는 것은 함께 보여 주는 우리말 해석이 이미 알려 준다.
   text = text.replace(/\s*[.?!]+\s*$/, "");
   const words = text.split(/\s+/).filter(Boolean);
-  if (words.length < 2) return esc(text);
+  if (words.length < 2) return text;
   words[0] = lowerFirstWord(words[0], en);
-  const shuffled = seededShuffle(words, seed);
-  return esc(shuffled.join(" / "));
+  return seededShuffle(words, seed).join(" / ");
 }
 
 /* 워크북8 — 순서 배열에 쓸 조각을 문장에서 직접 만든다.
@@ -7963,7 +8148,7 @@ function buildWorkbookHtml(d, stages, job, total, exam) {
   stages.forEach((stageId) => {
     const meta = WB_STAGES.find((s) => s.id === stageId);
     if (!meta) return;
-    const built = buildStage(stageId, d, sentences);
+    const built = buildStage(stageId, d, sentences, wbOxCtx(stages, d, sentences, job));
     if (!built || !built.html.trim()) return;
     stageNo++;
     const head = `STEP ${stageNo} ${meta.name}`;
@@ -7990,6 +8175,7 @@ function buildWorkbookByStage(entries, stages, exam) {
     d: data,
     label: job && (job.named || total > 1) ? job.name : "",
     sentences: (data.sentences || []).filter((s) => s && s.en),
+    job,
   }));
   const parts = [];
   const answers = [];
@@ -7998,7 +8184,7 @@ function buildWorkbookByStage(entries, stages, exam) {
     const meta = WB_STAGES.find((s) => s.id === stageId);
     if (!meta) return;
     const builtAll = items
-      .map((it) => ({ it, built: buildStage(stageId, it.d, it.sentences) }))
+      .map((it) => ({ it, built: buildStage(stageId, it.d, it.sentences, wbOxCtx(stages, it.d, it.sentences, it.job)) }))
       .filter((x) => x.built && x.built.html.trim());
     if (!builtAll.length) return;
     stageNo++;
@@ -8064,9 +8250,11 @@ function wbAnswerGroupHtml(label, groups) {
 }
 
 // 한 단계를 통째로 만든다 → { html, answers:[{no, text}] }
-function buildStage(stageId, d, sentences) {
+function buildStage(stageId, d, sentences, ctx) {
   if (stageId === 7) return buildStage7(d.grammarFix);
   if (stageId === 9) return buildStage9(d.paraOrder, sentences);
+  if (stageId === 11) return buildStage11(d.grammarArrange);
+  if (stageId === WB_OX_STAGE) return buildStageOx(d.ox, ctx && ctx.passageText);
 
   const html = [];
   const answers = [];
@@ -8158,6 +8346,85 @@ function renderStageSentence(stageId, s, passage) {
     html: `<div class="wb-q">${head}<div class="wb-q-body">${noBadge}<div class="wb-q-main">${body}</div></div></div>`,
     answer,
   };
+}
+
+/* 워크북11 — 목표어법 배열 영작. 해독제 워크북처럼 문장의 낱말을 **모두 한 괄호에** 섞어 준다
+   (순서 배열하기(8)의 묶음 나누기는 쓰지 않는다 — 새로 지은 문장이라 지문 순서를 떠올릴 단서가
+   없고, 구조를 스스로 짜 보는 것이 이 단계의 목적이다). 목표 어법 이름은 정답 별지에만 싣는다. */
+function wbArrangeItems(ga) {
+  return ((ga && ga.items) || []).filter((x) => x && x.en && x.ko);
+}
+// 낱말에 붙은 쉼표·쌍점도 뗀다 — 'economy,'처럼 남으면 절이 어디서 끊기는지 알려 주는 단서다
+function wbArrangeScramble(en, seed) {
+  return scrambleWords(String(en || "").replace(/[,;:](?=\s)/g, ""), seed);
+}
+function buildStage11(ga) {
+  const items = wbArrangeItems(ga);
+  if (!items.length) return { html: "", answers: [] };
+  // [목표어법: …] 줄은 싣지 않는다 — 학생에게 답의 구조를 미리 알려 주는 꼴이라(2026-10-16 사용자).
+  // 어느 문법을 연습한 문장인지는 정답 별지에만 남긴다.
+  const html = [];
+  const answers = [];
+  items.forEach((x, i) => {
+    const no = i + 1;
+    const scr = esc(wbArrangeScramble(x.en, strSeed(x.en) + no));
+    html.push(`<div class="wb-q"><div class="wb-q-body"><span class="wb-no">${no}</span><div class="wb-q-main">
+      <div class="wb-ko">${esc(x.ko)}</div>
+      <div class="wb-scramble"><b class="wb-scramble-grp">(${scr})</b></div>
+      <div class="wb-writeline"></div>
+      ${wbAns(x.en)}</div></div></div>`);
+    answers.push({ no, text: x.en + (x.grammar ? ` — ${x.grammar}` : "") });
+  });
+  return { html: html.join(""), answers };
+}
+
+/* 워크북12 — 내용 O/X. 지문은 워크북 맨 위(좌지문 우해석)에 한 번만 있으므로 여기서는 진술만 싣는다
+   (주관식 탭은 O/X 문항마다 지문 전문을 다시 싣는다). 진술 번호는 이 단계 안에서 1부터 이어 매기고,
+   주관식 문항(진술 5개) 하나를 한 덩어리로 두어 쪽 사이에서 쪼개지지 않게 한다.
+   답지에는 O/X만 싣는다(주관식 답지에 해설을 안 넣는 것과 같은 까닭 — 글씨가 작아진다). */
+/* 좌지문 우해석(1)을 안 골랐으면 지문이 워크북 어디에도 없다 — 그때는 O/X 위에 지문을 싣는다.
+   지문은 워크북이 나눈 문장(sentences)을 잇고, 워크북 호출 없이 O/X만 만든 경우는 넣은 지문 그대로. */
+function wbOxCtx(stages, d, sentences, job) {
+  if (stages.includes(1)) return null;
+  const text = (sentences || []).length
+    ? sentences.map((x) => (x.heading ? `${x.heading}\n` : "") + x.en).join(" ")
+    : (job && job.text) || "";
+  return { passageText: text.trim() };
+}
+function buildStageOx(ox, passageText) {
+  const groups = (ox || []).filter((q) => q && (q.tfItems || []).length);
+  if (!groups.length) return { html: "", answers: [] };
+  /* 모양은 주관식 탭의 O/X 카드 그대로 — 머리(번호·유형)·발문·(1)~(5)·괄호 칸을 주관식과 같은
+     quizBodyHtml로 그린다. 다른 것은 지문 하나뿐이다: 주관식은 카드마다 지문을 다시 싣지만, 여기서는
+     좌지문 우해석이 없을 때(passageText가 있을 때) 첫 카드에만 한 번 싣는다. */
+  const passageHtml = passageText ? esc(passageText).replace(/\n/g, "<br>") : "";
+  const html = [];
+  const answers = [];
+  groups.forEach((q, i) => {
+    const no = i + 1;
+    const lang = q.lang === "en" ? "OX진위(영)" : "OX진위(한)";
+    const qq = {
+      format: "tf",
+      type: (q.type || lang) + (q.level === "hard" ? " · 고난도" : ""),
+      instruction: q.instruction || "다음 글의 내용과 일치하면 O, 일치하지 않으면 X를 쓰시오.",
+      passageHtml: i === 0 ? passageHtml : "",
+      tfItems: q.tfItems,
+    };
+    let body = quizBodyHtml(qq);
+    if (!qq.passageHtml) body = body.replace(/<div class="qz-passage"><\/div>/, "");
+    const label = quizAnswerLabel(qq);
+    answers.push({ no, text: String(label).replace(/<[^>]*>/g, "") });
+    html.push(`
+      <div class="wb-q qz-card wb-ox-card">
+        <div class="qz-head"><span class="qz-no">${no}</span><span class="qz-type">${esc(qq.type)}</span></div>
+        <div class="qz-instruction">${safeHTML(qq.instruction)}</div>
+        ${body}
+        ${wbAns(String(label).replace(/<[^>]*>/g, ""))}
+        <button type="button" class="qz-reveal-btn">정답·해설 보기</button>
+        <div class="qz-answer-box"><b>정답 ${label}</b>${q.explanation ? `<br>${safeHTML(q.explanation)}` : ""}</div>
+      </div>`);
+  });
+  return { html: html.join(""), answers };
 }
 
 // 워크북7 — 지문 전체에서 어법상 어색한 세 곳 찾아 고치기
@@ -10083,6 +10350,8 @@ const HOWTO = {
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "넣을 <b>단계</b>를 고릅니다. 값이 단계 수에 걸려 있고, 7단계부터는 더 올라가지 않습니다.",
+      "<b>내용 O/X</b>(기본은 꺼짐)를 고르면 아래에 고르는 칸이 열립니다 — 주관식 탭처럼 <b>OX진위(한)·OX진위(영)</b>을 체크하고 <b>−/+</b>로 문항 수를 정한 뒤(한 문항 = 진술 5개), <b>난이도</b>를 고릅니다(기본·고난도를 둘 다 고르면 같은 개수로 두 벌). 주관식 탭의 OX진위와 <b>같은 방법·같은 값</b>으로 만들고, 지문은 워크북에 한 번만 싣고 진술만 이어 번호를 붙입니다. 값은 워크북 단계 값과 따로 더해집니다.",
+      "<b>목표어법 배열 영작</b>(기본은 꺼짐)을 고르면 지문마다 배열 영작 5문항이 붙습니다 — 지문 문장 2개 + <b>목표 어법을 쓴 새 문장 3개</b>입니다. 문법은 지문 칸 아래 <b>목표 어법</b> 칸에 적은 것을 쓰고(예: 계속적 용법 which, without ~ would, seem to have p.p.), 비워 두면 AI가 지문에서 골라 씁니다. 이 단계는 <b>골랐을 때만 만들어지므로</b>, 이미 만든 워크북에서 나중에 켜면 비어 있습니다 — 다시 만들어 주세요.",
       "지문이 여럿이면 <b>출력 순서</b>를 고릅니다 — <b>지문별로 묶기</b>는 지문 하나의 단계를 다 찍고 다음 지문으로, <b>단계별로 묶기</b>는 모든 지문의 좌지문 우해석을 먼저 모아 찍고 다음 단계로 넘어갑니다. 만든 뒤에 바꿔도 다시 만들지 않고 바로 다시 늘어놓습니다(요금 없음).",
       "(선택) <b>제목</b>과 <b>시험명</b>을 적으면 맨 앞에 <b>표지가 한 장</b> 생깁니다.",
       "<b>[워크북 만들기]</b>를 누릅니다.",

@@ -1155,6 +1155,7 @@
           <b>어법 문제</b>(객관식 어법 · 주관식 어법 선택형 · 틀린 어법 찾기 · 동사형 쓰기)의
           정답 자리를 이 문법으로 냅니다. <b>서술형배열 · 조건 영작 · 문장 전환</b>은 이 문법이
           쓰인 문장을 골라 출제합니다. 쉼표로 여럿 적으면 문항마다 나눠 씁니다.
+          워크북의 <b>목표어법 배열 영작</b>도 이 문법으로 문장을 짓습니다(비우면 지문에서 골라 씁니다).
         </div>
       </div>
     </div>
@@ -1599,6 +1600,17 @@
             <label class="chk toggle-all"><input type="checkbox" id="wbStageAll"> 전체 선택 / 해제</label>
           </div>
           <div class="quiz-type-grid" id="wbStageGrid"></div>
+          <!-- 내용 O/X(단계 12) — 주관식 탭의 OX진위를 그대로 불러 만든다(/api/quiz). 문항 하나 = 진술 5개.
+               값도 주관식 OX와 같고, 고난도는 주관식처럼 Pro로 간다. 단계를 켰을 때만 보인다(syncWbOxBox). -->
+          <div class="wb-ox-box" id="wbOxBox" hidden>
+            <label class="group-label" style="margin-top:0">내용 O/X 유형 <span class="group-note">(주관식 탭과 같은 고르기 — 한 문항 = 진술 5개)</span></label>
+            <div class="quiz-type-grid" id="wbOxGrid"></div>
+            <label class="group-label">난이도 <span class="group-note">(둘 다 고르면 같은 개수로 두 벌 — 고난도는 지문 내용을 다른 말로 바꿔 쓴 진술)</span></label>
+            <div class="quiz-type-grid radio-grid">
+              <label><input type="checkbox" name="wbOxLevel" value="normal" checked> 기본</label>
+              <label><input type="checkbox" name="wbOxLevel" value="hard" checked> 고난도</label>
+            </div>
+          </div>
           <div class="hint cost-hint" id="wbCostHint" role="status" aria-live="polite"></div>
           <div class="hint type-order-hint">
             체크한 단계 앞의 <b>번호가 인쇄 순서</b>입니다.

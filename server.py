@@ -299,7 +299,15 @@ PRICE_SAQ_KRW = int(os.environ.get("PRICE_SAQ_KRW", "250"))
 # 스키마·프롬프트를 잘라야 한다(그때 비로소 적게 고르면 실제로 싸진다).
 PRICE_WORKBOOK_STAGE_KRW = int(os.environ.get("PRICE_WORKBOOK_STAGE_KRW", "100"))  # 단계 1개당
 PRICE_WORKBOOK_MAX_KRW = int(os.environ.get("PRICE_WORKBOOK_MAX_KRW", "700"))      # 지문 1개당 상한
-WORKBOOK_STAGE_IDS = (1, 3, 4, 5, 6, 7, 8, 9, 10)  # public/app.js의 WB_STAGES와 같은 목록
+WORKBOOK_STAGE_IDS = (1, 3, 4, 5, 6, 7, 8, 9, 10, 11)  # public/app.js의 WB_STAGES와 같은 목록
+# 11 목표어법 배열 영작(2026-10-16) — 고를 때만 AI가 그 재료(grammarArrange)를 만든다.
+# 아래 WORKBOOK_STAGE_LABELS에는 일부러 넣지 않았다: 기출 유형 분석이 시험지의 서술형 배열
+# 문항을 이 이름에 갖다 붙여 워크북 탭에서 켜 버리면, 학생이 고른 적 없는 단계 값이 붙는다.
+# 화면의 12(내용 O/X)는 여기 없다 — 화면이 /api/quiz의 OX진위로 따로 만들고 그 값을 받는다.
+# 여기 넣으면 워크북 단계 값까지 겹쳐 받게 된다(화면도 /api/workbook에는 12를 빼고 보낸다).
+WORKBOOK_ARRANGE_STAGE = 11
+WORKBOOK_ARRANGE_ITEMS = 5      # 지문 문장 2 + 목표어법을 쓴 새 문장 3 (해독제식 내용이해 워크북)
+WORKBOOK_ARRANGE_FROM_PASSAGE = 2
 
 # 단계 이름과 '학생이 실제로 하는 일'. public/app.js WB_STAGES의 name·guide와 같은 값을
 # 유지해야 한다 — 기출 유형 분석이 시험지 문항을 이 이름에 갖다 붙이고, 화면은 그 이름으로
@@ -6189,9 +6197,72 @@ _WORKBOOK_TRUNC_MSG = (
     "지문을 두세 문단으로 나눠 각각 따로 만드세요."
 )
 
+# 워크북11 — 목표어법 배열 영작. 이 단계를 골랐을 때만 스키마에 더한다(안 고른 요청은
+# 출력이 늘지 않게). 문항마다 쓰는 문법(grammar)·우리말(ko)·정답 문장(en)·지문 문장인지(fromPassage).
+WORKBOOK_ARRANGE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "grammars": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "items": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "grammar": {"type": "STRING"},
+                    "ko": {"type": "STRING"},
+                    "en": {"type": "STRING"},
+                    "fromPassage": {"type": "BOOLEAN"},
+                },
+                "required": ["grammar", "ko", "en", "fromPassage"],
+                "propertyOrdering": ["grammar", "ko", "en", "fromPassage"],
+            },
+        },
+    },
+    "required": ["grammars", "items"],
+    "propertyOrdering": ["grammars", "items"],
+}
 
-def build_workbook_user_prompt(passage, complete_hint=None):
+
+def _workbook_schema(stages):
+    if WORKBOOK_ARRANGE_STAGE not in (stages or ()):
+        return WORKBOOK_SCHEMA
+    props = dict(WORKBOOK_SCHEMA["properties"], grammarArrange=WORKBOOK_ARRANGE_SCHEMA)
+    return dict(WORKBOOK_SCHEMA, properties=props,
+                required=WORKBOOK_SCHEMA["required"] + ["grammarArrange"],
+                propertyOrdering=WORKBOOK_SCHEMA["propertyOrdering"] + ["grammarArrange"])
+
+
+def _workbook_arrange_prompt(target_grammar):
+    n, k = WORKBOOK_ARRANGE_ITEMS, WORKBOOK_ARRANGE_FROM_PASSAGE
+    if target_grammar:
+        pick = (f"목표 어법(선생님이 정함): {target_grammar}\n"
+                "  · `grammars`에는 이 목표 어법을 그대로(쉼표로 나뉜 것을 하나씩) 담는다.")
+    else:
+        pick = ("목표 어법이 주어지지 않았다 — 이 지문에 실제로 쓰였고 내신 서술형에 자주 나오는 "
+                "문법 구조 3~4개를 골라라(예: 앞 문장 전체를 받는 관계대명사 which, 동사+목적어+to부정사, "
+                "without ~, 주어+would ..., seem to+완료부정사, 분사구문, 강조구문, 가정법 과거).\n"
+                "  · `grammars`에 고른 이름을 우리말로 짧게 담는다.")
+    return f"""
+## grammarArrange — 워크북11 재료 (목표어법 배열 영작) — 이 요청에서는 반드시 만든다
+{pick}
+- `items`: 정확히 {n}개. 학생은 우리말(`ko`)을 보고, 화면이 `en`의 낱말을 모두 섞어 준 것을 배열한다.
+  · 처음 {k}개는 `fromPassage: true` — 목표 어법이 쓰인 **지문의 문장 그대로**(`en`은 지문 원문과 한 글자도
+    다르지 않게, `ko`는 그 문장의 자연스러운 해석). 그런 문장이 모자라면 이 자리도 아래처럼 새로 지어 채운다.
+  · 나머지는 `fromPassage: false` — **지문에 없는 새 문장**. 지문의 내용·어휘를 써서 목표 어법을 연습하게
+    짓는다(예: 지문 "Expanding infrastructure requires significant funding, which many cities lack." →
+    새 문장 "Without enough funding, cities would not expand their infrastructure.").
+    지문의 내용과 어긋나는 사실을 지어내지 않는다. 문법적으로 완전히 옳아야 한다.
+  · 목표 어법을 고르게 돌려 쓴다 — 한 문법만 몰아 쓰지 않는다. `grammar`에 그 문항이 연습하는 문법 이름
+    (`grammars` 중 하나와 같은 글자)을 적는다.
+  · `en`은 8~22낱말의 한 문장, 평문(꾸밈표·괄호·번호 없음). `ko`는 우리말 문장 하나.
+"""
+
+
+def build_workbook_user_prompt(passage, complete_hint=None, stages=None, target_grammar=""):
     lines = []
+    if WORKBOOK_ARRANGE_STAGE in (stages or ()):
+        lines.append(_workbook_arrange_prompt((target_grammar or "").strip()))
+        lines.append("")
     if complete_hint is not None:
         expected, got = complete_hint
         lines.append(
@@ -6204,7 +6275,34 @@ def build_workbook_user_prompt(passage, complete_hint=None):
     return "\n".join(lines)
 
 
-def call_gemini_workbook(passage, api_key, model, complete_hint=None):
+def normalize_workbook_arrange(result, stages):
+    """워크북11 재료를 거른다 — 빈 문항·지나치게 긴 문장을 버리고 개수를 맞춘다.
+    화면이 esc로 찍지만 HTML 꼴은 여기서도 떼어 둔다(저장본에 그대로 남으므로)."""
+    if not isinstance(result, dict) or WORKBOOK_ARRANGE_STAGE not in (stages or ()):
+        return result
+    ga = result.get("grammarArrange")
+    if not isinstance(ga, dict):
+        result.pop("grammarArrange", None)
+        return result
+    plain = lambda v, n: re.sub(r"<[^>]*>", "", str(v or "")).strip()[:n]
+    items = []
+    for it in ga.get("items") or ():
+        if not isinstance(it, dict):
+            continue
+        en, ko = plain(it.get("en"), 400), plain(it.get("ko"), 400)
+        if len(en.split()) < 3 or not ko:
+            continue
+        items.append({"grammar": plain(it.get("grammar"), 60), "ko": ko, "en": en,
+                      "fromPassage": bool(it.get("fromPassage"))})
+    result["grammarArrange"] = {
+        "grammars": [g for g in (plain(x, 60) for x in (ga.get("grammars") or ())) if g][:6],
+        "items": items[:WORKBOOK_ARRANGE_ITEMS],
+    }
+    return result
+
+
+def call_gemini_workbook(passage, api_key, model, complete_hint=None, stages=None,
+                         target_grammar=""):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -6216,16 +6314,18 @@ def call_gemini_workbook(passage, api_key, model, complete_hint=None):
     payload = {
         "systemInstruction": {"parts": [{"text": WORKBOOK_SYSTEM_PROMPT}]},
         "contents": [
-            {"role": "user", "parts": [{"text": build_workbook_user_prompt(passage, complete_hint)}]}
+            {"role": "user", "parts": [{"text": build_workbook_user_prompt(
+                passage, complete_hint, stages, target_grammar)}]}
         ],
         "generationConfig": {
             "temperature": 0.25,
             "maxOutputTokens": 65536,
             "responseMimeType": "application/json",
-            "responseSchema": WORKBOOK_SCHEMA,
+            "responseSchema": _workbook_schema(stages),
         },
     }
-    return _gemini_json(payload, api_key, model, _WORKBOOK_TRUNC_MSG, label="workbook")
+    return normalize_workbook_arrange(
+        _gemini_json(payload, api_key, model, _WORKBOOK_TRUNC_MSG, label="workbook"), stages)
 
 
 # ── 주제 & 흐름 요약 규칙 (상세분석·소책자 공용) ──
@@ -10268,6 +10368,18 @@ CHANGELOG = [
             "📄 지문 저장함에서 저장본을 한꺼번에 여러 개 불러올 수 있습니다. 저장본 앞의 체크박스를 "
             "쓸 차례대로 누르면 번호가 붙고, 아래 [선택한 N개 불러오기]를 누르면 그 차례대로 입력칸에 "
             "들어갑니다. 목록에는 저장본마다 지문 개수도 보입니다.",
+        ],
+    },
+    {
+        "version": 70,
+        "date": "2026-10-16",
+        "items": [
+            "워크북 — '목표어법 배열 영작' 단계가 생겼습니다(기본은 꺼져 있습니다). 지문마다 배열 영작 "
+            "5문항이 붙는데, 지문 문장 2개에 더해 목표 어법을 써서 새로 지은 문장 3개가 나옵니다. "
+            "문법은 지문 칸 아래 '목표 어법' 칸에 적은 것을 쓰고, 비워 두면 지문에서 골라 씁니다.",
+            "워크북 — '내용 O/X' 단계가 생겼습니다(기본은 꺼져 있습니다). 우리말·영어 진술을 기본·고난도로 "
+            "나눠 문항 수를 정하면, 주관식 탭의 OX진위와 같은 방법·같은 값으로 만들어 지문 아래에 진술만 "
+            "이어서 싣습니다.",
         ],
     },
 ]
@@ -14519,9 +14631,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             api_key = req.get("apiKey") or ""
             model = MODEL  # 워크북은 항상 Flash — 사용자가 모델을 고르지 않는다
+            wb_stages = parse_workbook_stages(req.get("stages"))
+            wb_grammar = (req.get("targetGrammar") or "").strip()[:200]
             t0 = time.monotonic()
             try:
-                result = call_gemini_workbook(passage, api_key, model)
+                result = call_gemini_workbook(passage, api_key, model,
+                                              stages=wb_stages, target_grammar=wb_grammar)
                 # 문장 누락 방어 — 실제 문장 수보다 많이 부족하면 자동 보정 재요청
                 expected = rough_sentence_count(passage)
                 for _ in range(2):
@@ -14531,7 +14646,8 @@ class Handler(BaseHTTPRequestHandler):
                     if _over_budget(t0):  # 프록시가 끊기 전에 현재 결과라도 돌려준다
                         break
                     result = call_gemini_workbook(
-                        passage, api_key, model, complete_hint=(expected, got)
+                        passage, api_key, model, complete_hint=(expected, got),
+                        stages=wb_stages, target_grammar=wb_grammar,
                     )
             except ProUnavailable as e:
                 self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)

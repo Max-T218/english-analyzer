@@ -295,7 +295,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 | `QUIZ_TYPE_MAX` | `TYPE_MAX` (안내 문구는 `TYPE_MAX_REASON`) |
 | `QUIZ_TYPE_LABELS` | `MCQ_TYPES`, `SAQ_TYPES` |
 | `MCQ_ONLY_TYPES` | `MCQ_TRANSFORM_TYPES` |
-| `WORKBOOK_STAGE_IDS` | `WB_STAGES`의 id — 워크북 요금이 단계 수에 걸려 있다 |
+| `WORKBOOK_STAGE_IDS` | `WB_STAGES`의 id — 워크북 요금이 단계 수에 걸려 있다. 11(목표어법 배열 영작, 2026-10-16)만은 고를 때만 AI가 재료(`grammarArrange`)를 만들고(`_workbook_schema`), 공용 `targetGrammar` 칸을 받으며(비면 AI가 지문에서 고른다), 기출 유형 매칭이 켜지 않게 `WORKBOOK_STAGE_LABELS`에는 넣지 않았다. **12(내용 O/X)는 서버 목록에 일부러 없다** — 워크북 호출이 아니라 화면이 주관식 OX진위(`/api/quiz`)를 지문마다 기본·고난도로 따로 불러 만들고(`wbOxCalls`, 결과는 `data.ox`), 값도 주관식 OX 값을 받는다(`wbOxCost`). 워크북 값에 넣으면 두 번 받는다 |
 | `EXAM_MAX_PAGES` | `EXAM_MAX_PAGES` — 기출을 여러 부 쌓으므로 한 부의 서너 배가 든다 |
 | `QUIZ_HARD_RULES` 8~12번(주관식 유형) | `SAQ_HARD_TYPES` — 주관식 고난도가 되는 유형. 화면이 이 목록 밖의 유형은 고난도로 보내지 않는다 |
 | `RECHARGE_AMOUNTS` | `index.html`의 `recharge-preset-btn` 금액 단추 — 금액 직접 입력은 카카오페이 입점 조건 때문에 뺐다(2026-09-27) |
@@ -314,7 +314,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 | 출처 | 옮겨 적은 곳 |
 |---|---|
 | `QUIZ_TYPE_LABELS` / `MCQ_ONLY_TYPES` | `public/quiz.html`의 유형 목록(객관식 23 · 중학교 내신 13 · 주관식 18) |
-| `WORKBOOK_STAGE_IDS` / `WB_STAGES` | `public/workbook.html`의 9단계 |
+| `WORKBOOK_STAGE_IDS` / `WB_STAGES` | `public/workbook.html`의 11단계 |
 
 **화면을 바꾸면 '만드는 법'도 같은 커밋에서 고치세요.** 탭마다 뜨는 [❓ 만드는 법] 창의
 글은 `public/app.js`의 `HOWTO`에 손으로 적혀 있어, 화면과 자동으로 맞춰지지 않습니다.

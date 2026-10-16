@@ -1194,6 +1194,20 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
   font-size:13px; font-weight:600; color:var(--accent);
   margin:0 0 14px; padding-left:2px;
 }
+/* 워크북 내용 O/X 개수 칸 */
+.wb-ox-box{margin:10px 0 4px; padding:10px 12px; border:1px solid var(--line); border-radius:8px;}
+/* 유형 이름 'OX진위(한)'이 두 줄로 쪼개지지 않게 칸을 넓히고 이름을 한 줄로 둔다 */
+#wbOxGrid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));}
+#wbOxGrid .type-name{white-space:nowrap;}
+/* 워크북 내용 O/X — 주관식 탭의 O/X 카드(.qz-card)를 그대로 쓴다. 같이 붙은 .wb-q(쪽 수 세기용)의
+   점선 밑줄·여백이 카드 모양을 덮지 않게 되돌린다. */
+.wb-q.wb-ox-card{border:1px solid var(--line); padding:18px 20px; margin-bottom:16px;}
+.wb-q.wb-ox-card:last-child{border-bottom:1px solid var(--line);}
+@media print{
+  /* 주관식 시험지처럼 인쇄에서는 유형 이름표를 뺀다(.qz-cards .qz-type과 같은 규칙) */
+  .wb-ox-card .qz-type{display:none !important;}
+  .wb-q.wb-ox-card{padding:9px 11px; margin:0 0 7px;}
+}
 .wb-q{
   border-bottom:1px dashed var(--line); padding:12px 0;
   break-inside:avoid; page-break-inside:avoid;
