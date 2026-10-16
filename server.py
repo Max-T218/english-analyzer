@@ -92,6 +92,16 @@ MODEL_PRO = _env("GEMINI_MODEL_PRO", "gemini-3.1-pro-preview")
 # 지문 요약 인포그래픽을 '그리는' 모델(나노바나나 프로). 글자를 그림 안에 픽셀로
 # 찍는 작업이라, 값이 아니라 '지시를 그대로 지키는가'로 고른다.
 #
+# ✅ 2026-10-16에 나노바나나 2.1(gemini-nano-banana-2.1) · 2K로 옮겼다. 아래 8/29 기록은 그때 모델
+#    (gemini-3.1-flash-image · 1K)의 이야기라 이 모델과는 다르다.
+#    같은 지문 3개로 한영 혼합 5장·영어 전용 2장·한국어 전용 2장을 뽑아 봤는데(AI Studio·Vertex 섞어서)
+#    아래 사고(본문을 두 번 그림·«»를 글자로 그림·칸 번호 찍기·글자 흘림)가 한 번도 없었다.
+#    오히려 프로가 제목에 «»를 글자로 그렸다. 장당 약 200원 → 약 90원(생각 토큰 포함 실측),
+#    Vertex(global)·AI Studio 모두 2K·16:9·JPEG 요청을 그대로 받는다.
+#    남은 주의 둘: ① 한국어 전용 그림 속에 영어 낱말(idea·coffee mug 등)이 섞인 적이 있다.
+#    ② Vertex에서 영어 전용 1건이 그림 없이 끝났다(아래 재시도 한 번이 받아 준다).
+#    되돌리기: Render에 GEMINI_MODEL_IMAGE=gemini-3-pro-image 를 넣으면 배포 없이 바로 돌아간다.
+#
 # ⚠️ 2026-08-29에 나노바나나 2(gemini-3.1-flash-image) · 1K로 옮겼다가 되돌렸다.
 #    원가가 절반(188원 → 94원)이 될 줄 알고 한글 획도 안 깨져서 옮겼는데, 여섯 장을
 #    뽑아 보니 여섯 장 모두 사고가 났다:
@@ -122,7 +132,7 @@ MODEL_PRO = _env("GEMINI_MODEL_PRO", "gemini-3.1-pro-preview")
 #
 # 위의 두 모델과 달리 부르는 곳이 다르다: :generateContent가 아니라 Interactions API다
 # (GEMINI_IMAGE_URL 참고).
-MODEL_IMAGE = _env("GEMINI_MODEL_IMAGE", "gemini-3-pro-image")
+MODEL_IMAGE = _env("GEMINI_MODEL_IMAGE", "gemini-nano-banana-2.1")
 # 가로형. 인쇄물이라 A4를 가로로 눕힌 비율에 맞춘다.
 IMAGE_ASPECT = _env("GEMINI_IMAGE_ASPECT", "16:9")
 # 요약 그림 화질. 2K면 A4 한 쪽 폭(186mm)에 꽉 채워도 약 280dpi라 인쇄에 충분하다.
