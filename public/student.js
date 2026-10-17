@@ -243,8 +243,9 @@ function renderStudyTable() {
 }
 
 $("studyHideMeaning").addEventListener("change", renderStudyTable);
+// 뜻 칸만이 아니라 줄 어디를 눌러도 연다 — 폰에서는 단어를 누르는 일이 많다
 $("studyTableBody").addEventListener("click", (e) => {
-  const td = e.target.closest(".study-meaning");
+  const td = e.target.closest("tr")?.querySelector(".study-meaning");
   if (!td || td.dataset.revealed === "1") return;
   td.dataset.revealed = "1";
   td.style.cursor = "default";
