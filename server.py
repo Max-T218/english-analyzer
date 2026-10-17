@@ -12230,10 +12230,11 @@ def create_test_assignment(teacher_id, class_id, title, vocab, fmt, student_id=N
 
 
 def update_assignment_retest(teacher_id, assignment_id, max_wrong):
-    """이미 낸 시험의 재시험 기준(max_wrong)만 나중에 넣거나 바꾼다. 이미 제출된
-    시도의 합격 여부는 그대로 둔다 — 그 시도를 볼 당시의 기준으로 이미 확정된
-    결과라, 기준을 바꿨다고 지난 결과까지 소급해서 다시 매기지 않는다. 바뀐
-    기준은 이 시점 이후 새로 제출하는 시도부터 적용된다."""
+    """이미 낸 시험의 재시험 기준(max_wrong)을 나중에 넣거나 바꾼다. 이미 제출된
+    답안도 새 기준으로 합격 여부를 다시 매긴다(2026-10-17 사용자 결정 — 그전에는 지난
+    결과를 그대로 두었다). 기준을 올려 떨어진 학생은 '미통과'가 되어 바로 재시험을 볼 수
+    있고, 기준을 내려 붙은 학생은 합격이 된다. 기준을 없애면(None) 모두 합격이다.
+    돌려주는 값은 (새 기준, 결과가 바뀐 학생 수)."""
     _require_db()
     ref = DB.collection("test_assignments").document(assignment_id)
     snap = ref.get()
@@ -12249,8 +12250,35 @@ def update_assignment_retest(teacher_id, assignment_id, max_wrong):
             raise ValueError("허용 오답 수는 숫자여야 합니다.")
         if not (0 <= max_wrong <= word_count):
             raise ValueError(f"허용 오답 수는 0~{word_count} 사이여야 합니다.")
+    assignment = snap.to_dict()
     ref.update({"max_wrong": max_wrong})
-    return max_wrong
+
+    # 지난 답안 다시 매기기 — 학생마다 바뀌기 전·후 합격 여부를 견줘 바뀐 학생 수를 센다
+    by_student = {}
+    for doc in DB.collection("test_attempts").where("assignment_id", "==", assignment_id).stream():
+        by_student.setdefault((doc.to_dict() or {}).get("student_id"), []).append(doc)
+    after_assignment = dict(assignment, max_wrong=max_wrong)
+    changed = 0
+    batch, pending = DB.batch(), 0
+    for docs in by_student.values():
+        rows = sorted((d.to_dict() or {} for d in docs), key=lambda r: r.get("round", 1))
+        before = _attempt_progress(assignment, rows)["passed"]
+        new_rows = []
+        for doc in sorted(docs, key=lambda d: (d.to_dict() or {}).get("round", 1)):
+            row = doc.to_dict() or {}
+            passed = max_wrong is None or row.get("wrong", 0) <= max_wrong
+            if row.get("passed") != passed:
+                batch.update(doc.reference, {"passed": passed})
+                pending += 1
+                if pending >= 400:          # Firestore 한 묶음은 500건까지
+                    batch.commit()
+                    batch, pending = DB.batch(), 0
+            new_rows.append(dict(row, passed=passed))
+        if _attempt_progress(after_assignment, new_rows)["passed"] != before:
+            changed += 1
+    if pending:
+        batch.commit()
+    return max_wrong, changed
 
 
 def list_assignments_for_class(teacher_id, class_id):
@@ -14548,13 +14576,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
                 return
             try:
-                max_wrong = update_assignment_retest(
+                max_wrong, changed = update_assignment_retest(
                     user_id, req.get("assignmentId"), req.get("maxWrong"),
                 )
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
                 return
-            self._send_json({"maxWrong": max_wrong})
+            self._send_json({"maxWrong": max_wrong, "changed": changed})
             return
 
         # --- 문제 시험(객관식·주관식 탭에서 만든 문제를 학생이 푼다) ---
