@@ -5149,6 +5149,8 @@ const normVariations = (arr) => [...new Set((arr || []).map((v) => (v === "heavy
   .filter((v) => v in VARIATION_LABELS);
 // '단어 변형'이 바꾸는 낱말 수(약). 단어장 바꾸기와 함께면 단어장 단어를 먼저 쓰고 모자란 만큼만 채운다.
 const WORD_VARIATION_COUNT = 5;
+// 문제 탭(객관식·주관식·혼합)에서 동시에 만드는 지문 수 — 붐빔(429)을 피하려고 작게 둔다(2026-10-18)
+const QUIZ_PARALLEL = 2;
 const VARIATION_DESC = {
   verbatim: "지문을 그대로 사용합니다.",
   light: "지문 전체에서 약 5개 단어·표현을 비슷한 뜻의 다른 말로 바꿉니다. 단어장을 넣고 바꿔 싣기를 켰다면 단어장 단어를 먼저 쓰고, 모자란 만큼만 다른 낱말로 채웁니다.",
@@ -6108,19 +6110,29 @@ function setupQuizTab({ prefix, types, footer }) {
     for (let b = 0; b < batches.length && !stopped; b++) {
       const batch = batches[b];
       const batchTag = batches.length > 1 ? `${b + 1}/${batches.length} 묶음 · ` : "";
-      for (let i = 0; i < batch.length && !stopped; i++) {
-        const job = batch[i];
-        // 지문 단위로 선다 — 이 탭은 세트마다 바로 그리므로 멈춘 동안에도 만든 것이 보인다
-        if (jobsDone > 0 && await gate.check(`지문 ${total}개 중 ${jobsDone}개까지 만들었습니다.`)) {
-          stopped = true;
-          errorEl.textContent = runEndedNote(total - jobsDone, "지문");
-          break;
+      /* 지문을 QUIZ_PARALLEL개씩 동시에 만든다(2026-10-18) — 한 지문씩 차례로 보내면 지문 수만큼 시간이
+         늘었다(지문 5개 · 빈칸·어법·서술형배열·틀린 어법 찾기 = 5분 9초). 모델·지시문은 그대로라 품질은 같다.
+         화면에는 지문 차례대로 그린다 — 지문마다 그릴 일(ops)을 모아 두고, 앞 지문이 끝나야 뒤 지문을 그린다
+         (문항 번호 noSoFar가 지문 차례로 이어져야 한다). 멈추기(gate.check)는 한 번에 하나만 기다릴 수 있어
+         gateChain으로 줄을 세운다. */
+      const appendNow = append;
+      const doneOps = new Array(batch.length).fill(null);
+      let nextIdx = 0;
+      let drawn = 0;
+      const flush = (all) => {
+        while (drawn < batch.length && (doneOps[drawn] || all)) {
+          (doneOps[drawn] || []).forEach((op) => op());
+          drawn++;
         }
-        jobsDone++;
-
+      };
+      let gateChain = Promise.resolve(false);
+      let quotaShown = false;
+      const produce = async (job, ops) => {
+        const append = (html) => ops.push(() => appendNow(html));
+        const later = (fn) => ops.push(fn);
         if (job.text.length < 20) {
           append(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력).", "", prefix));
-          continue;
+          return;
         }
 
         // 이 지문에서 만들 유형 묶음 — 대화문이 아니면 대화문 유형이 빠진 쪽이다
@@ -6129,7 +6141,7 @@ function setupQuizTab({ prefix, types, footer }) {
         if (jp.dropped.length) {
           append(buildNoticeHtml(job, total, dropSentence(jp.dropped), ""));
         }
-        if (!plan.length) continue;
+        if (!plan.length) return;
 
         for (let v = 0; v < vars.length && !stopped; v++) {
           const variation = vars[v];
@@ -6247,60 +6259,91 @@ function setupQuizTab({ prefix, types, footer }) {
               }
             }
 
-            // 유형 칸의 순서대로 다시 줄 세운다 — 호출이 난이도별·지문변형형별로 갈려 돌아오면
-            // 칸 순서와 어긋난다. 같은 유형끼리는 받은 순서를 지킨다(sort는 안정 정렬).
-            questions.sort((a, b) => (typeOrder.get(a.type) ?? 999) - (typeOrder.get(b.type) ?? 999));
+            // 그리기는 지문 차례가 올 때(flush) 한다 — 그 시점의 멈춤 상태가 아니라 지금 것을 적어 둔다
+            const stopNow = stopped && stopErr ? stopErr : null;
+            const leftNow = steps - step;
+            later(() => {
+              // 유형 칸의 순서대로 다시 줄 세운다 — 호출이 난이도별·지문변형형별로 갈려 돌아오면
+              // 칸 순서와 어긋난다. 같은 유형끼리는 받은 순서를 지킨다(sort는 안정 정렬).
+              questions.sort((a, b) => (typeOrder.get(a.type) ?? 999) - (typeOrder.get(b.type) ?? 999));
 
-            // 일부 청크가 실패해도 성공한 문항은 살려 낸다 (그만큼 토큰을 이미 썼다)
-            if (questions.length) {
-              /* 문항마다 '어느 변형 세트에서 나왔는지'와 그 지문의 변형 낱말을 붙여 둔다.
-                 나중에 '문제 섞기'로 다시 섞을 때 세트를 갈라 두는 데 쓴다. 변형 낱말을
-                 문항에 두는 이유는 지문마다 바뀐 낱말이 달라, 세트로 합쳐 두면 다른
-                 지문의 낱말까지 잘못 칠해지기 때문이다. */
-              questions.forEach((q) => {
-                q.__label = label;
-                q.__labelIdx = v * plan.length + l;
-                q.__variations = varied;
-              });
-              if (shuffleAll()) {
-                /* 전체 문항 섞기 — 지문 경계를 넘어 섞으려면 모든 지문이 끝나야 하므로
-                   여기서는 그리지 않고 모아 두었다가 아래에서 한 번에 섞어 그린다.
-                   변형 세트(label)끼리는 섞지 않는다 — 같은 지문의 원문판·변형판이
-                   한 시험지에 뒤섞이면 거의 같은 지문을 두 번 풀게 되고, 애초에 변형을
-                   여러 개 고르는 건 A형/B형처럼 여러 벌을 뽑으려는 것이기 때문이다. */
-                const bucket = randomBuckets.get(label) || { questions: [], variations: [] };
-                bucket.questions.push(...questions);
-                bucket.variations.push(...varied);
-                randomBuckets.set(label, bucket);
-              } else {
-                // 지문 내 유형 섞기 — 지문 묶음은 그대로 두고 그 안에서만 순서를 섞는다.
-                // 문제지 번호와 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매긴다.
-                const set = { questions, variations: varied };
-                if (shuffleInPassage()) {
-                  set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
+              // 일부 청크가 실패해도 성공한 문항은 살려 낸다 (그만큼 토큰을 이미 썼다)
+              if (questions.length) {
+                /* 문항마다 '어느 변형 세트에서 나왔는지'와 그 지문의 변형 낱말을 붙여 둔다.
+                   나중에 '문제 섞기'로 다시 섞을 때 세트를 갈라 두는 데 쓴다. 변형 낱말을
+                   문항에 두는 이유는 지문마다 바뀐 낱말이 달라, 세트로 합쳐 두면 다른
+                   지문의 낱말까지 잘못 칠해지기 때문이다. */
+                questions.forEach((q) => {
+                  q.__label = label;
+                  q.__labelIdx = v * plan.length + l;
+                  q.__variations = varied;
+                });
+                if (shuffleAll()) {
+                  /* 전체 문항 섞기 — 지문 경계를 넘어 섞으려면 모든 지문이 끝나야 하므로
+                     여기서는 그리지 않고 모아 두었다가 아래에서 한 번에 섞어 그린다.
+                     변형 세트(label)끼리는 섞지 않는다 — 같은 지문의 원문판·변형판이
+                     한 시험지에 뒤섞이면 거의 같은 지문을 두 번 풀게 되고, 애초에 변형을
+                     여러 개 고르는 건 A형/B형처럼 여러 벌을 뽑으려는 것이기 때문이다. */
+                  const bucket = randomBuckets.get(label) || { questions: [], variations: [] };
+                  bucket.questions.push(...questions);
+                  bucket.variations.push(...varied);
+                  randomBuckets.set(label, bucket);
+                } else {
+                  // 지문 내 유형 섞기 — 지문 묶음은 그대로 두고 그 안에서만 순서를 섞는다.
+                  // 문제지 번호와 정답표 번호는 buildQuizHtml이 섞인 순서로 함께 매긴다.
+                  const set = { questions, variations: varied };
+                  if (shuffleInPassage()) {
+                    set.questions = seededShuffle(set.questions, Math.floor(Math.random() * 1e9));
+                  }
+                  const built = buildQuizHtml(set, job, total, prefix, label, "", showExp(), noSoFar);
+                  noSoFar += (set.questions || []).length;
+                  appendNow(built.html);
+                  answerParts.push(built.answerHtml);
+                  if (built.hasExpCol) expCol = true;
+                  entries.push({ job, label, set, total });
+                  showFooter();
                 }
-                const built = buildQuizHtml(set, job, total, prefix, label, "", showExp(), noSoFar);
-                noSoFar += (set.questions || []).length;
-                append(built.html);
-                answerParts.push(built.answerHtml);
-                if (built.hasExpCol) expCol = true;
-                entries.push({ job, label, set, total });
-                showFooter();
+                okCount++;
               }
-              okCount++;
-            }
-            failed.forEach((f) => {
-              append(f.notice
-                ? buildNoticeHtml(job, total, f.notice, label)
-                : buildErrorHtml(job, total, `${groupLabel(f.group)} — ${f.msg}`, label, prefix));
+              failed.forEach((f) => {
+                appendNow(f.notice
+                  ? buildNoticeHtml(job, total, f.notice, label)
+                  : buildErrorHtml(job, total, `${groupLabel(f.group)} — ${f.msg}`, label, prefix));
+              });
+              if (stopNow && !quotaShown) { // 함께 돌던 지문이 늦게 끝나도 안내는 한 번만
+                quotaShown = true;
+                if (leftNow > 0) appendNow(quotaStopHtml(leftNow, stopNow, "작업"));
+              }
             });
-            if (stopped && stopErr) {
-              const left = steps - step;
-              if (left > 0) append(quotaStopHtml(left, stopErr, "작업"));
-            }
           }
         }
-      }
+      };
+      const worker = async () => {
+        while (!stopped) {
+          const i = nextIdx++;
+          if (i >= batch.length) break;
+          // 지문 단위로 선다 — 이 탭은 세트마다 바로 그리므로 멈춘 동안에도 만든 것이 보인다
+          const end = await (gateChain = gateChain.then((prev) =>
+            prev || (jobsDone > 0 ? gate.check(`지문 ${total}개 중 ${jobsDone}개까지 만들었습니다.`) : false)));
+          if (end || stopped) {
+            if (end && !stopped) {
+              stopped = true;
+              errorEl.textContent = runEndedNote(total - jobsDone, "지문");
+            }
+            break;
+          }
+          jobsDone++;
+          const ops = [];
+          try {
+            await produce(batch[i], ops);
+          } finally {
+            doneOps[i] = ops;
+            flush(false);
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(QUIZ_PARALLEL, batch.length) }, worker));
+      flush(true); // 멈춰서 건너뛴 지문이 있어도 뒤에 끝난 지문은 그린다
     }
 
     /* 무작위 모드 — 모아 둔 문항을 지문 구분 없이 섞어 한 벌로 그린다.
