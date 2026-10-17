@@ -3248,15 +3248,23 @@ does NOT yet appear in the passage.
   that is expected. Never add a sentence, clause, or new information to make room for a word.
 - Change at most 8 spots in total for [B]. Prefer spots in different sentences.
 
+[C] 부족분 채우기 — only when a line "[C]" gives a target number N. Count the words/phrases you
+changed in [A] and [B]. If that is fewer than N, ALSO replace other content words/phrases of the
+passage with wording of EQUIVALENT meaning and EQUIVALENT difficulty (natural published English)
+until about N are changed in total. Never touch a word that [A]/[B] already changed, and never
+change a vocabulary word from the list into something else. If [A]/[B] already reached N, do nothing
+more for [C].
+
 Rules for everything:
 - Keep EVERY fact, the order of ideas, the number of sentences, paragraph breaks, line breaks,
   speaker labels (in dialogues), proper nouns, numbers, and quoted text exactly the same.
-- Change nothing that is not required by the tasks above.
+- Change nothing that is not required by the tasks above (including [C] when it is present).
 - Return the FULL passage, start to finish, as plain text. No HTML, no markdown, no marks
   around changed words, no notes about what you changed."""
 
 REWORD_VOCAB_SYN_MAX = 30
 REWORD_VOCAB_ADD_MAX = 60
+REWORD_VOCAB_FILL_MAX = 15     # [C] 채우기 목표 개수의 상한 — 화면 '단어 변형'은 5
 
 
 def parse_reword_vocab(req):
@@ -3277,7 +3285,16 @@ def parse_reword_vocab(req):
     return syn, add
 
 
-def build_reword_vocab_prompt(passage, syn, add):
+def parse_reword_fill(req):
+    """'단어 변형'이 단어장과 함께 올 때 총 몇 개쯤 바꿀지(없으면 0 — [C]를 싣지 않는다)."""
+    try:
+        n = int(req.get("fill") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(n, REWORD_VOCAB_FILL_MAX))
+
+
+def build_reword_vocab_prompt(passage, syn, add, fill=0):
     lines = []
     if syn:
         lines.append("[A] 유의어로 바꾸기")
@@ -3290,6 +3307,8 @@ def build_reword_vocab_prompt(passage, syn, add):
         for w, ko in add:
             lines.append(f"- {w}" + (f" ({ko})" if ko else ""))
         lines.append("")
+    if fill:
+        lines += ["[C] 부족분 채우기", f"- 목표: 합쳐서 약 {fill}개", ""]
     lines += ["[원문]", passage.strip()]
     return "\n".join(lines)
 
@@ -3306,7 +3325,7 @@ def build_reword_user_prompt(passage, variation):
 _REWORD_TRUNC_MSG = "지문 변형본이 잘렸습니다. 지문을 더 짧게 나눠 다시 시도하세요."
 
 
-def call_gemini_reword(passage, variation, api_key, model, vocab=None):
+def call_gemini_reword(passage, variation, api_key, model, vocab=None, fill=0):
     """지문을 한 번만 리워딩해 확정된 변형본 텍스트를 돌려준다.
     variation == "vocab"이면 vocab = (①유의어 목록, ②심을 단어 목록)으로 단어장 바꿔 쓰기를 한다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -3317,7 +3336,7 @@ def call_gemini_reword(passage, variation, api_key, model, vocab=None):
         )
     model = model if (model and _MODEL_RE.match(model)) else MODEL
     syn, add = vocab or ((), ())
-    if variation == "vocab" and not (syn or add):
+    if variation == "vocab" and not (syn or add or fill):
         return passage
     if variation not in ("light", "heavy", "vocab"):
         # 변형이 필요 없는 값이 오면 원문을 그대로 돌려준다 (호출 자체가 낭비)
@@ -3335,7 +3354,7 @@ def call_gemini_reword(passage, variation, api_key, model, vocab=None):
         )}]},
         "contents": [
             {"role": "user", "parts": [{"text": (
-                build_reword_vocab_prompt(passage, syn, add) if variation == "vocab"
+                build_reword_vocab_prompt(passage, syn, add, fill) if variation == "vocab"
                 else build_reword_user_prompt(passage, variation)
             )}]}
         ],
@@ -10391,6 +10410,15 @@ CHANGELOG = [
             "학생 화면 — 휴대폰에서 단어시험 보기 글씨를 크게 하고, 시험 목록 카드를 모두 같은 모양으로 맞췄습니다.",
         ],
     },
+    {
+        "version": 72,
+        "date": "2026-10-18",
+        "items": [
+            "객관식 · 주관식 · 객관식+주관식 — '지문 변형'이 '원문 그대로 / 단어 변형' 두 가지로 "
+            "간단해졌습니다. 단어 5개 내외와 5개 이상은 차이가 작아 하나로 합쳤고, 변형은 지문의 단어 "
+            "약 5개를 비슷한 뜻의 말로 바꿉니다. 이전에 '5개 이상 변형'으로 저장한 자료도 그대로 열립니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -15189,7 +15217,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 # "vocab"(단어장으로 바꿔 쓰기, 동형 모의고사)은 바꿀 목록을 함께 받는다 — 모델은 light와 같은 Flash
                 reworded = call_gemini_reword(passage, variation, api_key, model,
-                                              vocab=parse_reword_vocab(req) if variation == "vocab" else None)
+                                              vocab=parse_reword_vocab(req) if variation == "vocab" else None,
+                                              fill=parse_reword_fill(req) if variation == "vocab" else 0)
                 # 바뀐 낱말 목록을 함께 돌려준다 — 화면이 지문에서 그 낱말을 표시하고
                 # 해설지에 '원문 → 변형' 표를 싣는 데 쓴다.
                 self._charge_and_send(path, req, {

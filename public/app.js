@@ -4201,7 +4201,7 @@ function safeHTML(s) {
 }
 
 // 한 지문의 분석 실패 카드
-// label: 지문 변형 세트 이름 ("원문" / "5개 내외 변형" …). 변형을 하나만 골랐으면 빈 값.
+// label: 지문 변형 세트 이름 ("원문" / "단어 변형"). 변형을 하나만 골랐으면 빈 값.
 // what: 실패한 작업 이름 (기본 "분석" — 문제 제작 탭에서는 "문제 제작")
 function buildErrorHtml(job, total, msg, label, kind) {
   const what = kind === "mcq" || kind === "saq" || kind === "mix" ? "문제 제작" : "분석";
@@ -5139,13 +5139,19 @@ function checkGroup(name) {
 // 지문 변형 단계 — 화면 표시용 이름과 설명
 const VARIATION_LABELS = {
   verbatim: "원문",
-  light: "5개 내외 변형",
-  heavy: "5개 이상 변형",
+  light: "단어 변형",
+  // 2026-10-18에 화면에서 뺐다(변형 정도는 '단어 변형' 하나로 합침). 옛 저장본의 세트 이름표를
+  // 그리는 데만 남겨 둔다 — 선택 칸에서는 normVariations가 light로 바꾼다.
+  heavy: "단어 변형",
 };
+// 저장해 둔 값(localStorage·저장본)에 남은 옛 'heavy'를 'light'로 바꾸고 겹침을 없앤다.
+const normVariations = (arr) => [...new Set((arr || []).map((v) => (v === "heavy" ? "light" : v)))]
+  .filter((v) => v in VARIATION_LABELS);
+// '단어 변형'이 바꾸는 낱말 수(약). 단어장 바꾸기와 함께면 단어장 단어를 먼저 쓰고 모자란 만큼만 채운다.
+const WORD_VARIATION_COUNT = 5;
 const VARIATION_DESC = {
   verbatim: "지문을 그대로 사용합니다.",
-  light: "지문 전체에서 약 5개 단어·표현을 비슷한 뜻의 다른 말로 바꿉니다.",
-  heavy: "지문 전체에서 5개보다 많은 단어·표현을 바꿉니다.",
+  light: "지문 전체에서 약 5개 단어·표현을 비슷한 뜻의 다른 말로 바꿉니다. 단어장을 넣고 바꿔 싣기를 켰다면 단어장 단어를 먼저 쓰고, 모자란 만큼만 다른 낱말로 채웁니다.",
 };
 
 /* 한 지문에서 유형별로 뽑을 수 있는 최대 문항 수.
@@ -5840,9 +5846,7 @@ function setupQuizTab({ prefix, types, footer }) {
     function saveVariations() {
       localStorage.setItem(VARIATION_STORE, variationEl.values.join(","));
     }
-    const saved = (localStorage.getItem(VARIATION_STORE) || "verbatim")
-      .split(",")
-      .filter((v) => v in VARIATION_LABELS);
+    const saved = normVariations((localStorage.getItem(VARIATION_STORE) || "verbatim").split(","));
     variationEl.values = saved.length ? saved : ["verbatim"];
     variationEl.addEventListener("change", () => {
       saveVariations();
@@ -5985,7 +5989,7 @@ function setupQuizTab({ prefix, types, footer }) {
     // 유형마다 단가가 갈리고 추가 문항은 따로 매겨진다(costPerSet). 지문변형 세트를
     // 여러 개 고르면 세트 수만큼 문제 생성이 통째로 반복된다.
     const rewordSets = vars.filter((v) => v !== "verbatim").length;
-    // 단어장으로 지문 바꿔 싣기 — '원문 그대로' 세트에서만, 바꿀 것이 있는 지문마다 한 번
+    // 단어장으로 지문 바꿔 싣기 — '원문 그대로'·'단어 변형' 세트에서, 바꿀 것이 있는 지문마다 한 번
     const vocabTexts = usableJobs.map((j) => j.text);
     const vocabSwapJobs = vars.includes("verbatim")
       ? usableJobs.filter((j) => quizVocab.swapBody(j.text, vocabTexts)).length
@@ -6137,17 +6141,23 @@ function setupQuizTab({ prefix, types, footer }) {
           //    문제를 만들기 전에 지문을 한 번만 다시 쓴다.
           let source = job.text;
           let varied = [];
-          /* 단어장으로 지문 바꿔 싣기 — '원문 그대로' 세트에서만 한다(단어 변형 세트는 이미 다른 말로
-             바꾼 지문이라 둘을 겹치면 무엇이 단어장 때문에 바뀌었는지 가릴 수 없다). 실패하면 원문 그대로 만든다. */
-          const vocabBody = variation === "verbatim" ? quizVocab.swapBody(job.text, vocabTexts) : null;
+          /* 단어장으로 지문 바꿔 싣기 — '원문 그대로'·'단어 변형' 세트에서 한다. 단어 변형 세트는 서버가 단어장 단어를 먼저 바꾸고
+             약 5개에 모자란 만큼만 다른 낱말로 채우므로(fill) 일반 변형을 따로 부르지 않는다. 실패하면 원문 그대로(또는 일반 단어 변형으로) 만든다. */
+          const vocabBody = variation === "verbatim" || variation === "light" ? quizVocab.swapBody(job.text, vocabTexts) : null;
+          let rewordDone = false; // 단어 변형 세트는 단어장 바꾸기가 일반 변형을 대신한다(서버 [C] 채우기)
           if (vocabBody) {
             loadingTextEl.textContent = `${tag} — 단어장 단어로 바꾸는 중…`;
             try {
-              const r = await postGenerate("/api/reword", { passage: job.text, ...vocabBody }, "지문 바꾸기에 실패했습니다.");
+              const r = await postGenerate(
+                "/api/reword",
+                { passage: job.text, ...vocabBody, ...(variation === "light" ? { fill: WORD_VARIATION_COUNT } : {}) },
+                "지문 바꾸기에 실패했습니다."
+              );
               source = (r.passage || "").trim() || job.text;
               varied = Array.isArray(r.variations) ? r.variations : [];
+              rewordDone = variation === "light";
             } catch (err) {
-              append(buildNoticeHtml(job, total, `단어장 단어로 바꾸지 못해 원문 그대로 만듭니다 — ${err.message || err}`, ""));
+              append(buildNoticeHtml(job, total, `단어장 단어로 바꾸지 못해 ${variation === "light" ? "일반 단어 변형으로" : "원문 그대로"} 만듭니다 — ${err.message || err}`, ""));
               if (isQuotaError(err)) {
                 stopped = true;
                 stopErr = err;
@@ -6155,7 +6165,7 @@ function setupQuizTab({ prefix, types, footer }) {
               }
             }
           }
-          if (variation !== "verbatim") {
+          if (variation !== "verbatim" && !rewordDone) {
             loadingTextEl.textContent = `${tag} 지문 변형본 만드는 중…`;
             const rwStart = Date.now();
             try {
@@ -6489,7 +6499,7 @@ function setupQuizTab({ prefix, types, footer }) {
       updateOrderHint();
     }
     if (variationEl && Array.isArray(settings.variation) && settings.variation.length) {
-      variationEl.values = settings.variation;
+      variationEl.values = normVariations(settings.variation);
       updateVariationHint();
     }
     // 난이도가 생기기 전(2026-09-27)에 저장한 자료에는 값이 없다 — 그때는 다 기본이었다.
@@ -10287,13 +10297,13 @@ const HOWTO = {
     lead: "지문 하나로 수능·내신 어투의 5지선다 문항을 만듭니다.",
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. (선택) <b>목표 어법</b>을 적으면 어법 문항의 정답 자리를 그 문법으로 냅니다.",
-      "(선택) 지문 칸 아래 <b>단어장</b>에 학교가 정한 단어장 단어를 적거나 붙여넣으면(한 줄에 한 단어, 단어장 쪽 <b>사진·PDF</b>도 됩니다 · <b>📒 저장한 단어장에서 가져오기</b>도 됩니다) 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 씁니다. <b>유의어로 바꿔 싣기</b> · <b>단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문을 단어장으로 바꿔 씁니다(지문 변형이 '원문 그대로'일 때만) — 바뀐 낱말은 화면에서만 형광으로 보입니다.",
+      "(선택) 지문 칸 아래 <b>단어장</b>에 학교가 정한 단어장 단어를 적거나 붙여넣으면(한 줄에 한 단어, 단어장 쪽 <b>사진·PDF</b>도 됩니다 · <b>📒 저장한 단어장에서 가져오기</b>도 됩니다) 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 씁니다. <b>유의어로 바꿔 싣기</b> · <b>단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문을 단어장으로 바꿔 씁니다(지문 변형이 '단어 변형'이면 단어장 단어를 먼저 쓰고 모자란 만큼만 다른 낱말로 채웁니다) — 바뀐 낱말은 화면에서만 형광으로 보입니다.",
       "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추). 유형 칸은 <b>수능·고등 내신형</b>과 <b>중학교 내신형</b> 두 묶음으로 나뉘어 있습니다(묶음과 상관없이 무엇이든 고를 수 있습니다). 중학교 내신 유형 —<b>문법 쓰임 같은 것·다른 것</b>(that·as 등의 쓰임), <b>다의어 같은 뜻</b>은 아무 지문에서나 만들고, 대화문 유형(<b>대화 순서·어색한 응답·대화 빈칸·대화 내용 일치·대화 내용 불일치·답할 수 없는 질문·짝지어진 대화·대화 어법·어휘 선택·짝지어진 대화 어법·대화 상황 파악</b> — 실제 중학교 시험지의 대화문 문제 모양을 따랐습니다)은 줄마다 \"A:\", \"B:\"처럼 말하는 사람이 적힌 <b>대화문</b>을 넣었을 때만 만들어집니다 — 대화문이 아니면 빼고 값도 받지 않습니다.",
       "<b>학교급</b>을 고릅니다 — <b>중학교</b>를 고르면 보기·오답·문법 포인트를 중학생 수준으로 쉽게 만듭니다. 요금은 같습니다.",
       "<b>난이도</b>를 고릅니다 — 보기를 얼마나 까다롭게 만들지 정합니다. 둘의 요금은 같고, <b>둘 다 고르면</b> 같은 지문으로 기본 한 벌·고난도 한 벌이 나옵니다(요금도 두 벌).<br>" +
         "· <b>기본</b>: 정답은 지문의 표현을 <b>살려</b> 쓰고, 오답은 지문 내용과 <b>뚜렷이 어긋나게</b> 만듭니다. 지문 내용을 알면 고를 수 있습니다.<br>" +
         "· <b>고난도</b>: 정답은 지문의 표현을 <b>다른 말로 바꿔</b> 쓰고, 오답에 지문 속 낱말을 <b>그대로 넣은 함정</b>을 섞습니다. 눈에 익은 낱말로는 못 고르고 글의 논리를 이해해야 맞힙니다. 해설에 어느 보기가 함정이었는지도 적습니다.",
-      "(선택) <b>지문 변형</b> — 원문 그대로 / 단어 5개 내외 변형 / 5개 이상 변형. 여러 개 고르면 고른 만큼 세트가 늘어납니다.",
+      "(선택) <b>지문 변형</b> — 원문 그대로 / 단어 변형(지문의 단어 약 5개를 비슷한 뜻의 말로 바꿈). 둘 다 고르면 고른 만큼 세트가 늘어납니다.",
       "<b>출제 순서</b>를 고릅니다 — 유형 순서 / 지문 내 유형 섞기 / 전체 문항 섞기.",
       "(선택) <b>시험지 제목</b>을 적으면 시험지 맨 위와 정답지에 찍히고, 첫 장에 표지가 붙습니다. 인쇄 창에서 적어도 같은 칸에 들어갑니다.",
       "<b>[문제 만들기]</b>를 누릅니다.",
@@ -10310,14 +10320,14 @@ const HOWTO = {
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "(선택) <b>목표 어법</b>을 적으면 어법 선택형·틀린 어법 찾기·동사형 쓰기의 정답 자리를 그 문법으로 내고, <b>서술형배열·조건 영작·문장 전환</b>은 그 문법이 쓰인 문장을 골라 출제합니다.",
-      "(선택) 지문 칸 아래 <b>단어장</b>에 학교가 정한 단어장 단어를 적거나 붙여넣으면(한 줄에 한 단어, 단어장 쪽 <b>사진·PDF</b>도 됩니다 · <b>📒 저장한 단어장에서 가져오기</b>도 됩니다) 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 씁니다. <b>유의어로 바꿔 싣기</b> · <b>단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문을 단어장으로 바꿔 씁니다(지문 변형이 '원문 그대로'일 때만) — 바뀐 낱말은 화면에서만 형광으로 보입니다.",
+      "(선택) 지문 칸 아래 <b>단어장</b>에 학교가 정한 단어장 단어를 적거나 붙여넣으면(한 줄에 한 단어, 단어장 쪽 <b>사진·PDF</b>도 됩니다 · <b>📒 저장한 단어장에서 가져오기</b>도 됩니다) 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 씁니다. <b>유의어로 바꿔 싣기</b> · <b>단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문을 단어장으로 바꿔 씁니다(지문 변형이 '단어 변형'이면 단어장 단어를 먼저 쓰고 모자란 만큼만 다른 낱말로 채웁니다) — 바뀐 낱말은 화면에서만 형광으로 보입니다.",
       "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다.",
       "<b>학교급</b>을 고릅니다 — <b>중학교</b>를 고르면 묻는 말·문법 포인트를 중학생 수준으로 만듭니다. 요금은 같습니다.",
       "<b>난이도</b>를 고릅니다 — 묻는 말을 얼마나 까다롭게 만들지 정합니다. 둘의 요금은 같고, <b>둘 다 고르면</b> 기본 한 벌·고난도 한 벌이 나옵니다.<br>" +
         "· <b>기본</b>: 진술·질문·뜻풀이에 지문의 표현을 살려 씁니다. 지문 내용을 알면 풀 수 있습니다.<br>" +
         "· <b>고난도</b>: 묻는 말을 지문과 다른 말로 바꾸고, OX는 한 군데만 살짝 틀리게, 질문은 두 대목을 이어야 답이 나오게, 조건 영작은 원문과 다른 구조로 쓰게 합니다.<br>" +
         "· 고난도가 되는 유형은 <b>OX진위(영·한)·질문에 답하기·표현 찾아 쓰기·영영풀이 쓰기·조건 영작</b>입니다. 나머지는 <b>기본 + 고난도</b>면 기본 벌에만 들어가고, <b>고난도만</b> 고르면 새로 고를 수 없게 막히며 이미 고른 것은 기본으로 만듭니다.",
-      "(선택) <b>지문 변형</b>(원문 그대로 / 5개 내외 / 5개 이상)과 <b>출제 순서</b>를 고릅니다.",
+      "(선택) <b>지문 변형</b>(원문 그대로 / 단어 변형)과 <b>출제 순서</b>를 고릅니다.",
       "(선택) <b>시험지 제목</b>을 적으면 시험지와 정답지에 찍히고, 첫 장에 표지가 붙습니다.",
       "<b>[문제 만들기]</b>를 누릅니다.",
       "만든 뒤 <b>[🔀 문제 섞기]</b>로 순서만 다시 섞을 수 있습니다(요금 없음).",
@@ -10332,7 +10342,7 @@ const HOWTO = {
     lead: "객관식(5지선다)과 주관식(서술형·단답형) 유형을 한 시험지에 섞어 만듭니다. 객관식 탭·주관식 탭을 따로 돌려 두 시험지를 이어 붙일 필요가 없습니다.",
     steps: [
       "맨 위 <b>지문 칸</b>에 영어 지문을 붙여 넣습니다. (선택) <b>목표 어법</b>을 적으면 어법 계열 문항이 그 문법으로 나옵니다.",
-      "(선택) 지문 칸 아래 <b>단어장</b>에 학교가 정한 단어장 단어를 적거나 붙여넣으면(한 줄에 한 단어, 단어장 쪽 <b>사진·PDF</b>도 됩니다 · <b>📒 저장한 단어장에서 가져오기</b>도 됩니다) 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 씁니다. <b>유의어로 바꿔 싣기</b> · <b>단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문을 단어장으로 바꿔 씁니다(지문 변형이 '원문 그대로'일 때만) — 바뀐 낱말은 화면에서만 형광으로 보입니다.",
+      "(선택) 지문 칸 아래 <b>단어장</b>에 학교가 정한 단어장 단어를 적거나 붙여넣으면(한 줄에 한 단어, 단어장 쪽 <b>사진·PDF</b>도 됩니다 · <b>📒 저장한 단어장에서 가져오기</b>도 됩니다) 어휘·영영풀이·빈칸 문항이 지문에 나오는 그 단어를 정답 자리로 씁니다. <b>유의어로 바꿔 싣기</b> · <b>단어장 단어로 바꿔 싣기</b>를 켜면 문제를 만들기 전에 지문을 단어장으로 바꿔 씁니다(지문 변형이 '단어 변형'이면 단어장 단어를 먼저 쓰고 모자란 만큼만 다른 낱말로 채웁니다) — 바뀐 낱말은 화면에서만 형광으로 보입니다.",
       "<b>유형</b>을 고르고, 유형마다 <b>문항 수</b>를 정합니다(＋ － 단추). 칸은 <b>객관식 (5지선다)</b>와 <b>주관식 (서술형·단답형)</b>으로 나뉘어 있고, 객관식은 다시 <b>수능·고등 내신형</b>과 <b>중학교 내신형</b>(대화문·낱말·문법 쓰임)으로 묶여 있습니다. 어느 묶음에서든 자유롭게 고르면 됩니다.",
       "<b>학교급</b>·<b>난이도</b>를 고릅니다. 고난도는 객관식 전 유형과 주관식 중 <b>OX진위·질문에 답하기·표현 찾아 쓰기·영영풀이 쓰기·조건 영작</b>에서만 됩니다 — <b>기본 + 고난도</b>를 같이 고르면 고난도가 안 되는 주관식은 기본 벌에만 들어가고, <b>고난도만</b> 고르면 그 유형은 새로 고를 수 없게 막힙니다.",
       "<b>출제 순서</b>를 고릅니다 — <b>유형 순서대로</b>는 객관식 → 주관식 순으로 나오고, <b>지문 내 유형 섞기</b>·<b>전체 문항 섞기</b>를 고르면 두 종류가 한 시험지 안에서 뒤섞입니다.",
@@ -12979,7 +12989,27 @@ function createVocabBox(p, getTexts, scope) {
 
   // 칸 아래 안내 — 몇 단어가 지문에 실제로 나오는지 알려 준다
   let timer = 0;
+  // 단어장이 비어 있다가 처음 채워지는 순간 — 바로 단어장으로 지문을 바꾸게 켜 둔다(2026-10-18).
+  // 체크박스 둘을 켜고, 문제 탭이면 지문 변형을 '단어 변형'으로 맞춘다(원문 그대로는 해제). 선생님이 다시 끌 수 있다.
+  let hadWords = false;
+  function autoTurnOn() {
+    const has = entries().length > 0;
+    const first = has && !hadWords;
+    hadWords = has;
+    if (!first) return;
+    if ($(p + "ToSyn")) $(p + "ToSyn").checked = true;
+    if ($(p + "ToBook")) $(p + "ToBook").checked = true;
+    if (p !== "quizVocab") return;
+    ["mcq", "saq", "mix"].forEach((pre) => {
+      const g = checkGroup(pre + "Variation");
+      if (!g) return;
+      g.values = ["light"];
+      const inp = g.input("light");
+      if (inp) inp.dispatchEvent(new Event("change", { bubbles: true })); // 저장·안내·금액을 다시 맞춘다
+    });
+  }
   function sync() {
+    autoTurnOn();
     clearTimeout(timer);
     timer = setTimeout(() => {
       if (!hintEl) return;
@@ -13074,6 +13104,103 @@ function createVocabBox(p, getTexts, scope) {
       const n = append(rows);
       status(n ? `단어 <b>${n}개</b>를 넣었습니다.` : rows.length ? "이미 모두 들어 있는 단어입니다." : "이 단어장에는 단어가 없습니다.",
              n ? "ok" : "warn");
+    });
+  }
+
+  /* 저장한 단어장 여러 개를 한꺼번에 가져오기(2026-10-18) — 위 select는 한 번에 하나만 골라져서,
+     눈에 보이는 건 이 단추+체크 목록으로 바꾸고 select는 감춰 둔다(예전 코드가 기대는 자리라 지우지 않는다). */
+  if (fromEl && fromEl.parentNode) {
+    fromEl.hidden = true;
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "btn ghost small";
+    openBtn.textContent = "📒 저장한 단어장에서 가져오기…";
+    fromEl.parentNode.insertBefore(openBtn, fromEl);
+    // 화면 가운데에 뜨는 창 — 목록이 길어도 [가져오기]가 늘 보이도록 목록만 스크롤한다.
+    const panel = document.createElement("div");
+    panel.style.cssText =
+      "position:fixed;inset:0;z-index:1000;background:rgba(15,27,45,.35);" +
+      "align-items:center;justify-content:center;padding:16px";
+    // display를 style에 넣으면 hidden 속성을 이겨 닫아도 화면 전체를 덮는다 — 열고 닫을 때 같이 바꾼다.
+    const setOpen = (v) => {
+      panel.hidden = !v;
+      panel.style.display = v ? "flex" : "none";
+    };
+    document.body.appendChild(panel);
+    setOpen(false);
+    let panelBusy = false;
+    async function openPanel() {
+      if (panelBusy) return;
+      panelBusy = true;
+      setOpen(true);
+      const box = (inner) =>
+        `<div data-box style="background:var(--card,#fff);border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.25);` +
+        `width:min(440px,100%);max-height:80vh;display:flex;flex-direction:column">${inner}</div>`;
+      panel.innerHTML = box(`<div style="padding:16px"><span class="hint">저장함을 읽는 중…</span></div>`);
+      let items = [];
+      try {
+        const data = await getJson("/api/saved", "");
+        items = (data.items || []).filter((it) => it.tab === "vocab");
+      } catch (_) {
+        items = [];
+      }
+      panelBusy = false;
+      const cur = activeVocabSets().reduce((n, s) => n + (s.vocab || []).length, 0);
+      if (!items.length && !cur) {
+        panel.innerHTML = box(
+          `<div style="padding:16px"><span class="hint">저장한 단어장이 없습니다 — 위 칸에 직접 적어 주세요.</span></div>` +
+          `<div style="padding:0 16px 14px"><button type="button" class="btn ghost small" data-act="close">닫기</button></div>`
+        );
+        return;
+      }
+      const row = (val, text) =>
+        `<label class="chk"><input type="checkbox" value="${esc(val)}"> ${text}</label>`;
+      panel.innerHTML = box(
+        `<div style="padding:14px 16px 8px"><b>가져올 단어장을 체크하세요</b> <span class="hint">(여러 개 가능)</span></div>` +
+          `<div style="padding:4px 16px;overflow:auto;display:flex;flex-direction:column;gap:6px;flex:1 1 auto">` +
+          (cur ? row("current", `지금 단어장 탭에 있는 단어 (${cur}개)`) : "") +
+          items.map((it) => row(it.id, `💾 ${esc(it.title || "제목 없음")}`)).join("") +
+          `</div>` +
+          `<div style="display:flex;gap:6px;padding:12px 16px 14px;border-top:1px solid var(--line,#dbe3ee)">` +
+          `<button type="button" class="btn small" data-act="go">체크한 단어장 가져오기</button>` +
+          `<button type="button" class="btn ghost small" data-act="close">닫기</button></div>`
+      );
+    }
+    openBtn.addEventListener("click", () => (panel.hidden ? openPanel() : setOpen(false)));
+    panel.addEventListener("click", async (e) => {
+      const act = e.target && e.target.dataset && e.target.dataset.act;
+      if (act === "close" || e.target === panel) { // 바깥 어두운 곳을 눌러도 닫힌다
+        setOpen(false);
+        return;
+      }
+      if (act !== "go") return;
+      const vals = [...panel.querySelectorAll("input[type=checkbox]:checked")].map((c) => c.value);
+      if (!vals.length) {
+        status("가져올 단어장을 하나 이상 체크하세요.", "warn");
+        return;
+      }
+      e.target.disabled = true;
+      const rows = [];
+      let failed = 0;
+      for (const val of vals) {
+        try {
+          if (val === "current") rows.push(...flattenVocabSets(activeVocabSets()));
+          else {
+            const item = await getJson(`/api/saved/${encodeURIComponent(val)}`, "단어장을 불러오지 못했습니다.");
+            rows.push(...flattenVocabSets((item.payload && item.payload.vocabSets) || []));
+          }
+        } catch (_) {
+          failed++;
+        }
+      }
+      e.target.disabled = false;
+      const n = append(rows);
+      const miss = failed ? ` (${failed}개는 불러오지 못했습니다)` : "";
+      status(
+        (n ? `단어장 ${vals.length - failed}개에서 단어 <b>${n}개</b>를 넣었습니다.` : rows.length ? "이미 모두 들어 있는 단어입니다." : "고른 단어장에는 단어가 없습니다.") + miss,
+        n && !failed ? "ok" : "warn"
+      );
+      setOpen(false);
     });
   }
 
