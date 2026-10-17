@@ -10403,6 +10403,7 @@ const HOWTO = {
       "<b>단어장 탭</b>에서 단어장을 만든 뒤 <b>[🏫 반에 시험 내기]</b>를 누릅니다. 반 전체에도, 학생 한 명에게만도 낼 수 있습니다.",
       "<b>객관식·주관식·객관식+주관식 탭</b>에서 문제를 만든 뒤에도 <b>[🏫 반에 시험 내기]</b>로 <b>문제 시험</b>을 낼 수 있습니다. 학생은 한 번만 풀고, 제출하면 바로 정답·해설을 봅니다. 결과의 <b>[답안 보기]</b>에서 학생 답을 보고, 모범답안과 다르게 쓴 서술형 답(확인 대기)은 <b>[맞음]/[틀림]</b>으로 채점합니다. <b>문항별 정답률</b>도 함께 나옵니다.",
       "시험을 낼 때 <b>합격 기준</b>을 두면, 기준에 못 미친 학생은 통과할 때까지 재시험을 봅니다. 회차마다 문제 순서와 보기 자리가 다시 섞입니다.",
+      "이미 합격한 학생(또는 한 번만 보는 시험을 본 학생)도 다시 보게 하려면 시험의 <b>[결과 보기]</b>에서 그 학생 줄의 <b>[🔁 재시험 내기]</b>를 누르세요. 지난 점수는 그대로 남고, 학생 화면에 [재시험 보기]가 다시 생깁니다.",
       "<b>[🔗 학생에게 알려 줄 주소]</b>를 복사해 문자·알림장으로 보냅니다. 학생은 그 주소에서 <b>선생님이 정해 준 아이디와 비밀번호</b>로 로그인하고, 비밀번호는 스스로 바꿀 수도 있습니다.",
       "제출된 결과는 이 탭에서 봅니다. 시험마다 <b>[결과 보기]</b>를 누르면 성적표가 나오고, <b>[🖨️ 성적표 인쇄]</b>에는 결과만 실립니다(틀린 단어는 화면에서만 보입니다).",
       "학생 한 명의 한 달 성적은 학생 줄의 <b>[성적표]</b>로 보고, 반 학생 모두의 성적표는 학생 목록 아래 달을 고르고 <b>[🖨️ 반 전체 성적표 인쇄]</b>를 누르면 학생마다 한 장씩 한 번에 인쇄됩니다.",
@@ -14254,6 +14255,7 @@ function fmtDateTime(iso) {
 const SCORE_STATUS = {
   passed: ["✅ 합격", "var(--accent)"],
   failed: ["❌ 미통과", "var(--g)"],
+  retake: ["🔁 재시험 대기", "var(--g)"],
   none: ["미제출", "var(--ink-soft)"],
   done: ["📝 제출", "var(--accent)"],
 };
@@ -14327,9 +14329,10 @@ function reportTilesHtml(tiles) {
 }
 function statusTagHtml(status, passedRound) {
   // done — 문제 시험(합격 기준 없이 한 번 푸는 시험)을 냈다
-  const label = { passed: "합격", failed: "미통과", none: "미제출", done: "제출" }[status] || "미제출";
-  const cls = { passed: "pass", failed: "fail", none: "none", done: "pass" }[status] || "none";
-  if (status === "done") passedRound = null;
+  // retake — 선생님이 재시험을 열어 주었고 학생이 아직 안 봤다
+  const label = { passed: "합격", failed: "미통과", none: "미제출", done: "제출", retake: "재시험 대기" }[status] || "미제출";
+  const cls = { passed: "pass", failed: "fail", none: "none", done: "pass", retake: "fail" }[status] || "none";
+  if (status === "done" || status === "retake") passedRound = null;
   return `<span class="tag ${cls}">${label}${passedRound ? ` (${passedRound}회차)` : ""}</span>`;
 }
 
@@ -14370,12 +14373,17 @@ function renderTestResults(data, title) {
   const body = rows.map((r) => {
     const wrongBtn = r.status === "none" ? "" :
       `<button type="button" class="btn ghost small toggle-wrong-btn no-print">틀린 단어 ${r.wrongItems.length}</button>`;
+    // 재시험 — 합격(또는 1회로 끝난) 학생에게 다시 보게 한다. 미통과 학생은 이미 볼 수 있어 단추가 없다
+    const who = `data-sid="${esc(r.studentId)}" data-name="${esc(r.studentName)}"`;
+    const retakeBtn = r.removed ? "" :
+      r.status === "passed" ? `<button type="button" class="btn ghost small retake-btn" ${who}>🔁 재시험 내기</button>` :
+      r.status === "retake" ? `<button type="button" class="btn ghost small retake-btn" data-cancel="1" ${who}>재시험 거두기</button>` : "";
     return `<tr>
         <td class="tk">${esc(r.studentName)}${r.removed ? ' <span class="hint">(삭제된 학생)</span>' : ""}</td>
         <td>${statusTagHtml(r.status, r.passedRound)}</td>
         <td class="tk">${esc(roundsText(r.rounds)) || "—"}</td>
         <td>${esc(fmtDateTime(r.lastAt))}</td>
-        <td class="no-print">${wrongBtn}</td>
+        <td class="no-print">${wrongBtn} ${retakeBtn}</td>
       </tr>
       <tr class="wrong-row no-print" hidden><td colspan="5" class="tk">
         <b>마지막 시도의 틀린 단어</b>${wrongItemsHtml(r.wrongItems, r.hasDetails)}
@@ -15006,6 +15014,28 @@ assignedTestListEl.addEventListener("click", async (e) => {
     openPrintWindow(body.dataset.title || "성적표", clone.outerHTML);
     return;
   }
+  // 재시험 열기 / 거두기 — 합격했거나 1회로 끝난 학생에게 이 단어시험을 한 번 더 보게 한다
+  const retakeBtn = e.target.closest(".retake-btn");
+  if (retakeBtn) {
+    const card = retakeBtn.closest("[data-aid]");
+    const cancel = retakeBtn.dataset.cancel === "1";
+    const name = retakeBtn.dataset.name || "이 학생";
+    if (!confirm(cancel
+      ? `${name}에게 열어 준 재시험을 거둘까요?`
+      : `${name}에게 이 시험을 다시 보게 할까요?\n지난 점수는 기록에 그대로 남고, 학생 화면에 [재시험 보기]가 다시 생깁니다.`)) return;
+    retakeBtn.disabled = true;
+    try {
+      await postJson("/api/vocab-tests/retake",
+        { assignmentId: card.dataset.aid, studentId: retakeBtn.dataset.sid, cancel },
+        "재시험을 열지 못했습니다.");
+      loadTestResultsInto(card);
+    } catch (err) {
+      alert(err.message || "재시험을 열지 못했습니다.");
+      retakeBtn.disabled = false;
+    }
+    return;
+  }
+
   const delBtn = e.target.closest(".del-test-btn");
   if (delBtn) {
     const card = delBtn.closest("[data-aid]");
@@ -15100,6 +15130,12 @@ assignedTestListEl.addEventListener("click", async (e) => {
   }
   body.hidden = false;
   body.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  loadTestResultsInto(card);
+});
+
+// 시험 카드의 성적표를 (다시) 불러온다 — [결과 보기]와 재시험 열기 뒤 새로 그리기가 같이 쓴다
+async function loadTestResultsInto(card) {
+  const body = card.querySelector(".results-body");
   try {
     const data = await getJson(
       `/api/vocab-tests/results?assignmentId=${encodeURIComponent(card.dataset.aid)}`,
@@ -15111,7 +15147,7 @@ assignedTestListEl.addEventListener("click", async (e) => {
   } catch (err) {
     body.innerHTML = `<p class="error">${esc(err.message || "결과를 불러오지 못했습니다.")}</p>`;
   }
-});
+}
 
 assignedTestListEl.addEventListener("change", (e) => {
   const qf = e.target.closest(".quiz-answers-filter");

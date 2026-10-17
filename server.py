@@ -10382,6 +10382,15 @@ CHANGELOG = [
             "이어서 싣습니다.",
         ],
     },
+    {
+        "version": 71,
+        "date": "2026-10-17",
+        "items": [
+            "반 · 학생 — 이미 합격한 학생에게도 단어시험을 다시 보게 할 수 있습니다. 시험의 [결과 보기]에서 "
+            "그 학생 줄의 [🔁 재시험 내기]를 누르면 학생 화면에 [재시험 보기]가 다시 생깁니다(지난 점수는 남습니다).",
+            "학생 화면 — 휴대폰에서 단어시험 보기 글씨를 크게 하고, 시험 목록 카드를 모두 같은 모양으로 맞췄습니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -12337,22 +12346,82 @@ def _get_student_attempts(assignment_id, student_id):
     return rows
 
 
+def _retake_from(assignment, attempts):
+    """선생님이 이 학생에게 재시험을 열어 준 회차(open_retake). 그 앞 회차는 합격 판정에서
+    빼므로, 이미 합격했거나 1회로 끝나는 시험도 다시 볼 수 있게 된다. 없으면 1."""
+    if not attempts:
+        return 1
+    sid = attempts[0].get("student_id")
+    try:
+        return max(1, int((assignment.get("retakes") or {}).get(sid) or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
 def _attempt_progress(assignment, attempts):
     """max_wrong 기준으로 지금까지의 시도를 훑어 (합격 여부, 합격한 회차, 다음에 볼
     회차)를 계산한다. max_wrong이 없으면(재시험 없는 시험) 1회 제출로 항상 '합격'
-    취급 — 예전(회차 개념 없던 시절) 동작과 같다."""
+    취급 — 예전(회차 개념 없던 시절) 동작과 같다. 선생님이 재시험을 열어 주었으면
+    (`retakes`) 그 회차부터만 센다 — 열어 준 뒤 아직 안 봤으면 retakeOpen."""
     max_wrong = assignment.get("max_wrong")
+    start = _retake_from(assignment, attempts)
     passed_round = None
     for a in attempts:
-        if a.get("passed") or (max_wrong is None and a.get("round", 1) == 1):
-            passed_round = a.get("round", 1)
+        r = a.get("round", 1)
+        if r < start:
+            continue
+        if a.get("passed") or (max_wrong is None and r == start):
+            passed_round = r
             break
     next_round = (attempts[-1].get("round", 1) + 1) if attempts else 1
     return {
         "passed": passed_round is not None,
         "passedRound": passed_round,
         "nextRound": next_round,
+        "retakeOpen": start > 1 and next_round == start,
     }
+
+
+def _vocab_status(progress, attempts):
+    """단어시험 한 학생의 상태 — 성적표·학생 표가 같이 쓴다."""
+    if progress["passed"]:
+        return "passed"
+    if progress.get("retakeOpen"):
+        return "retake"      # 선생님이 재시험을 열어 주었고 아직 안 봤다
+    return "failed" if attempts else "none"
+
+
+def open_retake(teacher_id, assignment_id, student_id, cancel=False):
+    """선생님이 학생 한 명에게 단어시험을 다시 보게 한다 — 합격했든, 1회로 끝나는
+    시험이든 상관없다. 다음 회차 번호를 시험 문서의 retakes[학생]에 적어 두면
+    _attempt_progress가 그 회차부터 다시 합격을 센다(지난 회차 기록은 그대로 남는다).
+    cancel이면 아직 안 본 재시험을 거둔다."""
+    _require_db()
+    ref = DB.collection("test_assignments").document(assignment_id)
+    snap = ref.get()
+    if not snap.exists or snap.to_dict().get("teacher_id") != teacher_id:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    assignment = snap.to_dict()
+    if assignment.get("kind") == "quiz":
+        raise ValueError("문제 시험은 재시험을 열 수 없습니다.")
+    s_snap = DB.collection("students").document(student_id or "_").get()
+    if not s_snap.exists or not _assignment_targets_student(assignment, student_id, s_snap.to_dict()):
+        raise ValueError("이 시험을 보는 학생이 아닙니다.")
+    attempts = _get_student_attempts(assignment_id, student_id)
+    if not attempts:
+        raise ValueError("아직 한 번도 안 본 학생입니다 — 그대로 시험을 볼 수 있어요.")
+    progress = _attempt_progress(assignment, attempts)
+    if cancel:
+        if not progress["retakeOpen"]:
+            raise ValueError("거둘 재시험이 없습니다.")
+        ref.update({f"retakes.{student_id}": firestore.DELETE_FIELD})
+        return
+    if progress["retakeOpen"]:
+        return                                   # 이미 열려 있다
+    if not progress["passed"]:
+        # 미통과 학생은 열어 주지 않아도 이미 재시험을 볼 수 있다
+        raise ValueError("이 학생은 이미 재시험을 볼 수 있습니다.")
+    ref.update({f"retakes.{student_id}": progress["nextRound"]})
 
 
 def get_test_detail_for_student(student_id, assignment_id):
@@ -12435,6 +12504,7 @@ def list_tests_for_student(student_id):
             "maxWrong": d.get("max_wrong"),
             "submitted": bool(attempts),
             "passed": progress["passed"], "passedRound": progress["passedRound"],
+            "retakeOpen": progress["retakeOpen"],
             "attemptCount": len(attempts),
             "score": last.get("score") if last else None,
             "total": last.get("total") if last else None,
@@ -12558,6 +12628,7 @@ def get_result_for_student(student_id, assignment_id):
         "title": assignment.get("title", ""), "round": last.get("round", 1),
         "score": last.get("score", 0), "total": last.get("total", 0),
         "wrong": last.get("wrong", 0), "passed": progress["passed"],
+        "retakeOpen": progress["retakeOpen"],
         "attemptCount": len(attempts),
         "hasDetails": "details" in last,
         "wrongItems": _wrong_items(last.get("details")),
@@ -12600,7 +12671,7 @@ def _student_test_rows(student_id, assignments, attempts_by):
             "createdAt": a.get("created_at", ""),
             # 문제 시험은 합격/불합격이 없다 — 냈으면 'done'(제출)
             "status": ("done" if atts else "none") if quiz else
-                      ("passed" if progress["passed"] else ("failed" if atts else "none")),
+                      _vocab_status(progress, atts),
             "passedRound": progress["passedRound"],
             "rounds": [{
                 "round": x.get("round", 1), "score": x.get("score", 0), "total": x.get("total", 0),
@@ -12734,7 +12805,7 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
             "pending": (last.get("pending") or 0) if (quiz and last) else 0,
             "qc": _qt_q_counts(last.get("qdetails")) if (quiz and last) else None,
             "status": ("done" if atts else "none") if quiz else
-                      ("passed" if progress["passed"] else ("failed" if atts else "none")),
+                      _vocab_status(progress, atts),
             "passed": progress["passed"], "passedRound": progress["passedRound"],
             "rounds": [{
                 "round": x.get("round", 1), "score": x.get("score", 0), "total": x.get("total", 0),
@@ -12745,7 +12816,7 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
             "wrongItems": _wrong_items(last.get("details")) if last else [],
             "hasDetails": bool(last and "details" in last),
         })
-    order = {"failed": 0, "done": 1, "passed": 1, "none": 2}
+    order = {"failed": 0, "retake": 0, "done": 1, "passed": 1, "none": 2}
     rows.sort(key=lambda r: (order[r["status"]], r["studentName"]))
     submitted = [r for r in rows if r["status"] != "none"]
     best_pct = [max(x["score"] / x["total"] for x in r["rounds"] if x["total"]) for r in submitted
@@ -13801,7 +13872,8 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/students",
                         "/api/students/delete", "/api/students/update", "/api/student/password",
                         "/api/vocab-tests", "/api/vocab-tests/delete",
-                        "/api/vocab-tests/update", "/api/quiz-tests", "/api/quiz-tests/grade",
+                        "/api/vocab-tests/update", "/api/vocab-tests/retake",
+                        "/api/quiz-tests", "/api/quiz-tests/grade",
                         "/api/student/login", "/api/student/logout", "/api/student/tests/submit"):
             self.send_error(404, "Not found")
             return
@@ -14447,6 +14519,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 404)
                 return
             self._send_json({"deleted": True})
+            return
+
+        if path == "/api/vocab-tests/retake":
+            # 선생님이 학생 한 명에게 단어시험 재시험을 열어 준다(cancel이면 거둔다)
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                open_retake(user_id, req.get("assignmentId"), req.get("studentId"),
+                            cancel=bool(req.get("cancel")))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json({"ok": True})
             return
 
         if path == "/api/vocab-tests/update":

@@ -173,6 +173,11 @@ function renderTests(tests) {
     let status = "", buttons;
     if (!t.submitted) {
       buttons = `<button type="button" class="btn take-btn" data-id="${id}">응시하기</button>${study}`;
+    } else if (t.retakeOpen) {
+      // 합격했어도 선생님이 다시 보라고 열어 준 시험
+      status = `<div class="st-card-status bad">🔁 선생님이 재시험을 내셨어요 (지난 점수 ${t.score}/${t.total})</div>`;
+      buttons = `<button type="button" class="btn take-btn" data-id="${id}">재시험 보기</button>
+        <button type="button" class="btn ghost result-btn" data-id="${id}">지난 결과 보기</button>${study}`;
     } else if (t.passed) {
       status = `<div class="st-card-status ok">✅ 합격 (${t.passedRound}회차 · ${t.score}/${t.total})</div>`;
       buttons = `<button type="button" class="btn ghost result-btn" data-id="${id}">결과 보기</button>${study}`;
@@ -352,7 +357,9 @@ function showResultScreen(result, opts) {
   $("resultScore").textContent = `${result.score} / ${result.total}점`;
   $("resultLead").textContent = result.passed
     ? (result.round > 1 ? `🎉 ${result.round}회차 만에 합격했습니다!` : "🎉 합격했습니다!")
-    : `아직 기준에 못 미쳤습니다 (틀린 개수 ${result.wrong}개). 다시 도전해 보세요.`;
+    : result.retakeOpen
+      ? "🔁 선생님이 재시험을 내셨어요. 다시 도전해 보세요."
+      : `아직 기준에 못 미쳤습니다 (틀린 개수 ${result.wrong}개). 다시 도전해 보세요.`;
   $("retryBtn").hidden = result.passed;
   const items = result.wrongItems || [];
   const box = $("resultWrong");
