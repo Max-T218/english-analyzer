@@ -3109,6 +3109,12 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
             "responseSchema": QUIZ_SCHEMA,
         },
     }
+    # 기본 유형(지문을 그대로 싣는 Flash 호출)은 생각을 낮춰 속도를 올린다(2026-10-18). 효과는 유형에 따라
+    # 다르다 — OX진위·질문에 답하기가 섞인 6문항은 생각 2,756토큰이 0이 되며 30초 → 17초였고, 주제·제목·요지·
+    # 일치 5문항은 원래도 생각을 거의 안 해 1~2초 차이였다. 두 경우 모두 정답·오답·해설의 질은 같았다.
+    # Pro 호출(지문을 고치는 유형·고난도)은 생각이 품질을 좌우하므로 건드리지 않는다.
+    if "pro" not in (model or "").lower() and difficulty != "hard":
+        payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
     result = _gemini_json(payload, api_key, model, _QUIZ_TRUNC_MSG, label="quiz")
     _check_ox_plan(result, ox_plan)
     _check_answer_plan(result, answer_plan)
