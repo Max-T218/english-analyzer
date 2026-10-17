@@ -1876,11 +1876,12 @@ h3.section .num{color:var(--accent); font-size:15px;}
 table{width:100%; border-collapse:collapse; font-size:13px; background:var(--card); min-width:520px;}
 th,td{border-bottom:1px solid var(--line); padding:9px 12px; text-align:left; vertical-align:top;}
 thead th{background:var(--accent-soft); color:var(--accent); font-weight:700; font-size:12px; letter-spacing:.03em;}
-/* 학생 단어 학습 표 — 위 min-width 520px이면 폰에서 '뜻' 칸이 화면 밖으로 밀려
-   보이지도 눌리지도 않았다. 세 칸이라 폰 폭에 그대로 맞춘다. */
-table.study-table{min-width:0;}
-table.study-table th:first-child, table.study-table td:first-child{width:2.5em; padding-right:4px;}
-table.study-table td.study-meaning[data-revealed="0"]{color:var(--accent);}
+/* 학생 화면 표(단어 학습·틀린 단어) — 위 min-width 520px이면 폰에서 '뜻'·'정답' 칸이
+   화면 밖으로 밀려 보이지도 눌리지도 않았다. 칸이 몇 개 안 되니 폰 폭에 그대로 맞춘다. */
+table.st-table{min-width:0;}
+table.st-table th:first-child, table.st-table td:first-child{width:2.5em; padding-right:4px;}
+table.st-table td{overflow-wrap:break-word; word-break:keep-all;}   /* 낱말 가운데서 끊지 않는다 */
+table.st-table td.study-meaning[data-revealed="0"]{color:var(--accent);}
 table.flow td:first-child{font-weight:700; color:var(--accent); white-space:nowrap; width:78px;}
 table.flow tr:last-child td, table.vocab tr:last-child td{border-bottom:none;}
 table.vocab td:first-child{font-weight:600; color:var(--ink);}
@@ -2455,6 +2456,34 @@ table.qt-units{min-width:0; width:100%;}
 table.qt-units th, table.qt-units td{padding:6px 8px; word-break:break-word;}
 .qt-exp{margin-top:10px; padding:10px 12px; border-radius:9px; background:var(--paper);
   border-left:3px solid var(--accent); font-size:14px; line-height:1.7;}
+
+/* ══════ 학생 화면(student.html) — 학생은 거의 폰으로 본다 ══════ */
+/* 목록 카드 한 벌(testCardHtml) — 시험 종류와 상관없이 제목 → 설명 → 결과 → 단추 줄 */
+.st-card-title{font-weight:800; font-size:17px; line-height:1.35;}
+.st-card .hint{font-size:13px; margin-top:3px;}
+.st-card-status{font-weight:800; font-size:14px; margin-top:8px; color:var(--ink);}
+.st-card-status.ok{color:var(--accent);}
+.st-card-status.bad{color:#b91c1c;}
+.st-card-actions{display:flex; flex-wrap:wrap; gap:8px; margin-top:12px;}
+/* 단어시험 한 문항 — 보기는 문제 시험과 같은 .qt-opt 칸, 동그라미 단추는 감추고 칸 전체를 누른다 */
+.st-q-prompt{font-weight:800; font-size:17px; line-height:1.5; margin-bottom:12px;}
+.st-opt input{position:absolute; opacity:0; pointer-events:none;}
+/* label이라 위 '.panel label'(작은 회색 굵은 글씨·block)이 덮는다 — 문제 시험 보기 칸과 같게 되돌린다 */
+.panel label.st-opt{position:relative; display:flex; align-items:center; gap:10px;
+  font-size:15px; font-weight:500; color:var(--ink); letter-spacing:0; margin:0;}
+.panel label.st-opt.sel{font-weight:700;}
+input.st-in{width:100%; box-sizing:border-box;}
+/* 폰에서는 한 단계 크게 — 보기·입력칸·문제 시험 글씨. 입력칸 16px 밑이면 아이폰이 화면을 확대해 버린다 */
+@media (max-width:640px){
+  .st-page .qt-opt, .st-page .panel label.st-opt{font-size:17px; padding:13px 14px;}
+  .st-page .qt-pick .qt-opt{font-size:16px; padding:3px 9px;}
+  .st-page .qt-in{font-size:16px;}
+  .st-page .qt-card .qz-passage{font-size:16px; line-height:1.75;}
+  .st-page .qt-card .qz-instruction{font-size:16px;}
+  .st-page .qt-cue, .st-page .qt-exp{font-size:15px;}
+  .st-page .btn{font-size:15px;}
+  .st-page .hint{font-size:13px;}
+}
 
 /* 단어장 탭 — 쓸 단어장 고르기(단어장이 둘 이상일 때) */
 .vocab-pick{margin:8px 0 12px; padding:8px 12px; border:1px solid var(--line-soft); border-radius:8px; background:var(--panel, #fff);}

@@ -168,34 +168,36 @@ function renderTests(tests) {
   }
   $("testList").innerHTML = tests.map((t) => {
     if (t.kind === "quiz") return quizListRowHtml(t);
-    let rightSide;
+    const id = esc(t.id);
+    const study = `<button type="button" class="btn ghost study-btn" data-id="${id}">📖 단어 학습</button>`;
+    let status = "", buttons;
     if (!t.submitted) {
-      rightSide = `<button type="button" class="btn small take-btn" data-id="${esc(t.id)}">응시하기</button>`;
+      buttons = `<button type="button" class="btn take-btn" data-id="${id}">응시하기</button>${study}`;
     } else if (t.passed) {
-      rightSide = `
-        <div style="text-align:right;">
-          <div style="font-weight:800; color:var(--accent);">✅ 합격 (${t.passedRound}회차 · ${t.score}/${t.total})</div>
-          <button type="button" class="btn ghost small result-btn" data-id="${esc(t.id)}" style="margin-top:4px;">결과 보기</button>
-        </div>`;
+      status = `<div class="st-card-status ok">✅ 합격 (${t.passedRound}회차 · ${t.score}/${t.total})</div>`;
+      buttons = `<button type="button" class="btn ghost result-btn" data-id="${id}">결과 보기</button>${study}`;
     } else {
-      rightSide = `
-        <div style="text-align:right;">
-          <div style="font-weight:700; color:var(--g);">미통과 (${t.attemptCount}회 시도 · 최근 ${t.score}/${t.total})</div>
-          <button type="button" class="btn ghost small result-btn" data-id="${esc(t.id)}" style="margin-top:4px;">틀린 단어 보기</button>
-          <button type="button" class="btn small take-btn" data-id="${esc(t.id)}" style="margin-top:4px;">재시험 보기</button>
-        </div>`;
+      status = `<div class="st-card-status bad">미통과 (${t.attemptCount}회 시도 · 최근 ${t.score}/${t.total})</div>`;
+      buttons = `<button type="button" class="btn take-btn" data-id="${id}">재시험 보기</button>
+        <button type="button" class="btn ghost result-btn" data-id="${id}">틀린 단어 보기</button>${study}`;
     }
-    return `
-    <div class="panel" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-      <div>
-        <div style="font-weight:700;">${esc(t.title)}</div>
-        <div class="hint">${esc(FORMAT_LABEL[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개
-          ${t.maxWrong != null ? `· 합격 기준 ${t.wordCount - t.maxWrong}/${t.wordCount}` : ""}</div>
-        <button type="button" class="btn ghost small study-btn" data-id="${esc(t.id)}" style="margin-top:6px;">📖 단어 학습</button>
-      </div>
-      ${rightSide}
-    </div>`;
+    return testCardHtml(t.title,
+      `${esc(FORMAT_LABEL[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개`
+        + (t.maxWrong != null ? ` · 합격 기준 ${t.wordCount - t.maxWrong}/${t.wordCount}` : ""),
+      status, buttons);
   }).join("");
+}
+
+// 목록 카드 한 벌 — 단어시험·문제 시험·워크북이 모두 이 모양이다(제목 → 설명 → 결과 → 단추 줄).
+// 예전에는 시험마다 단추가 오른쪽·아래로 제각각 놓여 폰에서 들쭉날쭉했다.
+function testCardHtml(title, meta, status, buttons) {
+  return `
+    <div class="panel st-card">
+      <div class="st-card-title">${esc(title)}</div>
+      <div class="hint">${meta}</div>
+      ${status}
+      <div class="st-card-actions">${buttons}</div>
+    </div>`;
 }
 
 $("testList").addEventListener("click", (e) => {
@@ -308,18 +310,19 @@ function renderQuestion() {
   const saved = currentAnswers[currentIndex] || "";
   $("takeProgress").textContent = `문항 ${currentIndex + 1} / ${total}`;
   $("prevBtn").hidden = currentIndex === 0;
+  // 보기는 문제 시험(quiztest.js)과 같은 큰 칸(.qt-opt)으로 그린다 — 폰에서 손가락으로 누르기 쉽게
   $("takeForm").innerHTML = `
-    <div class="field" style="margin-bottom:14px;">
-      <label>${currentIndex + 1}. ${esc(q.prompt)}
+    <div class="st-q">
+      <div class="st-q-prompt">${currentIndex + 1}. ${esc(q.prompt)}
         ${currentFormat === "saq" ? `<span class="hint">(${q.direction === "en2ko" ? "뜻 쓰기" : "영어 쓰기"})</span>` : ""}
-      </label>
+      </div>
       ${currentFormat === "mcq"
-        ? (q.options || []).map((opt) => `
-            <label class="chk" style="display:flex; margin:4px 0;">
+        ? `<div class="qt-opts">${(q.options || []).map((opt, k) => `
+            <label class="qt-opt st-opt${opt === saved ? " sel" : ""}">
               <input type="radio" name="qCurrent" value="${esc(opt)}"${opt === saved ? " checked" : ""}>
-              <span style="margin-left:6px;">${esc(opt)}</span>
-            </label>`).join("")
-        : `<input type="text" id="qCurrentInput" autocomplete="off" value="${esc(saved)}">`}
+              <span class="qz-num">${"①②③④⑤⑥⑦⑧"[k] || ""}</span><span>${esc(opt)}</span>
+            </label>`).join("")}</div>`
+        : `<input type="text" class="qt-in st-in" id="qCurrentInput" autocomplete="off" value="${esc(saved)}">`}
     </div>
   `;
   nextBtn.textContent = currentIndex === total - 1 ? "제출하기" : "다음";
@@ -356,7 +359,7 @@ function showResultScreen(result, opts) {
   if (items.length) {
     box.innerHTML = `
       <div style="font-weight:700; margin-bottom:6px;">틀린 단어 ${items.length}개</div>
-      <div class="table-wrap"><table>
+      <div class="table-wrap"><table class="st-table">
         <thead><tr><th>#</th><th>문제</th><th>내 답</th><th>정답</th></tr></thead>
         <tbody>${items.map((w) => `<tr>
           <td>${esc(w.no)}</td><td>${esc(w.prompt)}</td>
@@ -449,10 +452,12 @@ $("prevBtn").addEventListener("click", () => {
 // (이전으로 돌아왔을 때 같은 답을 그대로 두고 앞으로 가려는 경우).
 $("takeForm").addEventListener("click", (e) => {
   if (currentFormat !== "mcq") return;
-  const input = e.target.closest("label.chk") && e.target.closest("label.chk").querySelector('input[name="qCurrent"]');
+  const opt = e.target.closest("label.st-opt");
+  const input = opt && opt.querySelector('input[name="qCurrent"]');
   if (!input) return;
   if (autoAdvanceTimer) return;                               // 더블클릭으로 두 칸 건너뛰지 않게
   input.checked = true;
+  $("takeForm").querySelectorAll("label.st-opt").forEach((l) => l.classList.toggle("sel", l === opt));
   autoAdvanceTimer = setTimeout(() => {
     autoAdvanceTimer = null;
     goNext();
@@ -464,24 +469,14 @@ $("takeForm").addEventListener("click", (e) => {
    한 번만 낼 수 있고, 내면 바로 점수·정답·해설을 보여 준다(답을 여러 모양으로 쓸 수 있는
    문항은 모범답안과 다르면 '선생님 확인 중'으로 남는다). */
 function quizListRowHtml(t) {
-  let right;
-  if (!t.submitted) {
-    right = `<button type="button" class="btn small take-btn" data-id="${esc(t.id)}">문제 풀기</button>`;
-  } else {
-    right = `
-      <div style="text-align:right;">
-        <div style="font-weight:700;">${QT.countsText(t.qc, true)}</div>
-        <button type="button" class="btn ghost small result-btn" data-id="${esc(t.id)}" style="margin-top:4px;">정답·해설 보기</button>
-      </div>`;
-  }
-  return `
-    <div class="panel" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-      <div>
-        <div style="font-weight:700;">${esc(t.title || (t.source === "workbook" ? "워크북" : "문제 시험"))}</div>
-        <div class="hint">${t.source === "workbook" ? `📚 워크북 · ${t.questionCount}단계` : `📝 문제 시험 · ${t.questionCount}문항`}</div>
-      </div>
-      ${right}
-    </div>`;
+  const id = esc(t.id);
+  const status = t.submitted ? `<div class="st-card-status">${QT.countsText(t.qc, true)}</div>` : "";
+  const buttons = t.submitted
+    ? `<button type="button" class="btn ghost result-btn" data-id="${id}">정답·해설 보기</button>`
+    : `<button type="button" class="btn take-btn" data-id="${id}">문제 풀기</button>`;
+  return testCardHtml(t.title || (t.source === "workbook" ? "워크북" : "문제 시험"),
+    t.source === "workbook" ? `📚 워크북 · ${t.questionCount}단계` : `📝 문제 시험 · ${t.questionCount}문항`,
+    status, buttons);
 }
 
 let quizQuestions = [];
