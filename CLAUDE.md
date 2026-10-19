@@ -107,6 +107,9 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `list_tests_for_student`·`get_test_detail_for_student`·`grade_and_submit_attempt`는
 전부 `_assignment_targets_student`로 이 배정 대상을 확인합니다 — 반이 같아도
 다른 학생 한 명에게만 낸 시험은 안 보입니다.
+시험 내기 창의 '낼 단어장'은 체크 목록이라(`assignVocabSourceList`, 2026-10-19) 지금 화면의 단어장과
+저장한 단어장 **여러 개를 한 시험으로 합쳐** 낸다 — `recomputeAssignVocabRows`가 목록 차례대로
+잇고 같은 단어(대소문자 무시)는 처음 것 하나만 둔다. 서버는 단어 목록만 받으므로 바뀐 것이 없다.
 
 **성적표**(2026-10-12): 채점할 때(`grade_and_submit_attempt`) 문제마다 번호·문제·내 답·정답·맞음을
 `test_attempts` 문서의 `details`에 함께 저장한다(이 값이 없는 옛 답안은 `hasDetails:false`로 표시).

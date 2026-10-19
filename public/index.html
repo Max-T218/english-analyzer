@@ -971,10 +971,8 @@
         <select id="assignTargetSelect">
           <option value="class">반 전체</option>
         </select>
-        <label for="assignVocabSourceSelect">낼 단어장</label>
-        <select id="assignVocabSourceSelect">
-          <option value="current">지금 화면에 있는 단어장</option>
-        </select>
+        <label>낼 단어장 <span class="hint" style="font-weight:400;">(여러 개를 고르면 한 시험으로 합칩니다)</span></label>
+        <div id="assignVocabSourceList" style="max-height:180px; overflow-y:auto; border:1px solid #d6dde8; border-radius:8px; padding:6px 10px; margin-bottom:4px;"></div>
         <p class="hint" id="assignVocabSourceHint"></p>
         <label for="assignTitle">시험 제목</label>
         <input type="text" id="assignTitle" placeholder="예: 3과 단어시험">

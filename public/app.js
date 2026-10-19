@@ -10689,7 +10689,7 @@ const HOWTO = {
       "<b>형식</b>을 고릅니다 — 단어장, 또는 시험지(뜻 쓰기 · 영어 쓰기 · 섞어서).",
       "<b>[단어장 만들기]</b>를 누르고 <b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑습니다.",
     ],
-    tip: "사진·PDF로 읽은 단어는 편집 표에서 확인한 뒤 [이 단어장에 추가]를 눌러야 들어갑니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 온라인 단어시험을 낼 수 있습니다(요금 없음).",
+    tip: "사진·PDF로 읽은 단어는 편집 표에서 확인한 뒤 [이 단어장에 추가]를 눌러야 들어갑니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 온라인 단어시험을 낼 수 있습니다(요금 없음). 저장한 단어장을 여러 개 체크하면 한 시험으로 합쳐 냅니다.",
     shots: {
       0: [{ img: "howto-step-vocab-1.jpg", cap: "직접 입력 · 사진 · PDF로 단어 넣기" }],
       1: [{ img: "howto-step-vocab-2.jpg", cap: "형식 고르기" }],
@@ -15615,7 +15615,7 @@ const assignTargetSelectEl = $("assignTargetSelect");
 const assignFormEl = $("assignForm");
 const assignErrorEl = $("assignError");
 const assignStatusEl = $("assignStatus");
-const assignVocabSourceSelectEl = $("assignVocabSourceSelect");
+const assignVocabSourceListEl = $("assignVocabSourceList");
 const assignVocabSourceHintEl = $("assignVocabSourceHint");
 const assignRetestChkEl = $("assignRetestChk");
 const assignRetestFieldEl = $("assignRetestField");
@@ -15660,12 +15660,15 @@ async function refreshAssignTargetSelect() {
 }
 assignClassSelectEl.addEventListener("change", refreshAssignTargetSelect);
 
-/* 반에 낼 단어장 — 기본은 "지금 화면에 있는 단어장"(lastVocabRows)이고, 저장함에
-   담아 둔 다른 단어장으로 바꿔 낼 수도 있다. assignVocabRows가 null이면 "지금 화면"을
-   쓰는 뜻이고, 배열이면 그걸로 덮어쓴다 — lastVocabRows를 직접 건드리지 않아
-   단어장 탭 화면은 그대로 둔 채 시험만 다른 단어장으로 낼 수 있다. */
-let assignVocabRows = null;
-let assignSavedVocabCache = [];
+/* 반에 낼 단어장 — "지금 화면에 있는 단어장"(lastVocabRows)과 저장함에 담아 둔 단어장을
+   **여러 개 체크해 한 시험으로 합쳐** 낼 수 있다(2026-10-19). 같은 단어가 두 단어장에 있으면
+   먼저 나온 것 하나만 쓴다(같은 단어가 두 문제로 나가지 않게). assignVocabRows가 체크한 것을
+   합친 결과이고, lastVocabRows를 직접 건드리지 않아 단어장 탭 화면은 그대로 남는다. */
+let assignVocabRows = [];
+let assignVocabDup = 0;          // 겹쳐서 뺀 단어 수(안내용)
+let assignVocabLoading = null;   // 저장본을 받아 오는 중이면 그 Promise — 제출이 기다린다
+let assignVocabSeq = 0;          // 체크를 빨리 여러 번 바꿨을 때 늦게 온 옛 결과를 버린다
+const assignSavedRowsCache = new Map(); // 저장본 id → 펼친 단어 줄(창을 열 때마다 비운다)
 
 // 저장해 둔 단어장 payload(vocabSets)를 buildVocab과 같은 규칙으로 한 줄씩 펼친다.
 function flattenVocabSets(sets) {
@@ -15679,14 +15682,22 @@ function flattenVocabSets(sets) {
 }
 
 function updateAssignVocabHint() {
-  const rows = assignVocabRows || lastVocabRows;
+  const picked = assignVocabSourceListEl.querySelectorAll("input:checked").length;
+  if (!picked) {
+    assignVocabSourceHintEl.textContent = "낼 단어장을 하나 이상 골라 주세요.";
+    return;
+  }
+  const rows = assignVocabRows;
   assignVocabSourceHintEl.textContent = rows.length
-    ? `${rows.length}개 단어로 시험을 냅니다.`
-    : "단어장이 비어 있습니다 — 다른 단어장을 골라 주세요.";
+    ? `단어장 ${picked}개 · ${rows.length}개 단어로 시험을 냅니다.` +
+      (assignVocabDup ? ` (겹치는 단어 ${assignVocabDup}개는 한 번만 넣었습니다)` : "")
+    : "고른 단어장이 비어 있습니다 — 다른 단어장을 골라 주세요.";
 }
 
 async function refreshAssignVocabSourceSelect() {
-  assignVocabRows = null;
+  assignVocabRows = [];
+  assignVocabDup = 0;
+  assignSavedRowsCache.clear(); // 그사이 저장본을 고쳤을 수 있어 창을 열 때마다 새로 받는다
   let items = [];
   try {
     const data = await getJson("/api/saved", "");
@@ -15694,31 +15705,59 @@ async function refreshAssignVocabSourceSelect() {
   } catch (_) {
     items = [];
   }
-  assignSavedVocabCache = items;
-  const saved = items
-    .map((it) => `<option value="${esc(it.id)}">💾 ${esc(it.title || "제목 없음")}</option>`)
-    .join("");
-  assignVocabSourceSelectEl.innerHTML =
-    `<option value="current">지금 화면에 있는 단어장</option>` + saved;
-  updateAssignVocabHint();
+  const row = (value, text, checked) =>
+    `<label class="chk" style="display:block; margin:4px 0;">` +
+    `<input type="checkbox" value="${esc(value)}"${checked ? " checked" : ""}> ${text}</label>`;
+  const cur = lastVocabRows.length;
+  // 화면에 단어장이 있으면 그것을 기본으로 체크해 둔다(예전 기본값과 같다).
+  assignVocabSourceListEl.innerHTML =
+    row("current", `지금 화면에 있는 단어장 <span class="hint">(${cur ? cur + "개" : "비어 있음"})</span>`, cur > 0) +
+    items.map((it) => row(it.id, `💾 ${esc(it.title || "제목 없음")}`, false)).join("");
+  await recomputeAssignVocabRows();
 }
 
-assignVocabSourceSelectEl.addEventListener("change", async () => {
-  const val = assignVocabSourceSelectEl.value;
-  if (val === "current") {
-    assignVocabRows = null;
+// 체크한 단어장을 목록 차례대로 합친다. 저장본은 처음 고를 때 한 번만 받아 둔다.
+function recomputeAssignVocabRows() {
+  const seq = ++assignVocabSeq;
+  const ids = [...assignVocabSourceListEl.querySelectorAll("input:checked")].map((el) => el.value);
+  const need = ids.filter((id) => id !== "current" && !assignSavedRowsCache.has(id));
+  if (need.length) assignVocabSourceHintEl.textContent = "불러오는 중…";
+  const job = (async () => {
+    let failed = "";
+    await Promise.all(need.map(async (id) => {
+      try {
+        const item = await getJson(`/api/saved/${encodeURIComponent(id)}`, "단어장을 불러오지 못했습니다.");
+        assignSavedRowsCache.set(id, flattenVocabSets((item.payload && item.payload.vocabSets) || []));
+      } catch (err) {
+        failed = err.message || "단어장을 불러오지 못했습니다.";
+      }
+    }));
+    if (seq !== assignVocabSeq) return; // 그사이 체크가 또 바뀌었다 — 새 계산에 맡긴다
+    if (failed) assignErrorEl.textContent = failed;
+    const seen = new Set();
+    const rows = [];
+    let dup = 0;
+    ids.forEach((id) => {
+      const src = id === "current" ? lastVocabRows : (assignSavedRowsCache.get(id) || []);
+      src.forEach((r) => {
+        const key = String(r.word || "").trim().toLowerCase();
+        if (!key) return;
+        if (seen.has(key)) { dup++; return; }
+        seen.add(key);
+        rows.push(r);
+      });
+    });
+    assignVocabRows = rows;
+    assignVocabDup = dup;
     updateAssignVocabHint();
-    return;
-  }
-  assignVocabSourceHintEl.textContent = "불러오는 중…";
-  try {
-    const item = await getJson(`/api/saved/${encodeURIComponent(val)}`, "불러오기에 실패했습니다.");
-    assignVocabRows = flattenVocabSets((item.payload && item.payload.vocabSets) || []);
-  } catch (err) {
-    assignVocabRows = [];
-    assignErrorEl.textContent = err.message || "단어장을 불러오지 못했습니다.";
-  }
-  updateAssignVocabHint();
+  })();
+  assignVocabLoading = job;
+  return job;
+}
+
+assignVocabSourceListEl.addEventListener("change", () => {
+  assignErrorEl.textContent = "";
+  recomputeAssignVocabRows();
 });
 
 vocabAssignBtn.addEventListener("click", async () => {
@@ -15741,7 +15780,8 @@ assignFormEl.addEventListener("submit", async (e) => {
     assignErrorEl.textContent = "반을 먼저 만들어 주세요.";
     return;
   }
-  const rows = assignVocabRows || lastVocabRows;
+  if (assignVocabLoading) await assignVocabLoading; // 저장본을 받는 중이면 다 받고 나서 낸다
+  const rows = assignVocabRows;
   if (!rows.length) {
     assignErrorEl.textContent = "먼저 단어장을 만들거나, 저장된 단어장을 골라 주세요.";
     return;
