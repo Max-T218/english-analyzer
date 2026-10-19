@@ -407,6 +407,12 @@ PRICE_TREND_SCAN_PAGE_KRW = int(os.environ.get("PRICE_TREND_SCAN_PAGE_KRW", "100
 PRICE_TREND_OCR_PAGE_KRW = int(os.environ.get("PRICE_TREND_OCR_PAGE_KRW", "100"))
 # 학생 성적표 코멘트(AI) — 1건당 정액. 집계 숫자만 보는 짧은 글쓰기라 Flash로 충분하다.
 PRICE_STUDENT_COMMENT_KRW = int(os.environ.get("PRICE_STUDENT_COMMENT_KRW", "50"))
+# 문법문제 출제 마법사(/api/grammar) — 시험지 한 장에 기본값 + 문제당(객관식·주관식 합쳐서 센다).
+# 기본 10문제(객관식 5 + 주관식 5)면 200P, 20문제 300P … 50문제 600P(2026-10-20 사용자 결정).
+# 처음엔 객관식·주관식을 따로 세어 기본값이 두 번 붙었는데, 섞어 만들수록 비싸져 납득하기 어려웠다.
+# 원가(2026-10-20 실측·청구서): 문제당 AI Studio 약 2.5~4.3원, Vertex는 그 2배. 받은 문항 수로만 받는다.
+PRICE_GRAMMAR_BASE_KRW = int(os.environ.get("PRICE_GRAMMAR_BASE_KRW", "100"))
+PRICE_GRAMMAR_PER_Q_KRW = int(os.environ.get("PRICE_GRAMMAR_PER_Q_KRW", "10"))
 # 시험지에서 지문 꺼내기 — 유형 분석과 달리 지문 전문을 옮겨 적으므로 출력이 길고,
 # 쪽마다 그림을 한 장씩 읽는다. 그래서 1벌당이 아니라 '쪽당'으로 매긴다.
 PRICE_EXAM_OCR_KRW = int(os.environ.get("PRICE_EXAM_OCR_KRW", "0"))
@@ -1077,7 +1083,7 @@ def _asset_version():
     stamp = 0.0
     # 만드는 법·결과물 예시 그림(howto-*)도 본다 — 2026-10-07에 그림만 갈아 끼웠다가 표식이 그대로여서
     # 옛 그림('홍보용' 제목)이 계속 보였다.
-    names = ["app.js", "trend.js", "quiztest.js", "style.css"] + [
+    names = ["app.js", "trend.js", "grammar.js", "quiztest.js", "style.css"] + [
         p.name for pat in ("sample-*.jpg", "howto-*.jpg", "howto-*.png") for p in sorted(PUBLIC_DIR.glob(pat))
     ]
     for name in names:
@@ -5512,6 +5518,486 @@ def call_gemini_student_comment(data, api_key, model):
     if not comment:
         raise RuntimeError("코멘트를 만들지 못했습니다. 다시 시도해 주세요.")
     return {"comment": comment}
+
+
+# ══════ 문법문제 출제 마법사(/api/grammar) ══════
+# 학년 → 문법 항목 → 세부 항목을 고르면 그 문법만 묻는 한 문장짜리 문항을 만든다(2026-10-20).
+# 문법 목차는 화면(public/grammar.js GRAMMAR_CATALOG)에만 있다 — 서버는 세부 항목 이름을 글자로
+# 받을 뿐이라, 목차를 고쳐도 서버를 고칠 일이 없다(선생님이 직접 적은 항목도 그대로 받는다).
+#
+# 문항 모양은 문제 시험(QUIZ_TEST_FORMATS)과 같은 format으로 돌려준다 — 그래야 화면이 문제 탭의
+# buildQuizHtml로 그대로 그리고, [🏫 반에 시험 내기]도 손대지 않고 쓴다. 다 만든 문항을
+# _qt_clean_question에 한 번 통과시켜 모양이 틀린 것은 버린다(그 함수가 HTML도 거른다).
+#
+# 한 번에 최대 50문항이라 10문항씩 나눠 동시에 부른다 — 한 호출에 50문항을 몰면 1분을 넘겨
+# 프록시가 화면 연결을 끊는다. 값은 실제로 받아 낸 문항 수로 매긴다(_grammar_cost).
+GRAMMAR_MAX_QUESTIONS = 50
+GRAMMAR_MAX_ITEMS = 40
+GRAMMAR_CHUNK = 10
+GRAMMAR_PASSAGE_MAX = 8000
+# 레벨 — 화면 grammar.js의 GRAMMAR_GRADES와 같은 열쇠. 화면 이름은 초등 고학년 · 중등 Level 1~3 ·
+# 수능 Level이다(2026-10-20 — 학년 이름이 다른 사이트를 따라 한 티가 난다고 바꿨다. 열쇠는 그대로 둔다).
+GRAMMAR_GRADES = {
+    "e56": ("초등학교 고학년(5~6학년)", "쉬운 낱말(초등 교과서 어휘)로 5~9단어짜리 문장. 해설은 초등학생이 알아듣는 말로."),
+    "m1": ("중학교 기초(중1 수준)", "중1 교과서 수준 낱말로 6~12단어짜리 문장."),
+    "m2": ("중학교 중급(중2 수준)", "중2 교과서 수준 낱말로 7~14단어짜리 문장."),
+    "m3": ("중학교 심화(중3 수준)", "중3 교과서 수준 낱말로 8~16단어짜리 문장."),
+    "high": ("고등학교·수능", "고등 내신·수능 어법 수준 낱말로 10~22단어짜리 문장. 수능 어법 문항처럼 함정을 넣어도 된다."),
+}
+# 문제 모양 — 화면 grammar.js의 GRAMMAR_MC_SHAPES·GRAMMAR_SA_SHAPES와 같은 열쇠(함께 고칠 것)
+GRAMMAR_MC_SHAPES = {
+    "mc_right": "어법상 옳은 문장 고르기",
+    "mc_wrong": "어법상 틀린 문장 고르기",
+    "mc_blank": "빈칸에 알맞은 말 고르기",
+    "mc_underline": "밑줄 ①~⑤ 중 틀린 것 고르기",
+    "mc_box": "네모 (A)(B)(C) 어법 고르기",
+    "mc_count": "옳은 문장의 개수 고르기",
+}
+GRAMMAR_SA_SHAPES = {
+    "sa_verb": "괄호 안 동사 알맞은 형태로 쓰기",
+    "sa_fill": "빈칸에 알맞은 말 쓰기",
+    "sa_fix": "틀린 곳 고쳐 쓰기",
+    "sa_convert": "문장 전환",
+    "sa_order": "배열 영작",
+    "sa_compose": "조건 영작",
+}
+_GRAMMAR_SHAPE_FORMAT = {
+    "mc_right": "mc", "mc_wrong": "mc", "mc_blank": "mc", "mc_underline": "mc",
+    "mc_box": "mc", "mc_count": "mc",
+    "sa_verb": "verb", "sa_fill": "fill", "sa_fix": "fix", "sa_convert": "convert",
+    "sa_order": "write", "sa_compose": "compose",
+}
+# 모양마다 무엇을 어떤 칸에 담는지 — 프롬프트에 그대로 싣는다. 칸 이름은 문제 탭과 같다.
+_GRAMMAR_SHAPE_RULES = {
+    "mc_right": 'format "mc". instruction "다음 중 어법상 옳은 문장은?". passageHtml은 빈 글자. choices는 영어 문장 5개 — 그중 정확히 하나만 어법상 옳고 넷은 그 문법 항목에서 흔히 틀리는 자리를 하나씩 틀린다. answer는 옳은 문장의 번호(1~5).',
+    "mc_wrong": 'format "mc". instruction "다음 중 어법상 틀린 문장은?". passageHtml은 빈 글자. choices는 영어 문장 5개 — 정확히 하나만 그 문법 항목에서 틀리고 넷은 완벽히 옳다. answer는 틀린 문장의 번호.',
+    "mc_blank": 'format "mc". instruction "다음 빈칸에 들어갈 말로 알맞은 것은?". passageHtml은 영어 문장 하나(대화 두 줄도 됨, 줄은 <br>)에 빈칸을 "_____"(밑줄 다섯 개)로 한 곳만. choices는 낱말·짧은 구 5개, 정답은 하나뿐. answer는 그 번호.',
+    "mc_underline": 'format "mc". instruction "다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?". passageHtml은 영어 2~4문장짜리 짧은 글에 밑줄 다섯 곳을 "①<u>낱말</u>"처럼 원문자를 밑줄 바로 앞에 붙여 ①~⑤ 차례로 표시. 틀린 곳은 정확히 하나이고 그 문법 항목에서 나온다. choices는 ["①","②","③","④","⑤"] 그대로. answer는 틀린 곳의 번호.',
+    "mc_box": 'format "mc". instruction "(A), (B), (C)의 각 네모 안에서 어법에 맞는 표현으로 가장 적절한 것은?". passageHtml은 영어 1~3문장에 네모 세 곳을 "(A) <b>[was / were]</b>"처럼 적는다(둘 중 하나만 옳다). choices는 5개 조합을 "were – who – to go"처럼 (A)–(B)–(C) 차례로. 정답 조합은 하나. answer는 그 번호.',
+    "mc_count": 'format "mc". instruction "다음 중 어법상 옳은 문장의 개수는?". countItems에 영어 문장 정확히 5개를 {"text": 문장, "isTrue": 어법상 옳으면 true, "why": 그렇게 판정한 근거 한국어 한 문장}으로 적는다. 이 slot의 정답 번호 N은 옳은 문장(isTrue)이 N개라는 뜻이다. 문장마다 판정을 먼저 정하고 근거를 쓴 뒤, 다시 한번 판정이 맞는지 따진다(서버가 isTrue를 세어 정답을 정하고 why로 해설을 만든다). passageHtml·choices·answer는 빈 값으로 둔다.',
+    "sa_verb": 'format "verb". instruction "괄호 안의 동사를 알맞은 형태로 바꿔 쓰시오.". passageHtml은 영어 문장 하나(또는 두 문장)에 바꿀 자리를 "(원형|정답)"으로 1~2곳 심는다 — 예: "She (live|has lived) here since 2020." 괄호 앞은 동사 원형, 뒤는 정답 형태. 정당한 답이 둘 이상이면 "/"로 이어 적는다 — 예: "(be|is / was)" 처럼 시제가 열려 있을 때.',
+    "sa_fill": 'format "fill". instruction "우리말과 같은 뜻이 되도록 빈칸에 알맞은 말을 쓰시오.". passageHtml은 "우리말 문장<br>영어 문장"으로, 영어 문장의 빈칸 자리를 "(|정답)"으로 1~2곳 심는다(괄호 안 앞쪽은 비워 둔다) — 예: "그는 나보다 키가 크다.<br>He is (|taller) than me." 정당한 답이 둘 이상이면 "/"로 이어 적는다 — 예: "(|whom / who / that)".',
+    "sa_fix": 'format "fix". instruction "다음 문장에서 어법상 틀린 부분을 찾아 바르게 고쳐 쓰시오.". passageHtml은 틀린 곳이 정확히 하나 있는 영어 문장(태그 없이 평문). fixes는 [{"wrong": 틀린 낱말(들), "right": 고친 말}] 하나 — wrong은 passageHtml에 글자 그대로 있어야 한다. 고친 말이 둘 이상 가능하면 right에 "/"로 이어 적는다 — 예: "whom / who / that".',
+    "sa_convert": 'format "convert". instruction "다음 문장을 <조건>에 맞게 바꿔 쓰시오.". passageHtml은 바꿀 영어 문장 하나. conditions는 무엇으로 바꾸는지 한두 줄(예: "수동태 문장으로 쓸 것", "관계대명사를 사용하여 한 문장으로 쓸 것"). answerText는 바꾼 문장 하나(대표 답). 다른 정당한 답이 있으면 alts에 한 문장씩.',
+    "sa_order": 'format "write". instruction "우리말과 같은 뜻이 되도록 주어진 단어를 바르게 배열하시오.". passageHtml은 우리말 문장 하나. answerText는 그 뜻의 영어 문장(5~14단어, 그 문법 항목이 꼭 들어간다) — 화면이 이 문장의 낱말을 섞어 <보기>로 보여 준다. 첫 낱말을 소문자로 바꿔 섞으므로 문장을 사람 이름·지명으로 시작하지 않는다(I·대명사·명사구로 시작). 부사·부사구 자리가 바뀔 수 있어 다른 어순도 정답이 되는 문장은 피한다 — 부득이하면 다른 정답을 alts에 적는다.',
+    "sa_compose": 'format "compose". instruction "<보기>의 단어를 활용하여 <조건>에 맞게 우리말을 영작하시오.". passageHtml은 우리말 문장 하나. wordBank는 써야 할 낱말의 원형 3~6개. conditions는 1~3줄(그 문법 항목을 쓰라는 조건과 단어 수 등). answerText는 모범 답안 영어 문장(대표 답). 다른 정당한 답이 있으면 alts에 한 문장씩.',
+}
+GRAMMAR_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "questions": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "slot": {"type": "INTEGER"},
+                    "shape": {"type": "STRING"},
+                    "format": {"type": "STRING"},
+                    "instruction": {"type": "STRING"},
+                    "passageHtml": {"type": "STRING"},
+                    "choices": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "answer": {"type": "INTEGER"},
+                    "answerText": {"type": "STRING"},
+                    "alts": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "countItems": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {"text": {"type": "STRING"}, "isTrue": {"type": "BOOLEAN"}, "why": {"type": "STRING"}},
+                            "required": ["text", "isTrue", "why"],
+                            "propertyOrdering": ["text", "isTrue", "why"],
+                        },
+                    },
+                    "fixes": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {"wrong": {"type": "STRING"}, "right": {"type": "STRING"}},
+                            "required": ["wrong", "right"],
+                            "propertyOrdering": ["wrong", "right"],
+                        },
+                    },
+                    "wordBank": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "conditions": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "explanation": {"type": "STRING"},
+                },
+                "required": ["slot", "shape", "format", "instruction", "passageHtml", "explanation"],
+                "propertyOrdering": ["slot", "shape", "format", "instruction", "passageHtml", "choices",
+                                     "answer", "answerText", "alts", "countItems", "fixes", "wordBank", "conditions", "explanation"],
+            },
+        },
+    },
+    "required": ["questions"],
+    "propertyOrdering": ["questions"],
+}
+GRAMMAR_SYSTEM_PROMPT = """당신은 한국 중·고등학교와 초등학교 영어 문법 시험 문제를 만드는 출제 위원입니다.
+입력은 학년, 문항 목록(번호 slot · 문법 세부 항목 · 객관식/주관식 · 문제 모양), 모양마다의 작성 규칙, 그리고 때로 재료 지문입니다.
+
+반드시 지킬 것
+- 문항 목록의 slot마다 정확히 한 문항을 만들고 slot 번호를 그대로 적습니다. 빠뜨리거나 더 만들지 않습니다.
+- 각 문항은 적힌 '문법 세부 항목'을 묻습니다. 정답과 오답의 차이가 바로 그 문법에서 나와야 합니다(낱말 뜻·철자 실수로 오답을 만들지 않습니다).
+- 모양이 하나로 정해진 slot은 그 모양으로, 후보가 여럿인 slot은 그 문법을 묻기에 가장 알맞은 모양을 골라 shape에 그 열쇠(예: "mc_right")를 적습니다. 같은 항목이 여러 문항이면 모양을 골고루 섞습니다.
+- format·instruction·각 칸은 '모양별 작성 규칙'을 글자 그대로 따릅니다. 쓰지 않는 칸은 빈 글자나 빈 배열로 둡니다.
+- 정답은 하나뿐이어야 합니다. 옳다고 둔 문장은 원어민이 보아도 완전히 자연스럽고 어법상 흠이 없어야 하고, 틀리다고 둔 곳은 분명히 틀려야 합니다. 만든 뒤 보기 하나하나를 다시 검토합니다.
+- 문항끼리 같은 문장·같은 낱말 재료를 되풀이하지 않습니다. 주어·시제·상황을 다양하게 바꿉니다.
+- 학년 수준(낱말 난이도·문장 길이)을 지킵니다.
+- 문항 목록에 '정답은 N번'이 적힌 객관식 slot은 정답(틀린 문장·틀린 밑줄 포함)을 반드시 그 번호에 둡니다. mc_count는 옳은 문장 수가 N개가 되게 합니다. 번호가 한쪽으로 쏠리지 않게 하려는 것이니 마음대로 바꾸지 않습니다.
+- 같은 세부 항목의 문항끼리는 오류 유형·함정이 겹치지 않게 합니다. 목록의 '이 항목의 n번째'를 보고, n번째 문항은 그 문법에서 n번째로 흔한 오류(예: 수일치, 품사 혼동, 대명사·목적어 중복, 어순, 시제 호응, 형태 변화 …)를 소재로 삼습니다. 같은 수법을 두 문항 이상 되풀이하지 않습니다.
+- 논란의 여지가 있는 문장은 쓰지 않습니다. '틀린 것 하나'를 찾는 문항(mc_wrong·mc_underline·sa_fix)은 나머지 곳이 어법·문맥·관용상 모두 자연스러워야 합니다. 원어민 사이에서도 의견이 갈리는 표현은 정답이나 오답의 근거로 쓰지 않습니다. 특히 금지: ① "that which"·"those who" 같은 문어체 관용(= what, 사람들)을 틀린 것으로 내는 일 — 이 표현은 옳습니다. ② 앞 절 전체를 받는 which의 동사 단·복수를 묻는 일(선행사가 명사로도 읽혀 답이 갈립니다). ③ "what + 명사"(what ingredients, what dishes …)처럼 what이 명사를 꾸미는 용법 — 옳다고도 틀렸다고도 읽힙니다. ④ 문어체·구어체 차이로만 갈리는 것. ⑤ 빈도부사·부정부사(rarely, usually not …)의 선택적 위치 — 동사 앞이 가장 자연스러울 뿐 뒤도 틀리지 않으니, 빈도부사 문항은 'forgot never'·'can feel often'처럼 누구에게나 틀린 어순만 오답으로 씁니다.
+- 동사형 쓰기(sa_verb)와 빈칸 쓰기(sa_fill)에서 시제·진행형이 열려 있으면(현재/과거, 단순형/진행형 모두 말이 되는 경우) 가능한 답을 모두 "/"로 잇습니다. 시제가 문맥으로 하나로 정해지게 만드는 편이 더 낫습니다(과거 시점 부사·접속사를 넣는 식).
+- 주어진 단어를 모두 쓰는 배열 영작(sa_order)은 문장 끝의 전치사구·부사가 문두로 옮겨도 성립하는 문장을 쓰지 않습니다. 쓰더라도 정당한 어순을 alts에 모두 적습니다.
+- 학생이 직접 쓰는 문항(sa_*)은 정당한 답이 둘 이상이면 모두 적습니다. verb·fill은 괄호 안에 "/"로 잇고, fix는 right에 "/"로 잇고, 문장 답은 answerText에 대표 하나만 두고 나머지는 alts에 한 문장씩 적습니다. 틀린 답을 alts에 넣지 않습니다. 정답이 하나뿐이면 alts는 빈 배열입니다.
+- explanation은 한국어 1~3문장: 정답의 근거가 되는 문법 규칙을 짚고, 틀린 보기가 왜 틀렸는지 핵심만 씁니다. 용어를 정확히 씁니다 — 선행사가 명사(구)인지 앞 절 전체인지, 절의 종류(명사절·형용사절·부사절)를 틀리게 부르지 않습니다. 보기를 가리킬 때는 실제 번호(①~⑤)와 일치하게 씁니다. 마크다운 금지.
+- HTML은 <br>, <u>, <b>만 씁니다.
+- 실존 인물의 사생활, 폭력·선정적인 내용, 특정 상표 광고는 쓰지 않습니다."""
+
+
+def parse_grammar_request(req):
+    """요청에서 학년·항목(객관식·주관식 개수)·허용 모양·지문을 꺼내 다듬는다. 잘못되면 ValueError."""
+    grade = str(req.get("grade") or "")
+    if grade not in GRAMMAR_GRADES:
+        raise ValueError("학년을 골라 주세요.")
+    items, total = [], 0
+    for it in (req.get("items") or [])[:GRAMMAR_MAX_ITEMS]:
+        if not isinstance(it, dict):
+            continue
+        name = _norm_text(str(it.get("name") or ""))[:80]
+        if not name:
+            continue
+        try:
+            mc = max(0, min(GRAMMAR_MAX_QUESTIONS, int(it.get("mc") or 0)))
+            sa = max(0, min(GRAMMAR_MAX_QUESTIONS, int(it.get("sa") or 0)))
+        except (TypeError, ValueError):
+            continue
+        if mc + sa == 0:
+            continue
+        items.append({"name": name, "mc": mc, "sa": sa})
+        total += mc + sa
+    if not items:
+        raise ValueError("세부 항목을 하나 이상 고르고 문항 수를 정해 주세요.")
+    if total > GRAMMAR_MAX_QUESTIONS:
+        raise ValueError(f"한 번에 {GRAMMAR_MAX_QUESTIONS}문항까지 만들 수 있습니다 (지금 {total}문항).")
+    mc_shapes = [s for s in (req.get("mcShapes") or []) if s in GRAMMAR_MC_SHAPES] or list(GRAMMAR_MC_SHAPES)
+    sa_shapes = [s for s in (req.get("saShapes") or []) if s in GRAMMAR_SA_SHAPES] or list(GRAMMAR_SA_SHAPES)
+    return {
+        "grade": grade,
+        "items": items,
+        "mc_shapes": list(dict.fromkeys(mc_shapes)),
+        "sa_shapes": list(dict.fromkeys(sa_shapes)),
+        "ai_pick": bool(req.get("aiPick", True)),
+        "passage": str(req.get("passage") or "").strip()[:GRAMMAR_PASSAGE_MAX],
+    }
+
+
+def _grammar_cost(mc, sa):
+    """시험지 한 장에 기본값 + 문제당(객관식·주관식 합쳐서). 화면(grammar.js grCost)도 같은 식으로 예상 금액을 보인다."""
+    n = max(0, mc) + max(0, sa)
+    return PRICE_GRAMMAR_BASE_KRW + PRICE_GRAMMAR_PER_Q_KRW * n if n else 0
+
+
+def _grammar_slots(plan):
+    """문항 하나하나의 자리 — [{slot, item, kind, shapes}]. 객관식을 모두 먼저, 주관식을 뒤에 둔다
+    (실제 시험지 차례). 모양을 AI에 맡기지 않으면 항목마다 고른 모양을 돌려 가며 정해 준다."""
+    slots = []
+    for kind, shapes in (("mc", plan["mc_shapes"]), ("sa", plan["sa_shapes"])):
+        for i, it in enumerate(plan["items"]):
+            for j in range(it[kind]):
+                pick = shapes if plan["ai_pick"] else [shapes[(i + j) % len(shapes)]]
+                slots.append({"slot": len(slots) + 1, "item": it["name"], "kind": kind, "shapes": pick})
+    # 항목 안에서 몇째 문항인지 — 묶음들이 따로 만들어져도 같은 항목의 오류 수법이 겹치지 않게 한다
+    seen = {}
+    for s in slots:
+        seen[s["item"]] = seen.get(s["item"], 0) + 1
+        s["nth"] = seen[s["item"]]
+    # 객관식 정답 번호를 서버가 먼저 정한다 — AI에 맡겼더니 20문항에서 ③이 8번, ⑤는 0번이었다
+    # (2026-10-20). 1~5를 섞은 한 벌씩 돌려 가며 나눠 주므로 쏠리지 않는다.
+    mc_slots = [s for s in slots if s["kind"] == "mc"]
+    pool = []
+    while len(pool) < len(mc_slots):
+        block = [1, 2, 3, 4, 5]
+        random.shuffle(block)
+        pool += block
+    for s, n in zip(mc_slots, pool):
+        s["target"] = n
+    return slots
+
+
+# 묶음마다 문장 소재를 달리 준다 — 묶음들이 동시에 만들어져 서로를 모르므로, 안 그러면
+# 같은 문장("The cookies were baked by my grandmother.")이 두 묶음에서 나왔다(2026-10-20 시험).
+_GRAMMAR_THEMES = ["학교·친구", "가족·집", "여행·장소", "운동·취미", "음식·요리", "자연·동물",
+                   "과학·발명", "음악·영화·책", "직업·꿈", "날씨·계절", "쇼핑·물건", "건강·생활 습관"]
+
+
+def _grammar_qkey(q):
+    """같은 문항인지 가리는 열쇠 — 영어 문장(지문·정답·보기)만 본다."""
+    text = " ".join([str(q.get("passageHtml") or ""), str(q.get("answerText") or "")]
+                    + [str(c) for c in (q.get("choices") or []) if len(str(c)) > 12])
+    text = re.sub(r"<[^>]+>|\([^()|]*\|", " ", text)
+    return re.sub(r"[^a-z]+", " ", text.lower()).strip()
+
+
+def _grammar_user_prompt(plan, slots, theme=None, avoid=None):
+    grade_name, grade_rule = GRAMMAR_GRADES[plan["grade"]]
+    used = []
+    lines = []
+    for s in slots:
+        for sh in s["shapes"]:
+            if sh not in used:
+                used.append(sh)
+        names = GRAMMAR_MC_SHAPES if s["kind"] == "mc" else GRAMMAR_SA_SHAPES
+        how = (f'모양 {s["shapes"][0]}({names[s["shapes"][0]]})' if len(s["shapes"]) == 1
+               else "모양 후보 " + ", ".join(f"{k}({names[k]})" for k in s["shapes"]))
+        extra = f' · 정답은 {s["target"]}번' if s.get("target") else ""
+        lines.append(f'slot {s["slot"]}: [{s["item"]}] (이 항목의 {s.get("nth", 1)}번째) '
+                     f'{"객관식" if s["kind"] == "mc" else "주관식"} — {how}{extra}')
+    rules = "\n".join(f"- {k}: {_GRAMMAR_SHAPE_RULES[k]}" for k in used)
+    text = (f"학년: {grade_name} — {grade_rule}\n\n"
+            f"문항 목록 ({len(slots)}문항):\n" + "\n".join(lines) +
+            f"\n\n모양별 작성 규칙:\n{rules}\n")
+    if theme and not plan["passage"]:
+        text += f"\n문장 소재는 주로 '{theme}' 쪽에서 고르되, 문항마다 상황을 바꿉니다.\n"
+    if avoid:
+        text += ("\n아래 문장들은 이미 다른 문항에 쓰였습니다. 같은 문장·같은 상황을 다시 쓰지 마세요:\n"
+                 + "\n".join(f"- {a}" for a in avoid) + "\n")
+    if plan["passage"]:
+        text += ("\n재료 지문 — 문항의 영어 문장은 이 지문에서 가져옵니다. 그 문법이 쓰인 지문 문장을 그대로 또는 "
+                 "조금만 고쳐 쓰고, 지문에 그 문법이 없으면 지문의 내용·낱말로 새 문장을 짓습니다. "
+                 "배열·영작의 우리말은 그 영어 문장의 뜻으로 씁니다.\n"
+                 f"<<<\n{plan['passage']}\n>>>\n")
+    return text
+
+
+_CIRCLED_NO = "①②③④⑤"
+_GRAMMAR_SWAPPABLE = ("mc_right", "mc_wrong", "mc_blank", "mc_box")
+# 해설에 AI가 스스로 고쳐 말한 흔적("다시 점검…")이 남은 문항 — 정답이 흔들렸다는 신호라 버린다
+_GRAMMAR_MONOLOGUE = ("다시 점검", "다시 확인", "다시 검토", "다시 따져", "잠깐", "정정", "(실제", "고쳐야 할 것 같지만")
+# 콤마 뒤 which 바로 뒤의 동사 빈칸 — which가 앞 절 전체를 받는지 앞 명사를 받는지 갈려 수일치 정답이 흔들린다
+_GRAMMAR_SENT_WHICH = re.compile(r",\s*which\s*\([^()|]*\|")
+_GRAMMAR_WORDS_COND = re.compile(r"(\d+)\s*단어")
+# 문장 안에서 자리를 옮겨도 말이 되는 부사 — 배열 영작에서 다른 어순이 정답이 되게 만든다
+_GRAMMAR_MOVABLE = {"first", "later", "then", "now", "again", "finally", "soon", "today", "yesterday", "tomorrow",
+                    "always", "usually", "often", "sometimes", "quickly", "slowly", "carefully", "easily",
+                    "really", "still", "already", "together"}
+
+
+def _grammar_flawed(q):
+    """AI가 만든 문항에서 기계로 알아볼 수 있는 흠 — 있으면 문항을 버리고 다시 채운다.
+    (프롬프트로 부탁만 해서는 막히지 않았다: 2026-10-20 시험에서 '총 13단어'인데 답이 14단어,
+    개수 문제의 정답이 틀리고 해설이 혼잣말, which 수일치 문항이 금지했는데도 나왔다.)"""
+    expl = str(q.get("explanation") or "")
+    if any(w in expl for w in _GRAMMAR_MONOLOGUE) or len(expl) > 900:
+        return True
+    if _GRAMMAR_SENT_WHICH.search(str(q.get("passageHtml") or "")):
+        return True
+    # 'why + to부정사'가 틀렸다는 전제의 문항 — 한국 교재 규칙이지만 영어권에서는 'why to avoid …'가 쓰여
+    # 정답이 갈린다(2026-10-20 사용자 검토: 16번 ①·18번 ②). 보기·지문·정답 어디에 있어도 버린다.
+    blob = " ".join([str(q.get("passageHtml") or ""), str(q.get("answerText") or "")]
+                    + [str(c) for c in (q.get("choices") or [])]
+                    + [f"{f.get('wrong', '')} {f.get('right', '')}" for f in (q.get("fixes") or []) if isinstance(f, dict)])
+    if re.search(r"\bwhy\s+to\b", blob, re.I):
+        return True
+    # 배열 영작에 자리가 바뀔 수 있는 부사('first', 'later' …)가 들어 있으면 다른 어순도 정답이라 학생이 억울하게
+    # 틀린다(40번 'at the crime scene first', 33번 'later'). 다른 정답(alts)을 적어 둔 문항만 통과시킨다.
+    if q.get("format") == "write" and not (q.get("alts") or []):
+        if set(re.findall(r"[a-z]+", str(q.get("answerText") or "").lower())) & _GRAMMAR_MOVABLE:
+            return True
+    # 동사형 쓰기에서 모든 빈칸이 '바꿀 것 없음'((design|design))이면 문제가 되지 않는다
+    if q.get("format") == "verb":
+        pairs = _QT_VERB_RE.findall(str(q.get("passageHtml") or ""))
+        if pairs and all(h.strip().lower() == a.strip().lower() for h, a in pairs):
+            return True
+    # 조건 영작은 <보기> 낱말이 있어야 발문('<보기>의 단어를 활용하여')이 맞는다
+    if q.get("format") == "compose" and len([w for w in (q.get("wordBank") or []) if str(w or "").strip()]) < 2:
+        return True
+    # 조건의 단어 수와 모범 답안이 어긋나면 버린다 (answerText가 대표 답이다)
+    ans = str(q.get("answerText") or "").strip()
+    if ans:
+        for c in q.get("conditions") or []:
+            m = _GRAMMAR_WORDS_COND.search(str(c))
+            if m and len(ans.split()) != int(m.group(1)):
+                return True
+    return False
+
+
+def _grammar_build_count(q):
+    """'옳은 문장의 개수' 문항을 AI가 판정한 문장 5개로 조립한다 — 정답은 서버가 isTrue를 세고,
+    해설도 문장별 why로 만든다. AI가 개수를 직접 말하면 판정과 어긋나곤 했다(2026-10-20)."""
+    items = [it for it in (q.get("countItems") or []) if isinstance(it, dict) and str(it.get("text") or "").strip()]
+    if len(items) != 5:
+        return False
+    n = sum(1 for it in items if it.get("isTrue") is True)
+    if not (1 <= n <= 5):
+        return False
+    letters = "abcde"
+    q["passageHtml"] = "<br>".join(f"({letters[i]}) {str(it['text']).strip()}" for i, it in enumerate(items))
+    q["choices"] = ["1개", "2개", "3개", "4개", "5개"]
+    q["answer"] = n
+    right = ", ".join(f"({letters[i]})" for i, it in enumerate(items) if it.get("isTrue") is True)
+    why = " ".join(f"({letters[i]}) {'○' if it.get('isTrue') is True else '×'} {str(it.get('why') or '').strip()}"
+                   for i, it in enumerate(items))
+    q["explanation"] = f"옳은 문장은 {right}로 {n}개입니다. {why}"
+    return True
+
+
+def _grammar_remap_numbers(text, i, j):
+    """해설 안의 보기 번호(①~⑤·'2번')를 i↔j(0부터) 맞바꾼 대로 고친다."""
+    pair = {i + 1: j + 1, j + 1: i + 1}
+
+    def circ(m):
+        n = _CIRCLED_NO.index(m.group(0)) + 1
+        return _CIRCLED_NO[pair.get(n, n) - 1]
+
+    def word(m):
+        n = int(m.group(1))
+        return f"{pair.get(n, n)}번"
+
+    text = re.sub(f"[{_CIRCLED_NO}]", circ, text)
+    return re.sub(r"(?<![0-9])([1-5])번(?!째)", word, text)
+
+
+def _grammar_place_answer(q, shape, target):
+    """객관식 정답을 서버가 정한 번호(target)에 둔다. AI가 번호를 어겼으면 보기 두 개를 맞바꾸고
+    해설의 번호도 함께 고친다. 밑줄 문제(위치가 지문에 묶여 있음)와 개수 문제(보기가 고정)는
+    바꿀 수 없어 AI가 지킨 번호를 그대로 둔다."""
+    if shape not in _GRAMMAR_SWAPPABLE or not target:
+        return
+    try:
+        ans = int(q.get("answer"))
+    except (TypeError, ValueError):
+        return
+    choices = list(q.get("choices") or [])
+    if not (1 <= ans <= len(choices)) or not (1 <= target <= len(choices)) or ans == target:
+        return
+    i, j = ans - 1, target - 1
+    choices[i], choices[j] = choices[j], choices[i]
+    q["choices"] = choices
+    q["answer"] = target
+    q["explanation"] = _grammar_remap_numbers(str(q.get("explanation") or ""), i, j)
+
+
+def _grammar_finish(raw, slot):
+    """AI가 만든 문항 하나를 다듬어 화면·문제 시험이 쓰는 모양으로. 못 쓰면 None."""
+    if not isinstance(raw, dict):
+        return None
+    shape = raw.get("shape")
+    if shape not in slot["shapes"]:
+        shape = slot["shapes"][0] if len(slot["shapes"]) == 1 else shape
+    if shape not in _GRAMMAR_SHAPE_FORMAT:
+        return None
+    q = dict(raw)
+    q["format"] = _GRAMMAR_SHAPE_FORMAT[shape]
+    q["type"] = slot["item"]
+    if _grammar_flawed(q):
+        return None
+    if shape == "mc_underline":
+        q["choices"] = ["①", "②", "③", "④", "⑤"]
+    elif shape == "mc_count":
+        if not _grammar_build_count(q):
+            return None
+    if q["format"] == "mc" and len(q.get("choices") or []) != 5:
+        return None
+    _grammar_place_answer(q, shape, slot.get("target"))
+    if q["format"] == "fix":
+        q["passageHtml"] = re.sub(r"<[^>]+>", "", str(q.get("passageHtml") or ""))
+        fixes = [f for f in (q.get("fixes") or []) if isinstance(f, dict) and f.get("wrong")
+                 and str(f["wrong"]) in q["passageHtml"]]
+        if not fixes:
+            return None
+        q["fixes"] = fixes[:1]
+    clean = _qt_clean_question(q)
+    if not clean:
+        return None
+    clean["gkind"] = slot["kind"]   # 객관식·주관식 — 받아 낸 문항 수로 값을 셀 때 쓴다
+    return clean
+
+
+def _grammar_call(plan, slots, api_key, model, theme=None, avoid=None):
+    payload = {
+        "systemInstruction": {"parts": [{"text": GRAMMAR_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": _grammar_user_prompt(plan, slots, theme, avoid)}]}],
+        "generationConfig": {
+            "temperature": 0.8,
+            "maxOutputTokens": 16384,
+            "responseMimeType": "application/json",
+            "responseSchema": GRAMMAR_SCHEMA,
+        },
+    }
+    result = _gemini_json(payload, api_key, model, "문항이 너무 길어 잘렸습니다. 문항 수를 줄여 다시 시도해 주세요.",
+                          salvage=True, label="grammar")
+    by_slot = {s["slot"]: s for s in slots}
+    out = {}
+    for raw in result.get("questions") or []:
+        try:
+            n = int((raw or {}).get("slot"))
+        except (TypeError, ValueError):
+            continue
+        if n in by_slot and n not in out:
+            q = _grammar_finish(raw, by_slot[n])
+            if q:
+                out[n] = q
+    return out
+
+
+def call_gemini_grammar(plan, api_key, model=None):
+    """문항 자리를 GRAMMAR_CHUNK개씩 나눠 동시에 만들고, 빠진 자리는 한 번 더 채운다.
+    돌려주는 값: {"questions": [...], "missing": 못 만든 수}. 하나도 못 만들면 예외."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+                           "관리자에게 문의하세요.")
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+    slots = _grammar_slots(plan)
+    got, errors = {}, []
+    labels = _vertex_get_labels()   # 새 스레드에는 요청의 결제 라벨이 없어 옮겨 준다
+    t0 = time.monotonic()
+
+    themes = random.sample(_GRAMMAR_THEMES, len(_GRAMMAR_THEMES))
+
+    def run(groups, avoid=None):
+        def work(k, group):
+            _vertex_set_labels(labels)
+            try:
+                got.update(_grammar_call(plan, group, api_key, model,
+                                         theme=themes[k % len(themes)], avoid=avoid))
+            except Exception as e:   # 한 묶음 실패가 전체를 막지 않게 — 아래에서 모아 판단한다
+                errors.append(e)
+        threads = [threading.Thread(target=work, args=(k, g), daemon=True) for k, g in enumerate(groups)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    def drop_dups():
+        """앞 문항과 같은 문장을 쓴 문항은 빼서 다시 만들게 한다."""
+        seen = set()
+        for s in slots:
+            q = got.get(s["slot"])
+            if not q:
+                continue
+            key = _grammar_qkey(q)
+            if key and key in seen:
+                del got[s["slot"]]
+            elif key:
+                seen.add(key)
+
+    run([slots[i:i + GRAMMAR_CHUNK] for i in range(0, len(slots), GRAMMAR_CHUNK)])
+    drop_dups()
+    # 빠진 자리(AI가 빠뜨렸거나 기계 검사에서 걸러진 문항)를 최대 두 번 다시 채운다
+    for _round in range(2):
+        missing = [s for s in slots if s["slot"] not in got]
+        if not (missing and got) or _over_budget(t0):
+            break
+        avoid = [re.sub(r"<[^>]+>", " ", q.get("answerText") or q.get("passageHtml") or "")[:120]
+                 for q in got.values()][:40]
+        run([missing[i:i + GRAMMAR_CHUNK] for i in range(0, len(missing), GRAMMAR_CHUNK)], avoid)
+        drop_dups()
+    questions = [got[s["slot"]] for s in slots if s["slot"] in got]
+    if not questions:
+        first = errors[0] if errors else None
+        if isinstance(first, (QuotaExceeded, ProUnavailable)):
+            raise first
+        raise RuntimeError(str(first) if first else "문항을 만들지 못했습니다. 다시 시도해 주세요.")
+    return {"questions": questions, "missing": len(slots) - len(questions)}
 
 
 # ── 기출 시험지 유형 분석 스키마 ──
@@ -10773,6 +11259,15 @@ CHANGELOG = [
             "못 읽은 쪽은 값을 받지 않고, 동형 모의고사의 기출 분석은 지금처럼 무료입니다.",
         ],
     },
+    {
+        "version": 81,
+        "date": "2026-10-20",
+        "items": [
+            "새 탭 📐 문법문제 마법사 — 레벨(초등 고학년 · 중등 Level 1~3 · 수능 Level)과 문법 항목(시제·관계사·가정법 …)을 고르면 그 문법만 묻는 객관식·주관식 문제를 "
+            "최대 50문항까지 만들어 드립니다. 지문 없이도 되고, 넣은 지문의 문장으로 만들 수도 있습니다. "
+            "문항마다 [✏️ 고치기]로 직접 고칠 수 있고, 1단/2단 인쇄·답지·저장·반에 시험 내기가 됩니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -13444,6 +13939,21 @@ def _qt_clean_question(q):
         if not ans:
             return None
         out["answerText"] = ans
+        # 다른 정당한 정답 — '/'로 이어 정답 칸에 함께 적는다(_qt_units). 배열 영작의 <보기>는 answerText만 흩으므로
+        # 대표 답과 따로 둔다. 같은 문장·'/'가 든 것은 버린다(채점이 '/'로 가른다).
+        key0 = _qt_key(ans)
+        alts, seen_alt = [], {key0}
+        for a in _qt_list(q.get("alts")):
+            a = _norm_text(_qt_s(a, 1000))
+            if a and "/" not in a and _qt_key(a) not in seen_alt:
+                seen_alt.add(_qt_key(a))
+                alts.append(a)
+        out["alts"] = alts[:4]
+        # 문법 마법사의 배열 영작 — 정답과 같은 단어를 다 쓰고 어순만 다르면 틀림으로 단정하지 않고 선생님이 본다
+        # (자리가 바뀔 수 있는 부사 등으로 다른 어순도 정답일 수 있다 — 2026-10-20 사용자 결정). 다른 탭의
+        # 서술형 배열은 이 표시가 없어 예전처럼 정답과 다르면 틀림이다.
+        if fmt == "write" and q.get("looseOrder"):
+            out["looseOrder"] = True
         out["wordBank"] = [_norm_text(_qt_s(w, 80)) for w in _qt_list(q.get("wordBank")) if str(w or "").strip()][:30]
         out["conditions"] = [_norm_text(_qt_s(c, 300)) for c in _qt_list(q.get("conditions")) if str(c or "").strip()][:8]
     return out
@@ -13471,7 +13981,8 @@ def _qt_units(q):
         return [{"correct": l["answer"]} for l in q["lines"]]
     if fmt == "paraorder":
         return [{"correct": x} for x in q["seq"]]
-    return [{"correct": q["answerText"]}]
+    # 정당한 다른 정답(alts)은 '/'로 이어 붙인다 — _qt_accepts가 '/'로 갈라 어느 것이든 맞음으로 본다
+    return [{"correct": " / ".join([q["answerText"]] + [a for a in (q.get("alts") or []) if a])}]
 
 
 def _qt_key(s):
@@ -13633,6 +14144,15 @@ def get_quiz_for_student(assignment_id, assignment, student_id):
     }
 
 
+def _qt_same_words(given, correct):
+    """학생 답이 정답(또는 '/'로 이은 다른 정답 중 하나)과 같은 낱말을 같은 개수만큼 썼는가 — 어순만 다른지 본다."""
+    def bag(s):
+        return sorted(_qt_key(s).split())
+    g = bag(given)
+    options = [correct] + ([p for p in re.split(r"\s*/\s*", correct) if p] if "/" in correct else [])
+    return any(bag(o) == g for o in options)
+
+
 def _qt_grade_question(q, given):
     """문항 하나를 채점해 단위별 (내 답, 정답, 맞음[True/False/None=확인 대기])을 돌려준다."""
     fmt = q["format"]
@@ -13671,6 +14191,8 @@ def _qt_grade_question(q, given):
             ok = True
         elif (fmt in QUIZ_TEST_FREE_FORMATS or fmt == "wbwrite") and g:
             ok = None          # 모범답안과 다르게 썼다 — 선생님이 본다
+        elif fmt == "write" and q.get("looseOrder") and g and _qt_same_words(g, u["correct"]):
+            ok = None          # 같은 단어, 다른 어순 — 맞는 문장일 수 있어 선생님이 본다
         else:
             ok = False
         rows.append({"given": g, "correct": u["correct"], "ok": ok})
@@ -13962,6 +14484,9 @@ class Handler(BaseHTTPRequestHandler):
                 "trendScanPage": PRICE_TREND_SCAN_PAGE_KRW,
                 "trendOcrPage": PRICE_TREND_OCR_PAGE_KRW,
                 "studentComment": PRICE_STUDENT_COMMENT_KRW,
+                # 문법문제 마법사 — 시험지 한 장에 기본값 + 문제당(객관식·주관식 합쳐서)
+                "grammarBase": PRICE_GRAMMAR_BASE_KRW,
+                "grammarPerQ": PRICE_GRAMMAR_PER_Q_KRW,
                 # 시험지에서 지문 꺼내기 — 이것만 쪽당이다(화면이 쪽 수를 곱해 보여 준다)
                 "examOcrPage": PRICE_EXAM_OCR_KRW,
                 # 동형 모의고사 상한 이벤트 — 한 번 누를 때(여러 부 합쳐) 이 값까지만.
@@ -14350,7 +14875,7 @@ class Handler(BaseHTTPRequestHandler):
         self._exam_run = None
 
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/analyze", "/api/brief", "/api/models", "/api/quiz", "/api/workbook",
+        if path not in ("/api/analyze", "/api/brief", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                         "/api/examtrend", "/api/pdfsplit", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
@@ -14429,7 +14954,7 @@ class Handler(BaseHTTPRequestHandler):
         # 로그인이 곧 '누가 관리자 키를 쓰는지' 구분하는 유일한 장치다.
         # 그중 실제로 콘텐츠를 생성하는 여섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
-        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/quiz", "/api/workbook",
+        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                            "/api/examtrend", "/api/pdfsplit", "/api/studentcomment",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf")
@@ -14508,6 +15033,17 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/reword":
                     cost = PRICE_REWORD_KRW
                     self._pending_label = "지문 변형"
+                elif path == "/api/grammar":
+                    # 잔액은 요청한 문항 수로 미리 보고, 실제 차감은 받아 낸 문항 수로 다시 센다
+                    # (아래 /api/grammar 처리). 형식이 틀린 요청은 거기서 400으로 돌려보낸다.
+                    try:
+                        g_plan = parse_grammar_request(req)
+                        g_mc = sum(it["mc"] for it in g_plan["items"])
+                        g_sa = sum(it["sa"] for it in g_plan["items"])
+                    except ValueError:
+                        g_mc = g_sa = 0
+                    cost = _grammar_cost(g_mc, g_sa)
+                    self._pending_label = f"문법 문제 · {g_mc + g_sa}문항"
                 elif path == "/api/examscan":
                     # 기본 0원 — 값을 매기지 않는 이유는 PRICE_EXAMSCAN_KRW 주석 참고.
                     # 관리자가 환경변수로 값을 매기면 그때부터 쪽 수와 무관하게 1벌당 이 값이다.
@@ -15698,6 +16234,28 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
             except ProUnavailable as e:
                 self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        if path == "/api/grammar":
+            try:
+                plan = parse_grammar_request(req)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            # 한 문항만 다시 만들기는 없앴다 — 한 문항에 지시문을 통째로 보내 값을 따로 매겨야 했는데 선생님이
+            # 납득하기 어려웠다(2026-10-20 사용자). 마음에 안 드는 문항은 화면의 [✏️ 고치기]로 직접 고친다.
+            try:
+                result = call_gemini_grammar(plan, req.get("apiKey") or "")
+                got_mc = sum(1 for q in result["questions"] if q.get("gkind") == "mc")
+                got_sa = len(result["questions"]) - got_mc
+                # 받아 낸 만큼만 받는다 — 못 만든 문항에 값이 나가면 안 된다
+                self._pending_charge = _grammar_cost(got_mc, got_sa)
+                self._pending_label = f"문법 문제 · {got_mc + got_sa}문항"
+                self._charge_and_send(path, req, result)
             except QuotaExceeded as e:
                 self._send_json({"error": str(e), "code": "quota"}, 429)
             except Exception as e:

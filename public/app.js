@@ -2969,7 +2969,7 @@ function syncFloatPrint() {
   const btn =
     active &&
     active.querySelector(
-      "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #mixPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
+      "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #mixPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn, #grPrintBtn"
     );
   // 묶음은 페이지 이동 버튼도 담고 있으므로 통째로 감추지 않고 인쇄 버튼만 여닫는다
   floatPrintBtn.hidden = !(btn && btn.style.display !== "none");
@@ -2984,7 +2984,7 @@ function activeSectionBtn(selector) {
 }
 floatPrintBtn.addEventListener("click", () => {
   const b = activeSectionBtn(
-    "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #mixPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn"
+    "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #mixPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn, #grPrintBtn"
   );
   if (b) b.click();
 });
@@ -3060,7 +3060,9 @@ function syncTabChrome(tab) {
   const onExam = tab === "exam";
   // 시험지 분석 리포트는 공용 지문칸을 쓰지 않는다
   const onTrend = tab === "trend";
-  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || tab === "vocab" || tab === "students";
+  // 문법문제 마법사는 '넣은 지문으로'를 골랐을 때만 지문칸을 쓴다(grammar.js grammarWantsPassage)
+  const grammarNoPassage = tab === "grammar" && !(typeof grammarWantsPassage === "function" && grammarWantsPassage());
+  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || grammarNoPassage || tab === "vocab" || tab === "students";
   // 공용 지문칸 아래 단어장은 문제 탭에서만 쓰인다(분석·워크북은 단어장을 보지 않는다)
   const quizVocabWrap = $("quizVocabWrap");
   if (quizVocabWrap) quizVocabWrap.hidden = !["mcq", "saq", "mix"].includes(tab);
@@ -3072,7 +3074,8 @@ function syncTabChrome(tab) {
      전에 큰 칸이 먼저 보였고, 인쇄물에 찍히는 제목 칸과 떨어져 있었다(2026-10-14 사용자).
      자리가 없는 화면(탭을 고르기 전, 반/학생 관리)에서는 감춘다. */
   const SLOT_ID = { analyze: "analyzeBrandSlot", brief: "briefBrandSlot", mcq: "mcqBrandSlot",
-    saq: "saqBrandSlot", mix: "mixBrandSlot", workbook: "wbBrandSlot", vocab: "vocabBrandSlot" };
+    saq: "saqBrandSlot", mix: "mixBrandSlot", workbook: "wbBrandSlot", vocab: "vocabBrandSlot",
+    grammar: "grammarBrandSlot" };
   const slot = onExam ? (!examPaperPanelEl.hidden ? $("examBrandSlot") : null)
     : onTrend ? $("trendBrandSlot")
     : SLOT_ID[tab] ? $(SLOT_ID[tab]) : null;
@@ -6816,7 +6819,8 @@ function quizAnswerLabel(q) {
     fmt === "write" || fmt === "short" ||
     fmt === "compose" || fmt === "convert" || fmt === "answer"
   ) {
-    return esc(q.answerText || "");
+    // 정당한 다른 정답(alts, 문법 마법사)이 있으면 '/'로 이어 함께 보인다 — 학생 시험 채점도 그것을 모두 받는다
+    return esc([q.answerText || "", ...(q.alts || [])].filter(Boolean).join(" / "));
   }
   if (fmt === "tf") {
     return (q.tfItems || [])

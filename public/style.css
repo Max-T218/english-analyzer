@@ -2557,3 +2557,77 @@ input.st-in{width:100%; box-sizing:border-box;}
 .saved-pick-order li:last-child{border-bottom:none;}
 .saved-pick-order .saved-pick-name{flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px;}
 .saved-pick-order .btn.small{padding:1px 8px; font-size:12px; min-width:28px;}
+
+/* ══════ 문법문제 출제 마법사 (public/grammar.js) ══════
+   ① 레벨 · ② 문법 항목 · ③④ 세부/고른 항목 · ⑤ 문항 수·모양을 네 칸에 둔다. 다른 탭과 같은 결
+   (옅은 칸 · 얇은 테두리 · 체크 칸 · 파란 강조)로 맞췄다 — 처음 모양(회색 STEP 머리줄 · 노란 단추)은
+   참고한 사이트 티가 난다고 바꿨다(2026-10-20). 좁은 화면에서는 칸을 위아래로 쌓는다. */
+.gr-mode{margin-top:8px !important; margin-bottom:14px;}
+.gr-wizard{display:grid; grid-template-columns:150px minmax(0,1fr) minmax(0,1.25fr) 270px; gap:10px; align-items:stretch;}
+.gr-box{background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:10px 12px;
+  display:flex; flex-direction:column; gap:4px; min-width:0;}
+.gr-head{display:flex; align-items:center; gap:7px; font-size:13.5px; font-weight:800; color:var(--ink);
+  padding-bottom:7px; margin-bottom:2px; border-bottom:1px solid var(--line);}
+.gr-head-2{margin-top:10px;}
+.gr-head .gr-reset{margin-left:auto; padding:3px 10px; font-size:12px;}
+.gr-num{display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%;
+  background:var(--accent); color:#fff; font-size:11.5px; font-weight:800; flex:0 0 auto;}
+.gr-scroll{overflow-y:auto; max-height:420px;}
+.gr-half{max-height:230px; min-height:120px;}
+.gr-levels{display:flex; flex-direction:column; gap:6px; margin-top:4px;}
+.gr-level{display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--ink); cursor:pointer;
+  background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 10px;}
+.gr-level input{accent-color:var(--accent); cursor:pointer;}
+.gr-level.picked{border-color:var(--accent); background:var(--accent-soft);}
+.gr-topic, .gr-sub{display:flex; align-items:center; gap:7px; padding:7px 4px; border-radius:6px;
+  cursor:pointer; line-height:1.4; font-size:13px; color:var(--ink);}
+.gr-topic:hover, .gr-sub:hover{background:var(--card);}
+.gr-topic.on{background:var(--accent-soft); color:var(--accent); font-weight:700;}
+.gr-topic input, .gr-sub input{flex:0 0 auto; width:15px; height:15px; accent-color:var(--accent);}
+.gr-topic > span:first-of-type, .gr-sub > span:first-of-type{flex:1 1 auto;}
+.gr-sub-all{font-size:12px; color:var(--accent); border-bottom:1px dashed var(--line); border-radius:0;}
+.gr-count{background:var(--accent); color:#fff; border-radius:999px; font-size:11px; padding:0 7px; font-weight:700;}
+.gr-seen{font-size:10.5px; font-weight:700; color:var(--conj); border:1px solid var(--conj); border-radius:4px; padding:0 5px; white-space:nowrap;}
+.gr-new{font-size:10.5px; font-weight:700; color:var(--ink-soft); background:var(--line-soft); border:1px solid var(--line);
+  border-radius:4px; padding:0 5px; white-space:nowrap;}
+.gr-empty{color:var(--ink-soft); font-size:12.5px; margin:6px 2px;}
+.gr-picked{display:flex; align-items:center; gap:6px; padding:6px 2px; border-bottom:1px dashed var(--line); font-size:12.5px;}
+.gr-picked-name{flex:1 1 auto; min-width:0;}
+.gr-picked-n{white-space:nowrap; color:var(--ink-soft); font-size:12px;}
+.gr-picked-n input{width:44px; padding:3px 4px; margin:0 2px;}
+.gr-x{border:none; background:none; color:var(--ink-soft); cursor:pointer; font-size:13px; padding:2px 4px;}
+.gr-x:hover{color:var(--g);}
+.gr-custom{display:flex; gap:6px; margin-top:8px;}
+.gr-custom input{flex:1 1 auto; min-width:0; font-size:12.5px;}
+.gr-custom .btn{white-space:nowrap; flex:0 0 auto;}
+.gr-sub-h{font-size:12.5px; font-weight:800; color:var(--ink); margin-top:10px;}
+.gr-sub-h:first-of-type{margin-top:4px;}
+.gr-num-row{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink);}
+.gr-num-row > span:first-child{width:48px; font-weight:600;}
+.gr-num-row input{width:64px; text-align:center; padding:5px 6px;}
+.gr-total{padding-top:4px; border-top:1px dashed var(--line); margin-top:2px;}
+.gr-total b{width:64px; text-align:center; font-size:14px;}
+.gr-total b.over, .gr-warn{color:var(--g); font-weight:700;}
+.gr-split{display:flex; flex-direction:column; gap:3px; margin-top:4px;}
+.gr-split .chk, .gr-box-make > .chk{font-size:12.5px;}
+.gr-shape-l{font-size:11.5px; font-weight:700; color:var(--ink-soft); margin-top:4px;}
+.gr-shapes{display:grid; grid-template-columns:1fr 1fr; gap:2px 6px;}
+.gr-shapes .chk{font-size:12px; font-weight:500;}
+.gr-card-tools{display:flex; gap:6px; margin-top:10px; justify-content:flex-end;}
+.gr-edit-modal{max-width:620px; max-height:88vh; overflow-y:auto;}
+.gr-edit-modal textarea, .gr-edit-modal input{width:100%; box-sizing:border-box; font:inherit; font-size:13px;}
+.gr-ed-l{display:block; font-weight:700; font-size:13px; margin:10px 0 4px;}
+@media (max-width:1100px){
+  .gr-wizard{grid-template-columns:140px minmax(0,1fr) minmax(0,1fr);}
+  .gr-box-make{grid-column:1 / -1;}
+}
+@media (max-width:700px){
+  .gr-wizard{grid-template-columns:1fr;}
+  .gr-levels{flex-direction:row; flex-wrap:wrap;}
+  .gr-level{flex:1 1 40%;}
+}
+@media print{
+  .gr-card-tools{display:none !important;}
+  /* 1단을 고르면 문항 카드를 한 줄로 흘린다(기본은 문제 탭과 같은 2단) */
+  #grResult.gr-1col .qz-cards{column-count:1;}
+}

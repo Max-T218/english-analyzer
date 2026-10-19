@@ -1045,6 +1045,8 @@
       <button type="button" class="tab-btn" data-tab="saq">주관식</button>
       <button type="button" class="tab-btn" data-tab="mix">객관식+주관식</button>
     </div>
+    <!-- 문법문제 출제 마법사 — 지문 없이 학년·문법 항목만 골라도 문제를 만든다(public/grammar.js) -->
+    <button type="button" class="tab-btn" data-tab="grammar">📐 문법문제 마법사</button>
     <button type="button" class="tab-btn" data-tab="workbook">📚 워크북 제작</button>
     <button type="button" class="tab-btn" data-tab="vocab">📒 단어장</button>
     <button type="button" class="tab-btn" data-tab="exam" id="examTabBtn" hidden>🧾 동형 모의고사 제작</button>
@@ -2175,6 +2177,106 @@
     <div id="trendResult"></div>
   </section>
 
+  <!-- ══════════ 문법문제 출제 마법사 ══════════
+       ① 레벨 → ② 문법 항목 → ③ 세부 항목 → ④ 고른 항목 → ⑤ 문항 수·모양을 한 화면 네 칸에 둔다
+       (③·④는 셋째 칸 위아래). 모양은 다른 탭과 같은 칸·체크 모양을 쓴다 — 처음엔 참고한 사이트처럼
+       STEP 머리줄·노란 단추로 만들었다가 그 사이트 티가 난다고 바꿨다(2026-10-20). 동작은 public/grammar.js. -->
+  <section class="tab-page" id="tab-grammar">
+    <section class="panel">
+      <label class="group-label" style="margin-top:0 !important">무엇으로 만들까요?</label>
+      <div class="quiz-type-grid radio-grid gr-mode">
+        <label><input type="radio" name="grMode" value="plain" checked>
+          <span class="opt-text">문법만으로<span class="opt-sub">AI가 연습 문장을 새로 짓습니다</span></span></label>
+        <label><input type="radio" name="grMode" value="passage">
+          <span class="opt-text">넣은 지문으로<span class="opt-sub">위 지문 칸의 문장으로 출제합니다</span></span></label>
+      </div>
+      <div class="gr-wizard">
+        <div class="gr-box gr-box-level">
+          <div class="gr-head"><span class="gr-num">1</span>레벨</div>
+          <div class="gr-levels" id="grGradeList"></div>
+        </div>
+        <div class="gr-box">
+          <div class="gr-head"><span class="gr-num">2</span>문법 항목</div>
+          <div class="gr-scroll" id="grTopicList"></div>
+        </div>
+        <div class="gr-box gr-box-split">
+          <div class="gr-head"><span class="gr-num">3</span>세부 항목</div>
+          <div class="gr-scroll gr-half" id="grSubList"></div>
+          <div class="gr-head gr-head-2"><span class="gr-num">4</span>고른 항목 <span class="group-note" id="grPickedCount"></span>
+            <button type="button" class="btn ghost small gr-reset" id="grResetBtn"
+                    title="체크한 세부 항목을 모두 지웁니다. 레벨·문항 수·문제 모양은 그대로 둡니다.">↺ 선택 초기화</button></div>
+          <div class="gr-scroll gr-half">
+            <div id="grPickedList"></div>
+            <div class="gr-custom">
+              <input type="text" id="grCustom" maxlength="80" placeholder="목록에 없는 항목 직접 적기 (예: 분사 vs 동명사)">
+              <button type="button" class="btn ghost small" id="grCustomAdd">＋ 추가</button>
+            </div>
+          </div>
+        </div>
+        <div class="gr-box gr-box-make">
+          <div class="gr-head"><span class="gr-num">5</span>문항 수 · 모양</div>
+          <div class="gr-sub-h">문항 수 <span class="group-note">(한 번에 50문항까지)</span></div>
+          <div class="gr-num-row"><span>객관식</span><input type="number" id="grMcTotal" min="0" max="50" value="5"><span>문항</span></div>
+          <div class="gr-num-row"><span>주관식</span><input type="number" id="grSaTotal" min="0" max="50" value="5"><span>문항</span></div>
+          <div class="gr-num-row gr-total"><span>합계</span><b id="grSum">0</b><span>문항</span></div>
+          <div class="gr-split">
+            <label class="chk"><input type="radio" name="grSplit" value="auto" checked> 항목마다 고르게 나누기</label>
+            <label class="chk"><input type="radio" name="grSplit" value="manual"> 항목마다 직접 정하기 (④에 적기)</label>
+          </div>
+          <div class="gr-sub-h">문제 모양</div>
+          <label class="chk"><input type="checkbox" id="grAiPick" checked> AI가 항목에 맞게 골라 섞기</label>
+          <div class="gr-shape-l">객관식</div>
+          <div class="gr-shapes" id="grMcShapes"></div>
+          <div class="gr-shape-l">주관식</div>
+          <div class="gr-shapes" id="grSaShapes"></div>
+          <div class="hint" id="grShapeHint"></div>
+          <div class="gr-sub-h">인쇄</div>
+          <div class="gr-split gr-cols-row">
+            <label class="chk"><input type="radio" name="grCols" value="2" checked> 2단 (문제 탭과 같음)</label>
+            <label class="chk"><input type="radio" name="grCols" value="1"> 1단</label>
+          </div>
+        </div>
+      </div>
+      <div class="hint cost-hint" id="grCostHint" role="status" aria-live="polite"></div>
+
+      <div class="row cover-row">
+        <div class="field">
+          <label for="grTitle">시험지 제목 (선택)</label>
+          <input type="text" id="grTitle" maxlength="60" placeholder="예: 2학년 1학기 중간 대비 문법">
+          <div class="hint">시험지 맨 위와 정답지에 이 이름이 찍힙니다. 비워 두면 레벨 이름으로 찍힙니다.</div>
+        </div>
+      </div>
+      <div class="brand-slot" id="grammarBrandSlot"></div>
+      <div class="actions">
+        <button type="button" class="btn" id="grMakeBtn" disabled>문제 만들기</button>
+        <button type="button" class="btn ghost" id="grLoadBtn">📂 불러오기</button>
+        <button class="btn ghost" id="grPrintBtn" style="display:none"
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
+        <button class="btn ghost" id="grAnswerPrintBtn" style="display:none" title="문제지는 빼고 뒤쪽 '정답 및 해설'만 지면에 올립니다.">🔑 답지만</button>
+        <button class="btn ghost" id="grSaveBtn" style="display:none" title="로그인한 계정에 이 문제를 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
+        <button class="btn ghost" id="grAssignBtn" style="display:none"
+                title="지금 만든 문제를 반 학생들이 사이트에서 풀게 냅니다. AI를 다시 부르지 않아 요금이 없습니다.">🏫 반에 시험 내기</button>
+      </div>
+      <div class="error" id="grError"></div>
+    </section>
+    <div class="loading" id="grLoading">
+      <span class="spinner"></span>
+      <span id="grLoadingText">AI가 문법 문제를 만들고 있습니다…</span>
+    </div>
+    <div id="grResult" class="qz-result"></div>
+
+    <div class="print-guide" id="grEditModal" hidden>
+      <div class="print-guide-card gr-edit-modal" role="dialog" aria-modal="true" aria-labelledby="grEditTitle">
+        <h3 id="grEditTitle">문항 고치기</h3>
+        <div id="grEditBody"></div>
+        <div class="print-guide-actions">
+          <button type="button" class="btn ghost" id="grEditCancel">취소</button>
+          <button type="button" class="btn" id="grEditSave">고친 대로 바꾸기</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="tab-page" id="tab-students">
     <section class="panel">
       <div class="field-head">
@@ -2580,5 +2682,6 @@
 <script src="/quiztest.js?v=%%ASSET_V%%"></script>
 <script src="/app.js?v=%%ASSET_V%%"></script>
 <script src="/trend.js?v=%%ASSET_V%%"></script>
+<script src="/grammar.js?v=%%ASSET_V%%"></script>
 </body>
 </html>
