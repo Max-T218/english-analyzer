@@ -1608,6 +1608,11 @@
               <label><input type="checkbox" name="wbOxLevel" value="hard" checked> 고난도</label>
             </div>
           </div>
+          <!-- 단어 쓰기(단계 13·14·15) — 단계마다 단어 수. 고른 단계의 칸만 보인다(syncWbWordBox). 세 단계에는 서로 다른 단어가 나온다. -->
+          <div class="wb-ox-box" id="wbWordBox" hidden>
+            <label class="group-label" style="margin-top:0">단어 쓰기 단어 수 <span class="group-note">(AI가 지문에서 꼭 알아야 할 핵심 어휘를 고릅니다 — 세 단계는 서로 다른 단어)</span></label>
+            <div class="quiz-type-grid" id="wbWordGrid"></div>
+          </div>
           <div class="hint cost-hint" id="wbCostHint" role="status" aria-live="polite"></div>
           <div class="hint type-order-hint">
             체크한 단계 앞의 <b>번호가 인쇄 순서</b>입니다.

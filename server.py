@@ -299,7 +299,14 @@ PRICE_SAQ_KRW = int(os.environ.get("PRICE_SAQ_KRW", "250"))
 # 스키마·프롬프트를 잘라야 한다(그때 비로소 적게 고르면 실제로 싸진다).
 PRICE_WORKBOOK_STAGE_KRW = int(os.environ.get("PRICE_WORKBOOK_STAGE_KRW", "100"))  # 단계 1개당
 PRICE_WORKBOOK_MAX_KRW = int(os.environ.get("PRICE_WORKBOOK_MAX_KRW", "700"))      # 지문 1개당 상한
-WORKBOOK_STAGE_IDS = (1, 3, 4, 5, 6, 7, 8, 9, 10, 11)  # public/app.js의 WB_STAGES와 같은 목록
+WORKBOOK_STAGE_IDS = (1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15)  # public/app.js의 WB_STAGES와 같은 목록
+# 13·14·15 단어 쓰기 세 가지(2026-10-19) — 13 영영풀이 보고 단어 쓰기 / 14 영어 단어 보고 우리말 뜻 쓰기 /
+# 15 우리말 뜻 보고 영어 단어 쓰기. 세 단계가 같은 재료(wordPicks)를 쓰되 **단계마다 다른 단어**를 받는다 —
+# 화면이 단계마다 단어 수(wordCounts)를 보내고, 서버는 그 합만큼 뽑아 차례대로 나눠 쓴다.
+# 11처럼 WORKBOOK_STAGE_LABELS에는 넣지 않는다(기출 유형 매칭이 켜 버리지 않게).
+WORKBOOK_WORD_STAGES = (13, 14, 15)
+WORKBOOK_WORD_DEFAULT = 5       # 단계 하나의 기본 단어 수(해독제 워크북과 같다)
+WORKBOOK_WORD_MAX = 10          # 단계 하나의 상한 — 세 단계를 모두 켜도 30개
 # 11 목표어법 배열 영작(2026-10-16) — 고를 때만 AI가 그 재료(grammarArrange)를 만든다.
 # 아래 WORKBOOK_STAGE_LABELS에는 일부러 넣지 않았다: 기출 유형 분석이 시험지의 서술형 배열
 # 문항을 이 이름에 갖다 붙여 워크북 탭에서 켜 버리면, 학생이 고른 적 없는 단계 값이 붙는다.
@@ -6248,13 +6255,75 @@ WORKBOOK_ARRANGE_SCHEMA = {
 }
 
 
+# 워크북13·14·15 — 단어 쓰기 재료. 단어마다 지문에 나온 기본형(en)·지문 문맥의 우리말 뜻(ko)·영영풀이(def).
+WORKBOOK_WORDS_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "items": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "en": {"type": "STRING"},
+                    "ko": {"type": "STRING"},
+                    "def": {"type": "STRING"},
+                },
+                "required": ["en", "ko", "def"],
+                "propertyOrdering": ["en", "ko", "def"],
+            },
+        },
+    },
+    "required": ["items"],
+    "propertyOrdering": ["items"],
+}
+
+
 def _workbook_schema(stages):
-    if WORKBOOK_ARRANGE_STAGE not in (stages or ()):
+    stages = stages or ()
+    extra = {}
+    if WORKBOOK_ARRANGE_STAGE in stages:
+        extra["grammarArrange"] = WORKBOOK_ARRANGE_SCHEMA
+    if any(s in stages for s in WORKBOOK_WORD_STAGES):
+        extra["wordPicks"] = WORKBOOK_WORDS_SCHEMA
+    if not extra:
         return WORKBOOK_SCHEMA
-    props = dict(WORKBOOK_SCHEMA["properties"], grammarArrange=WORKBOOK_ARRANGE_SCHEMA)
+    props = dict(WORKBOOK_SCHEMA["properties"], **extra)
     return dict(WORKBOOK_SCHEMA, properties=props,
-                required=WORKBOOK_SCHEMA["required"] + ["grammarArrange"],
-                propertyOrdering=WORKBOOK_SCHEMA["propertyOrdering"] + ["grammarArrange"])
+                required=WORKBOOK_SCHEMA["required"] + list(extra),
+                propertyOrdering=WORKBOOK_SCHEMA["propertyOrdering"] + list(extra))
+
+
+def parse_workbook_word_counts(raw, stages):
+    """요청의 wordCounts({"13": 5, ...})를 거른다 — 고른 단어 단계만, 1~WORKBOOK_WORD_MAX로.
+    값이 없거나 이상하면 기본값. 화면을 우회한 요청이 출력 크기를 키우지 못하게 서버에서도 자른다."""
+    out = {}
+    raw = raw if isinstance(raw, dict) else {}
+    for s in WORKBOOK_WORD_STAGES:
+        if s not in (stages or ()):
+            continue
+        try:
+            n = int(raw.get(str(s), raw.get(s, WORKBOOK_WORD_DEFAULT)))
+        except (TypeError, ValueError):
+            n = WORKBOOK_WORD_DEFAULT
+        out[s] = max(1, min(n, WORKBOOK_WORD_MAX))
+    return out
+
+
+def _workbook_words_prompt(total):
+    return f"""
+## wordPicks — 워크북13·14·15 재료 (단어 쓰기) — 이 요청에서는 반드시 만든다
+- `items`: 정확히 {total}개. 이 지문에서 **학생이 꼭 알아야 할 핵심 어휘**를 골라라. 학생은 아래 셋 중 하나로 묻는다 —
+  영영풀이(`def`)를 보고 영어 단어(`en`) 쓰기 / 영어 단어(`en`)를 보고 우리말 뜻(`ko`) 쓰기 / 우리말 뜻(`ko`)을 보고 영어 단어(`en`) 쓰기.
+- 고르는 기준:
+  · 지문에 **실제로 나온** 낱말만. 명사·동사·형용사·부사 같은 내용어(예: urbanization, relocate, strain,
+    infrastructure, inhabit). 관사·전치사·대명사·be/have/do 같은 기능어와 중학교 초급 단어(city, people, grow)는 뺀다.
+  · 지문 내용을 이해하는 데 중요하고 내신·수능 어휘로 자주 나오는 것을 먼저. 같은 어근의 파생어(urban/urbanization)는
+    하나만. 지문 앞부분에서 뒷부분까지 고르게 흩어지게.
+  · `en`은 **기본형**(복수·과거·-ing를 풀어 사전 표제어로: increases → increase). 숙어는 3낱말 이내.
+  · `ko`는 **이 지문 문맥에서의 뜻** 하나, 짧게(예: strain → 부담을 주다). 여러 뜻을 늘어놓지 않는다.
+  · `def`는 영영풀이 한 문장. 쉬운 영어로, **`en`과 그 파생어를 문장 안에 쓰지 않는다**(답이 드러난다).
+    뜻이 딱 그 단어 하나로 정해지게 쓴다(비슷한 말 여럿이 답이 될 만한 정의는 피한다).
+"""
 
 
 def _workbook_arrange_prompt(target_grammar):
@@ -6283,10 +6352,15 @@ def _workbook_arrange_prompt(target_grammar):
 """
 
 
-def build_workbook_user_prompt(passage, complete_hint=None, stages=None, target_grammar=""):
+def build_workbook_user_prompt(passage, complete_hint=None, stages=None, target_grammar="",
+                               word_counts=None):
     lines = []
     if WORKBOOK_ARRANGE_STAGE in (stages or ()):
         lines.append(_workbook_arrange_prompt((target_grammar or "").strip()))
+        lines.append("")
+    if word_counts:
+        # 영영풀이에 답이 든 것은 걸러 버리므로(normalize_workbook_words) 여유를 몇 개 더 받는다
+        lines.append(_workbook_words_prompt(sum(word_counts.values()) + 3))
         lines.append("")
     if complete_hint is not None:
         expected, got = complete_hint
@@ -6326,8 +6400,43 @@ def normalize_workbook_arrange(result, stages):
     return result
 
 
+def normalize_workbook_words(result, word_counts):
+    """워크북13·14·15 재료를 거른다 — 빈 항목·중복 단어를 버리고, 영영풀이에 답이 그대로 든 것도 버린다.
+    남은 단어는 단계 차례(13→14→15)대로 단계별 개수만큼 나눠 담는다(result["wordPicks"] = {"13": [...], ...}).
+    모자라면 뒤 단계가 그만큼 적게 받는다 — 화면은 있는 만큼만 그린다."""
+    if not isinstance(result, dict) or not word_counts:
+        return result
+    wp = result.get("wordPicks")
+    result.pop("wordPicks", None)
+    if not isinstance(wp, dict):
+        return result
+    plain = lambda v, n: re.sub(r"<[^>]*>", "", str(v or "")).strip()[:n]
+    seen, items = set(), []
+    for it in wp.get("items") or ():
+        if not isinstance(it, dict):
+            continue
+        en, ko, de = plain(it.get("en"), 60), plain(it.get("ko"), 80), plain(it.get("def"), 300)
+        key = en.lower()
+        if not en or not ko or not de or key in seen or len(en.split()) > 3:
+            continue
+        stem = re.sub(r"[^a-z]", "", key)[:5]
+        if len(stem) >= 4 and stem in re.sub(r"[^a-z ]", "", de.lower()):
+            continue            # 영영풀이에 단어(의 어근)가 그대로 들어 있다 — 답이 드러난다
+        seen.add(key)
+        items.append({"en": en, "ko": ko, "def": de})
+    out, at = {}, 0
+    for stage in WORKBOOK_WORD_STAGES:
+        n = word_counts.get(stage)
+        if not n:
+            continue
+        out[str(stage)] = items[at:at + n]
+        at += n
+    result["wordPicks"] = out
+    return result
+
+
 def call_gemini_workbook(passage, api_key, model, complete_hint=None, stages=None,
-                         target_grammar=""):
+                         target_grammar="", word_counts=None):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -6340,7 +6449,7 @@ def call_gemini_workbook(passage, api_key, model, complete_hint=None, stages=Non
         "systemInstruction": {"parts": [{"text": WORKBOOK_SYSTEM_PROMPT}]},
         "contents": [
             {"role": "user", "parts": [{"text": build_workbook_user_prompt(
-                passage, complete_hint, stages, target_grammar)}]}
+                passage, complete_hint, stages, target_grammar, word_counts)}]}
         ],
         "generationConfig": {
             "temperature": 0.25,
@@ -6349,8 +6458,10 @@ def call_gemini_workbook(passage, api_key, model, complete_hint=None, stages=Non
             "responseSchema": _workbook_schema(stages),
         },
     }
-    return normalize_workbook_arrange(
-        _gemini_json(payload, api_key, model, _WORKBOOK_TRUNC_MSG, label="workbook"), stages)
+    return normalize_workbook_words(
+        normalize_workbook_arrange(
+            _gemini_json(payload, api_key, model, _WORKBOOK_TRUNC_MSG, label="workbook"), stages),
+        word_counts)
 
 
 # ── 주제 & 흐름 요약 규칙 (상세분석·소책자 공용) ──
@@ -10432,6 +10543,15 @@ CHANGELOG = [
             "객관식 · 주관식 · 객관식+주관식 — 지문을 두 개씩 함께 만들어 문제 제작이 빨라졌습니다. "
             "지문 5개로 빈칸·어법 같은 유형을 만들 때 5분 남짓 걸리던 것이 2분 남짓으로 줄었습니다. "
             "문제의 질과 요금은 그대로이고, 결과는 지금처럼 지문 차례대로 나옵니다.",
+        ],
+    },
+    {
+        "version": 74,
+        "date": "2026-10-19",
+        "items": [
+            "워크북 — 단어 쓰기 단계 세 가지가 생겼습니다(기본은 꺼져 있습니다). '영영풀이 보고 단어 쓰기', "
+            "'영어 단어 보고 우리말 뜻 쓰기', '우리말 뜻 보고 영어 단어 쓰기'이고, 단계마다 − / + 로 단어 수를 "
+            "정합니다. 단어는 지문에서 꼭 알아야 할 핵심 어휘를 AI가 고르며, 세 단계에는 서로 다른 단어가 나옵니다.",
         ],
     },
 ]
@@ -14809,10 +14929,12 @@ class Handler(BaseHTTPRequestHandler):
             model = MODEL  # 워크북은 항상 Flash — 사용자가 모델을 고르지 않는다
             wb_stages = parse_workbook_stages(req.get("stages"))
             wb_grammar = (req.get("targetGrammar") or "").strip()[:200]
+            wb_words = parse_workbook_word_counts(req.get("wordCounts"), wb_stages)
             t0 = time.monotonic()
             try:
                 result = call_gemini_workbook(passage, api_key, model,
-                                              stages=wb_stages, target_grammar=wb_grammar)
+                                              stages=wb_stages, target_grammar=wb_grammar,
+                                              word_counts=wb_words)
                 # 문장 누락 방어 — 실제 문장 수보다 많이 부족하면 자동 보정 재요청
                 expected = rough_sentence_count(passage)
                 for _ in range(2):
@@ -14823,7 +14945,7 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     result = call_gemini_workbook(
                         passage, api_key, model, complete_hint=(expected, got),
-                        stages=wb_stages, target_grammar=wb_grammar,
+                        stages=wb_stages, target_grammar=wb_grammar, word_counts=wb_words,
                     )
             except ProUnavailable as e:
                 self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)

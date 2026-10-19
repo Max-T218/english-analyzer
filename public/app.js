@@ -7169,7 +7169,15 @@ const WB_STAGES = [
      목표 어법은 지문칸 아래 공용 '목표 어법' 칸을 쓰고, 비어 있으면 AI가 지문에서 고른다.
      이 단계를 골랐을 때만 서버가 재료(grammarArrange)를 만든다 — 그래서 기본은 꺼 둔다. */
   { id: 11, name: "목표어법 배열 영작",    guide: "다음 우리말과 같은 뜻이 되도록 괄호 안의 단어를 배열하여 영어 문장을 쓰세요.", def: false },
+  /* 13·14·15 — 단어 쓰기 세 가지(2026-10-19). 세 단계가 한 번의 워크북 호출에서 나온 같은 재료(wordPicks)를
+     쓰되 단계마다 다른 단어를 받는다. 단어 수는 #wbWordBox의 − / + (단계마다 따로). 기본은 꺼 둔다. */
+  { id: 13, name: "영영풀이 보고 단어 쓰기",   guide: "영영풀이를 읽고 알맞은 영어 단어를 쓰세요.", def: false },
+  { id: 14, name: "영어 단어 뜻 쓰기",         guide: "주어진 영어 단어의 뜻을 우리말로 쓰세요.", def: false },
+  { id: 15, name: "우리말 뜻 보고 단어 쓰기",  guide: "우리말 뜻에 알맞은 영어 단어를 쓰세요.", def: false },
 ];
+const WB_WORD_STAGES = [13, 14, 15];
+const WB_WORD_DEFAULT = 5;   // server.py WORKBOOK_WORD_DEFAULT
+const WB_WORD_MAX = 10;      // server.py WORKBOOK_WORD_MAX
 
 const wbStageGridEl = $("wbStageGrid");
 WB_STAGES.forEach((s) => {
@@ -7337,6 +7345,66 @@ function wbPassageCost(stages) {
 }
 function syncWbOxBox() {
   if (wbOxBoxEl) wbOxBoxEl.hidden = !wbPickedStages().includes(WB_OX_STAGE);
+  syncWbWordBox();
+}
+
+/* ── 단어 쓰기(13·14·15) — 단계마다 단어 수를 − / + 로 정한다 ──
+   고른 단계의 칸만 보인다. 값(요금)은 단계 수에 걸린 워크북 값 그대로라 개수는 요금과 무관하다. */
+const wbWordBoxEl = $("wbWordBox");
+const wbWordGridEl = $("wbWordGrid");
+WB_WORD_STAGES.forEach((id) => {
+  const meta = WB_STAGES.find((s) => s.id === id);
+  const chip = document.createElement("div");
+  chip.className = "type-chip picked";
+  chip.dataset.id = String(id);
+  chip.innerHTML =
+    `<span class="type-name">${esc(meta.name)}</span>` +
+    `<div class="type-count">` +
+    `<button type="button" class="type-step" data-step="-1" aria-label="${esc(meta.name)} 단어 수 줄이기">−</button>` +
+    `<span class="type-n" aria-live="polite" data-n="${WB_WORD_DEFAULT}">${WB_WORD_DEFAULT}</span>` +
+    `<button type="button" class="type-step" data-step="1" aria-label="${esc(meta.name)} 단어 수 늘리기">+</button></div>`;
+  wbWordGridEl.appendChild(chip);
+});
+function syncWbWordChips() {
+  wbWordGridEl.querySelectorAll(".type-chip").forEach((chip) => {
+    const nEl = chip.querySelector(".type-n");
+    const n = Math.min(WB_WORD_MAX, Math.max(1, Number(nEl.dataset.n) || WB_WORD_DEFAULT));
+    nEl.dataset.n = String(n);
+    nEl.textContent = String(n);
+    chip.querySelector('.type-step[data-step="-1"]').disabled = n <= 1;
+    chip.querySelector('.type-step[data-step="1"]').disabled = n >= WB_WORD_MAX;
+  });
+}
+function syncWbWordBox() {
+  if (!wbWordBoxEl) return;
+  const picked = wbPickedStages();
+  wbWordBoxEl.hidden = !WB_WORD_STAGES.some((id) => picked.includes(id));
+  wbWordGridEl.querySelectorAll(".type-chip").forEach((chip) => {
+    chip.hidden = !picked.includes(Number(chip.dataset.id));
+  });
+}
+wbWordGridEl.addEventListener("click", (e) => {
+  const step = e.target.closest(".type-step");
+  if (!step) return;
+  const nEl = step.closest(".type-chip").querySelector(".type-n");
+  nEl.dataset.n = String((Number(nEl.dataset.n) || WB_WORD_DEFAULT) + Number(step.dataset.step));
+  syncWbWordChips();
+});
+// {"13": 5, ...} — 서버 wordCounts와 저장본 설정이 같은 모양이다. 고른 단계만 담는다.
+function wbWordCounts(stages = wbPickedStages()) {
+  const out = {};
+  wbWordGridEl.querySelectorAll(".type-chip").forEach((chip) => {
+    const id = Number(chip.dataset.id);
+    if (stages.includes(id)) out[id] = Number(chip.querySelector(".type-n").dataset.n) || WB_WORD_DEFAULT;
+  });
+  return out;
+}
+function wbWordApply(p) {
+  if (!p || typeof p !== "object") return;
+  wbWordGridEl.querySelectorAll(".type-chip").forEach((chip) => {
+    if (p[chip.dataset.id]) chip.querySelector(".type-n").dataset.n = String(p[chip.dataset.id]);
+  });
+  syncWbWordChips();
 }
 
 // 단계를 켜고 끌 때마다 지문 1개당 예상 금액을 바로 보여 준다 (문제 제작 탭과 같은 방식).
@@ -7600,7 +7668,8 @@ async function generateWorkbook() {
           // (만들어지는 내용은 여러 단계분이 통째로 오고, 고른 것만 화면이 그린다.
           //  목표어법 배열 영작(11)만은 골랐을 때만 만들어지므로, 만든 뒤 켜면 비어 있다.)
           // 내용 O/X(12)는 여기 싣지 않는다 — 아래에서 주관식 OX로 따로 만들고 값도 따로다.
-          { passage: job.text, stages: serverStages, targetGrammar: grammarEl.value },
+          { passage: job.text, stages: serverStages, targetGrammar: grammarEl.value,
+            wordCounts: wbWordCounts(serverStages) },
           "워크북 생성에 실패했습니다."
         );
       } catch (err) {
@@ -7764,6 +7833,7 @@ function getWorkbookSettings() {
     answerBook: wbAnswerBookChk ? wbAnswerBookChk.checked : true,
     order: wbOrderEl ? wbOrderEl.value : "passage",
     ox: wbOxPick(),
+    words: wbWordCounts(WB_WORD_STAGES),   // 단계를 껐어도 고른 개수는 남긴다
   };
 }
 function applyWorkbookSettings(settings) {
@@ -7774,6 +7844,7 @@ function applyWorkbookSettings(settings) {
   });
   // 내용 O/X 고르기 — 담지 않은 옛 저장본은 지금 값을 그대로 둔다
   wbOxApply(settings.ox);
+  wbWordApply(settings.words);
   syncWbAll();
   renumberWbStages();
   syncWbOxBox();
@@ -7868,6 +7939,13 @@ function wbQuestionsForStudents(entries, stages) {
         if (lines.length) {
           out.push({ ...base, format: "order", lines, instruction: esc(meta.guide + " (문장 전체를 쓰세요)") });
         }
+      } else if (WB_WORD_STAGES.includes(id)) {
+        // 단어 쓰기 — wbwrite 모양(줄마다 단서·정답). 정답과 다르게 쓰면 '확인 대기'로 가 선생님이 본다(14는 우리말 뜻이라 특히)
+        const lines = wbWordItems(d.wordPicks, id).map((x) => {
+          const { cue, answer } = wbWordCueAnswer(id, x);
+          return { cue, hint: "", answer };
+        });
+        if (lines.length) out.push({ ...base, format: "wbwrite", lines });
       } else if (id === 10) {
         const lines = sentences.map((x) => {
           const keys = (x.writeKeys || []).filter(Boolean);
@@ -8307,6 +8385,7 @@ function buildStage(stageId, d, sentences, ctx) {
   if (stageId === 7) return buildStage7(d.grammarFix);
   if (stageId === 9) return buildStage9(d.paraOrder, sentences);
   if (stageId === 11) return buildStage11(d.grammarArrange);
+  if (WB_WORD_STAGES.includes(stageId)) return buildStageWord(stageId, d.wordPicks);
   if (stageId === WB_OX_STAGE) return buildStageOx(d.ox, ctx && ctx.passageText);
 
   const html = [];
@@ -8427,6 +8506,39 @@ function buildStage11(ga) {
       <div class="wb-writeline"></div>
       ${wbAns(x.en)}</div></div></div>`);
     answers.push({ no, text: x.en + (x.grammar ? ` — ${x.grammar}` : "") });
+  });
+  return { html: html.join(""), answers };
+}
+
+/* 워크북13·14·15 — 단어 쓰기. 단서(cue)와 정답(answer)만 단계마다 다르다.
+   13: 영영풀이 → 영어 단어 / 14: 영어 단어 → 우리말 뜻 / 15: 우리말 뜻 → 영어 단어.
+   wordPicks는 {"13":[{en,ko,def}], "14":[…], "15":[…]} — 서버가 단계마다 다른 단어로 나눠 준다. */
+function wbWordItems(wp, stageId) {
+  return ((wp && wp[String(stageId)]) || []).filter((x) => x && x.en && x.ko && x.def);
+}
+function wbWordCueAnswer(stageId, x) {
+  if (stageId === 13) return { cue: x.def, answer: x.en };
+  if (stageId === 14) return { cue: x.en, answer: x.ko };
+  return { cue: x.ko, answer: x.en };
+}
+function buildStageWord(stageId, wp) {
+  const items = wbWordItems(wp, stageId);
+  if (!items.length) return { html: "", answers: [] };
+  const html = [];
+  const answers = [];
+  items.forEach((x, i) => {
+    const no = i + 1;
+    const { cue, answer } = wbWordCueAnswer(stageId, x);
+    // 영어 단서(영영풀이·영어 단어)는 영어 글꼴(wb-en), 우리말 단서는 wb-ko
+    const cueHtml = stageId === 15
+      ? `<div class="wb-ko">${esc(cue)}</div>`
+      : `<div class="wb-en">${stageId === 14 ? `<b>${esc(cue)}</b>` : esc(cue)}</div>`;
+    html.push(`<div class="wb-q"><div class="wb-q-body"><span class="wb-no">${no}</span><div class="wb-q-main">
+      ${cueHtml}
+      <div class="wb-writeline"></div>
+      ${wbAns(answer)}</div></div></div>`);
+    // 14의 정답은 우리말 한 가지가 아닐 수 있다 — 별지에 영어 단어도 함께 적어 채점을 돕는다
+    answers.push({ no, text: stageId === 14 ? `${x.ko} (${x.en})` : answer });
   });
   return { html: html.join(""), answers };
 }
@@ -10410,7 +10522,7 @@ const HOWTO = {
     lead: "한 지문을 여러 단계로 나눠 학생이 차례로 풀어 나가는 학습지를 만듭니다.",
     steps: [
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
-      "넣을 <b>단계</b>를 체크합니다. (선택) <b>내용 O/X</b>·<b>목표어법 배열 영작</b>도 고를 수 있습니다.",
+      "넣을 <b>단계</b>를 체크합니다. (선택) <b>내용 O/X</b>·<b>목표어법 배열 영작</b>·<b>단어 쓰기 세 가지</b>(단어 수는 − / +)도 고를 수 있습니다.",
       "<b>[워크북 만들기]</b>를 누릅니다. <b>정답 표시 (교사용)</b>를 켜면 선생님용으로 인쇄됩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
     ],

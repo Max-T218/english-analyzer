@@ -111,7 +111,11 @@
       return (q.lines || []).map((l, j) =>
         `<div class="qt-cue"><span class="qt-blankno">(${j + 1})</span> ${esc(l.cue)}</div>` +
         (l.hint ? `<div class="qz-scramble">${esc(l.hint)}</div>` : "") +
-        (mode === "take" ? `<textarea ${inputAttrs(j)} rows="2" placeholder="영어 문장 전체를 쓰세요"></textarea>` : "")).join("");
+        (mode === "take"
+          // 힌트가 없는 줄은 단어 쓰기(워크북 13·14·15) — 문장이 아니라 단어·뜻 하나를 쓴다
+          ? (l.hint ? `<textarea ${inputAttrs(j)} rows="2" placeholder="영어 문장 전체를 쓰세요"></textarea>`
+                    : `<input type="text" ${inputAttrs(j)} placeholder="답을 쓰세요">`)
+          : "")).join("");
     }
     if (fmt === "paraorder") {
       const paras = q.paras || [];
