@@ -1284,6 +1284,18 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 }
 .wb-fixline{font-size:14px; margin-top:10px; color:var(--ink);}
 
+/* 단어 쓰기(13~15) — 답 칸을 단서 옆에 붙인다. 13(영영풀이)은 풀이가 길어 한 줄을 다 쓰고
+   끝에 짧은 답 칸, 14·15는 좌우 두 칸. 글자 크기는 그대로 두고 줄 간격·여백만 줄인다. */
+.wb-words .wb-q.wb-wq{border-bottom:none; padding:7px 0;}
+.wb-wq-row{display:flex; align-items:flex-end; gap:10px;}
+.wb-wq-cue{margin:0; line-height:1.6;}
+.wb-wq-line{flex:1 1 auto; min-width:80px; height:1.5em; border-bottom:1px solid var(--ink-soft);}
+.wb-words-def .wb-wq-cue{flex:1 1 auto;}
+.wb-words-def .wb-wq-line{flex:0 0 150px;}
+.wb-words-grid{display:grid; grid-template-columns:1fr 1fr; column-gap:28px;}
+.wb-words-grid .wb-wq-cue{flex:0 1 auto; word-break:keep-all;}
+@media (max-width:560px){ .wb-words-grid{grid-template-columns:1fr;} .wb-words-def .wb-wq-line{flex-basis:90px;} }
+
 /* 문단 배열 (A)(B)(C) */
 .wb-para-head{margin-bottom:8px;}
 .wb-para-tail{margin-top:10px;}
@@ -1336,6 +1348,11 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
      지문의 첫 단계만 예외 — 지문 제목 바로 아래에 이어져야 하므로. */
   table.wb-page{break-before:page; page-break-before:always; margin-top:0;}
   .wb-passage > table.wb-page:first-of-type{break-before:auto; page-break-before:auto;}
+  /* 단어 쓰기 단계는 한 줄짜리 문항뿐이라 단계마다 새 쪽을 열면 쪽마다 4분의 3이 빈다 —
+     앞 단계도 단어 쓰기면 같은 쪽에 잇는다. 첫 단어 단계만 새 쪽에서 시작한다.
+     단계별 묶기(지문·단계마다 .wb-passage)도 같은 규칙. wbCountPages가 같은 셈을 한다. */
+  table.wb-page-word + table.wb-page-word,
+  .wb-passage-word + .wb-passage-word{break-before:auto; page-break-before:auto; margin-top:18px;}
   /* 아래쪽 공통 인쇄 규칙의 tr{break-inside:avoid}는 지문분석 표(행이 짧다)를 위한
      것인데, 워크북은 한 단계 전체가 tbody의 tr 하나여서 그것까지 걸린다. 그러면
      쪽에 남은 자리에 안 들어간다고 단계를 통째로 다음 쪽으로 밀어내, 지문 제목만

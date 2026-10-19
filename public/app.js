@@ -7600,13 +7600,27 @@ function wbCountPages() {
   if (doc.querySelector(".wb-cover")) pages++;            // 표지는 한 쪽을 통째로 쓴다
   const repeatHead = !doc.classList.contains("wb-norepeat");
 
+  let used = 0;
+  let prevWord = false;   // 바로 앞 단계가 단어 쓰기였나 — 그러면 새 쪽 없이 잇는다(인쇄 CSS와 같은 규칙)
   doc.querySelectorAll(".wb-passage").forEach((sec) => {
     const title = px(sec.querySelector(".wb-titlebar"));
     sec.querySelectorAll("table.wb-page").forEach((tbl, ti) => {
       const head = px(tbl.querySelector("thead"));
-      pages++;                                            // 단계마다 새 쪽
-      let used = head + (ti === 0 ? title : 0);
+      const word = tbl.classList.contains("wb-page-word");
+      const top = head + (ti === 0 ? title : 0);
+      if (word && prevWord && used + top <= pageH) {
+        used += top + 18;                                 // 같은 쪽에 이어 싣는다(margin-top 18px)
+      } else {
+        pages++;                                          // 단계마다 새 쪽
+        used = top;
+      }
+      prevWord = word;
+      let rowTop = null;
       tbl.querySelectorAll(".wb-q").forEach((q) => {
+        // 두 칸으로 늘어선 단어 문항은 한 줄에 둘 — 줄이 바뀔 때만 높이를 더한다
+        const t = q.getBoundingClientRect().top;
+        if (rowTop !== null && Math.abs(t - rowTop) < 1) return;
+        rowTop = t;
         const h = px(q);
         if (used + h > pageH) {                           // 안 들어가면 다음 쪽
           pages++;
@@ -8397,7 +8411,7 @@ function buildWorkbookHtml(d, stages, job, total, exam) {
     if (!built || !built.html.trim()) return;
     stageNo++;
     const head = `STEP ${stageNo} ${meta.name}`;
-    parts.push(wbStageTableHtml(head, label, exam, meta.guide, built.html));
+    parts.push(wbStageTableHtml(head, label, exam, meta.guide, built.html, WB_WORD_STAGES.includes(stageId)));
     if (built.answers && built.answers.length) {
       answerStages.push({ head, items: built.answers });
     }
@@ -8435,9 +8449,10 @@ function buildWorkbookByStage(entries, stages, exam) {
     stageNo++;
     const head = `STEP ${stageNo} ${meta.name}`;
     const groups = [];
+    const word = WB_WORD_STAGES.includes(stageId);
     builtAll.forEach(({ it, built }) => {
-      parts.push(`<section class="wb-passage">${wbTitlebarHtml(it.d)}` +
-        wbStageTableHtml(head, it.label, exam, meta.guide, built.html) + `</section>`);
+      parts.push(`<section class="wb-passage${word ? " wb-passage-word" : ""}">${wbTitlebarHtml(it.d)}` +
+        wbStageTableHtml(head, it.label, exam, meta.guide, built.html, word) + `</section>`);
       if (built.answers && built.answers.length) {
         groups.push({ head: it.label || head, items: built.answers });
       }
@@ -8457,9 +8472,10 @@ function wbTitlebarHtml(d) {
 }
 
 // 표의 <thead>는 브라우저가 쪽마다 다시 그려 준다 — 참고 자료의 '쪽 머리말'이 된다
-function wbStageTableHtml(head, label, exam, guide, body) {
+// word: 단어 쓰기 단계(13~15) — 앞 단계도 단어 쓰기면 새 쪽을 열지 않고 이어 싣는다(인쇄 CSS)
+function wbStageTableHtml(head, label, exam, guide, body, word) {
   return `
-      <table class="wb-page">
+      <table class="wb-page${word ? " wb-page-word" : ""}">
         <thead><tr><td>
           <div class="wb-run">
             <span class="wb-run-l">${esc(head)}</span>
@@ -8635,6 +8651,10 @@ function wbWordCueAnswer(stageId, x) {
   if (stageId === 14) return { cue: x.en, answer: x.ko };
   return { cue: x.ko, answer: x.en };
 }
+/* 한 문항이 한 줄이라 다른 단계처럼 단서 아래에 줄을 따로 그으면 쪽마다 4분의 3이 빈다
+   (2026-10-19 사용자 — 세 단계 9문항이 세 쪽). 그래서 답 칸을 단서 옆에 붙이고,
+   단서가 짧은 14·15는 좌우 두 칸으로 나눈다. 세 단계를 한 쪽에 잇는 것은 인쇄 CSS의
+   .wb-page-word / .wb-passage-word 규칙이다. 글자 크기는 다른 단계와 같다. */
 function buildStageWord(stageId, wp) {
   const items = wbWordItems(wp, stageId);
   if (!items.length) return { html: "", answers: [] };
@@ -8645,16 +8665,16 @@ function buildStageWord(stageId, wp) {
     const { cue, answer } = wbWordCueAnswer(stageId, x);
     // 영어 단서(영영풀이·영어 단어)는 영어 글꼴(wb-en), 우리말 단서는 wb-ko
     const cueHtml = stageId === 15
-      ? `<div class="wb-ko">${esc(cue)}</div>`
-      : `<div class="wb-en">${stageId === 14 ? `<b>${esc(cue)}</b>` : esc(cue)}</div>`;
-    html.push(`<div class="wb-q"><div class="wb-q-body"><span class="wb-no">${no}</span><div class="wb-q-main">
-      ${cueHtml}
-      <div class="wb-writeline"></div>
+      ? `<span class="wb-wq-cue wb-ko">${esc(cue)}</span>`
+      : `<span class="wb-wq-cue wb-en">${stageId === 14 ? `<b>${esc(cue)}</b>` : esc(cue)}</span>`;
+    html.push(`<div class="wb-q wb-wq"><div class="wb-q-body"><span class="wb-no">${no}</span><div class="wb-q-main">
+      <div class="wb-wq-row">${cueHtml}<span class="wb-wq-line"></span></div>
       ${wbAns(answer)}</div></div></div>`);
     // 14의 정답은 우리말 한 가지가 아닐 수 있다 — 별지에 영어 단어도 함께 적어 채점을 돕는다
     answers.push({ no, text: stageId === 14 ? `${x.ko} (${x.en})` : answer });
   });
-  return { html: html.join(""), answers };
+  const cls = stageId === 13 ? "wb-words wb-words-def" : "wb-words wb-words-grid";
+  return { html: `<div class="${cls}">${html.join("")}</div>`, answers };
 }
 
 /* 워크북12 — 내용 O/X. 지문은 워크북 맨 위(좌지문 우해석)에 한 번만 있으므로 여기서는 진술만 싣는다
