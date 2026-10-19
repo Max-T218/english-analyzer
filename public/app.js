@@ -2,6 +2,7 @@
 
 // ── 열 때마다 완전 초기화 ──────────────────────────────────────────────
 // 창을 새로 열면 지문·학원 마크·모델 설정·단어장 데이터까지 전부 비운다.
+// (학원 마크는 계정에 저장해 두므로 로그인하면 brandPull이 다시 채운다.)
 // 공용 PC에서 앞사람 흔적이 남지 않게 하려는 것으로, 아래의 모든 초기화 코드보다
 // 먼저 실행되어야 하므로 파일 맨 위에 둔다.
 // (한 세션 안에서의 저장은 그대로 동작한다 — 예: 지문 분석 결과의 어휘를 단어장
@@ -906,8 +907,10 @@ function renderAccount(info) {
     studentsTabBtn.hidden = true;
     isExamApproved = false;
     hideExamTab();
+    brandClearLocal();   // 공용 PC — 다음 사람 인쇄물에 이 계정의 학원 마크가 찍히지 않게
     return;
   }
+  brandPull();   // 계정에 저장해 둔 학원 마크(로그인마다 한 번)
   const krw = Number(info.krwRemaining);
   currentKrw = Number.isFinite(krw) ? krw : null;
   const free = Number(info.krwFree);
@@ -1220,7 +1223,11 @@ verifyPanelEl.addEventListener("submit", async (e) => {
 });
 $("verifyBackBtn").addEventListener("click", () => showSignupStep("form"));
 
-// ── 학원 마크(로고) — 고정 파일 대신 사용자가 업로드해 이 브라우저에 저장 ──
+// ── 학원 마크(로고) — 고정 파일 대신 사용자가 올려 계정에 저장 ──
+// 이 페이지 안에서는 localStorage를 그대로 쓰고(trend.js의 인쇄 창도 여기서 읽는다), 바꿀 때마다
+// 서버(/api/brand)에도 올린다. 창을 열면 파일 맨 위에서 localStorage가 비워지므로 로그인하면
+// brandPull이 계정에서 다시 채우고, 로그아웃하면 brandClearLocal이 지운다(공용 PC 보호).
+// 그림은 shrinkBrandImage로 줄여서 담는다 — 서버 문서 한도(1MiB)와 브라우저 저장 공간(약 5MB).
 const BRAND_IMG_STORE = "brand_mark_img";   // data URL
 const BRAND_NAME_STORE = "brand_mark_name"; // 학원명 텍스트
 /* 워터마크 — 쪽 전체 뒷배경에 옅게 까는 그림. 우하단 로고와 따로 받는다(아래쪽에는 가로로 긴
@@ -1228,7 +1235,10 @@ const BRAND_NAME_STORE = "brand_mark_name"; // 학원명 텍스트
    로고로 대신 채우지 않는다(2026-09-29 사용자). 처음엔 시험지 분석 리포트에만 두었다가
    2026-09-30에 모든 탭 인쇄물로 넓혔다. 인쇄에서는 #printWatermark가 쪽마다 되풀이된다. */
 const BRAND_WM_STORE = "brand_mark_wm";
-const BRAND_MAX_BYTES = 5 * 1024 * 1024;    // 5MB — localStorage 용량 보호
+const BRAND_MAX_BYTES = 5 * 1024 * 1024;    // 5MB — 올리는 원본 파일의 상한(줄이기 전)
+const BRAND_SEND_MAX_CHARS = 950000;        // 줄인 그림 data URL 상한 — server.py SAVED_IMAGE_MAX_CHARS보다 작게
+const BRAND_LOGO_SIDE = 800;                // 로고 긴 변(px) — 쪽 아래 작게 찍힌다
+const BRAND_WM_SIDE = 1600;                 // 워터마크 긴 변(px) — 쪽 전체에 깔린다
 const brandNameEl = $("brandName");
 const brandFileEl = $("brandFile");
 const brandWmFileEl = $("brandWmFile");
@@ -1278,14 +1288,109 @@ function renderBrand() {
   }
 }
 
+/* 그림을 긴 변 maxSide 안으로 줄여 data URL로 돌려준다. 투명 배경을 지키려고 PNG를 먼저 쓰고,
+   너무 크면 WebP, 그래도 크면 크기를 줄여 가며 다시 만든다. */
+function shrinkBrandImage(file, maxSide) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const w0 = img.naturalWidth || img.width;
+      const h0 = img.naturalHeight || img.height;
+      if (!w0 || !h0) return reject(new Error("그림을 읽지 못했습니다."));
+      let scale = Math.min(1, maxSide / Math.max(w0, h0));
+      for (let i = 0; i < 8; i++) {
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(w0 * scale));
+        c.height = Math.max(1, Math.round(h0 * scale));
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        let out = c.toDataURL("image/png");
+        if (out.length > BRAND_SEND_MAX_CHARS) {
+          const webp = c.toDataURL("image/webp", 0.9);
+          if (webp.startsWith("data:image/webp")) out = webp;
+        }
+        if (out.length <= BRAND_SEND_MAX_CHARS) return resolve(out);
+        scale *= 0.75;
+      }
+      reject(new Error("그림이 너무 큽니다. 더 작은 그림으로 넣어 주세요."));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("그림을 읽지 못했습니다."));
+    };
+    img.src = url;
+  });
+}
+
+// 계정에 올린다 — 실린 칸만 바뀐다. 실패해도 이 창에서는 그대로 쓴다.
+function brandPush(fields) {
+  if (!isLoggedIn) return;
+  postJson("/api/brand", fields, "학원 마크를 계정에 저장하지 못했습니다.").catch((err) => {
+    alert(`${err.message || "학원 마크를 계정에 저장하지 못했습니다."}\n이 창에서는 그대로 쓸 수 있지만, 다음 로그인 때는 다시 넣어야 합니다.`);
+  });
+}
+
+function brandSetLocal(key, val) {
+  try {
+    if (val) localStorage.setItem(key, val);
+    else localStorage.removeItem(key);
+    return true;
+  } catch (_) {
+    return false;   // 브라우저 저장 공간이 넘쳤다
+  }
+}
+
+let brandPulled = false;          // 이번 로그인에서 계정의 마크를 받아 왔는지
+const brandTouched = new Set();   // 받아 오기 전에 손댄 칸 — 받아 온 값으로 덮지 않는다
+
+async function brandPull() {
+  if (brandPulled) return;
+  brandPulled = true;
+  brandTouched.clear();
+  let d;
+  try {
+    d = await getJson("/api/brand", "");
+  } catch (_) {
+    brandPulled = false;   // 다음 계정 갱신 때 다시 시도
+    return;
+  }
+  if (!brandTouched.has("name")) {
+    brandSetLocal(BRAND_NAME_STORE, (d.name || "").trim());
+    if (brandNameEl) brandNameEl.value = d.name || "";
+  }
+  if (!brandTouched.has("logo")) brandSetLocal(BRAND_IMG_STORE, d.logo || "");
+  if (!brandTouched.has("wm")) brandSetLocal(BRAND_WM_STORE, d.wm || "");
+  renderBrand();
+}
+
+// 로그아웃 — 다음 사람 인쇄물에 이 계정의 마크가 찍히지 않게 화면에서 지운다(계정에는 남는다)
+function brandClearLocal() {
+  brandPulled = false;
+  clearTimeout(brandNameTimer);
+  [BRAND_IMG_STORE, BRAND_NAME_STORE, BRAND_WM_STORE].forEach((k) => brandSetLocal(k, ""));
+  if (brandNameEl) brandNameEl.value = "";
+  if (brandFileEl) brandFileEl.value = "";
+  if (brandWmFileEl) brandWmFileEl.value = "";
+  renderBrand();
+}
+
+let brandNameTimer = 0;
 if (brandNameEl) {
   brandNameEl.value = localStorage.getItem(BRAND_NAME_STORE) || "";
+  const pushName = () => {
+    clearTimeout(brandNameTimer);
+    brandPush({ name: brandNameEl.value.trim() });
+  };
   brandNameEl.addEventListener("input", () => {
+    brandTouched.add("name");
     const v = brandNameEl.value.trim();
-    if (v) localStorage.setItem(BRAND_NAME_STORE, v);
-    else localStorage.removeItem(BRAND_NAME_STORE);
+    brandSetLocal(BRAND_NAME_STORE, v);
     renderBrand();
+    clearTimeout(brandNameTimer);
+    brandNameTimer = setTimeout(pushName, 800);   // 글자마다 보내지 않고 멈추면 보낸다
   });
+  brandNameEl.addEventListener("change", pushName);
 }
 
 if (brandFileEl) {
@@ -1302,15 +1407,19 @@ if (brandFileEl) {
       brandFileEl.value = "";
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      localStorage.setItem(BRAND_IMG_STORE, reader.result);
+    brandTouched.add("logo");
+    shrinkBrandImage(file, BRAND_LOGO_SIDE).then((dataUrl) => {
+      if (!brandSetLocal(BRAND_IMG_STORE, dataUrl)) {
+        alert("그림이 너무 커서 넣지 못했습니다. 더 작은 그림으로 넣어 주세요.");
+        brandFileEl.value = "";
+        return;
+      }
       renderBrand();
-    };
-    reader.onerror = () => {
-      errorEl.textContent = "로고 파일을 읽는 데 실패했습니다.";
-    };
-    reader.readAsDataURL(file);
+      brandPush({ logo: dataUrl });
+    }).catch((err) => {
+      alert(err.message || "로고 파일을 읽는 데 실패했습니다.");
+      brandFileEl.value = "";
+    });
   });
 }
 
@@ -1324,29 +1433,31 @@ if (brandWmFileEl) {
       brandWmFileEl.value = "";
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        localStorage.setItem(BRAND_WM_STORE, reader.result);
-      } catch (_) {
-        // 로고와 워터마크가 브라우저 저장 공간(약 5MB)을 나눠 쓴다 — 넘치면 여기서 막힌다
+    brandTouched.add("wm");
+    shrinkBrandImage(file, BRAND_WM_SIDE).then((dataUrl) => {
+      // 로고와 워터마크가 브라우저 저장 공간(약 5MB)을 나눠 쓴다 — 넘치면 여기서 막힌다
+      if (!brandSetLocal(BRAND_WM_STORE, dataUrl)) {
         alert("그림이 너무 커서 넣지 못했습니다. 더 작은 그림으로 넣어 주세요.");
         brandWmFileEl.value = "";
         return;
       }
       renderBrand();
-    };
-    reader.onerror = () => alert("워터마크 파일을 읽지 못했습니다.");
-    reader.readAsDataURL(file);
+      brandPush({ wm: dataUrl });
+    }).catch((err) => {
+      alert(err.message || "워터마크 파일을 읽지 못했습니다.");
+      brandWmFileEl.value = "";
+    });
   });
 }
 // 미리보기의 [빼기] — 미리보기 칸을 renderBrand가 매번 새로 그리므로 칸에 걸어 둔다
 if (brandWmPreviewEl) {
   brandWmPreviewEl.addEventListener("click", (e) => {
     if (!e.target.closest("#brandWmClear")) return;
+    brandTouched.add("wm");
     localStorage.removeItem(BRAND_WM_STORE);
     if (brandWmFileEl) brandWmFileEl.value = "";
     renderBrand();
+    brandPush({ wm: "" });
   });
 }
 
@@ -1358,7 +1469,10 @@ if (brandRemoveBtn) {
     if (brandFileEl) brandFileEl.value = "";
     if (brandWmFileEl) brandWmFileEl.value = "";
     if (brandNameEl) brandNameEl.value = "";
+    ["name", "logo", "wm"].forEach((k) => brandTouched.add(k));
+    clearTimeout(brandNameTimer);
     renderBrand();
+    brandPush({ name: "", logo: "", wm: "" });   // 계정에서도 지운다
   });
 }
 

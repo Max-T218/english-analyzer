@@ -9741,6 +9741,8 @@ def delete_user_account(user_id, by_admin=False):
         item.reference.delete()
     for img in DB.collection(SAVED_IMAGES).where("user_id", "==", user_id).select(["key"]).stream():
         img.reference.delete()
+    for doc in DB.collection(BRAND_MARKS).where("user_id", "==", user_id).select(["user_id"]).stream():
+        doc.reference.delete()   # 학원 마크(학원명·로고·워터마크)
     # 이용 내역도 함께 지운다 — 탈퇴하면 다 사라진다고 안내하고 있고,
     # 계정이 없어진 뒤에도 남아 있을 이유가 없다.
     for row in DB.collection(POINT_LEDGER).where("user_id", "==", user_id).stream():
@@ -10552,6 +10554,15 @@ CHANGELOG = [
             "워크북 — 단어 쓰기 단계 세 가지가 생겼습니다(기본은 꺼져 있습니다). '영영풀이 보고 단어 쓰기', "
             "'영어 단어 보고 우리말 뜻 쓰기', '우리말 뜻 보고 영어 단어 쓰기'이고, 단계마다 − / + 로 단어 수를 "
             "정합니다. 단어는 지문에서 꼭 알아야 할 핵심 어휘를 AI가 고르며, 세 단계에는 서로 다른 단어가 나옵니다.",
+        ],
+    },
+    {
+        "version": 75,
+        "date": "2026-10-19",
+        "items": [
+            "학원 마크 — 학원명·로고·워터마크가 계정에 저장됩니다. 한 번 넣어 두면 다음에 로그인할 때도, "
+            "다른 컴퓨터에서도 그대로 나와 제작할 때마다 다시 넣지 않아도 됩니다. 로그아웃하면 그 컴퓨터 "
+            "화면에서는 지워지므로 공용 컴퓨터에서도 안심하고 쓰세요. 지금 넣어 둔 마크는 한 번 다시 넣어 주시면 저장됩니다.",
         ],
     },
 ]
@@ -11817,6 +11828,74 @@ def delete_saved_item(item_id, user_id):
     prune_item_images(item_id, set())   # 딸린 그림도 함께 지운다
     ref.delete()
     return True
+
+
+# ── 학원 마크(학원명·우하단 로고·워터마크)를 계정에 둔다 ──
+# 화면은 창을 열 때마다 브라우저 저장 공간을 비우므로(공용 PC 보호) 예전엔 제작할 때마다 다시
+# 넣어야 했다. 로그인하면 여기서 받아 가고, 로그아웃하면 화면이 지운다(공용 PC에서 다음 사람
+# 인쇄물에 남의 마크가 찍히지 않게). 회원 문서는 1MiB 한도라 그림을 넣지 않고 한 장에 문서
+# 하나로 따로 담는다 — {uid}(학원명), {uid}__logo, {uid}__wm. 그림은 화면이 줄여서 보낸다.
+BRAND_MARKS = "brand_marks"
+BRAND_NAME_MAX = 40
+BRAND_IMAGE_KINDS = ("logo", "wm")
+_BRAND_DATA_URL_RE = re.compile(r"^data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$")
+
+
+def get_brand_mark(user_id):
+    _require_db()
+    col = DB.collection(BRAND_MARKS)
+    out = {"name": "", "logo": "", "wm": ""}
+    snap = col.document(user_id).get()
+    if snap.exists:
+        out["name"] = str((snap.to_dict() or {}).get("name") or "")
+    for kind in BRAND_IMAGE_KINDS:
+        s = col.document(f"{user_id}__{kind}").get()
+        if s.exists:
+            d = s.to_dict() or {}
+            if d.get("user_id") == user_id and d.get("data"):
+                out[kind] = f"data:{d.get('mime', 'image/png')};base64,{d['data']}"
+    return out
+
+
+def save_brand_mark(user_id, req):
+    """요청에 실린 칸만 바꾼다 — name(글자), logo·wm(data URL, 빈 글자면 지운다).
+    반환: 오류 문구 또는 None."""
+    _require_db()
+    col = DB.collection(BRAND_MARKS)
+    imgs = {}
+    for kind in BRAND_IMAGE_KINDS:
+        if kind not in req:
+            continue
+        val = req.get(kind) or ""
+        if not isinstance(val, str):
+            return "잘못된 요청입니다."
+        if not val:
+            imgs[kind] = None
+            continue
+        m = _BRAND_DATA_URL_RE.match(val)
+        if not m:
+            return "지원하지 않는 그림 형식입니다."
+        mime, b64 = m.group(1), m.group(2)
+        if len(b64) > SAVED_IMAGE_MAX_CHARS:
+            return "그림이 너무 커서 저장할 수 없습니다."
+        try:
+            head = base64.b64decode(b64[:16] + "=" * (-len(b64[:16]) % 4))
+        except Exception:
+            return "그림 데이터가 올바르지 않습니다."
+        if not any(head.startswith(sig) for sig in _SAVED_IMG_MAGIC[mime]):
+            return "그림 데이터가 올바르지 않습니다."
+        imgs[kind] = (mime, b64)
+    if "name" in req:
+        name = str(req.get("name") or "").strip()[:BRAND_NAME_MAX]
+        col.document(user_id).set({"user_id": user_id, "name": name, "updated_at": _now_iso()})
+    for kind, v in imgs.items():
+        ref = col.document(f"{user_id}__{kind}")
+        if v is None:
+            ref.delete()
+        else:
+            ref.set({"user_id": user_id, "kind": kind, "mime": v[0], "data": v[1],
+                     "updated_at": _now_iso()})
+    return None
 
 
 # =============================================================================
@@ -13754,6 +13833,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 500)
             return
 
+        if path == "/api/brand":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                self._send_json(get_brand_mark(user_id))
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+            return
+
         if path.startswith("/api/saved-image/"):
             # /api/saved-image/<저장본 id>/<그림 key>
             user_id = _session_user(self)
@@ -14055,7 +14145,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/account/recharge", "/api/account/recharge/confirm",
                         "/api/account/ack-update", "/api/portone/webhook",
                         "/api/saved", "/api/saved/delete", "/api/saved/rename",
-                        "/api/saved-image",
+                        "/api/saved-image", "/api/brand",
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
                         "/api/admin/approve-exam",
@@ -14860,6 +14950,23 @@ class Handler(BaseHTTPRequestHandler):
                                       req.get("image"))
             except Exception as e:
                 self._send_json({"error": f"그림 저장에 실패했습니다: {e}"}, 500)
+                return
+            if err:
+                self._send_json({"error": err}, 400)
+                return
+            self._send_json({"ok": True})
+            return
+
+        if path == "/api/brand":
+            # 학원 마크 — 실린 칸(name·logo·wm)만 바꾼다
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                err = save_brand_mark(user_id, req if isinstance(req, dict) else {})
+            except Exception as e:
+                self._send_json({"error": f"학원 마크 저장에 실패했습니다: {e}"}, 500)
                 return
             if err:
                 self._send_json({"error": err}, 400)
