@@ -1358,6 +1358,12 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
      단계별 묶기(지문·단계마다 .wb-passage)도 같은 규칙. wbCountPages가 같은 셈을 한다. */
   table.wb-page-word + table.wb-page-word,
   .wb-passage-word + .wb-passage-word{break-before:auto; page-break-before:auto; margin-top:18px;}
+  /* 쪽 구성에서 정한 나눔(data-brk)이 위의 기본 규칙을 이긴다 — app.js wbPaging.
+     이어 붙인 단계 위 여백 18px은 app.js의 WB_CONT_GAP과 같은 값이어야 한다. */
+  #workbookDoc .wb-passage[data-brk="page"],
+  #workbookDoc table.wb-page[data-brk="page"]{break-before:page; page-break-before:always;}
+  #workbookDoc .wb-passage[data-brk="auto"],
+  #workbookDoc table.wb-page[data-brk="auto"]{break-before:auto; page-break-before:auto; margin-top:18px;}
   /* 아래쪽 공통 인쇄 규칙의 tr{break-inside:avoid}는 지문분석 표(행이 짧다)를 위한
      것인데, 워크북은 한 단계 전체가 tbody의 tr 하나여서 그것까지 걸린다. 그러면
      쪽에 남은 자리에 안 들어간다고 단계를 통째로 다음 쪽으로 밀어내, 지문 제목만
@@ -1763,6 +1769,11 @@ u{
   background:var(--accent); color:#fff; font-size:13px; font-weight:800;
 }
 .pg-edge-why{white-space:nowrap;}
+/* 워크북 쪽 구성 — 단계(지문) 바로 위에 놓는 손잡이 줄. 새 쪽으로 정한 단계는 채운 색 단추 */
+.wb-pg-bar{display:flex; align-items:center; gap:8px; margin:22px 0 -14px;}
+.wb-pg-bar.on .pg-brk-btn{background:var(--g); color:#fff; border-color:var(--g);}
+.wb-pg-bar.on .pg-brk-btn:hover{background:#a81f1f;}
+#workbookDoc.paging{width:186mm; max-width:100%; margin:0 auto;}
 
 /* ── 문장 카드 (좌우 7:3) ── */
 .sent{
@@ -2131,7 +2142,7 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
      화면에서 지정한 것 중 지면에 남는 것은 이 표시 하나뿐이다. 손잡이·경계선·빈 칸은
      전부 화면용이므로 지운다. 지문의 첫 덩어리는 .passage-block이 이미 쪽을 넘기므로
      여기서 또 넘기면 빈 쪽이 생긴다 — 그 경우만 무시한다. */
-  .pg-handle,.pg-gap,.pg-edge{display:none !important;}
+  .pg-handle,.pg-gap,.pg-edge,.wb-pg-bar{display:none !important;}
   .paging{width:auto; max-width:none;}
   .pg-blk[data-brk="page"]{break-before:page; page-break-before:always;}
   .pg-blk.pg-head[data-brk="page"]{break-before:auto; page-break-before:auto;}

@@ -211,6 +211,12 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 한 번에 모두 풀어 빈자리를 채운다. 지문 하나에 기본 강제 쪽 나눔이 서너 군데(`data-brk-def="page"`)라
 지문을 여럿 넣으면 올릴 자리가 100군데를 넘어, 하나씩 누르는 길만으로는 감당이 안 된다.
 `pg-head`(지문 시작)는 건드리지 않는다) ·
+`setWbPaging` / `wbLayoutPages` / `wbSimulate`(워크북 '쪽 구성', 2026-10-19 — 단위는 지문 상자 `.wb-passage`와 둘째 단계부터의
+`table.wb-page`(`wbPageUnits`)이고 인쇄에 남는 건 그 `data-brk`뿐이다. 처음 상태(`wbDefaultBrk`)는 style.css 인쇄 규칙 — 단계마다 새 쪽,
+단어 쓰기끼리는 잇기 — 과 같다. 워크북 단계는 여러 쪽에 걸쳐 이어지므로 지문 상세분석의 `layoutPages`를 쓰지 않고
+`wbSimulate`가 문항(`.wb-q`)을 하나씩 담아 쪽을 센다 — `wbCountPages`(쪽 조이기 안내)도 같은 함수다. 실제 인쇄와 쪽 수가 맞는 것을
+헤드리스 크롬 PDF로 확인했다. 다시 그리면 나눔은 처음 상태로 돌아가고 저장본에도 안 담긴다) ·
+워크북 단계 인쇄 순서는 **체크한 차례**다(`wbStageOrder`/`wbPickedStages`, 2026-10-19 — 예전엔 칸 차례로 고정). 저장본 `settings.stages`가 그 차례를 담는다 ·
 `getVocabSets` / `replaceAnalyzeVocabSets` / `appendVocabSet`(단어장 저장소 — 지문 분석·직접
 입력·사진·PDF 네 출처가 같은 `vocabSets`를 쓴다. `src` 태그로 구분해, 재분석은 `src:"analyze"`
 세트만 갈아 끼우고 나머지는 남긴다) ·

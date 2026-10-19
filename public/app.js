@@ -7331,14 +7331,25 @@ WB_STAGES.forEach((s) => {
   wbStageGridEl.appendChild(label);
 });
 
+/* 단계 인쇄 순서 = 체크한 차례(2026-10-19 — 예전엔 칸이 놓인 차례로 고정이라 선생님이 순서를 못 바꿨다).
+   wbStageOrder에 체크한 단계 id를 누른 차례대로 쌓는다. 순서를 바꾸려면 체크를 풀었다가 원하는 차례에
+   다시 누른다. 이 목록에 없는데 체크된 것(처음 기본값·전체 선택)은 칸 차례대로 뒤에 붙는다. */
+let wbStageOrder = [];
+function wbStageOrderSync() {
+  const on = Array.from(wbStageGridEl.querySelectorAll("input:checked"), (i) => parseInt(i.value, 10));
+  wbStageOrder = wbStageOrder.filter((id) => on.includes(id)).concat(on.filter((id) => !wbStageOrder.includes(id)));
+  return wbStageOrder;
+}
+wbStageOrderSync();   // 처음 기본값 — 칸 차례대로
+
 // 체크한 단계에만 1번부터 번호를 붙인다. WB_STAGES의 id는 렌더 분기를 고르는
-// 내부 키이자 참고 자료의 단계 번호이고, 화면·인쇄물에 찍히는 번호는 '선택 순서'다.
+// 내부 키이자 참고 자료의 단계 번호이고, 화면·인쇄물에 찍히는 번호는 '체크한 차례'다.
 function renumberWbStages() {
-  let n = 0;
+  const order = wbStageOrderSync();
   wbStageGridEl.querySelectorAll("label").forEach((label) => {
-    const on = label.querySelector("input").checked;
-    label.querySelector(".type-no").textContent = on ? `${++n}.` : "";
-    label.classList.toggle("picked", on);
+    const k = order.indexOf(parseInt(label.querySelector("input").value, 10));
+    label.querySelector(".type-no").textContent = k >= 0 ? `${k + 1}.` : "";
+    label.classList.toggle("picked", k >= 0);
   });
 }
 // 전체 선택 / 해제 — 일부만 선택된 상태는 '중간' 표시 (문제 제작 탭과 동일)
@@ -7352,6 +7363,7 @@ function syncWbAll() {
 wbStageAllEl.addEventListener("change", () => {
   const check = wbStageAllEl.checked;
   wbStageGridEl.querySelectorAll("input").forEach((b) => (b.checked = check));
+  wbStageOrder = [];   // 전체 선택은 칸 차례대로 — 하나씩 누른 차례는 지운다
   syncWbAll();
   renumberWbStages();
   syncWbOxBox();
@@ -7472,8 +7484,8 @@ function wbOxCost(calls = wbOxCalls()) {
   return calls.reduce((s, call) =>
     s + call.types.reduce((a, t) => a + (PRICING.saq || 0) + extra * (t.count - 1), 0), 0);
 }
-const wbPickedStages = () =>
-  [...wbStageGridEl.querySelectorAll("input:checked")].map((i) => parseInt(i.value, 10));
+// 고른 단계 — 체크한 차례(= 인쇄 순서)대로
+const wbPickedStages = () => wbStageOrderSync().slice();
 // 워크북 AI 호출(/api/workbook)로 만드는 단계만 — 값이 이 수에 걸린다
 const wbServerStages = (stages) => stages.filter((id) => id !== WB_OX_STAGE);
 function wbPassageCost(stages) {
@@ -7569,11 +7581,20 @@ function updateWbCostHint() {
   wbCostHintEl.innerHTML = parts.join(" ");
 }
 
-wbStageGridEl.addEventListener("change", () => {
+wbStageGridEl.addEventListener("change", (e) => {
+  // 새로 체크한 단계는 맨 뒤 차례로 간다(wbStageOrderSync가 체크를 푼 것은 빼 준다)
+  const box = e.target.closest("input");
+  if (box) {
+    const id = parseInt(box.value, 10);
+    wbStageOrder = wbStageOrder.filter((x) => x !== id);
+    if (box.checked) wbStageOrder.push(id);
+  }
   syncWbAll();
   renumberWbStages();
   syncWbOxBox();
   updateWbCostHint();
+  // 이미 만든 워크북은 새 차례로 다시 늘어놓는다 — AI를 다시 부르지 않는다(안 만든 단계는 빠진다)
+  if (lastWorkbookResults.length) drawWorkbook(lastWorkbookResults);
 });
 syncWbAll();
 renumberWbStages();
@@ -7592,8 +7613,9 @@ const wbAnswerChk = $("wbAnswerChk");
 /* ── 워크북 쪽 조이기 ──
    워크북에서 쪽이 넘어가는 까닭은 큰 빈자리가 남아서가 아니다. 실측하면(A4, 12문항)
    문항 하나가 22.6mm인데 쪽 아래에 20mm쯤 남아 2mm 차이로 통째로 밀리고, 밀려간 쪽에는
-   STEP 머리말이 다시 그려져 15mm를 또 먹는다. 그래서 지문 상세분석식 '경계 옮기기'는
-   여기서 쓸모가 없다 — 올릴 자리가 애초에 없다. 자투리를 메우는 쪽으로 푼다.
+   STEP 머리말이 다시 그려져 15mm를 또 먹는다. 그 자투리는 여기서 메운다.
+   짧은 단계(내용 O/X·단어 쓰기) 뒤에 남는 큰 빈자리는 아래 '쪽 구성'(wbPaging)이 메운다 —
+   단계마다 새 쪽을 열지 앞 쪽에 이어 붙일지 고른다(2026-10-19).
 
    쪽 수는 여기서 직접 세어 보여 준다. 인쇄해 보기 전에 몇 쪽이 주는지 알아야 켤지
    말지를 정할 수 있기 때문이다. 세는 방법은 브라우저가 인쇄할 때 하는 일을 흉내내는
@@ -7604,57 +7626,81 @@ const wbTightChk = $("wbTightChk");
 const wbNoRepeatChk = $("wbNoRepeatChk");
 const wbTightNote = $("wbTightNote");
 
-// 인쇄 폭에서 재야 실제와 맞는다. 화면 폭으로 재면 줄바꿈이 달라져 쪽 수가 어긋난다.
-function wbCountPages() {
-  const doc = workbookDocEl;
-  if (!doc || !doc.querySelector(".wb-passage")) return 0;
-  const prev = doc.getAttribute("style") || "";
-  doc.style.width = PAGE_W_MM + "mm";
-  doc.style.maxWidth = "none";
+/* 쪽이 바뀌는 자리를 고를 수 있는 '단위' — 지문 상자(.wb-passage, 단계별 묶기에서는 지문·단계 한 칸)와
+   지문 안의 둘째 단계부터의 표(table.wb-page). 맨 앞 지문은 늘 첫 쪽(표지가 있으면 표지 다음 쪽)이라 뺀다. */
+function wbPageUnits(doc = workbookDocEl) {
+  const out = [];
+  doc.querySelectorAll(":scope > .wb-passage").forEach((sec, si) => {
+    if (si > 0) out.push(sec);
+    sec.querySelectorAll(":scope > table.wb-page").forEach((tbl, ti) => { if (ti > 0) out.push(tbl); });
+  });
+  return out;
+}
+// 처음 상태의 쪽 나눔 — style.css의 인쇄 규칙과 같다(단계마다 새 쪽, 단어 쓰기끼리는 잇는다)
+function wbDefaultBrk(el) {
+  const word = el.matches("table") ? "wb-page-word" : "wb-passage-word";
+  let prev = el.previousElementSibling;
+  while (prev && prev.matches(".pg-gap, .pg-edge, .wb-pg-bar")) prev = prev.previousElementSibling;
+  return el.classList.contains(word) && prev && prev.classList.contains(word) ? "auto" : "page";
+}
+const wbBrkOf = (el) => el.dataset.brk || wbDefaultBrk(el);
+const WB_CONT_GAP = 18;   // 앞 쪽에 이어 붙인 단계 위 여백(px) — style.css 인쇄 규칙의 margin-top과 같다
 
+/* 브라우저가 인쇄할 때 하는 일을 흉내 내 쪽을 나눈다. 단계 표는 쪽을 넘어 이어지므로(문항 .wb-q는
+   안 쪼개진다) 문항을 하나씩 담다가 안 들어가면 다음 쪽으로 넘긴다. breaks가 배열이면 쪽이 바뀌는
+   자리마다 {el, left, why}를 담는다 — 쪽 구성 화면이 그 자리에 경계선을 그린다.
+   인쇄 폭에서 재야 실제와 맞는다(화면 폭으로 재면 줄바꿈이 달라 쪽 수가 어긋난다). */
+function wbSimulate(doc, breaks) {
   const px = (el) => {
     if (!el) return 0;
     const cs = getComputedStyle(el);
     return el.getBoundingClientRect().height + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom);
   };
   const pageH = PAGE_H_MM * PX_PER_MM;
-  let pages = 0;
-
-  if (doc.querySelector(".wb-cover")) pages++;            // 표지는 한 쪽을 통째로 쓴다
   const repeatHead = !doc.classList.contains("wb-norepeat");
-
+  let pages = doc.querySelector(".wb-cover") ? 1 : 0;   // 표지는 한 쪽을 통째로 쓴다
   let used = 0;
-  let prevWord = false;   // 바로 앞 단계가 단어 쓰기였나 — 그러면 새 쪽 없이 잇는다(인쇄 CSS와 같은 규칙)
-  doc.querySelectorAll(".wb-passage").forEach((sec) => {
+  const newPage = (el, why, top) => {
+    if (breaks && why) breaks.push({ el, left: Math.max(0, pageH - used), why, no: pages + 1 });
+    pages++;
+    used = top;
+  };
+  doc.querySelectorAll(":scope > .wb-passage").forEach((sec, si) => {
     const title = px(sec.querySelector(".wb-titlebar"));
-    sec.querySelectorAll("table.wb-page").forEach((tbl, ti) => {
+    sec.querySelectorAll(":scope > table.wb-page").forEach((tbl, ti) => {
       const head = px(tbl.querySelector("thead"));
-      const word = tbl.classList.contains("wb-page-word");
-      const top = head + (ti === 0 ? title : 0);
-      if (word && prevWord && used + top <= pageH) {
-        used += top + 18;                                 // 같은 쪽에 이어 싣는다(margin-top 18px)
-      } else {
-        pages++;                                          // 단계마다 새 쪽
-        used = top;
-      }
-      prevWord = word;
+      const qs = [...tbl.querySelectorAll(".wb-q")];
+      const top = head + px(tbl.querySelector(".wb-guide")) + (ti === 0 ? title : 0);
+      const unit = ti === 0 ? sec : tbl;
+      const first = qs.length ? px(qs[0]) : 0;
+      if (si === 0 && ti === 0) newPage(unit, "", top);
+      else if (wbBrkOf(unit) === "page") newPage(unit, "새 쪽 시작으로 정한 단계", top);
+      // 이어 붙여도 머리말과 첫 문항이 안 들어가면 브라우저도 다음 쪽으로 넘긴다
+      else if (used + WB_CONT_GAP + top + first > pageH) newPage(unit, "자리가 모자라 넘어감", top);
+      else used += WB_CONT_GAP + top;
       let rowTop = null;
-      tbl.querySelectorAll(".wb-q").forEach((q) => {
+      qs.forEach((q) => {
         // 두 칸으로 늘어선 단어 문항은 한 줄에 둘 — 줄이 바뀔 때만 높이를 더한다
         const t = q.getBoundingClientRect().top;
         if (rowTop !== null && Math.abs(t - rowTop) < 1) return;
         rowTop = t;
         const h = px(q);
-        if (used + h > pageH) {                           // 안 들어가면 다음 쪽
-          pages++;
-          used = repeatHead ? head : 0;                   // 이어지는 쪽의 머리말
-        }
+        if (used + h > pageH && used > top) newPage(q, "단계가 다음 쪽으로 이어짐", repeatHead ? head : 0);
         used += h;
       });
     });
   });
   if (doc.querySelector(".wb-answerbook")) pages++;       // 정답 별지(어림)
+  return pages;
+}
 
+function wbCountPages() {
+  const doc = workbookDocEl;
+  if (!doc || !doc.querySelector(".wb-passage")) return 0;
+  const prev = doc.getAttribute("style") || "";
+  doc.style.width = PAGE_W_MM + "mm";
+  doc.style.maxWidth = "none";
+  const pages = wbSimulate(doc, null);
   doc.setAttribute("style", prev);
   return pages;
 }
@@ -7684,8 +7730,117 @@ function syncWbTight() {
     (best < now ? ` — 둘 다 켜면 ${best}쪽까지 줄어듭니다.` : " (더 줄일 자리는 없습니다.)");
 }
 
-if (wbTightChk) wbTightChk.addEventListener("change", syncWbTight);
-if (wbNoRepeatChk) wbNoRepeatChk.addEventListener("change", syncWbTight);
+if (wbTightChk) wbTightChk.addEventListener("change", () => { syncWbTight(); wbLayoutPages(); });
+if (wbNoRepeatChk) wbNoRepeatChk.addEventListener("change", () => { syncWbTight(); wbLayoutPages(); });
+
+/* ── 워크북 쪽 구성(2026-10-19) ──
+   처음엔 단계마다 새 쪽을 연다. 그래서 내용 O/X(⅓쪽)·단어 쓰기처럼 짧은 단계 뒤가 통째로 비었다
+   (사용자: "여백이 너무 아깝다"). 단계(또는 지문) 위의 [⤴ 위로 올리기]로 앞 쪽 빈자리에 이어 붙이고,
+   [✂ 새 쪽 시작]으로 되돌린다. 인쇄에 남는 것은 단위마다의 data-brk 하나뿐이고(style.css 인쇄 규칙),
+   경계선·빈 칸·단추는 화면 표시라 인쇄에서 빠진다. 지문 상세분석의 쪽 구성과 모양은 같지만, 워크북
+   단계는 여러 쪽에 걸쳐 이어지므로 쪽 셈은 wbSimulate로 따로 한다(지문 상세분석은 덩어리가 안 쪼개진다).
+   다시 그리면(출력 순서·단계 순서를 바꾸면) 화면이 새로 만들어져 쪽 나눔도 처음 상태로 돌아간다. */
+const wbPageBtn = $("wbPageBtn");
+const wbPageRaiseBtn = $("wbPageRaiseBtn");
+const wbPageResetBtn = $("wbPageResetBtn");
+const wbPageHint = $("wbPageHint");
+let wbPaging = false;
+
+function wbClearPageMarks() {
+  workbookDocEl.querySelectorAll(".pg-gap, .pg-edge, .wb-pg-bar").forEach((n) => n.remove());
+}
+
+function wbLayoutPages() {
+  if (!wbPaging) return 0;
+  const doc = workbookDocEl;
+  wbClearPageMarks();
+  if (!doc.querySelector(".wb-passage")) { setWbPaging(false); return 0; }
+  const breaks = [];
+  const pages = wbSimulate(doc, breaks);
+  // 쪽이 바뀌는 자리마다 '앞 쪽의 남은 빈 자리'를 벌리고 경계선을 넣는다
+  breaks.forEach((b) => {
+    if (b.left >= 6) {
+      const gap = document.createElement("div");
+      gap.className = "pg-gap";
+      gap.style.height = `${Math.round(b.left)}px`;
+      gap.setAttribute("aria-hidden", "true");
+      b.el.before(gap);
+    }
+    const edge = document.createElement("div");
+    edge.className = "pg-edge";
+    const mm = Math.round(b.left / PX_PER_MM);
+    edge.innerHTML = `<span class="pg-edge-no">${b.no}쪽</span>` +
+      `<span class="pg-edge-why">${esc(b.why + (mm >= 5 ? ` · 앞 쪽 아래 약 ${mm}mm 빔` : ""))}</span>`;
+    b.el.before(edge);
+  });
+  // 단위마다 손잡이 — 지금 상태에 따라 단추 글자가 바뀐다
+  wbPageUnits(doc).forEach((el) => {
+    const on = wbBrkOf(el) === "page";
+    const bar = document.createElement("div");
+    bar.className = "wb-pg-bar" + (on ? " on" : "");
+    const what = el.matches("table") ? "이 단계" : "이 지문";
+    bar.innerHTML = `<button type="button" class="pg-brk-btn">${on ? "⤴ 위로 올리기" : "✂ 새 쪽 시작"}</button>` +
+      `<span class="pg-note">${on ? `${what}는 새 쪽에서 시작` : `${what}는 앞 쪽에 이어 붙음`}</span>`;
+    bar.querySelector("button").title = on
+      ? "앞 쪽 빈자리에 이어 붙입니다." : "여기부터 새 쪽에서 시작하게 합니다.";
+    bar._unit = el;
+    el.before(bar);
+  });
+  wbPageHint.textContent = `모두 약 ${pages}쪽 — 단계 위의 [⤴ 위로 올리기] · [✂ 새 쪽 시작]으로 쪽을 나누세요.`;
+  return pages;
+}
+
+function setWbPaging(on) {
+  wbPaging = on;
+  workbookDocEl.classList.toggle("paging", on);
+  wbPageBtn.textContent = on ? "✅ 쪽 구성 끝내기" : "📄 쪽 구성";
+  wbPageRaiseBtn.style.display = on ? "inline-flex" : "none";
+  wbPageResetBtn.style.display = on ? "inline-flex" : "none";
+  if (on) {
+    // 처음 상태를 글자로 박아 둔다 — 화면용 경계선·단추가 끼어들면 인쇄 CSS의 '바로 앞 형제' 규칙이 깨진다
+    wbPageUnits().forEach((el) => { if (!el.dataset.brk) el.dataset.brk = wbDefaultBrk(el); });
+    wbLayoutPages();
+  } else {
+    wbClearPageMarks();
+    wbPageHint.textContent = "";
+  }
+}
+
+if (wbPageBtn) {
+  wbPageBtn.addEventListener("click", () => setWbPaging(!wbPaging));
+  wbPageRaiseBtn.addEventListener("click", () => {
+    const before = wbLayoutPages();
+    const targets = wbPageUnits().filter((el) => wbBrkOf(el) === "page");
+    targets.forEach((el) => { el.dataset.brk = "auto"; });
+    const after = wbLayoutPages();
+    syncWbTight();
+    wbPageHint.textContent = targets.length
+      ? `${targets.length}군데를 올려 약 ${before}쪽 → ${after}쪽으로 줄였습니다. 되돌리려면 [↺ 쪽 구성 처음으로]를 누르세요.`
+      : "올릴 수 있는 단계가 없습니다 — 이미 모두 앞 쪽에 이어 붙어 있습니다.";
+  });
+  wbPageResetBtn.addEventListener("click", () => {
+    wbPageUnits().forEach((el) => { el.dataset.brk = wbDefaultBrk(el); });
+    wbLayoutPages();
+    syncWbTight();
+  });
+  // workbookDocEl은 아래에서 선언되므로 여기서는 DOM에서 바로 집는다(TDZ 회피)
+  $("workbookDoc").addEventListener("click", (e) => {
+    const btn = e.target.closest(".wb-pg-bar .pg-brk-btn");
+    if (!btn || !wbPaging) return;
+    const el = btn.parentElement._unit;
+    if (!el) return;
+    el.dataset.brk = wbBrkOf(el) === "page" ? "auto" : "page";
+    wbLayoutPages();
+    syncWbTight();
+  });
+  // 창 폭이 바뀌면 줄바꿈이 달라져 쪽 경계도 달라진다
+  let wbPageResizeTimer = 0;
+  window.addEventListener("resize", () => {
+    if (!wbPaging) return;
+    clearTimeout(wbPageResizeTimer);
+    wbPageResizeTimer = setTimeout(wbLayoutPages, 200);
+  });
+}
 
 const wbAnswerBookChk = $("wbAnswerBookChk");
 const workbookDocEl = $("workbookDoc");
@@ -7753,7 +7908,7 @@ async function generateWorkbook() {
     wbErrorEl.textContent = "워크북을 만들 영어 지문을 입력하세요.";
     return;
   }
-  const stages = [...wbStageGridEl.querySelectorAll("input:checked")].map((i) => parseInt(i.value, 10));
+  const stages = wbPickedStages();
   if (!stages.length) {
     wbErrorEl.textContent = "포함할 단계를 하나 이상 선택하세요.";
     return;
@@ -7895,7 +8050,7 @@ function drawWorkbook(results) {
   const htmlParts = [];
   const title = wbTitleEl.value.trim();
   const exam = wbExamEl ? wbExamEl.value.trim() : "";
-  const stages = [...wbStageGridEl.querySelectorAll("input:checked")].map((i) => parseInt(i.value, 10));
+  const stages = wbPickedStages();
   if (title) {
     htmlParts.push(`
       <div class="wb-cover">
@@ -7935,6 +8090,7 @@ function drawWorkbook(results) {
   }
   if (total) htmlParts.push(`<footer>단계별 WORKBOOK · 자동 생성</footer>`);
   workbookDocEl.innerHTML = htmlParts.join("");
+  if (wbPaging) setWbPaging(total > 0);   // 새로 그린 화면에 쪽 구성 표시를 다시 단다(나눔은 처음 상태로)
   syncWbTight();   // 새로 그렸으니 쪽 수를 다시 센다
   applyAnswerVisibility();
   workbookPrintBtn.style.display = total ? "inline-flex" : "none";
@@ -7977,7 +8133,7 @@ if (wbOrderEl) {
 
 function getWorkbookSettings() {
   return {
-    stages: [...wbStageGridEl.querySelectorAll("input:checked")].map((i) => parseInt(i.value, 10)),
+    stages: wbPickedStages(),
     title: wbTitleEl.value,
     exam: wbExamEl ? wbExamEl.value : "",
     answer: wbAnswerChk.checked,
@@ -7993,6 +8149,7 @@ function applyWorkbookSettings(settings) {
   wbStageGridEl.querySelectorAll("input").forEach((b) => {
     b.checked = wanted.has(parseInt(b.value, 10));
   });
+  wbStageOrder = (settings.stages || []).map(Number);   // 저장해 둔 인쇄 순서 그대로
   // 내용 O/X 고르기 — 담지 않은 옛 저장본은 지금 값을 그대로 둔다
   wbOxApply(settings.ox);
   wbWordApply(settings.words);
@@ -8126,7 +8283,7 @@ function syncWbAssignBtn() {
 }
 QUIZ_ASSIGN_SYNC.push(syncWbAssignBtn);
 $("wbAssignBtn").addEventListener("click", () => {
-  const stages = [...wbStageGridEl.querySelectorAll("input:checked")].map((i) => parseInt(i.value, 10));
+  const stages = wbPickedStages();
   openQuizAssign(wbQuestionsForStudents(lastWorkbookEntries, stages), wbTitleEl.value, "workbook");
 });
 
@@ -10689,11 +10846,11 @@ const HOWTO = {
     lead: "한 지문을 여러 단계로 나눠 학생이 차례로 풀어 나가는 학습지를 만듭니다.",
     steps: [
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
-      "넣을 <b>단계</b>를 체크합니다. (선택) <b>내용 O/X</b>·<b>목표어법 배열 영작</b>·<b>단어 쓰기 세 가지</b>(단어 수는 − / +)도 고를 수 있습니다.",
+      "넣을 <b>단계</b>를 체크합니다. <b>체크한 차례가 인쇄 순서</b>입니다. (선택) <b>내용 O/X</b>·<b>목표어법 배열 영작</b>·<b>단어 쓰기 세 가지</b>(단어 수는 − / +)도 고를 수 있습니다.",
       "<b>[워크북 만들기]</b>를 누릅니다. <b>정답 표시 (교사용)</b>를 켜면 선생님용으로 인쇄됩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
     ],
-    tip: "값은 단계 수에 따라 오르다가 일정 단계부터 더 오르지 않습니다. 지문이 여럿이면 <b>지문별로 묶기 / 단계별로 묶기</b>를 고를 수 있습니다." + HOWTO_PAUSE_TIP,
+    tip: "단계 뒤가 비면 <b>[📄 쪽 구성]</b>에서 <b>[⤴ 위로 올리기]</b>로 앞 쪽에 이어 붙이세요. 값은 단계 수에 따라 오르다가 일정 단계부터 더 오르지 않습니다. 지문이 여럿이면 <b>지문별로 묶기 / 단계별로 묶기</b>를 고를 수 있습니다." + HOWTO_PAUSE_TIP,
     shots: {
       0: [{ img: "howto-step-mcq-1.jpg", cap: "지문을 붙여 넣은 모습" }],
       1: [{ img: "howto-step-workbook-1.jpg", cap: "넣을 단계 체크" }],
