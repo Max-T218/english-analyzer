@@ -7909,6 +7909,31 @@ if (wbExamEl) {
   );
 }
 
+/* 워크북 표지 — 제목이 있을 때만, 인쇄에서 한 장을 차지한다. */
+function wbCoverHtml(title, exam) {
+  return `
+      <div class="wb-cover">
+        <h1>${esc(title)}</h1>
+        ${exam ? `<div class="wb-exam">${esc(exam)}</div>` : ""}
+        <div class="wb-date">${esc(new Date().toLocaleDateString("ko-KR"))}</div>
+      </div>`;
+}
+/* 만든 뒤에 제목·시험명을 고쳐도 표지가 바로 따라오게 한다(2026-10-19 — 예전엔 [워크북 만들기]를
+   누를 때의 제목으로만 표지를 만들어, 만든 뒤 제목을 적으면 표지가 안 생겼다). 다른 탭의 applyDocCover처럼
+   화면을 다시 그리지 않고 표지만 갈아 끼운다 — 쪽 구성에서 정한 나눔이 그대로 남는다. */
+function syncWbCover() {
+  if (!workbookDocEl.querySelector(":scope > .wb-passage")) return;   // 결과가 없으면 표지도 안 붙인다
+  const title = wbTitleEl.value.trim();
+  const old = workbookDocEl.querySelector(":scope > .wb-cover");
+  if (!title) { if (old) old.remove(); }
+  else if (old) old.outerHTML = wbCoverHtml(title, wbExamEl ? wbExamEl.value.trim() : "");
+  else workbookDocEl.insertAdjacentHTML("afterbegin", wbCoverHtml(title, wbExamEl ? wbExamEl.value.trim() : ""));
+  syncWbTight();
+  wbLayoutPages();
+}
+wbTitleEl.addEventListener("input", syncWbCover);
+if (wbExamEl) wbExamEl.addEventListener("input", syncWbCover);
+
 // 정답 표시 토글 — 다시 그리지 않고 클래스만 바꿔서 (섞인 보기·순서가 유지되도록)
 const WB_ANSWER_STORE = "gemini_wb_answer";
 wbAnswerChk.checked = localStorage.getItem(WB_ANSWER_STORE) === "1";
@@ -8102,14 +8127,7 @@ function drawWorkbook(results, opts = {}) {
   const title = wbTitleEl.value.trim();
   const exam = wbExamEl ? wbExamEl.value.trim() : "";
   const stages = wbPickedStages();
-  if (title) {
-    htmlParts.push(`
-      <div class="wb-cover">
-        <h1>${esc(title)}</h1>
-        ${exam ? `<div class="wb-exam">${esc(exam)}</div>` : ""}
-        <div class="wb-date">${esc(new Date().toLocaleDateString("ko-KR"))}</div>
-      </div>`);
-  }
+  if (title) htmlParts.push(wbCoverHtml(title, exam));
 
   let answerBody = "";
   if (wbOrderEl && wbOrderEl.value === "stage") {
