@@ -1203,6 +1203,11 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 }
 /* 워크북 내용 O/X 개수 칸 */
 .wb-ox-box{margin:10px 0 4px; padding:10px 12px; border:1px solid var(--line); border-radius:8px;}
+/* 단어 쓰기 단어 수 — 고르지 않은 단계 칸은 숨긴다(.type-chip의 display:flex가 hidden을 이겨 남아 보였다).
+   이름이 '영영풀이 보 / 고 단어 쓰기'처럼 끊기지 않게 칸을 넓히고 한 줄로 둔다. */
+#wbWordGrid .type-chip[hidden]{display:none;}
+#wbWordGrid{grid-template-columns:repeat(auto-fill, minmax(250px, 1fr));}
+#wbWordGrid .type-name{white-space:nowrap;}
 /* 유형 이름 'OX진위(한)'이 두 줄로 쪼개지지 않게 칸을 넓히고 이름을 한 줄로 둔다 */
 #wbOxGrid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));}
 #wbOxGrid .type-name{white-space:nowrap;}
