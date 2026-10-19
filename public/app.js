@@ -10126,6 +10126,16 @@ async function openSavedList(kind, target, onlyTab) {
     const data = await getJson("/api/saved", "저장 목록을 불러오지 못했습니다.");
     // 옛 기출 구성 저장본(tab "exam")을 기출 구성으로 돌려 보인다 — savedTabOf 참고
     savedItemsCache = (data.items || []).map((it) => ({ ...it, tab: savedTabOf(it) }));
+    /* 제작 자료 저장함은 지금 보고 있는 탭의 종류를 골라 둔 채 연다 — 워크북 탭에서 열었는데
+       [전체]로 열리면 124개 중 워크북 10개를 직접 찾아야 했다(2026-10-19 사용자). [전체]는 그대로
+       한 번 누르면 된다. 탭을 아직 안 골랐거나 그 탭 저장본이 없으면 [전체]. */
+    if (openLibrary === "material") {
+      const on = tabBtns.find((b) => b.classList.contains("active"));
+      const kind = on && on.dataset.tab;
+      if (kind && savedItemsCache.some((it) => it.tab === kind && LIBRARY.material.match(it))) {
+        savedKindFilter = kind;
+      }
+    }
     renderSavedList();
   } catch (err) {
     savedItemsCache = [];
