@@ -1774,6 +1774,15 @@ u{
 .wb-pg-bar.on .pg-brk-btn{background:var(--g); color:#fff; border-color:var(--g);}
 .wb-pg-bar.on .pg-brk-btn:hover{background:#a81f1f;}
 #workbookDoc.paging{width:186mm; max-width:100%; margin:0 auto;}
+/* 단계 순서 ▲/▼ — 쪽 나눔 단추와 헷갈리지 않게 오른쪽 끝에 회색 윤곽으로 */
+.wb-mv-group{margin-left:auto; display:inline-flex; gap:6px;}
+.wb-mv{
+  font:inherit; font-size:12.5px; font-weight:800; line-height:1; white-space:nowrap;
+  padding:7px 12px; border-radius:999px; cursor:pointer;
+  border:1.5px solid var(--line); background:var(--card); color:var(--ink);
+}
+.wb-mv:hover:not(:disabled){border-color:var(--accent); color:var(--accent);}
+.wb-mv:disabled{opacity:.35; cursor:default;}
 
 /* ── 문장 카드 (좌우 7:3) ── */
 .sent{
