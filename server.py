@@ -389,12 +389,22 @@ PRICE_OCR_KRW = int(os.environ.get("PRICE_OCR_KRW", "0"))                  # 사
 # 정하기 전에 먼저 돈을 내는 셈이 된다.
 # OCR·지문 변형과 같은 자리다 — 결과물이 아니라 '만들기 전 단계'는 받지 않는다.
 PRICE_EXAMSCAN_KRW = int(os.environ.get("PRICE_EXAMSCAN_KRW", "0"))
-# 시험지 분석 리포트 — 보고서 1건당 정액(2026-09-29 사용자 결정: 1,000P). 받는 자리는 총평을
-# 쓸 때 한 번이다(분석이 끝나면 총평까지 저절로 이어지므로 보고서 하나에 한 번 받는 셈이다).
-# 유형 분석·지문 읽기(/api/examscan·/api/examocr)는 동형 모의고사 탭과 값을 같이 쓰는데
-# 그 둘은 무료로 두기로 했으므로, 보고서 값은 여기 한 곳에서만 받는다.
+# 시험지 분석 리포트 — 총평 1건당 정액. 받는 자리는 총평을 쓸 때 한 번이다(분석이 끝나면
+# 총평까지 저절로 이어지므로 보고서 하나에 한 번 받는 셈이다).
 # 실측 원가(8쪽 시험지 1부): 범위 없이 약 290원 · 범위 대조까지 약 780원 · 3부 합치기 약 860원.
-PRICE_EXAM_TREND_KRW = int(os.environ.get("PRICE_EXAM_TREND_KRW", "1000"))
+# 원가는 쪽 수를 따라가는데(유형 분석은 3쪽씩, 지문 옮겨 적기는 2쪽씩 AI에 보낸다) 처음에는
+# 1,000P 정액만 받아, 3부를 범위까지 대조하면 원가가 약 2,300원으로 손해였다. 그래서
+# 2026-10-20(사용자 결정)부터 쪽당으로 받고 총평 값은 1,000P → 300P로 내렸다. 부가 아니라
+# 쪽으로 세는 까닭: 사진은 한 번에 고른 묶음이 한 부라, 시험지 셋을 한꺼번에 찍어 올리면
+# 한 부로 잡힌다 — 몇 부인지는 알 수 없어도 쪽(그림 장수)은 서버가 정확히 센다.
+PRICE_EXAM_TREND_KRW = int(os.environ.get("PRICE_EXAM_TREND_KRW", "300"))
+# 시험지 분석 리포트 탭에서 읽는 쪽 하나의 값 — 유형 분석(/api/examscan) 1쪽당, 시험 범위를
+# 대조할 때 지문 옮겨 적기(/api/examocr) 1쪽당 따로 받는다(둘 다 하면 쪽당 200P).
+# 원가는 쪽당 약 36원 · 약 62원(위 실측을 8쪽으로 나눈 값). **동형 모의고사 탭은 그대로 무료다**
+# (사용자 결정 — 문항값으로 이미 남는다). 두 탭이 같은 주소를 부르므로 리포트 탭이 요청에
+# trend:true를 실어 가르고, 그 표시가 있을 때만 이 값을 받는다(_trend_page_cost).
+PRICE_TREND_SCAN_PAGE_KRW = int(os.environ.get("PRICE_TREND_SCAN_PAGE_KRW", "100"))
+PRICE_TREND_OCR_PAGE_KRW = int(os.environ.get("PRICE_TREND_OCR_PAGE_KRW", "100"))
 # 학생 성적표 코멘트(AI) — 1건당 정액. 집계 숫자만 보는 짧은 글쓰기라 Flash로 충분하다.
 PRICE_STUDENT_COMMENT_KRW = int(os.environ.get("PRICE_STUDENT_COMMENT_KRW", "50"))
 # 시험지에서 지문 꺼내기 — 유형 분석과 달리 지문 전문을 옮겨 적으므로 출력이 길고,
@@ -429,6 +439,45 @@ MCQ_ONLY_TYPES = {
     "문법 쓰임 같은 것", "문법 쓰임 다른 것", "다의어 같은 뜻", "짝지어진 대화",
     "대화 어법·어휘 선택", "짝지어진 대화 어법", "대화 상황 파악",
 }
+
+
+def _pdf_page_count(data):
+    """base64로 온 PDF의 쪽 수. 쪽 그림을 꺼낼 수 없는 PDF는 화면이 파일을 통째로 보내므로
+    (app.js examPdfNeedsWhole) 그림 한 장이 아니라 그 안의 쪽 수로 센다. 못 세면 1쪽."""
+    try:
+        s = str(data or "")
+        raw = base64.b64decode(s.split(",", 1)[1] if s.startswith("data:") else s)
+    except Exception:
+        return 1
+    if PDF_READY:
+        try:
+            from pdfminer.pdfpage import PDFPage
+            n = sum(1 for _ in PDFPage.get_pages(io.BytesIO(raw)))
+            if n > 0:
+                return n
+        except Exception:
+            pass
+    return max(1, len(re.findall(rb"/Type\s*/Page(?![a-zA-Z])", raw)))
+
+
+def _trend_page_cost(files, unit, paid_idx=()):
+    """시험지 분석 리포트 탭이 보낸 쪽 묶음의 값과 쪽 수 — 사진·쪽 그림은 한 장에 1쪽,
+    통째로 온 PDF는 그 안의 쪽 수다. paid_idx는 이 묶음 안에서 이미 값을 낸 그림의 자리다:
+    지문 옮겨 적기는 2쪽씩 한 쪽 겹쳐 읽어(trendOcrStarts) 겹친 쪽을 두 번 받으면 안 된다.
+    화면이 알려 주는 값이지만 빼 주는 쪽으로만 쓰이므로 회원에게 불리해질 일은 없다."""
+    skip = set()
+    for v in paid_idx or ():
+        try:
+            skip.add(int(v))
+        except (TypeError, ValueError):
+            continue
+    pages = 0
+    for i, f in enumerate(files or ()):
+        if i in skip or not isinstance(f, dict):
+            continue
+        mime = (f.get("mime") or "").lower()
+        pages += _pdf_page_count(f.get("data")) if "pdf" in mime else 1
+    return unit * pages, pages
 
 
 def _quiz_type_base_price(t):
@@ -10715,6 +10764,15 @@ CHANGELOG = [
             "모든 지문에서 함께 옮겨지고, 정해 둔 쪽 나눔은 그대로 남습니다.",
         ],
     },
+    {
+        "version": 80,
+        "date": "2026-10-20",
+        "items": [
+            "시험지 분석 리포트 — 값이 보고서 1건 정액에서 읽은 시험지 쪽 수(사진 한 장·PDF 한 쪽)대로 바뀌었습니다. "
+            "시험 범위를 넣어 대조하면 쪽마다 조금 더 붙고, 총평 값은 내렸습니다. [분석하기]를 누르면 쪽 수와 금액을 먼저 보여 드립니다. "
+            "못 읽은 쪽은 값을 받지 않고, 동형 모의고사의 기출 분석은 지금처럼 무료입니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -13900,6 +13958,9 @@ class Handler(BaseHTTPRequestHandler):
                 # 기출 유형 분석 — 기본 0원. 값이 붙어도 시험지 1벌당이지 쪽 수에 곱하지 않는다
                 "examScan": PRICE_EXAMSCAN_KRW,
                 "examTrend": PRICE_EXAM_TREND_KRW,
+                # 시험지 분석 리포트 탭에서만 — 유형 분석·범위 대조(지문 옮겨 적기) 1쪽당
+                "trendScanPage": PRICE_TREND_SCAN_PAGE_KRW,
+                "trendOcrPage": PRICE_TREND_OCR_PAGE_KRW,
                 "studentComment": PRICE_STUDENT_COMMENT_KRW,
                 # 시험지에서 지문 꺼내기 — 이것만 쪽당이다(화면이 쪽 수를 곱해 보여 준다)
                 "examOcrPage": PRICE_EXAM_OCR_KRW,
@@ -14453,9 +14514,13 @@ class Handler(BaseHTTPRequestHandler):
                     cost = PRICE_EXAMSCAN_KRW
                     pages = len(req.get("files") or ())
                     self._pending_label = f"기출 유형 분석 · {pages}쪽"
+                    # 시험지 분석 리포트 탭에서 온 것만 쪽당 받는다(동형 모의고사 탭은 무료).
+                    if req.get("trend"):
+                        cost, pages = _trend_page_cost(req.get("files"), PRICE_TREND_SCAN_PAGE_KRW)
+                        self._pending_label = f"시험지 분석 · 유형 {pages}쪽"
                 elif path == "/api/examtrend":
                     cost = PRICE_EXAM_TREND_KRW
-                    self._pending_label = "출제경향 보고서"
+                    self._pending_label = "시험지 분석 · 총평"
                 elif path == "/api/studentcomment":
                     cost = PRICE_STUDENT_COMMENT_KRW
                     self._pending_label = "성적표 코멘트"
@@ -14464,6 +14529,10 @@ class Handler(BaseHTTPRequestHandler):
                     pages = len(req.get("files") or ())
                     cost = PRICE_EXAM_OCR_KRW * pages
                     self._pending_label = f"시험지에서 지문 꺼내기 · {pages}쪽"
+                    if req.get("trend"):
+                        cost, pages = _trend_page_cost(req.get("files"), PRICE_TREND_OCR_PAGE_KRW,
+                                                       req.get("paidIdx"))
+                        self._pending_label = f"시험지 분석 · 범위 대조 {pages}쪽"
                 elif path == "/api/pdfsplit":
                     # 규칙으로 나누는 길은 Gemini를 부르지 않으므로 언제나 0원이다.
                     # 'AI로 다시 시도'(ai=true)일 때만 값을 매긴다.

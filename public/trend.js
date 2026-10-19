@@ -273,6 +273,16 @@ function trendStatus(msg, kind) {
   trendStatusEl.className = "exam-status" + (kind ? " " + kind : "");
 }
 
+/* 시험지 분석 값은 쪽당이다(2026-10-20 — 사진은 한 번에 고른 묶음이 한 부라 몇 부인지는 알 수
+   없어도 쪽은 셀 수 있다). 쪽 그림 하나 = 1쪽, 통째로 보내는 PDF는 그 안의 쪽 수. */
+function trendPdfPageCount(buf) {
+  let s = "";
+  for (let i = 0; i < buf.length; i += 65536) s += String.fromCharCode.apply(null, buf.subarray(i, i + 65536));
+  return Math.max(1, (s.match(/\/Type\s*\/Page(?![a-zA-Z])/g) || []).length);
+}
+const trendPartPages = (p) => (p && p.pdfPages) || 1;
+const trendIdxPages = (d, idx) => idx.reduce((n, i) => n + trendPartPages(d.pages[i]), 0);
+
 async function trendAddFiles(fileList) {
   if (trendBusy) return;
   trendBusy = true;
@@ -310,7 +320,9 @@ async function trendAddFiles(fileList) {
               `${file.name} 은 쪽 그림을 꺼낼 수 없는 PDF인데 용량이 너무 큽니다. 쪽을 사진으로 찍거나 캡처해서 올려 주세요.`;
             continue;
           }
-          doc.pages.push({ mime: "application/pdf", data });
+          // 값은 쪽당이라(server.py _trend_page_cost) 통째 PDF는 그 안의 쪽 수를 세어 둔다 — 예상 비용용.
+          // 실제로 받는 값은 서버가 다시 센다
+          doc.pages.push({ mime: "application/pdf", data, pdfPages: trendPdfPageCount(buf) });
         }
         trendDocs.push(doc);
       } else if (isPhoto(file)) {
@@ -469,11 +481,19 @@ async function trendReadPassages(d) {
       tails.set(passageKey(found[at].text, true), at);
     }
   };
-  const read = (idx) => postGenerate(
-    "/api/examocr",
-    { files: idx.map((i) => d.pages[i]), pageFrom: idx[0] + 1, pageTotal: d.pages.length },
-    "시험지에서 지문을 꺼내지 못했습니다."
-  );
+  /* 값은 쪽당이고 2쪽씩 한 쪽 겹쳐 읽으므로, 이미 값을 낸 쪽(d.ocrPaid)은 paidIdx로 알려
+     서버가 빼게 한다 — 안 그러면 겹친 쪽마다 두 번 받는다. 읽기에 성공한 묶음만 낸 것으로 친다. */
+  if (!retry || !(d.ocrPaid instanceof Set)) d.ocrPaid = new Set();
+  const read = async (idx) => {
+    const res = await postGenerate(
+      "/api/examocr",
+      { files: idx.map((i) => d.pages[i]), pageFrom: idx[0] + 1, pageTotal: d.pages.length,
+        trend: true, paidIdx: idx.map((i, k) => (d.ocrPaid.has(i) ? k : -1)).filter((k) => k >= 0) },
+      "시험지에서 지문을 꺼내지 못했습니다."
+    );
+    idx.forEach((i) => d.ocrPaid.add(i));
+    return res;
+  };
   // 처음이면 2쪽씩 겹쳐 묶고, 다시 읽는 것이면 못 읽은 쪽만 한 쪽씩
   const jobs = retry
     ? d.ocrFailed.map((i) => [i])
@@ -514,14 +534,29 @@ async function trendRun() {
   const todo = trendPending();
   if (!todo.length) return;
   trendErrorEl.textContent = "";
-  const scanCalls = todo.reduce((n, d) => n + (!trendNeedsScan(d) ? 0 : d.questions
-    ? d.failedIdx.length : Math.ceil(d.pages.length / EXAM_SCAN_BATCH)), 0);
-  const ocrPages = todo.reduce((n, d) => n + (trendNeedsPassages(d)
-    ? trendOcrStarts(d.pages.length).reduce((m, i) => m + Math.min(EXAM_OCR_BATCH, d.pages.length - i), 0) : 0), 0);
-  const won = PRICING ? (PRICING.examScan || 0) * scanCalls + (PRICING.examOcrPage || 0) * ocrPages
-    + (trendAi ? 0 : (PRICING.examTrend || 0)) : 0;
+  // 예상 값 — 쪽당(서버 PRICE_TREND_SCAN_PAGE_KRW · PRICE_TREND_OCR_PAGE_KRW). 다시 읽는 것이면 못 읽은 쪽만,
+  // 범위 대조는 아직 값을 안 낸 쪽만 센다(trendReadPassages의 d.ocrPaid)
+  const allIdx = (d) => d.pages.map((_p, i) => i);
+  const scanPages = todo.reduce((n, d) => n + (!trendNeedsScan(d) ? 0
+    : trendIdxPages(d, d.questions ? d.failedIdx : allIdx(d))), 0);
+  const ocrPages = todo.reduce((n, d) => {
+    if (!trendNeedsPassages(d)) return n;
+    const again = Array.isArray(d.ocrFailed) && d.ocrFailed.length && Array.isArray(d.passages);
+    const paid = again && d.ocrPaid instanceof Set ? d.ocrPaid : new Set();
+    return n + trendIdxPages(d, (again ? d.ocrFailed : allIdx(d)).filter((i) => !paid.has(i)));
+  }, 0);
+  const scanWon = PRICING ? (PRICING.trendScanPage || 0) * scanPages : 0;
+  const ocrWon = PRICING ? (PRICING.trendOcrPage || 0) * ocrPages : 0;
+  const aiWon = PRICING && !trendAi ? (PRICING.examTrend || 0) : 0;
+  const won = scanWon + ocrWon + aiWon;
+  const lines = [
+    scanPages ? `· 유형 분석 ${scanPages}쪽 ${pt(scanWon)}` : "",
+    ocrPages ? `· 시험 범위 대조 ${ocrPages}쪽 ${pt(ocrWon)}` : "",
+    aiWon ? `· 총평 ${pt(aiWon)}` : "",
+  ].filter(Boolean).join("\n");
   if (won > 0 && !(await costConfirmed(won,
-      `시험지 ${todo.length}부를 분석${trendAi ? "합니다(총평은 그대로 둡니다)" : "하고 총평까지 씁니다"}${ocrPages ? " (출제 지문 옮겨 적기 포함)" : ""}.`, scanCalls, ""))) return;
+      `시험지 ${todo.length}부를 분석${trendAi ? "합니다(총평은 그대로 둡니다)" : "하고 총평까지 씁니다"}.\n${lines}\n` +
+      "못 읽은 쪽은 값을 받지 않습니다.", undefined, ""))) return;
   trendBusy = true;
   trendRunBtn.disabled = true;
   trendLoadingEl.classList.add("on");
@@ -549,7 +584,7 @@ async function trendRun() {
       const readJob = async (idx) => {
         const scan = await postGenerate(
           "/api/examscan",
-          { files: idx.map((i) => d.pages[i]), pageFrom: idx[0] + 1, pageTotal: d.pages.length },
+          { files: idx.map((i) => d.pages[i]), pageFrom: idx[0] + 1, pageTotal: d.pages.length, trend: true },
           "시험지 분석에 실패했습니다."
         );
         // 첫 쪽에서 읽은 고사 이름(예: 2026학년도 2학기 영어Ⅱ 1차고사)을 부 이름으로 쓴다 —
@@ -641,10 +676,13 @@ trendRunBtn.addEventListener("click", trendRun);
 onPricingReady(() => {
   const el = $("trendCostHint");
   if (!el || !PRICING) return;
-  const won = PRICING.examTrend || 0;
-  el.innerHTML = won > 0
-    ? `시험지 분석은 <b>무료</b> · 보고서 총평 1건 <b>${pt(won)}</b>`
-    : "분석과 보고서 모두 <b>포인트가 들지 않습니다</b>";
+  const scan = PRICING.trendScanPage || 0, ocr = PRICING.trendOcrPage || 0, won = PRICING.examTrend || 0;
+  const parts = [
+    scan > 0 ? `시험지 1쪽당 <b>${pt(scan)}</b>(사진 한 장·PDF 한 쪽)` : "",
+    ocr > 0 ? `시험 범위를 넣으면 1쪽당 <b>${pt(ocr)}</b> 더` : "",
+    won > 0 ? `총평 1건 <b>${pt(won)}</b>` : "",
+  ].filter(Boolean);
+  el.innerHTML = parts.length ? parts.join(" · ") : "분석과 보고서 모두 <b>포인트가 들지 않습니다</b>";
 });
 
 /* ── 집계 ── */
@@ -2138,7 +2176,7 @@ trendSync();
 HOWTO.trend = {
   // 2026-10-18 짧게 다시 씀 + 화면 사진(app.js의 HOWTO 머리 주석 참고)
   title: "📊 시험지 분석 리포트 만드는 법",
-  lead: "기출 시험지의 문항 유형을 읽어 출제경향 보고서와 총평을 만듭니다. 시험지 분석에는 포인트가 들지 않고, 총평을 쓸 때 보고서 1건당 값이 매겨집니다.",
+  lead: "기출 시험지의 문항 유형을 읽어 출제경향 보고서와 총평을 만듭니다. 값은 읽은 시험지 쪽 수(사진 한 장·PDF 한 쪽)대로 매겨지고, 총평 값이 1건당 따로 붙습니다.",
   steps: [
     "<b>학교 이름</b>·<b>학년 · 과목</b>을 적고, 기출 시험지 <b>PDF·사진</b>을 끌어다 놓습니다. PDF 한 파일이 한 부입니다.",
     "(선택) <b>시험 범위 지문</b>을 넣으면 범위의 어느 지문이 몇 번 문항으로 나왔는지도 나옵니다.",
