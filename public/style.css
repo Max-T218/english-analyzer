@@ -1495,7 +1495,8 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 .brand-body label{font-size:12px; margin-bottom:4px;}
 input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:9px; padding:7px 9px;}
 .brand-preview-row{display:flex; align-items:center; gap:8px; margin-top:8px;}
-.brand-preview-row #brandRemoveBtn{flex:0 0 auto;}
+.brand-preview-row #brandRemoveBtn, .brand-preview-row #brandSaveBtn{flex:0 0 auto;}
+.brand-preview-row #brandSaveBtn:disabled{opacity:.55; cursor:default;}
 .brand-preview{
   flex:1; min-width:0; padding:8px 10px; border:1px dashed var(--brand); border-radius:8px;
   display:flex; align-items:center; gap:10px; min-height:40px; background:var(--card);

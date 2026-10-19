@@ -62,7 +62,7 @@ foreach ($n in 'GEMINI_API_KEY','GOOGLE_APPLICATION_CREDENTIALS_JSON','GOOGLE_CL
 
 dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를 로컬 서버와 배포 서버가
 똑같이 바라봅니다 — 컬렉션은 `users`, `sessions`, `saved_items`, `pending_signups`,
-`deleted_accounts`, `admin_sessions`, `payment_intents`, `saved_images`(요약 이미지 — 저장본에 딸린 그림), `brand_marks`(학원 마크 — 문서 `{uid}`=학원명, `{uid}__logo`·`{uid}__wm`=그림. `/api/brand` GET/POST, 화면 `brandPull`(로그인 때 받기)·`brandPush`·`brandClearLocal`(로그아웃 때 화면에서 지우기), 그림은 `shrinkBrandImage`로 줄여 보낸다. 탈퇴 때 함께 지운다).
+`deleted_accounts`, `admin_sessions`, `payment_intents`, `saved_images`(요약 이미지 — 저장본에 딸린 그림), `brand_marks`(학원 마크 — 문서 `{uid}`=학원명, `{uid}__logo`·`{uid}__wm`=그림. `/api/brand` GET/POST, 화면 `brandPull`(로그인 때 받기)·`brandPush`(**[💾 계정에 저장] 단추를 눌렀을 때만** 바꾼 칸을 올린다 — 2026-10-19 사용자 결정, 처음엔 바꿀 때마다 저절로 올렸다)·`brandClearLocal`(로그아웃 때 화면에서 지우기), 그림은 `shrinkBrandImage`로 줄여 보낸다. 탈퇴 때 함께 지운다).
 
 따라서 로컬 테스트가 곧 실데이터 조작입니다.
 

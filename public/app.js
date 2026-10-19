@@ -2,7 +2,7 @@
 
 // ── 열 때마다 완전 초기화 ──────────────────────────────────────────────
 // 창을 새로 열면 지문·학원 마크·모델 설정·단어장 데이터까지 전부 비운다.
-// (학원 마크는 계정에 저장해 두므로 로그인하면 brandPull이 다시 채운다.)
+// (학원 마크는 [계정에 저장]을 눌러 둔 사람이면 로그인할 때 brandPull이 다시 채운다.)
 // 공용 PC에서 앞사람 흔적이 남지 않게 하려는 것으로, 아래의 모든 초기화 코드보다
 // 먼저 실행되어야 하므로 파일 맨 위에 둔다.
 // (한 세션 안에서의 저장은 그대로 동작한다 — 예: 지문 분석 결과의 어휘를 단어장
@@ -1224,8 +1224,9 @@ verifyPanelEl.addEventListener("submit", async (e) => {
 $("verifyBackBtn").addEventListener("click", () => showSignupStep("form"));
 
 // ── 학원 마크(로고) — 고정 파일 대신 사용자가 올려 계정에 저장 ──
-// 이 페이지 안에서는 localStorage를 그대로 쓰고(trend.js의 인쇄 창도 여기서 읽는다), 바꿀 때마다
-// 서버(/api/brand)에도 올린다. 창을 열면 파일 맨 위에서 localStorage가 비워지므로 로그인하면
+// 이 페이지 안에서는 localStorage를 그대로 쓰고(trend.js의 인쇄 창도 여기서 읽는다), 선생님이
+// [💾 계정에 저장]을 눌렀을 때만 서버(/api/brand)에 올린다 — 넣기만 하고 안 누른 사람의 마크는
+// 계정에 남지 않는다(2026-10-19 사용자 결정, 처음엔 바꿀 때마다 저절로 올렸다). 창을 열면 파일 맨 위에서 localStorage가 비워지므로 로그인하면
 // brandPull이 계정에서 다시 채우고, 로그아웃하면 brandClearLocal이 지운다(공용 PC 보호).
 // 그림은 shrinkBrandImage로 줄여서 담는다 — 서버 문서 한도(1MiB)와 브라우저 저장 공간(약 5MB).
 const BRAND_IMG_STORE = "brand_mark_img";   // data URL
@@ -1325,10 +1326,8 @@ function shrinkBrandImage(file, maxSide) {
 
 // 계정에 올린다 — 실린 칸만 바뀐다. 실패해도 이 창에서는 그대로 쓴다.
 function brandPush(fields) {
-  if (!isLoggedIn) return;
-  postJson("/api/brand", fields, "학원 마크를 계정에 저장하지 못했습니다.").catch((err) => {
-    alert(`${err.message || "학원 마크를 계정에 저장하지 못했습니다."}\n이 창에서는 그대로 쓸 수 있지만, 다음 로그인 때는 다시 넣어야 합니다.`);
-  });
+  if (!isLoggedIn) return Promise.reject(new Error("로그인해야 계정에 저장할 수 있습니다."));
+  return postJson("/api/brand", fields, "학원 마크를 계정에 저장하지 못했습니다.");
 }
 
 function brandSetLocal(key, val) {
@@ -1343,6 +1342,20 @@ function brandSetLocal(key, val) {
 
 let brandPulled = false;          // 이번 로그인에서 계정의 마크를 받아 왔는지
 const brandTouched = new Set();   // 받아 오기 전에 손댄 칸 — 받아 온 값으로 덮지 않는다
+const brandDirty = new Set();     // 마지막 [계정에 저장] 뒤로 바꾼 칸 — 저장할 때 이 칸만 보낸다
+const brandSaveBtn = $("brandSaveBtn");
+
+// 저장 단추 — 바꾼 것이 있을 때만 누를 수 있다
+function syncBrandSaveBtn(label) {
+  if (!brandSaveBtn) return;
+  brandSaveBtn.disabled = !brandDirty.size;
+  brandSaveBtn.textContent = (!brandDirty.size && label) || "💾 계정에 저장";
+}
+function brandMarkDirty(k) {
+  brandTouched.add(k);
+  brandDirty.add(k);
+  syncBrandSaveBtn();
+}
 
 async function brandPull() {
   if (brandPulled) return;
@@ -1362,35 +1375,28 @@ async function brandPull() {
   if (!brandTouched.has("logo")) brandSetLocal(BRAND_IMG_STORE, d.logo || "");
   if (!brandTouched.has("wm")) brandSetLocal(BRAND_WM_STORE, d.wm || "");
   renderBrand();
+  syncBrandSaveBtn();
 }
 
 // 로그아웃 — 다음 사람 인쇄물에 이 계정의 마크가 찍히지 않게 화면에서 지운다(계정에는 남는다)
 function brandClearLocal() {
   brandPulled = false;
-  clearTimeout(brandNameTimer);
+  brandDirty.clear();
   [BRAND_IMG_STORE, BRAND_NAME_STORE, BRAND_WM_STORE].forEach((k) => brandSetLocal(k, ""));
   if (brandNameEl) brandNameEl.value = "";
   if (brandFileEl) brandFileEl.value = "";
   if (brandWmFileEl) brandWmFileEl.value = "";
   renderBrand();
+  syncBrandSaveBtn();
 }
 
-let brandNameTimer = 0;
 if (brandNameEl) {
   brandNameEl.value = localStorage.getItem(BRAND_NAME_STORE) || "";
-  const pushName = () => {
-    clearTimeout(brandNameTimer);
-    brandPush({ name: brandNameEl.value.trim() });
-  };
   brandNameEl.addEventListener("input", () => {
-    brandTouched.add("name");
-    const v = brandNameEl.value.trim();
-    brandSetLocal(BRAND_NAME_STORE, v);
+    brandMarkDirty("name");
+    brandSetLocal(BRAND_NAME_STORE, brandNameEl.value.trim());
     renderBrand();
-    clearTimeout(brandNameTimer);
-    brandNameTimer = setTimeout(pushName, 800);   // 글자마다 보내지 않고 멈추면 보낸다
   });
-  brandNameEl.addEventListener("change", pushName);
 }
 
 if (brandFileEl) {
@@ -1407,15 +1413,14 @@ if (brandFileEl) {
       brandFileEl.value = "";
       return;
     }
-    brandTouched.add("logo");
     shrinkBrandImage(file, BRAND_LOGO_SIDE).then((dataUrl) => {
       if (!brandSetLocal(BRAND_IMG_STORE, dataUrl)) {
         alert("그림이 너무 커서 넣지 못했습니다. 더 작은 그림으로 넣어 주세요.");
         brandFileEl.value = "";
         return;
       }
+      brandMarkDirty("logo");
       renderBrand();
-      brandPush({ logo: dataUrl });
     }).catch((err) => {
       alert(err.message || "로고 파일을 읽는 데 실패했습니다.");
       brandFileEl.value = "";
@@ -1433,7 +1438,6 @@ if (brandWmFileEl) {
       brandWmFileEl.value = "";
       return;
     }
-    brandTouched.add("wm");
     shrinkBrandImage(file, BRAND_WM_SIDE).then((dataUrl) => {
       // 로고와 워터마크가 브라우저 저장 공간(약 5MB)을 나눠 쓴다 — 넘치면 여기서 막힌다
       if (!brandSetLocal(BRAND_WM_STORE, dataUrl)) {
@@ -1441,8 +1445,8 @@ if (brandWmFileEl) {
         brandWmFileEl.value = "";
         return;
       }
+      brandMarkDirty("wm");
       renderBrand();
-      brandPush({ wm: dataUrl });
     }).catch((err) => {
       alert(err.message || "워터마크 파일을 읽지 못했습니다.");
       brandWmFileEl.value = "";
@@ -1453,11 +1457,10 @@ if (brandWmFileEl) {
 if (brandWmPreviewEl) {
   brandWmPreviewEl.addEventListener("click", (e) => {
     if (!e.target.closest("#brandWmClear")) return;
-    brandTouched.add("wm");
+    brandMarkDirty("wm");
     localStorage.removeItem(BRAND_WM_STORE);
     if (brandWmFileEl) brandWmFileEl.value = "";
     renderBrand();
-    brandPush({ wm: "" });
   });
 }
 
@@ -1469,12 +1472,32 @@ if (brandRemoveBtn) {
     if (brandFileEl) brandFileEl.value = "";
     if (brandWmFileEl) brandWmFileEl.value = "";
     if (brandNameEl) brandNameEl.value = "";
-    ["name", "logo", "wm"].forEach((k) => brandTouched.add(k));
-    clearTimeout(brandNameTimer);
-    renderBrand();
-    brandPush({ name: "", logo: "", wm: "" });   // 계정에서도 지운다
+    ["name", "logo", "wm"].forEach(brandMarkDirty);
+    renderBrand();   // 계정의 마크는 [계정에 저장]을 눌러야 함께 지워진다
   });
 }
+
+// [💾 계정에 저장] — 바꾼 칸만 보낸다. 빈 칸을 보내면 계정에서도 지워진다.
+if (brandSaveBtn) {
+  brandSaveBtn.addEventListener("click", async () => {
+    if (!brandDirty.size) return;
+    const sent = [...brandDirty];
+    const src = { name: BRAND_NAME_STORE, logo: BRAND_IMG_STORE, wm: BRAND_WM_STORE };
+    const fields = {};
+    sent.forEach((k) => { fields[k] = (localStorage.getItem(src[k]) || "").trim(); });
+    brandSaveBtn.disabled = true;
+    brandSaveBtn.textContent = "저장하는 중…";
+    try {
+      await brandPush(fields);
+      sent.forEach((k) => brandDirty.delete(k));   // 저장하는 사이 또 바꾼 칸은 남긴다
+      syncBrandSaveBtn("✓ 계정에 저장했습니다");
+    } catch (err) {
+      alert(err.message || "학원 마크를 계정에 저장하지 못했습니다.");
+      syncBrandSaveBtn();
+    }
+  });
+}
+syncBrandSaveBtn();
 
 renderBrand(); // 저장된 마크가 있으면 시작 시 바로 표시
 
