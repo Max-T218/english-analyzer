@@ -6400,8 +6400,76 @@ def normalize_workbook_arrange(result, stages):
     return result
 
 
-def normalize_workbook_words(result, word_counts):
+# 단어 쓰기 단어가 지문에 실제로 나왔는지 볼 때 쓰는 불규칙 변화형(기본형 → 변화형).
+# 규칙 변화(-s/-ed/-ing…)와 긴 낱말의 앞머리 맞대기로 못 잡는 흔한 것만 둔다.
+_IRREGULAR_FORMS = {
+    "arise": "arose arisen", "bear": "bore borne born", "beat": "beaten", "become": "became",
+    "begin": "began begun", "bind": "bound", "bring": "brought", "build": "built", "buy": "bought",
+    "catch": "caught", "choose": "chose chosen", "deal": "dealt", "draw": "drew drawn",
+    "drive": "drove driven", "fall": "fell fallen", "feed": "fed", "feel": "felt", "fight": "fought",
+    "find": "found", "flee": "fled", "forget": "forgot forgotten", "forgive": "forgave forgiven",
+    "freeze": "froze frozen", "give": "gave given", "go": "went gone", "grow": "grew grown",
+    "hide": "hid hidden", "hold": "held", "keep": "kept", "know": "knew known", "lay": "laid",
+    "lead": "led", "leave": "left", "lend": "lent", "lie": "lay lain", "lose": "lost", "make": "made",
+    "mean": "meant", "meet": "met", "pay": "paid", "rise": "rose risen", "say": "said",
+    "see": "saw seen", "seek": "sought", "sell": "sold", "send": "sent", "shake": "shook shaken",
+    "shine": "shone", "shoot": "shot", "sink": "sank sunk", "speak": "spoke spoken",
+    "spend": "spent", "spin": "spun", "stand": "stood", "steal": "stole stolen", "stick": "stuck",
+    "strike": "struck", "strive": "strove striven", "swear": "swore sworn", "take": "took taken",
+    "teach": "taught", "tear": "tore torn", "tell": "told", "think": "thought", "throw": "threw thrown",
+    "wake": "woke woken", "wear": "wore worn", "weave": "wove woven", "win": "won",
+    "withdraw": "withdrew withdrawn", "write": "wrote written", "child": "children",
+    "mouse": "mice", "foot": "feet", "tooth": "teeth", "man": "men", "woman": "women",
+    "phenomenon": "phenomena", "criterion": "criteria", "crisis": "crises", "analysis": "analyses",
+    "hypothesis": "hypotheses", "basis": "bases", "thesis": "theses", "medium": "media",
+    "datum": "data", "bacterium": "bacteria", "good": "better best", "bad": "worse worst",
+}
+
+
+def _word_forms(base):
+    """기본형 하나의 흔한 변화형 묶음(소문자)."""
+    b = base.lower()
+    forms = {b, b + "s", b + "es", b + "ed", b + "d", b + "ing", b + "er", b + "est"}
+    if len(b) > 2 and b.endswith("y") and b[-2] not in "aeiou":
+        forms |= {b[:-1] + x for x in ("ies", "ied", "ier", "iest")}
+    if b.endswith("ie"):
+        forms.add(b[:-2] + "ying")
+    if b.endswith("e"):
+        forms |= {b[:-1] + "ing", b[:-1] + "ed"}
+    if len(b) >= 3 and b[-1] not in "aeiouwxy":
+        forms |= {b + b[-1] + "ed", b + b[-1] + "ing", b + b[-1] + "er", b + b[-1] + "est"}
+    if b.endswith(("s", "x", "z", "ch", "sh")):
+        forms.add(b + "es")
+    if b.endswith("f"):
+        forms.add(b[:-1] + "ves")
+    if b.endswith("fe"):
+        forms.add(b[:-2] + "ves")
+    forms |= set(_IRREGULAR_FORMS.get(b, "").split())
+    return forms
+
+
+def _word_in_passage(en, tokens):
+    """단어(숙어면 낱말마다)가 지문 낱말 목록 tokens에 나왔는가. 변화형까지 본다.
+    여섯 글자 이상은 앞머리(다섯 글자 이상이면서 낱말 길이 - 3 글자 이상)가 같은 낱말도 인정한다 — 표에 없는 불규칙형
+    (overcome → overcame, understand → understood)까지 잡으려는 것. 짧은 낱말은 오인(cope/copy)이 잦아 변화형만 본다."""
+    parts = re.findall(r"[a-z]+", en.lower())
+    if not parts:
+        return False
+    for w in parts:
+        forms = _word_forms(w)
+        if tokens & forms:
+            continue
+        if len(w) >= 6 and any(
+                abs(len(t) - len(w)) <= 3 and len(os.path.commonprefix((t, w))) >= max(5, len(w) - 3)
+                for t in tokens):
+            continue
+        return False
+    return True
+
+
+def normalize_workbook_words(result, word_counts, passage=""):
     """워크북13·14·15 재료를 거른다 — 빈 항목·중복 단어를 버리고, 영영풀이에 답이 그대로 든 것도 버린다.
+    지문에 실제로 나오지 않은 단어도 버린다(지시문만으로는 지문 밖 단어가 섞일 수 있다 — 2026-10-19 사용자).
     남은 단어는 단계 차례(13→14→15)대로 단계별 개수만큼 나눠 담는다(result["wordPicks"] = {"13": [...], ...}).
     모자라면 뒤 단계가 그만큼 적게 받는다 — 화면은 있는 만큼만 그린다."""
     if not isinstance(result, dict) or not word_counts:
@@ -6412,6 +6480,7 @@ def normalize_workbook_words(result, word_counts):
         return result
     plain = lambda v, n: re.sub(r"<[^>]*>", "", str(v or "")).strip()[:n]
     seen, items = set(), []
+    tokens = set(re.findall(r"[a-z]+", str(passage or "").lower()))
     for it in wp.get("items") or ():
         if not isinstance(it, dict):
             continue
@@ -6422,6 +6491,8 @@ def normalize_workbook_words(result, word_counts):
         stem = re.sub(r"[^a-z]", "", key)[:5]
         if len(stem) >= 4 and stem in re.sub(r"[^a-z ]", "", de.lower()):
             continue            # 영영풀이에 단어(의 어근)가 그대로 들어 있다 — 답이 드러난다
+        if tokens and not _word_in_passage(en, tokens):
+            continue            # 지문에 없는 단어
         seen.add(key)
         items.append({"en": en, "ko": ko, "def": de})
     out, at = {}, 0
@@ -6461,7 +6532,7 @@ def call_gemini_workbook(passage, api_key, model, complete_hint=None, stages=Non
     return normalize_workbook_words(
         normalize_workbook_arrange(
             _gemini_json(payload, api_key, model, _WORKBOOK_TRUNC_MSG, label="workbook"), stages),
-        word_counts)
+        word_counts, passage)
 
 
 # ── 주제 & 흐름 요약 규칙 (상세분석·소책자 공용) ──
