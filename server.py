@@ -861,6 +861,12 @@ VERTEX_LATER_RETRY_BUDGET = float(os.environ.get("VERTEX_LATER_RETRY_BUDGET", "3
 # 이번 요청에서 Vertex로 몇 번째 보내는지 — 요청마다 do_POST가 0으로 되돌린다.
 # 요청 하나는 스레드 하나에서만 돈다(ThreadingHTTPServer)라 스레드별 값으로 센다.
 _VERTEX_CALLS = threading.local()
+# Vertex 요청에 붙이는 결제 라벨 — 구글 결제 보고서의 '그룹화 기준 → 라벨'에서 teacher(회원)·
+# feature(기능)로 실제 원가를 나눠 볼 수 있게 한다(2026-10-19). 결제 보고서는 모델·SKU별
+# 합계만 줘서 선생님마다 토큰 원가가 얼마인지 알 길이 없었다. AI Studio는 라벨을 받지 않아
+# Vertex로 간 호출만 잡힌다. 값은 _vertex_cost_tag(회원 id를 줄인 것) — 라벨 값에는 @·.를
+# 못 쓰고 결제 화면에 이메일을 남기고 싶지도 않다. 관리자 화면 회원 표에 같은 값이 나온다.
+_VERTEX_LABELS = threading.local()
 _VERTEX_LOCK = threading.Lock()
 _VERTEX_CREDS = None
 # 권한·설정 문제로 실패하면 한동안 Vertex를 건너뛴다 — 요청마다 헛걸음하면 그만큼 느려진다
@@ -893,11 +899,44 @@ def _vertex_ready():
     return GEMINI_VIA_VERTEX and time.time() >= _VERTEX_PAUSED_UNTIL
 
 
+def _vertex_cost_tag(user_id):
+    """회원 id → 결제 라벨 값(t + 해시 12자리). 같은 회원은 언제나 같은 값이다."""
+    if not user_id:
+        return ""
+    return "t" + hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:12]
+
+
+def _vertex_set_labels(labels):
+    """이번 요청(스레드)의 Vertex 라벨을 정한다. 다른 스레드로 일을 넘길 때도 이걸로 옮겨 준다."""
+    _VERTEX_LABELS.v = dict(labels) if labels else {}
+
+
+def _vertex_get_labels():
+    return dict(getattr(_VERTEX_LABELS, "v", None) or {})
+
+
+def _vertex_with_labels(data):
+    """본문(JSON bytes) 맨 앞에 labels를 끼워 넣는다 — 사진·PDF가 든 큰 본문을 다시
+    풀었다 묶지 않으려고 글자로 붙인다."""
+    labels = _vertex_get_labels()
+    if not labels or not data:
+        return data
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    head = data.lstrip()
+    if not head.startswith(b"{") or b'"labels"' in head[:200]:
+        return data
+    rest = head[1:].lstrip()
+    sep = b"" if rest.startswith(b"}") else b","
+    return b'{"labels":' + json.dumps(labels).encode("utf-8") + sep + rest
+
+
 def _vertex_post(model, data):
     """Vertex의 :generateContent로 보낸다. 본문·응답 모양은 AI Studio와 같다."""
     creds = _vertex_credentials()
     if creds is None:
         raise RuntimeError("Vertex용 서비스 계정 키가 없습니다")
+    data = _vertex_with_labels(data)
     url = (f"https://aiplatform.googleapis.com/v1/projects/{creds.project_id}"
            f"/locations/{VERTEX_LOCATION}/publishers/google/models/{model}:generateContent")
     req = urllib.request.Request(url, data=data, method="POST", headers={
@@ -3848,8 +3887,10 @@ def vocab_pdf_ai_chunked(pages, api_key, model):
     chunks = [c[:VOCAB_PDF_CHARS_PER_CALL * 2] for c in chunks[:VOCAB_PDF_MAX_CALLS]]
 
     results = [None] * len(chunks)
+    labels = _vertex_get_labels()   # 새 스레드에는 요청의 결제 라벨이 없어 옮겨 준다
 
     def work(i, text):
+        _vertex_set_labels(labels)
         try:
             results[i] = call_gemini_vocab_pdf(text, api_key, model)
         except Exception as e:   # 한 묶음 실패가 전체를 막지 않게 — 아래에서 모아 판단한다
@@ -11591,6 +11632,8 @@ def list_all_users():
             "dormant": bool(d.get("dormant")),
             # 휴면 예정 통지를 보낸 계정은 예정일까지 함께 보여 준다
             "dormantDue": _kst_date(d.get("dormant_due_at")) or "",
+            # 구글 결제 보고서의 teacher 라벨 값 — 그 보고서에서 이 회원의 원가를 찾는 열쇠
+            "costTag": _vertex_cost_tag(doc.id),
         })
     rows.sort(key=lambda r: r["createdAt"], reverse=True)
     return rows
@@ -14184,6 +14227,7 @@ class Handler(BaseHTTPRequestHandler):
         원인을 찾기가 매우 어렵다(실제로 그런 사고가 있었다)."""
         self._inflight_key = None
         _VERTEX_CALLS.n = 0   # 이번 요청의 Vertex 호출 차례를 처음부터 센다(_vertex_try)
+        _vertex_set_labels(None)   # 지난 요청의 회원 라벨이 남지 않게(keep-alive는 스레드를 다시 쓴다)
         try:
             self._handle_post()
         except Exception as e:
@@ -14303,6 +14347,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "로그인이 필요한 서비스입니다."}, 401)
                 return
             self._auth_user_id = user_id
+            _vertex_set_labels({"teacher": _vertex_cost_tag(user_id),
+                                "feature": path.rsplit("/", 1)[-1].lower()})
             # 끊겼던 요청을 다시 묻는 것이라면, 만들어 둔 것을 그대로 돌려준다.
             # 새로 만들지 않으므로 Gemini 요금도 회원 차감도 다시 일어나지 않는다.
             # 잔액 확인보다 앞에 두는 것이 중요하다 — 이미 값을 낸 결과를 받아 가는

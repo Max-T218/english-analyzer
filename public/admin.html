@@ -312,7 +312,8 @@ function renderUsers() {
   $("userTableBody").innerHTML = currentUsers.map((u) => `
     <tr style="border-bottom:1px solid var(--line-soft);" data-uid="${esc(u.id)}">
       <td style="padding:8px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-          title="${esc(u.email)}">${esc(u.email)}</td>
+          title="${esc(u.email)}">${esc(u.email)}${u.costTag ? `<div style="font-size:11px; color:var(--ink-soft); font-family:monospace;"
+            title="구글 결제 보고서 → 그룹화 기준 → 라벨 → teacher에서 이 값이 이 회원입니다">${esc(u.costTag)}</div>` : ""}</td>
       <td style="padding:8px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
           title="${esc(u.name)}">${esc(u.name)}</td>
       <td style="padding:8px 6px; white-space:nowrap;">${u.provider === "google" ? "구글" : "이메일"}</td>
