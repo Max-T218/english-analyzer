@@ -2653,3 +2653,8 @@ input.st-in{width:100%; box-sizing:border-box;}
 .mock-fill-choice{display:flex; flex-direction:column; gap:3px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; line-height:1.55;}
 .mock-fill-choice b{font-size:14.5px;}
 .mock-fill-cost{font-weight:700; color:var(--accent);}
+.mock-fill-key{display:flex; flex-direction:column; gap:5px; padding:10px 12px; margin-bottom:10px; border:1px dashed var(--line); border-radius:8px; font-size:13.5px; line-height:1.55;}
+.mock-fill-key textarea{width:100%; box-sizing:border-box; min-height:0; height:64px; font:inherit; font-size:13px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; resize:vertical;}
+.mock-fill-opt{font-weight:400; color:var(--muted, #777); font-size:12.5px;}
+.mock-fill-key-file{display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:13px;}
+.mock-restore-answers li.mock-key-off{color:#c0392b;}

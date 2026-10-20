@@ -4832,6 +4832,20 @@ def _ko_ratio(s):
     return sum(1 for c in letters if _HANGUL_RE.match(c)) / len(letters)
 
 
+def _pdf_unspace_letters(text):
+    """양쪽 정렬로 자간이 크게 벌어진 줄은 'p r o c e s s .  B a s e d  o n'처럼 글자마다 빈칸이
+    들어온다. 낱말 사이는 빈칸 둘 이상이라, 그런 줄만 골라 낱말 안의 빈칸을 지운다
+    (2026-10-21 교사용 독해 문제집 — 지문에 'a n d s o f t w a re'가 그대로 실렸다).
+    낱말 사이도 빈칸 하나인 줄은 되돌릴 수 없어 손대지 않는다."""
+    if "  " not in text:
+        return text
+    toks = text.split()
+    if len(toks) < 6 or sum(1 for t in toks if len(t) == 1) < len(toks) * 0.6:
+        return text
+    lead = text[:len(text) - len(text.lstrip())]
+    return lead + " ".join(w.replace(" ", "") for w in re.split(r" {2,}", text.strip()))
+
+
 def _pdf_page_lines(page):
     """PDF 한 쪽을 '읽는 순서대로 놓인 줄'의 목록으로 바꾼다.
 
@@ -4849,7 +4863,7 @@ def _pdf_page_lines(page):
         for ln in box:
             if not isinstance(ln, LTTextLine):
                 continue
-            text = ln.get_text().rstrip()
+            text = _pdf_unspace_letters(ln.get_text().rstrip())
             if not text.strip():
                 continue
             sizes = [c.size for c in ln if hasattr(c, "size")]
@@ -4926,6 +4940,18 @@ def _pdf_drop_running_heads(pages):
         for key in {re.sub(r"\d+", "#", r["t"].strip()) for r in lines}:
             seen[key] += 1
     common = {k for k, n in seen.items() if n >= len(pages) * 0.6}
+    # 책은 왼쪽·오른쪽 쪽의 머리말이 다르다('16 자이스토리 영어 독해 실전' / 'A. 목적 찾기 17') —
+    # 홀수 쪽끼리, 짝수 쪽끼리 따로 센다. 영어 본문의 흔한 줄('Sincerely,')이 우연히 같은 쪽 줄에
+    # 겹쳐 지워지지 않게 한글이 든 줄이나 숫자뿐인 줄만 이 길로 지운다(2026-10-21 교사용 독해 문제집).
+    if len(pages) >= 4:
+        for parity in (0, 1):
+            group = pages[parity::2]
+            cnt = Counter()
+            for lines in group:
+                for key in {re.sub(r"\d+", "#", r["t"].strip()) for r in lines}:
+                    cnt[key] += 1
+            common |= {k for k, n in cnt.items()
+                       if n >= len(group) * 0.6 and (_HANGUL_RE.search(k) or not re.search(r"[A-Za-z]", k))}
     return [[r for r in lines if re.sub(r"\d+", "#", r["t"].strip()) not in common]
             for lines in pages]
 
@@ -6637,6 +6663,7 @@ MOCK_RESTORE_SCHEMA = {
                     "text": {"type": "STRING"},
                     "answer": {"type": "STRING"},
                     "change": {"type": "STRING"},
+                    "keyed": {"type": "BOOLEAN"},
                 },
                 "required": ["no", "text"],
             },
@@ -6663,7 +6690,61 @@ MOCK_RESTORE_SYSTEM_PROMPT = """당신은 한국 고등학교 영어 교사입�
 - 글은 원문 낱말을 그대로 옮깁니다. 바꾸는 곳은 위의 '되살리는 법'에 해당하는 자리뿐입니다. 요약하거나 다듬지 않습니다.
 - 문단이 나뉜 글(안내문·편지 등)은 줄바꿈을 살립니다.
 - no는 문항 번호(예: "31", "41~42"), type은 유형 이름(예: "빈칸", "글의 순서", "문장 삽입", "어법", "어휘", "무관한 문장", "주제"), answer는 고른 답(예: "② scarcity", "(B)-(C)-(A)", "④", 고르는 문항이 아니면 빈 글자), change는 되살리며 바꾼 것을 한국어 한 문장으로(예: "빈칸에 scarcity를 넣음", "④ 자리에 주어진 문장을 넣음", "② making → makes로 고침", 바꾼 것이 없으면 빈 글자) 적습니다.
+- 고르는 문항의 answer는 보기 번호(①~⑤)로 시작합니다(예: "③ (B)-(A)-(C)", "② scarcity"). 장문처럼 한 지문에 여러 문항이 딸려 있으면 "41 ② / 42 ⑤"처럼 문항마다 적습니다.
+- 정답표가 함께 주어지면 직접 풀지 말고 정답표의 답을 그대로 따라 되살립니다. 직접 푼 답과 달라 보여도 정답표를 따릅니다. 정답표의 답을 따른 지문은 keyed를 true로, 정답표에 그 번호가 없어 직접 푼 지문은 false로 적습니다. 정답표가 없으면 keyed는 false입니다.
 - 맡은 범위 밖의 문항은 쓰지 않습니다. 범위 안에 독해 문항이 없으면 passages를 빈 배열로 둡니다."""
+
+# 정답표 — AI가 푼 답은 틀릴 수 있어(2026-10-21 사용자) 선생님이 정답표를 주면 그 답대로 되살린다.
+# 붙여 넣은 글('31 ② 32 ④', '31. 2', 번호 줄 + 답 줄의 가로 표)은 서버가 번호 → ①~⑤로 읽어 범위마다
+# 그 번호만 보내고, 읽지 못한 글은 그대로, 파일(PDF·사진)은 두 번째 파일로 함께 보낸다.
+_CIRCLED = "①②③④⑤"
+MOCK_KEY_FILE_MAX = 4 * 1024 * 1024   # 정답표 파일(base64 기준) — 문제지 PDF(9MB)와 합쳐 요청 상한 안에 들게
+
+
+def _mock_key_ans(tok):
+    tok = (tok or "").strip()
+    if len(tok) == 1 and tok in _CIRCLED:
+        return tok
+    if tok in ("1", "2", "3", "4", "5"):
+        return _CIRCLED[int(tok) - 1]
+    return ""
+
+
+def parse_mock_answer_key(text):
+    """정답표 글 → {문항 번호: '②'}. 1~45번만, 읽지 못하면 빈 dict."""
+    text = (text or "")[:6000].replace("　", " ")
+    out = {}
+    # 가로 표: 번호만 있는 줄 다음에 답만 있는 줄(교육청 정답표를 복사하면 이렇게 붙는다) — 먼저 본다.
+    # 짝 맞추기(아래)로 먼저 읽으면 '18 19 20' 줄의 20을 '2'와 '0'으로 쪼개 읽는 일은 없지만, 줄끼리 짝을 잘못 짓는다.
+    skip = {"번호", "문항", "정답", "답", "문항번호"}
+    rows = [[t for t in ln.split() if t not in skip] for ln in text.splitlines() if ln.strip()]
+    for a_row, b_row in zip(rows, rows[1:]):
+        if len(a_row) >= 3 and len(a_row) == len(b_row) and all(t.isdigit() for t in a_row) \
+                and all(_mock_key_ans(t) for t in b_row):
+            for n, a in zip(a_row, b_row):
+                if 1 <= int(n) <= 45:
+                    out.setdefault(int(n), _mock_key_ans(a))
+    if out:
+        return out
+    # 번호와 답이 짝지어 붙은 꼴: '31 ②', '31. ②', '31) 2', '31번-④', '31:3', '31②'.
+    # 줄을 넘어 짝짓지 않는다 — 평가원 정답표는 '37 ③ 3'(번호·정답·배점)으로 줄이 끝나 다음 줄 첫 답과 엮인다
+    for m in re.finditer(r"(?<!\d)(\d{1,2})[ \t]*(?:번)?[ \t]*[.)\]:\-–=]?[ \t]*([①②③④⑤]|(?<![\d.])[1-5](?![\d.]))", text):
+        n, a = int(m.group(1)), _mock_key_ans(m.group(2))
+        if 1 <= n <= 45 and a:
+            out.setdefault(n, a)
+    return out
+
+
+def parse_mock_answer_file(raw):
+    """정답표 파일(PDF·사진) → Gemini에 보낼 part. 없으면 None, 형식이 틀리면 ValueError."""
+    if not isinstance(raw, dict) or not raw.get("data"):
+        return None
+    mime = (raw.get("mime") or "").lower().split(";")[0].strip()
+    if mime != PDF_MIME and mime not in OCR_MIMES:
+        raise ValueError("정답표는 PDF나 사진(JPG·PNG)으로 올려 주세요.")
+    if len(raw["data"]) > MOCK_KEY_FILE_MAX:
+        raise ValueError("정답표 파일이 너무 큽니다. 정답이 있는 쪽만 찍거나 잘라 올려 주세요.")
+    return {"inlineData": {"mimeType": mime, "data": raw["data"]}}
 
 
 def _mock_nos_of(no):
@@ -6681,11 +6762,15 @@ def parse_mock_nos(raw):
     return out or None
 
 
-def call_gemini_mock_restore(file, api_key, nos=None, model=None):
+def call_gemini_mock_restore(file, api_key, nos=None, model=None, key=None, key_text="", key_file=None):
     """모의고사 문제지 PDF 한 부 → 문항 범위마다 나눠 동시에 Pro로 풀고 복원한 지문 목록.
     nos: 풀어 채울 문항 번호만(화면의 [📄 PDF에서 가져오기]가 규칙으로 못 꺼냈거나 풀리지 않은 채 꺼낸 번호 —
     나머지는 규칙으로 무료로 꺼냈으므로 다시 만들지 않는다). None이면 범위 전부.
-    돌려주는 값: {"passages": [{name, text, type, answer, change}], "failed": 실패한 범위 수}."""
+    key: 정답표 {번호: '②'}(parse_mock_answer_key), key_text: 번호를 못 읽은 정답표 글(그대로 보여 준다),
+    key_file: 정답표 파일 part(parse_mock_answer_file) — 하나라도 있으면 AI가 풀지 않고 정답표대로 되살린다.
+    돌려주는 값: {"passages": [{name, text, type, answer, change, keyed, keyMismatch}], "failed": 실패한 범위 수}."""
+    key = key or {}
+    key_text = (key_text or "").strip()[:3000]
     want = set(nos) if nos else None
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -6704,9 +6789,21 @@ def call_gemini_mock_restore(file, api_key, nos=None, model=None):
                    "장문처럼 한 지문에 여러 문항이 딸려 있으면 그 지문을 한 번만 쓰고 no에 묶음 번호(예: 41~42)를 적습니다.")
         else:
             ask = f"맡을 범위: {lo}번부터 {hi}번까지. 이 범위의 독해 문항을 풀고 원래 지문으로 되살려 적으세요."
+        parts = [pdf]
+        mine = {n: a for n, a in key.items() if lo <= n <= hi}
+        if mine:
+            ask += ("\n\n정답표(직접 풀지 말고 이 답을 그대로 따릅니다): " +
+                    ", ".join(f"{n}번 {a}" for n, a in sorted(mine.items())))
+        elif key_text:
+            ask += f"\n\n선생님이 붙여 넣은 정답표(맡은 번호의 답을 찾아 그대로 따릅니다):\n{key_text}"
+        if key_file:
+            parts.append(key_file)
+            ask += ("\n\n두 번째 파일은 이 시험의 정답표입니다. 영어 과목 정답에서 맡은 번호의 답을 찾아 그대로 따릅니다"
+                    "(국어·수학 등 다른 과목의 정답과 헷갈리지 마세요).")
+        parts.append({"text": ask})
         payload = {
             "systemInstruction": {"parts": [{"text": MOCK_RESTORE_SYSTEM_PROMPT}]},
-            "contents": [{"role": "user", "parts": [pdf, {"text": ask}]}],
+            "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {
                 # 옮겨 적기가 대부분이라 낮게 두되 0으로 두지 않는다 — RECITATION 차단(call_gemini_exam_ocr과 같은 사정)
                 "temperature": 0.15,
@@ -6745,13 +6842,19 @@ def call_gemini_mock_restore(file, api_key, nos=None, model=None):
             seen.add(no)
             text = re.sub(r"[ \t]+", " ", text)
             text = re.sub(r"\n{3,}", "\n\n", text)
+            answer = _norm_text(str(p.get("answer") or ""))[:80]
+            # 번호를 읽은 정답표가 있으면 AI가 적은 답에 그 번호가 들어 있는지 견준다 — 어긋나면 화면이 짚어 준다
+            keyed_nos = sorted(n for n in _mock_nos_of(no) if n in key)
+            mismatch = [f"{n}번 {key[n]}" for n in keyed_nos if key[n] not in answer]
             out.append({
                 "no": no,
                 "name": f"{no}번",
                 "text": text,
                 "type": _norm_text(str(p.get("type") or ""))[:20],
-                "answer": _norm_text(str(p.get("answer") or ""))[:80],
+                "answer": answer,
                 "change": _norm_text(str(p.get("change") or ""))[:160],
+                "keyed": bool(keyed_nos) or (bool(key_text or key_file) and bool(p.get("keyed"))),
+                "keyMismatch": ", ".join(mismatch),
             })
     first = lambda s: int(re.match(r"\d+", s).group()) if re.match(r"\d+", s) else 999
     out.sort(key=lambda p: first(p["no"]))
@@ -11622,6 +11725,14 @@ CHANGELOG = [
             "AI가 고른 답을 함께 보여 드리니 정답표와 맞춰 보세요.",
         ],
     },
+    {
+        "version": 88,
+        "date": "2026-10-21",
+        "items": [
+            "모의고사 문제지의 빈칸·순서·문장 삽입을 채울 때 정답표를 함께 넣을 수 있습니다. 정답을 글로 붙여 넣거나 "
+            "정답표 PDF·사진을 올리면 AI가 직접 풀지 않고 정답표의 답대로 원래 지문을 되살립니다(포인트는 같습니다).",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -16398,7 +16509,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"PDF가 너무 큽니다 (최대 {MAX_FILE_BYTES // 1048576}MB)."}, 413)
                 return
             try:
-                result = call_gemini_mock_restore(file, req.get("apiKey") or "", parse_mock_nos(req.get("nos")))
+                key_file = parse_mock_answer_file(req.get("keyFile"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            key_raw = str(req.get("keyText") or "")
+            key = parse_mock_answer_key(key_raw)
+            try:
+                # 번호를 읽어 낸 정답표는 범위마다 그 번호만 보내고, 못 읽은 글은 그대로 보여 준다
+                result = call_gemini_mock_restore(file, req.get("apiKey") or "", parse_mock_nos(req.get("nos")),
+                                                  key=key, key_text="" if key else key_raw, key_file=key_file)
+                result["keyCount"] = len(key)
                 n = len(result["passages"])
                 # 받아 낸 지문 수만큼만 받는다 — 못 되살린 지문에 값이 나가면 안 된다
                 self._pending_charge = PRICE_MOCK_RESTORE_KRW * n

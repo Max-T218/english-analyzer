@@ -2782,8 +2782,11 @@ function mockNosText(nos) {
   return out.join(", ");
 }
 
-/* 답을 채워야 하는 문항을 AI로 채울지 묻는 창 — "ai" | "keep"을 돌려준다.
-   브라우저 확인창(확인/취소)으로는 어느 쪽이 무엇인지 헷갈려 선택지 이름을 단 창으로 띄운다(2026-10-20 사용자). */
+/* 답을 채워야 하는 문항을 AI로 채울지 묻는 창 — { mode: "ai" | "keep", keyText, keyFile }을 돌려준다.
+   브라우저 확인창(확인/취소)으로는 어느 쪽이 무엇인지 헷갈려 선택지 이름을 단 창으로 띄운다(2026-10-20 사용자).
+   정답표(선택, 2026-10-21 사용자 — AI가 푼 답은 틀릴 수 있다): 글로 붙여 넣거나 PDF·사진으로 올리면 서버가
+   AI에게 풀지 말고 그 답대로 되살리게 한다. 값은 같다. 시험지마다 정답이 달라 창을 열 때마다 비운다. */
+const MOCK_KEY_FILE_MAX = 4 * 1024 * 1024;   // base64 기준 — server.py의 MOCK_KEY_FILE_MAX와 같은 값
 function askMockFill(who, nos) {
   const per = PRICING ? PRICING.mockRestore : 0;
   $("mockFillLead").innerHTML =
@@ -2792,13 +2795,50 @@ function askMockFill(who, nos) {
   $("mockFillCost").textContent = per
     ? `되살린 지문 1개당 ${pt(per)} — 장문 묶음은 한 지문으로 세어, 많아야 약 ${pt(per * nos.length)}입니다(못 되살린 지문은 받지 않습니다).`
     : "";
+  const textEl = $("mockFillKeyText");
+  const fileEl = $("mockFillKeyFile");
+  let keyFile = null;
+  textEl.value = "";
+  fileEl.value = "";
+  const sync = () => {
+    const has = !!(textEl.value.trim() || keyFile);
+    $("mockFillAi").textContent = has ? "📋 정답표대로 채우기" : "🧩 AI로 자동 채우기";
+    $("mockFillNote").textContent = has
+      ? "정답표의 답대로 채웁니다. 넣은 뒤 채운 답을 목록으로 보여 드립니다."
+      : "AI가 푼 답은 넣은 뒤 목록으로 보여 드립니다. 정답표와 맞춰 보세요.";
+    $("mockFillKeyName").textContent = keyFile ? keyFile.name : "";
+    $("mockFillKeyClear").hidden = !keyFile;
+  };
+  textEl.oninput = sync;
+  $("mockFillKeyBtn").onclick = () => fileEl.click();
+  $("mockFillKeyClear").onclick = () => { keyFile = null; fileEl.value = ""; sync(); };
+  fileEl.onchange = async () => {
+    const f = fileEl.files && fileEl.files[0];
+    if (!f) return;
+    $("mockFillKeyName").textContent = "읽는 중…";
+    try {
+      const part = isPdf(f) ? { mime: "application/pdf", data: await blobToBase64(f) } : await photoToPart(f);
+      if (part.data.length > MOCK_KEY_FILE_MAX) {
+        keyFile = null;
+        sync();
+        $("mockFillKeyName").textContent = "⚠️ 파일이 너무 큽니다. 정답이 있는 쪽만 잘라 올려 주세요.";
+        return;
+      }
+      keyFile = Object.assign(part, { name: f.name || "정답표" });
+    } catch {
+      keyFile = null;
+    }
+    sync();
+  };
+  sync();
   const box = $("mockFillGuide");
   box.hidden = false;
   return new Promise((resolve) => {
-    const done = (v) => {
+    const done = (mode) => {
       box.hidden = true;
       $("mockFillAi").onclick = $("mockFillKeep").onclick = box.onclick = null;
-      resolve(v);
+      const kf = keyFile ? { mime: keyFile.mime, data: keyFile.data } : null;
+      resolve({ mode, keyText: textEl.value.trim(), keyFile: kf });
     };
     $("mockFillAi").onclick = () => done("ai");
     $("mockFillKeep").onclick = () => done("keep");
@@ -2811,21 +2851,36 @@ function askMockFill(who, nos) {
    풀어 되살린 지문을 돌려준다. '31번'처럼 문항 번호를 이름으로 달아 지문칸에 이어 붙이고(모의고사는 번호가
    또렷해 이름이 맞는다), AI가 고른 답을 모두 적어 선생님이 정답표와 맞춰 보게 한다 — 틀리면 지문도 틀린다.
    돌려주는 값: 안내에 붙일 HTML 조각. 실패하면 예외. */
-async function mockRestoreInto(mgr, data, nos, status) {
-  status(`<span class="spinner"></span> AI가 ${esc(mockNosText(nos))}번 문제를 풀어 지문을 되살리는 중… (1분쯤 걸립니다)`);
-  const res = await postGenerate("/api/mockrestore", { file: { mime: "application/pdf", data }, nos },
+async function mockRestoreInto(mgr, data, nos, status, key = {}) {
+  const hasKey = !!(key.keyText || key.keyFile);
+  status(`<span class="spinner"></span> ${hasKey ? "정답표대로" : "AI가"} ${esc(mockNosText(nos))}번 ` +
+    `${hasKey ? "답을 채워" : "문제를 풀어"} 지문을 되살리는 중… (1분쯤 걸립니다)`);
+  const body = { file: { mime: "application/pdf", data }, nos };
+  if (key.keyText) body.keyText = key.keyText;
+  if (key.keyFile) body.keyFile = key.keyFile;
+  const res = await postGenerate("/api/mockrestore", body,
     "지문을 되살리지 못했습니다.",
     (n) => status(`<span class="spinner"></span> 연결이 끊겨 다시 받아 오는 중… (${n})`));
   const list = res.passages || [];
   const { added, full } = mgr.appendJobs(list.map((p) => ({ name: p.name, text: p.text, named: true })));
   const solved = list.filter((p) => p.answer || p.change);
+  // 정답표를 줬는데 그 답대로 안 된 지문(정답표에 번호가 없었거나 AI가 어겼다)은 빨갛게 짚는다
+  const off = (p) => hasKey && (p.keyMismatch || !p.keyed);
   const lines = solved.map((p) =>
-    `<li><b>${esc(p.name)}</b> ${esc(p.type || "")}${p.answer ? ` — 답 <b>${esc(p.answer)}</b>` : ""}${p.change ? ` · ${esc(p.change)}` : ""}</li>`).join("");
-  return `🧩 AI가 문제를 풀어 <b>지문 ${added}개</b>를 원래 지문으로 되살려 넣었습니다.` +
+    `<li${off(p) ? ' class="mock-key-off"' : ""}><b>${esc(p.name)}</b> ${esc(p.type || "")}` +
+    `${p.answer ? ` — 답 <b>${esc(p.answer)}</b>` : ""}${p.change ? ` · ${esc(p.change)}` : ""}` +
+    (p.keyMismatch ? ` ⚠️ 정답표는 ${esc(p.keyMismatch)}` : off(p) ? " ⚠️ 정답표에서 답을 못 찾아 AI가 풀었습니다" : "") +
+    `</li>`).join("");
+  const offN = solved.filter(off).length;
+  const head = hasKey
+    ? `📋 정답표대로 답을 채워 <b>지문 ${added}개</b>를 원래 지문으로 되살려 넣었습니다.` +
+      (offN ? ` <b>${offN}개</b>는 정답표대로 되지 않았을 수 있으니 목록의 빨간 줄을 확인하세요.` : "")
+    : `🧩 AI가 문제를 풀어 <b>지문 ${added}개</b>를 원래 지문으로 되살려 넣었습니다.`;
+  return head +
     (full ? " 지문 칸이 가득 차 나머지는 넣지 못했습니다." : "") +
     (res.failed ? ` 일부 문항(${res.failed}묶음)은 읽지 못했습니다 — 빠진 번호를 확인하세요.` : "") +
-    ` AI가 푼 답이니 <b>정답표와 맞춰 보고</b>, 다르면 그 지문을 고쳐 주세요.` +
-    (lines ? `<details class="mock-restore-answers"><summary>AI가 고른 답 보기 (${solved.length}개)</summary><ul>${lines}</ul></details>` : "");
+    (hasKey ? "" : ` AI가 푼 답이니 <b>정답표와 맞춰 보고</b>, 다르면 그 지문을 고쳐 주세요.`) +
+    (lines ? `<details class="mock-restore-answers"><summary>${hasKey ? "채운 답 보기" : "AI가 고른 답 보기"} (${solved.length}개)</summary><ul>${lines}</ul></details>` : "");
 }
 
 // mgr: 채울 지문칸 관리자(공용 또는 시험 범위), status: 안내를 그리는 함수
@@ -2966,13 +3021,14 @@ async function runPdfImport(fileList, mgr, status) {
      AI로 자동 채우기 = 되살린 지문 1개당 값 / 원문 그대로 두기 = 꺼낸 그대로 넣는다(무료). */
   for (const m of full ? [] : mocks) {
     const per = PRICING ? PRICING.mockRestore : 0;
-    let useAi = (await askMockFill(m.who, m.need)) === "ai";
+    const pick = await askMockFill(m.who, m.need);
+    let useAi = pick.mode === "ai";
     // 잔액이 모자라면 hasEnoughPoints가 안내하고 false — 그때는 원문 그대로 둔다.
     // 장문 묶음(41~42, 43~45)은 지문 하나로 줄어들어 값은 이보다 적게 나온다(받아 낸 지문 수로만 받는다)
     if (useAi && per) useAi = await hasEnoughPoints(per * m.need.length, "모의고사 지문 자동 채우기");
     if (useAi) {
       try {
-        parts.push(await mockRestoreInto(mgr, m.data, m.need, status));
+        parts.push(await mockRestoreInto(mgr, m.data, m.need, status, pick));
         added++;
       } catch (err) {
         parts.push(`❌ ${esc(m.who)} — ${esc(err.message || "지문을 되살리지 못했습니다.")} 꺼낸 그대로 넣었습니다.`);
@@ -11020,7 +11076,7 @@ const HOWTO = {
       "<b>[✏️ 직접 수정]</b>으로 글자를, <b>[📄 쪽 구성]</b>으로 인쇄될 쪽 경계를 고칩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
     ],
-    tip: "요약 이미지는 사이트에 저장해야 다음에 불러올 때 남습니다. 학생용 모의고사 문제지를 <b>[📄 PDF에서 가져오기]</b>로 올리면 빈칸·순서·문장 삽입 문항을 AI가 풀어 채울지 묻습니다(채우면 지문당 포인트)." + HOWTO_PAUSE_TIP,
+    tip: "요약 이미지는 사이트에 저장해야 다음에 불러올 때 남습니다. 학생용 모의고사 문제지를 <b>[📄 PDF에서 가져오기]</b>로 올리면 빈칸·순서·문장 삽입 문항을 AI가 풀어 채울지 묻습니다(채우면 지문당 포인트). 그 창에 정답표를 붙여 넣거나 올리면 정답표의 답대로 채웁니다." + HOWTO_PAUSE_TIP,
     shots: {
       0: [{ img: "howto-step-mcq-1.jpg", cap: "지문을 붙여 넣은 모습" }],
       1: [{ img: "howto-step-analyze-1.jpg", cap: "표지 제목 · 요약 이미지" }],
