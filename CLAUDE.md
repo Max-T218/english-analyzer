@@ -148,7 +148,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `details`를 단어 기록으로 읽기 때문이다. 상태값은 합격/불합격 대신 `done`(제출). 문항 그리기는 `public/quiztest.js`(`window.QT`)
 한 벌을 학생 화면(`student.js`의 `openQuiz`/`showQuizResult`)과 선생님 화면(`renderQuizTestResults`/`loadQuizAnswers`)이 같이 쓴다.
 상한 `QUIZ_TEST_MAX_QUESTIONS`(100) — 화면 `app.js`에도 같은 이름의 값이 있다.
-**워크북도 같은 길로 낸다**(`wbAssignBtn` → `wbQuestionsForStudents`, `source:"workbook"` — 목록 이름표만 다르다).
+**학생 관리 탭의 [＋ 시험 출제]**(`goVocabTabBtn` → `openTestPicker`, 2026-10-20)는 저장해 둔 단어장·객관식·주관식·혼합·문법·워크북 저장본 목록을 띄우고, 고른 저장본을 받아 단어장이면 `openVocabAssign(id, 제목)`(그 저장본을 체크해 연다), 나머지는 각 탭의 시험 내기와 같은 변환(`quizQuestionsFromEntries` · 문법의 `looseOrder` · `wbQuestionsForStudents`+`settings.stages`)으로 `openQuizAssign`을 연다 — 탭을 열거나 화면의 작업을 건드리지 않는다(예전엔 단어장 탭으로 넘어가기만 했다). **워크북도 같은 길로 낸다**(`wbAssignBtn` → `wbQuestionsForStudents`, `source:"workbook"` — 목록 이름표만 다르다).
 단계 하나 = 문항 하나로 그 단계의 문장을 모은다. 빈칸 완성·동사형·어법 고르기·어색한 곳 찾기는 문제 시험의
 fill·verb·pick·fix 모양을 그대로 쓰고, 워크북 전용 모양 `QUIZ_TEST_WB_FORMATS`(read=좌지문 우해석·채점 없음 /
 order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / paraorder=문단 배열)를 더했다. **해석 연습하기는 뺀다**(답이

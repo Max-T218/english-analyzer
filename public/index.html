@@ -959,6 +959,18 @@
     </div>
   </div>
 
+  <!-- ══════════ 시험 출제 — 저장해 둔 자료를 골라 바로 낸다(학생 관리 탭 [＋ 시험 출제], app.js openTestPicker) ══════════ -->
+  <div class="modal-overlay" id="testPickModalOverlay" hidden>
+    <div class="modal-box">
+      <button type="button" class="modal-close" id="testPickModalClose" aria-label="닫기">&times;</button>
+      <h3 class="modal-title">시험 낼 자료 고르기</h3>
+      <p class="hint">저장해 둔 자료를 누르면 시험 내기 창이 열립니다. 새로 만들려면 그 탭에서 만든 뒤 "🏫 반에 시험 내기"를 누르세요.</p>
+      <div class="tp-kinds" id="testPickKinds"></div>
+      <div id="testPickList" style="max-height:360px; overflow-y:auto; overflow-x:hidden; border:1px solid #d6dde8; border-radius:8px; padding:4px 8px;"></div>
+      <div class="error" id="testPickError"></div>
+    </div>
+  </div>
+
   <!-- ══════════ 반에 시험 내기 창(플로팅) ══════════ -->
   <div class="modal-overlay" id="assignModalOverlay" hidden>
     <div class="modal-box">
@@ -2353,7 +2365,7 @@
         <label>단어시험 리스트</label>
         <button type="button" class="btn small" id="goVocabTabBtn">＋ 시험 출제</button>
       </div>
-      <p class="hint">단어장 탭에서 단어장을 만든 뒤 "🏫 반에 시험 내기"를 누르면 여기에 나타납니다.</p>
+      <p class="hint">[＋ 시험 출제]로 저장해 둔 단어장·문제·워크북을 골라 바로 낼 수 있습니다. 각 탭의 "🏫 반에 시험 내기"로 낸 시험도 여기에 나타납니다.</p>
       <div id="assignedTestList"></div>
     </section>
   </section>
