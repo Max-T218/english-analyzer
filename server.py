@@ -14,6 +14,7 @@ Gemini API 키는 관리자(운영자)가 환경변수 GEMINI_API_KEY 하나로�
 
 import base64
 import copy
+import csv
 import difflib
 import hashlib
 import hmac
@@ -3378,6 +3379,150 @@ REWORD_VOCAB_ADD_MAX = 60
 REWORD_VOCAB_FILL_MAX = 15     # [C] 채우기 목표 개수의 상한 — 화면 '단어 변형'은 5
 
 
+# ── 변형할 때 고르는 낱말의 범위 — 2022 개정 교육과정 기본 어휘(2026-10-20 사용자) ──
+# 교육부 고시 [별책14] 영어과 교육과정의 [별표 3] 3,000단어(초등 800 · 중학교·공통 1,200 · 고등 선택 1,000)를
+# curriculum_vocab_2022.csv로 옮겨 두었다. AI가 '스스로 고르는' 바꿀 낱말(단어 변형, [A]의 유의어가 없을 때, [C] 채우기)은
+# 이 목록에서 **먼저** 고르게 한다 — 맞는 낱말이 목록에 없을 때만 밖의 낱말을 쓴다(2026-10-20 사용자: '안에서만'이 아니라 '우선').
+# 선생님이 준 단어장 단어·유의어([A]의 유의어, [B])는 그대로 쓴다. 중학교면 초등·중학교·공통 단어만 싣는다.
+# 목록은 지시문(systemInstruction)에 붙여 학교급마다 앞부분이 같으므로 Gemini의 자동 캐시를 탄다.
+CURRICULUM_VOCAB_FILE = Path(__file__).with_name("curriculum_vocab_2022.csv")
+_CURRICULUM_LEVELS = ("초등", "중학교·공통", "고등(선택)")
+
+
+def _load_curriculum_vocab():
+    """(학교급별 표제어 목록, 알아볼 낱말 모양 → 학교급 차례). 파일이 없으면 빈 값 — 이 기능만 꺼진다."""
+    heads = {lv: [] for lv in _CURRICULUM_LEVELS}
+    forms = {}
+    try:
+        with open(CURRICULUM_VOCAB_FILE, encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.reader(f))[1:]
+    except OSError:
+        return heads, forms
+    for row in rows:
+        if len(row) < 2 or row[1] not in heads:
+            continue
+        word, lv = row[0].strip(), row[1]
+        alts = [x.strip() for x in (row[2] if len(row) > 2 else "").split("/") if x.strip()]
+        derivs = [x.strip() for x in re.split(r"[,/]", row[3] if len(row) > 3 else "") if x.strip()]
+        heads[lv].append(" / ".join([word] + alts))
+        rank = _CURRICULUM_LEVELS.index(lv)
+        for w in [word] + alts + derivs:
+            forms.setdefault(w.lower(), rank)
+    return heads, forms
+
+
+_CURRICULUM_HEADS, _CURRICULUM_FORMS = _load_curriculum_vocab()
+
+REWORD_CURRICULUM_RULES = r"""
+
+## Reference vocabulary — 2022 개정 교육과정 기본 어휘
+The list at the end is the official Korean national-curriculum basic vocabulary, by school level.
+- When you choose a replacement word yourself, look on this list FIRST: the listed word, its
+  inflected forms (plural, tense, comparative), or a form derived with a common affix
+  (un-, re-, dis-, in-, -ly, -ness, -tion, -ment, -er, -ful, -less, -able, -al, -ity, -ive …).
+  Pick a listed word whenever one keeps the meaning exactly and reads naturally in context.
+- Only when no listed word fits that spot may you use a word outside the list — and then keep
+  it at the same level as the word it replaces. Meaning and natural English come before the list.
+- {level}
+- Words the teacher gave in the request ([A] 단어장 유의어, [B] 단어장 단어) are exempt — use them
+  as given, even when they are not on the list."""
+
+_CURRICULUM_LEVEL_RULE = {
+    "middle": "This exam is for MIDDLE-school students: the list below has only 초등 and 중학교·공통 "
+              "words. Prefer them strongly; an off-list word must be one a middle-school student knows.",
+    "high": "This exam is for HIGH-school students. Keep the difficulty: replace a word with one of "
+            "about the same level (prefer 중학교·공통 and 고등 선택 words), and do not swap a harder "
+            "word for an easy 초등 word.",
+}
+
+
+def _curriculum_prompt(school):
+    """지시문 뒤에 붙일 규칙 + 목록. 목록 파일이 없으면 빈 글자(예전 지시문 그대로)."""
+    levels = _CURRICULUM_LEVELS[:2] if school == "middle" else _CURRICULUM_LEVELS
+    if not any(_CURRICULUM_HEADS[lv] for lv in levels):
+        return ""
+    parts = [REWORD_CURRICULUM_RULES.replace("{level}", _CURRICULUM_LEVEL_RULE[
+        "middle" if school == "middle" else "high"])]
+    for lv in levels:
+        parts.append(f"\n[{lv} — {len(_CURRICULUM_HEADS[lv])}단어]\n" + ", ".join(_CURRICULUM_HEADS[lv]))
+    return "\n".join(parts)
+
+
+_CURRICULUM_PREFIXES = ("un", "re", "dis", "mis", "in", "im", "il", "ir", "en", "em", "inter")
+_CURRICULUM_SUFFIXES = ("ization", "ation", "ication", "ition", "ion", "ness", "ment", "ship", "ity",
+                        "ance", "ence", "able", "ible", "less", "ful", "ous", "ive", "ism", "ist",
+                        "ize", "ise", "ify", "ary", "ant", "ent", "ure", "ish", "ical", "ic", "al",
+                        "or", "er", "est", "ly", "th", "y", "s")
+
+
+# 불규칙 변화 — 흔한 것만(기록용이라 빠져도 로그에 한 줄 더 찍힐 뿐이다)
+_CURRICULUM_IRREGULAR = {
+    "went": "go", "gone": "go", "was": "be", "were": "be", "been": "be", "is": "be", "are": "be", "am": "be",
+    "had": "have", "has": "have", "did": "do", "done": "do", "made": "make", "said": "say", "took": "take",
+    "taken": "take", "came": "come", "saw": "see", "seen": "see", "got": "get", "gotten": "get",
+    "gave": "give", "given": "give", "found": "find", "thought": "think", "told": "tell", "became": "become",
+    "left": "leave", "felt": "feel", "brought": "bring", "began": "begin", "begun": "begin", "kept": "keep",
+    "held": "hold", "wrote": "write", "written": "write", "stood": "stand", "heard": "hear", "meant": "mean",
+    "met": "meet", "ran": "run", "paid": "pay", "sat": "sit", "spoke": "speak", "spoken": "speak",
+    "led": "lead", "grew": "grow", "grown": "grow", "lost": "lose", "fell": "fall", "fallen": "fall",
+    "sent": "send", "built": "build", "understood": "understand", "drew": "draw", "drawn": "draw",
+    "broke": "break", "broken": "break", "spent": "spend", "rose": "rise", "risen": "rise", "drove": "drive",
+    "driven": "drive", "bought": "buy", "wore": "wear", "worn": "wear", "chose": "choose", "chosen": "choose",
+    "sought": "seek", "caught": "catch", "taught": "teach", "fought": "fight", "threw": "throw",
+    "thrown": "throw", "ate": "eat", "eaten": "eat", "knew": "know", "known": "know", "flew": "fly",
+    "flown": "fly", "forgot": "forget", "forgotten": "forget", "hid": "hide", "hidden": "hide",
+    "children": "child", "men": "man", "women": "woman", "people": "person", "feet": "foot", "teeth": "tooth",
+    "mice": "mouse", "lives": "life", "better": "good", "best": "good", "worse": "bad", "worst": "bad",
+    "less": "little", "least": "little", "more": "many", "most": "many", "further": "far", "farther": "far",
+}
+
+
+def _curriculum_known(word):
+    """낱말이 목록의 표제어(굴절·흔한 접사 붙은 모양 포함)로 보이는지 — 기록용 짐작이라 넉넉하게 본다."""
+    w = word.lower().strip("’'")
+    if not w or not w.isalpha() or w in _CURRICULUM_FORMS:
+        return True
+    cands = {w}
+    for p in _CURRICULUM_PREFIXES:
+        if w.startswith(p) and len(w) - len(p) >= 3:
+            cands.add(w[len(p):])
+    for c in list(cands):
+        for end, rep in (("ies", "y"), ("ied", "y"), ("ier", "y"), ("iest", "y"), ("ily", "y"),
+                         ("es", ""), ("ed", ""), ("ed", "e"), ("ing", ""), ("ing", "e"), ("d", ""),
+                         ("s", "")):
+            if c.endswith(end) and len(c) - len(end) >= 2:
+                b = c[:-len(end)] + rep
+                cands.add(b)
+                if len(b) > 3 and b[-1] == b[-2]:
+                    cands.add(b[:-1])   # stopped → stop
+    for _ in range(2):   # beautifully → beautiful → beauty처럼 접사가 둘 붙은 것까지
+        for c in list(cands):
+            for suf in _CURRICULUM_SUFFIXES:
+                if c.endswith(suf) and len(c) - len(suf) >= 3:
+                    b = c[:-len(suf)]
+                    cands.update({b, b + "e", b + "y"})
+                    if b.endswith("i"):
+                        cands.add(b[:-1] + "y")        # beautiful → beauty
+                    if suf == "ist" and b.endswith("t"):
+                        cands.add(b[:-1] + "ce")       # scientist → science
+    cands.update(_CURRICULUM_IRREGULAR.get(c, "") for c in list(cands))
+    return any(c in _CURRICULUM_FORMS for c in cands)
+
+
+def _curriculum_offlist(original, variations, exempt=()):
+    """바뀐 낱말 중 목록 밖으로 보이는 것 — 목록 밖도 허용이지만 얼마나 자주 나가는지 Render 로그로 보려고 센다(화면에는 안 보인다)."""
+    if not _CURRICULUM_FORMS:
+        return []
+    had = {t.lower() for t in _WORD_TOKEN_RE.findall(original or "") if _is_word(t)}
+    skip = {w.lower() for w in exempt}
+    out = []
+    for p in variations or []:
+        for t in _WORD_TOKEN_RE.findall(p.get("to") or ""):
+            if _is_word(t) and t.lower() not in had and t.lower() not in skip and not _curriculum_known(t):
+                out.append(t)
+    return out
+
+
 def parse_reword_vocab(req):
     """화면이 보낸 ①·② 목록을 다듬는다 — 프롬프트에만 들어가므로 글자·길이·개수를 자른다."""
     def clean(v, n=80):
@@ -3436,9 +3581,10 @@ def build_reword_user_prompt(passage, variation):
 _REWORD_TRUNC_MSG = "지문 변형본이 잘렸습니다. 지문을 더 짧게 나눠 다시 시도하세요."
 
 
-def call_gemini_reword(passage, variation, api_key, model, vocab=None, fill=0):
+def call_gemini_reword(passage, variation, api_key, model, vocab=None, fill=0, school="high"):
     """지문을 한 번만 리워딩해 확정된 변형본 텍스트를 돌려준다.
-    variation == "vocab"이면 vocab = (①유의어 목록, ②심을 단어 목록)으로 단어장 바꿔 쓰기를 한다."""
+    variation == "vocab"이면 vocab = (①유의어 목록, ②심을 단어 목록)으로 단어장 바꿔 쓰기를 한다.
+    AI가 스스로 고르는 낱말은 교육과정 기본 어휘 안에서만 — school(middle/high)이 그 범위를 정한다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -3462,7 +3608,7 @@ def call_gemini_reword(passage, variation, api_key, model, vocab=None, fill=0):
     payload = {
         "systemInstruction": {"parts": [{"text": (
             REWORD_VOCAB_SYSTEM_PROMPT if variation == "vocab" else REWORD_SYSTEM_PROMPT
-        )}]},
+        ) + _curriculum_prompt(school)}]},
         "contents": [
             {"role": "user", "parts": [{"text": (
                 build_reword_vocab_prompt(passage, syn, add, fill) if variation == "vocab"
@@ -11268,6 +11414,14 @@ CHANGELOG = [
             "문항마다 [✏️ 고치기]로 직접 고칠 수 있고, 1단/2단 인쇄·답지·저장·반에 시험 내기가 됩니다.",
         ],
     },
+    {
+        "version": 82,
+        "date": "2026-10-20",
+        "items": [
+            "지문 변형 — 단어를 바꿔 쓸 때 2022 개정 교육과정 기본 어휘(3,000단어)에서 먼저 고르고, 맞는 말이 없을 때만 다른 낱말을 씁니다. "
+            "학교급이 중학교면 초등·중학교 어휘를 먼저 씁니다. 넣어 주신 단어장 단어는 그대로 씁니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -16218,16 +16372,25 @@ class Handler(BaseHTTPRequestHandler):
             api_key = req.get("apiKey") or ""
             # '5개 이상 변형'만 Pro — 사용자가 모델을 고르지 않고 서버가 자동으로 정한다.
             model = MODEL_PRO if variation == "heavy" else MODEL
+            school = "middle" if req.get("school") == "middle" else "high"
             try:
                 # "vocab"(단어장으로 바꿔 쓰기, 동형 모의고사)은 바꿀 목록을 함께 받는다 — 모델은 light와 같은 Flash
-                reworded = call_gemini_reword(passage, variation, api_key, model,
-                                              vocab=parse_reword_vocab(req) if variation == "vocab" else None,
-                                              fill=parse_reword_fill(req) if variation == "vocab" else 0)
+                vocab = parse_reword_vocab(req) if variation == "vocab" else None
+                reworded = call_gemini_reword(passage, variation, api_key, model, vocab=vocab,
+                                              fill=parse_reword_fill(req) if variation == "vocab" else 0,
+                                              school=school)
+                variations = diff_variations(passage, reworded)
+                # 교육과정 밖 낱말이 섞였는지 로그로만 남긴다 — 지시가 지켜지는지 실서비스에서 보려고
+                syn, add = vocab or ((), ())
+                exempt = [w for it in syn for w in re.findall(r"[A-Za-z]+", it[2])] +                          [w for it in add for w in re.findall(r"[A-Za-z]+", it[0])]
+                off = _curriculum_offlist(passage, variations, exempt)
+                if off:
+                    print(f"[reword] 교육과정 밖으로 보이는 낱말({school}): {', '.join(off[:20])}", flush=True)
                 # 바뀐 낱말 목록을 함께 돌려준다 — 화면이 지문에서 그 낱말을 표시하고
                 # 해설지에 '원문 → 변형' 표를 싣는 데 쓴다.
                 self._charge_and_send(path, req, {
                     "passage": reworded,
-                    "variations": diff_variations(passage, reworded),
+                    "variations": variations,
                 })
             except NeedsPro as e:
                 # 모델을 바꾸기 전에는 계속 실패한다 — 화면이 남은 작업을 멈추도록 code를 붙인다

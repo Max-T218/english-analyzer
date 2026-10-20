@@ -6302,7 +6302,7 @@ function setupQuizTab({ prefix, types, footer }) {
             try {
               const r = await postGenerate(
                 "/api/reword",
-                { passage: job.text, ...vocabBody, ...(variation === "light" ? { fill: WORD_VARIATION_COUNT } : {}) },
+                { passage: job.text, ...vocabBody, school: school(), ...(variation === "light" ? { fill: WORD_VARIATION_COUNT } : {}) },
                 "지문 바꾸기에 실패했습니다."
               );
               source = (r.passage || "").trim() || job.text;
@@ -6323,7 +6323,7 @@ function setupQuizTab({ prefix, types, footer }) {
             try {
               const r = await postGenerate(
                 "/api/reword",
-                { passage: job.text, variation },
+                { passage: job.text, variation, school: school() },
                 "지문 변형에 실패했습니다."
               );
               // 다음에 '문항이 많습니다' 창이 뜰 때 예상 시간의 근거가 된다
@@ -14130,7 +14130,7 @@ async function runExamPaper() {
     const { no, job, body } = swaps[i];
     examPaperLoadingTextEl.textContent = `지문을 단어장 단어로 바꾸는 중… (${i + 1}/${swaps.length})`;
     try {
-      const r = await postGenerate("/api/reword", { passage: job.text, ...body }, "지문 바꾸기에 실패했습니다.");
+      const r = await postGenerate("/api/reword", { passage: job.text, ...body, school: examSchoolEl && examSchoolEl.value === "middle" ? "middle" : "high" }, "지문 바꾸기에 실패했습니다.");
       const text = String(r.passage || "").trim();
       if (text) swapped.set(no, { text, variations: Array.isArray(r.variations) ? r.variations : [] });
     } catch (err) {
