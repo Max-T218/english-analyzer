@@ -16245,8 +16245,8 @@ function renderTestPickList() {
     const k = TEST_PICK_KINDS.find((x) => x.tab === it.tab);
     return `<button type="button" class="tp-item" data-id="${esc(it.id)}" data-tab="${esc(it.tab)}" data-title="${esc(it.title || "")}">` +
       `<span class="saved-list-tag">${esc(k ? k.label : it.tab)}</span>` +
-      `<span class="tp-title">${esc(it.title || "제목 없음")}</span>` +
-      `<span class="hint">${esc(savedDateText(it.updated_at))}</span></button>`;
+      // 날짜는 싣지 않는다 — 같은 책의 단원 저장본은 같은 시각에 만들어져 날짜로는 못 가르고, 제목이 잘려 구분이 안 됐다(2026-10-20 사용자)
+      `<span class="tp-title">${esc(it.title || "제목 없음")}</span></button>`;
   }).join("") : `<p class="saved-list-empty">시험으로 낼 수 있는 저장본이 없습니다. 단어장·문제·워크북 탭에서 만든 뒤 [💾 사이트 저장]을 눌러 두세요.</p>`;
 }
 async function openTestPicker() {
