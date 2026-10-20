@@ -7181,7 +7181,7 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true, st
     (q, i) => `
       <div class="qz-card">
         <div class="qz-head"><span class="qz-no">${startNo + i + 1}</span><span class="qz-type">${esc(q.type)}</span></div>
-        <div class="qz-instruction">${safeHTML(q.instruction)}</div>
+        <div class="qz-instruction">${QT.emStem(safeHTML(q.instruction))}</div>
         ${markVariations(quizBodyHtml(q), q.__variations || d.variations)}
         <button type="button" class="qz-reveal-btn">정답·해설 보기</button>
         <div class="qz-answer-box">
@@ -8979,7 +8979,7 @@ function buildStageOx(ox, passageText) {
     html.push(`
       <div class="wb-q qz-card wb-ox-card">
         <div class="qz-head"><span class="qz-no">${no}</span><span class="qz-type">${esc(qq.type)}</span></div>
-        <div class="qz-instruction">${safeHTML(qq.instruction)}</div>
+        <div class="qz-instruction">${QT.emStem(safeHTML(qq.instruction))}</div>
         ${body}
         ${wbAns(String(label).replace(/<[^>]*>/g, ""))}
         <button type="button" class="qz-reveal-btn">정답·해설 보기</button>

@@ -12,6 +12,20 @@
   const esc = (s) => String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+  /* 발문의 판단 낱말(틀린·않은·적절한·옳은…)에 굵게+밑줄 — 시중 문제처럼 '옳은 것'과 '틀린 것'을
+     헷갈리지 않게 한다(2026-10-20 사용자 결정: 부정·긍정 모두). AI에 맡기지 않고 그릴 때 붙이므로
+     옛 저장본에도 적용되고 요금이 없다. '것·곳·문장…' 앞의 낱말만 잡아 "어법에 맞는 표현으로
+     가장 적절한 것은"에서는 '적절한'만 칠한다. 이미 칠한 것은 벗기고 다시 칠해 겹치지 않는다.
+     clean()이 속성을 지우므로 반드시 clean 뒤에 부른다. */
+  const STEM_EM_RE = /(틀린|않은|않는|없는|아닌|다른|어색한|잘못된|올바른|바른|옳은|알맞은|맞는|적절한|일치하는|같은)(?=\s*(?:것|곳|말|문장|부분|낱말|단어|응답|대답|질문|설명|의미|뜻))/g;
+  function emStem(html) {
+    return String(html == null ? "" : html)
+      .replace(/<span class="qz-em">([\s\S]*?)<\/span>/g, "$1")
+      .split(/(<[^>]*>)/)
+      .map((p) => (p.charAt(0) === "<" ? p : p.replace(STEM_EM_RE, '<span class="qz-em">$1</span>')))
+      .join("");
+  }
+
   /* 서버가 이미 br·u·b만 남기고 걸렀지만 학생 브라우저에 그대로 넣는 HTML이라 여기서도
      한 번 더 거른다 — 허용 태그 외에는 껍데기만 벗기고 글자는 남긴다, 속성은 모두 지운다. */
   const KEEP = new Set(["BR", "U", "B"]);
@@ -215,7 +229,7 @@
       <div class="qz-head"><span class="qz-no">${i + 1}</span>${q.type ? `<span class="qz-type">${esc(q.type)}</span>` : ""}
         ${review ? markHtml(q) : ""}</div>
       ${q.passageName ? `<div class="hint" style="margin-bottom:4px;">${esc(q.passageName)}</div>` : ""}
-      <div class="qz-instruction">${clean(q.instruction)}</div>
+      <div class="qz-instruction">${emStem(clean(q.instruction))}</div>
       ${bodyHtml(q, i, mode)}
       ${review ? unitsHtml(q, i, opts) : ""}
       ${review && String(q.explanation || "").trim() ? `<div class="qt-exp"><b>해설</b><br>${clean(q.explanation)}</div>` : ""}
@@ -287,5 +301,5 @@
     return `${ok} · ${bad}${qc.pending ? ` · 확인 중 ${qc.pending}` : ""}`;
   }
 
-  window.QT = { countsText, clean, esc, unitCount, questionHtml, questionStatus, bind, collect, restore, blankCount };
+  window.QT = { countsText, clean, emStem, esc, unitCount, questionHtml, questionStatus, bind, collect, restore, blankCount };
 })();
