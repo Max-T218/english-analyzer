@@ -2765,6 +2765,69 @@ $("pdfHeldAdd").addEventListener("click", () => {
   );
 });
 
+/* 모의고사 문제지에서 '풀어야 원래 지문이 되는' 문항 번호 — 어법·어휘(29·30)·빈칸(31~34)·무관한 문장(35)·
+   순서(36·37)·문장 삽입(38·39)·장문(41~45, 어휘 고치기·(B)(C)(D) 순서). 규칙으로 꺼내도 빈칸이 비었거나
+   순서가 섞인 채라 쓸 수 없고, 아예 못 꺼내는 것도 많다(고1 10월 모의고사 28지문 중 13개만 나왔다). */
+const MOCK_SOLVE_NOS = new Set([29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44, 45]);
+
+// 번호 목록을 '29~39, 41~45'처럼 줄여 적는다
+function mockNosText(nos) {
+  const out = [];
+  for (let i = 0; i < nos.length; i++) {
+    let j = i;
+    while (j + 1 < nos.length && nos[j + 1] === nos[j] + 1) j++;
+    out.push(j > i ? `${nos[i]}~${nos[j]}` : `${nos[i]}`);
+    i = j;
+  }
+  return out.join(", ");
+}
+
+/* 답을 채워야 하는 문항을 AI로 채울지 묻는 창 — "ai" | "keep"을 돌려준다.
+   브라우저 확인창(확인/취소)으로는 어느 쪽이 무엇인지 헷갈려 선택지 이름을 단 창으로 띄운다(2026-10-20 사용자). */
+function askMockFill(who, nos) {
+  const per = PRICING ? PRICING.mockRestore : 0;
+  $("mockFillLead").innerHTML =
+    `<b>${esc(who)}</b>은(는) 모의고사 문제지라 <b>${esc(mockNosText(nos))}번</b>이 빈칸·순서 배열·문장 삽입·어법처럼 ` +
+    `답을 채워야 원래 지문이 됩니다.`;
+  $("mockFillCost").textContent = per
+    ? `되살린 지문 1개당 ${pt(per)} — 장문 묶음은 한 지문으로 세어, 많아야 약 ${pt(per * nos.length)}입니다(못 되살린 지문은 받지 않습니다).`
+    : "";
+  const box = $("mockFillGuide");
+  box.hidden = false;
+  return new Promise((resolve) => {
+    const done = (v) => {
+      box.hidden = true;
+      $("mockFillAi").onclick = $("mockFillKeep").onclick = box.onclick = null;
+      resolve(v);
+    };
+    $("mockFillAi").onclick = () => done("ai");
+    $("mockFillKeep").onclick = () => done("keep");
+    // 창 밖을 누르면 값이 안 드는 쪽으로 닫는다
+    box.onclick = (e) => { if (e.target === box) done("keep"); };
+  });
+}
+
+/* 모의고사 문제지 → 원래 지문. 서버(/api/mockrestore, call_gemini_mock_restore)가 AI(Pro)로 고른 번호의 문제만
+   풀어 되살린 지문을 돌려준다. '31번'처럼 문항 번호를 이름으로 달아 지문칸에 이어 붙이고(모의고사는 번호가
+   또렷해 이름이 맞는다), AI가 고른 답을 모두 적어 선생님이 정답표와 맞춰 보게 한다 — 틀리면 지문도 틀린다.
+   돌려주는 값: 안내에 붙일 HTML 조각. 실패하면 예외. */
+async function mockRestoreInto(mgr, data, nos, status) {
+  status(`<span class="spinner"></span> AI가 ${esc(mockNosText(nos))}번 문제를 풀어 지문을 되살리는 중… (1분쯤 걸립니다)`);
+  const res = await postGenerate("/api/mockrestore", { file: { mime: "application/pdf", data }, nos },
+    "지문을 되살리지 못했습니다.",
+    (n) => status(`<span class="spinner"></span> 연결이 끊겨 다시 받아 오는 중… (${n})`));
+  const list = res.passages || [];
+  const { added, full } = mgr.appendJobs(list.map((p) => ({ name: p.name, text: p.text, named: true })));
+  const solved = list.filter((p) => p.answer || p.change);
+  const lines = solved.map((p) =>
+    `<li><b>${esc(p.name)}</b> ${esc(p.type || "")}${p.answer ? ` — 답 <b>${esc(p.answer)}</b>` : ""}${p.change ? ` · ${esc(p.change)}` : ""}</li>`).join("");
+  return `🧩 AI가 문제를 풀어 <b>지문 ${added}개</b>를 원래 지문으로 되살려 넣었습니다.` +
+    (full ? " 지문 칸이 가득 차 나머지는 넣지 못했습니다." : "") +
+    (res.failed ? ` 일부 문항(${res.failed}묶음)은 읽지 못했습니다 — 빠진 번호를 확인하세요.` : "") +
+    ` AI가 푼 답이니 <b>정답표와 맞춰 보고</b>, 다르면 그 지문을 고쳐 주세요.` +
+    (lines ? `<details class="mock-restore-answers"><summary>AI가 고른 답 보기 (${solved.length}개)</summary><ul>${lines}</ul></details>` : "");
+}
+
 // mgr: 채울 지문칸 관리자(공용 또는 시험 범위), status: 안내를 그리는 함수
 async function runPdfImport(fileList, mgr, status) {
   const files = [...fileList].filter(isPdf);
@@ -2781,6 +2844,7 @@ async function runPdfImport(fileList, mgr, status) {
   const notes = [];
   const fails = [];
   const held = [];   // 도표·실용문 — 다 넣은 뒤에 추가할지 묻는다
+  const mocks = [];  // 모의고사 문제지 — 풀어야 할 문항을 다 넣은 뒤에 'AI로 채울지/직접 채울지' 묻는다
   pdfHeldBack = null;
 
   for (let i = 0; i < files.length; i++) {
@@ -2814,14 +2878,19 @@ async function runPdfImport(fileList, mgr, status) {
       }
       /* 번호로 빼는 규칙은 이 PDF가 28번을 넘어설 때만 쓴다. 25~28이 도표·안내문
          자리인 것은 수능형 편집의 관례라, 거기까지 닿지 않는 PDF(교과서 단원, 부분
-         발췌)에서 25~28번은 그냥 평범한 지문이다. */
+         발췌)에서 25~28번은 그냥 평범한 지문이다. 같은 까닭으로 '풀어야 할 문항'도 이때만 가른다. */
       const nosOf = res.passages.map((p) => pdfQuestionNos(p.name));
       const useNoRule = Math.max(0, ...nosOf.flat()) >= 29;
+      const unsolved = [];   // 규칙으로 꺼냈지만 풀리지 않은 채인 지문 — 직접 채우기를 고르면 그대로 넣는다
 
       for (let k = 0; k < res.passages.length; k++) {
         const p = res.passages[k];
         // p.name은 지문 이름칸에 쓰지 않는다 — fillText 주석 참고. 여기서 번호만 읽고 버린다.
         const nos = nosOf[k];
+        if (useNoRule && nos.some((n) => MOCK_SOLVE_NOS.has(n))) {
+          unsolved.push(p.text);
+          continue;   // 아래에서 AI로 채울지 묻는다
+        }
         const hitNo = useNoRule ? nos.find((n) => PDF_SKIP_NOS.has(n)) : undefined;
         const shape = passageShape(p.text);
         if (hitNo !== undefined || shape) {
@@ -2839,6 +2908,18 @@ async function runPdfImport(fileList, mgr, status) {
           full = true;
           break;
         }
+      }
+      if (useNoRule) {
+        // 풀어야 할 번호 + 규칙이 아예 못 꺼낸 번호(18번부터 이 시험지의 끝 번호까지 — 40번을 넘으면 45번까지로 본다).
+        // 도표·인물·안내문(25~28)은 꺼내도 기본으로 빼 두는 지문이라 AI로 채우지 않는다(값만 붙는다).
+        const found = new Set(nosOf.flat());
+        const last = Math.max(...found) >= 40 ? 45 : Math.max(...found);
+        const need = [];
+        for (let n = 18; n <= last; n++) {
+          if (PDF_SKIP_NOS.has(n)) continue;
+          if (MOCK_SOLVE_NOS.has(n) || !found.has(n)) need.push(n);
+        }
+        if (need.length) mocks.push({ who, data, need, unsolved });
       }
       if (res.note) notes.push(`${who}: ${res.note}`);
       if (full) {
@@ -2876,8 +2957,35 @@ async function runPdfImport(fileList, mgr, status) {
   }
   notes.forEach((n) => parts.push(`⚠️ ${esc(n)}`));
   fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
-  if (!parts.length) parts.push("옮길 지문을 찾지 못했습니다.");
-  status(parts.join("<br>"), added ? (fails.length ? "warn" : "ok") : "warn");
+  const draw = () => status(parts.length ? parts.join("<br>") : "옮길 지문을 찾지 못했습니다.",
+    added && !fails.length ? "ok" : "warn");
+  draw();
+
+  /* 모의고사 문제지 — 빈칸·순서·문장 삽입·어법처럼 답을 채워야 원래 지문이 되는 문항이 있을 때만 묻는다
+     (2026-10-20 사용자: 무료로 열면 원가가 크니, 채울지 물어보고 AI로 채우면 포인트를 받자).
+     AI로 자동 채우기 = 되살린 지문 1개당 값 / 원문 그대로 두기 = 꺼낸 그대로 넣는다(무료). */
+  for (const m of full ? [] : mocks) {
+    const per = PRICING ? PRICING.mockRestore : 0;
+    let useAi = (await askMockFill(m.who, m.need)) === "ai";
+    // 잔액이 모자라면 hasEnoughPoints가 안내하고 false — 그때는 원문 그대로 둔다.
+    // 장문 묶음(41~42, 43~45)은 지문 하나로 줄어들어 값은 이보다 적게 나온다(받아 낸 지문 수로만 받는다)
+    if (useAi && per) useAi = await hasEnoughPoints(per * m.need.length, "모의고사 지문 자동 채우기");
+    if (useAi) {
+      try {
+        parts.push(await mockRestoreInto(mgr, m.data, m.need, status));
+        added++;
+      } catch (err) {
+        parts.push(`❌ ${esc(m.who)} — ${esc(err.message || "지문을 되살리지 못했습니다.")} 꺼낸 그대로 넣었습니다.`);
+        m.unsolved.forEach((t) => mgr.fillText(t));
+      }
+    } else {
+      let n = 0;
+      for (const t of m.unsolved) if (mgr.fillText(t)) n++;
+      parts.push(`✍️ ${esc(m.who)}: 답을 채워야 하는 문항은 원문 그대로 ${n}개를 넣었습니다(빈칸·순서·삽입이 풀리지 않은 채입니다). ` +
+        `빠진 문항(${esc(mockNosText(m.need))}번 가운데 넣지 못한 것)은 <b>[＋ 지문 추가]</b>로 직접 넣어 채워 주세요.`);
+    }
+    draw();
+  }
 
   pdfBusy = false;
   [pdfBtn, examPdfBtn].forEach((b) => b && (b.disabled = false));
@@ -10912,7 +11020,7 @@ const HOWTO = {
       "<b>[✏️ 직접 수정]</b>으로 글자를, <b>[📄 쪽 구성]</b>으로 인쇄될 쪽 경계를 고칩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
     ],
-    tip: "요약 이미지는 사이트에 저장해야 다음에 불러올 때 남습니다." + HOWTO_PAUSE_TIP,
+    tip: "요약 이미지는 사이트에 저장해야 다음에 불러올 때 남습니다. 학생용 모의고사 문제지를 <b>[📄 PDF에서 가져오기]</b>로 올리면 빈칸·순서·문장 삽입 문항을 AI가 풀어 채울지 묻습니다(채우면 지문당 포인트)." + HOWTO_PAUSE_TIP,
     shots: {
       0: [{ img: "howto-step-mcq-1.jpg", cap: "지문을 붙여 넣은 모습" }],
       1: [{ img: "howto-step-analyze-1.jpg", cap: "표지 제목 · 요약 이미지" }],

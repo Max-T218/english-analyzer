@@ -422,6 +422,10 @@ PRICE_EXAM_OCR_KRW = int(os.environ.get("PRICE_EXAM_OCR_KRW", "0"))
 # 시도'를 누른 경우에만 이 값을 매긴다. 그때도 AI는 '지문이 몇째 줄부터 몇째 줄까지인지'
 # 만 답하고 본문은 서버가 원문에서 잘라 쓰므로 호출이 가볍다.
 PRICE_PDFSPLIT_KRW = int(os.environ.get("PRICE_PDFSPLIT_KRW", "0"))
+# 모의고사 문제지 → 지문 복원(/api/mockrestore) — AI(Pro)가 문제를 풀어 빈칸을 채우고 순서·삽입을 맞춰
+# 원래 지문으로 되돌린다. 복원해 받아 낸 지문 1개당이다(못 받은 지문은 받지 않는다).
+# 원가(2026-10-20 실측 전 어림): 문제지 한 부(독해 28지문)를 다섯 묶음으로 나눠 Pro로 부르면 약 300~500원.
+PRICE_MOCK_RESTORE_KRW = int(os.environ.get("PRICE_MOCK_RESTORE_KRW", "30"))
 # 단어장 탭 — 사진에서 단어 목록 인식. 지문 사진(PRICE_OCR_KRW)과 같은 자리이지만
 # 값은 따로 매긴다(단어장은 지문 분석 없이도 쓸 수 있어 씀씀이가 다르다).
 PRICE_VOCAB_OCR_KRW = int(os.environ.get("PRICE_VOCAB_OCR_KRW", "0"))
@@ -6611,6 +6615,154 @@ def call_gemini_exam_ocr(files, api_key, model, page_from=0, page_total=0):
     return out
 
 
+# ── 모의고사 문제지 → 원래 지문으로 복원 ──
+# 학생용 문제지는 빈칸이 비어 있고, 순서 배열은 (A)(B)(C)가 섞여 있고, 문장 삽입은 주어진 문장이
+# 따로 떨어져 있어 PDF에서 꺼내도 지문으로 쓸 수 없다(규칙으로 꺼내는 /api/pdfsplit은 28지문 중
+# 13개만 건졌다 — 정작 빈칸·순서·삽입이 빠진다). 정답표 없이 AI가 문제를 풀어 되돌린다(2026-10-20 사용자).
+# 글자를 서버가 뽑아 정답만 받아 끼우는 길도 봤지만, 2단 시험지는 줄 순서가 섞여(29번 첫 줄이 30번
+# 발문 사이에 낀다) 끼울 자리를 믿을 수 없었다 — 그래서 PDF를 통째로 보내 쪽 모양 그대로 읽게 한다.
+# 한 번에 다 시키면 오래 걸려 화면 연결이 끊기므로 문항 번호 범위로 나눠 동시에 부른다.
+MOCK_RESTORE_RANGES = ((18, 24), (25, 30), (31, 35), (36, 40), (41, 45))
+
+MOCK_RESTORE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "passages": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "no": {"type": "STRING"},
+                    "type": {"type": "STRING"},
+                    "text": {"type": "STRING"},
+                    "answer": {"type": "STRING"},
+                    "change": {"type": "STRING"},
+                },
+                "required": ["no", "text"],
+            },
+        },
+    },
+    "required": ["passages"],
+}
+
+MOCK_RESTORE_SYSTEM_PROMPT = """당신은 한국 고등학교 영어 교사입니다. 입력은 영어 모의고사(학생용 문제지) PDF와, 그중 맡을 문항 번호 범위입니다.
+맡은 범위의 독해 문항마다 문제를 직접 풀고, 그 답을 반영해 '문제로 바꾸기 전의 원래 영어 지문'을 되살려 적습니다.
+
+되살리는 법
+- 빈칸 추론: 고른 보기의 말을 빈칸 자리에 넣어 완전한 글로 만듭니다.
+- 글의 순서: 주어진 글 다음에 (A)(B)(C)를 맞는 순서로 이어 한 덩어리 글로 씁니다. (A)(B)(C) 표시는 지웁니다.
+- 문장 삽입: 주어진 문장을 맞는 자리에 넣고 ( ① )~( ⑤ ) 표시를 모두 지웁니다.
+- 무관한 문장: 흐름과 관계없는 문장을 빼고 씁니다.
+- 어법·어휘(밑줄 ①~⑤, (a)~(e)): 틀린 곳 하나를 바르게 고쳐 쓰고, 번호·기호는 모두 지웁니다.
+- 요약문 완성: 본문만 씁니다(요약문 상자는 싣지 않습니다).
+- 장문(한 지문에 여러 문항, 예: [41~42], [43~45]): 지문을 한 번만 쓰고 no에 "41~42"처럼 적습니다. 순서 문항이 있으면 (B)(C)(D)를 맞는 순서로 잇고, 낱말 쓰임 문항이 있으면 틀린 낱말을 고칩니다. (A)~(D)·(a)~(e) 표시는 지웁니다.
+- 그 밖의 문항(목적·심경·주장·함축·요지·주제·제목·도표·내용 일치·안내문 등)은 지문을 그대로 옮기되 밑줄·기호만 지웁니다. 도표 문항은 글만 옮깁니다.
+- 듣기 문항, 문항 번호·발문·보기(①~⑤ 선택지)·각주(* 낱말 풀이)·배점([3점])·쪽 번호는 싣지 않습니다.
+
+반드시 지킬 것
+- 글은 원문 낱말을 그대로 옮깁니다. 바꾸는 곳은 위의 '되살리는 법'에 해당하는 자리뿐입니다. 요약하거나 다듬지 않습니다.
+- 문단이 나뉜 글(안내문·편지 등)은 줄바꿈을 살립니다.
+- no는 문항 번호(예: "31", "41~42"), type은 유형 이름(예: "빈칸", "글의 순서", "문장 삽입", "어법", "어휘", "무관한 문장", "주제"), answer는 고른 답(예: "② scarcity", "(B)-(C)-(A)", "④", 고르는 문항이 아니면 빈 글자), change는 되살리며 바꾼 것을 한국어 한 문장으로(예: "빈칸에 scarcity를 넣음", "④ 자리에 주어진 문장을 넣음", "② making → makes로 고침", 바꾼 것이 없으면 빈 글자) 적습니다.
+- 맡은 범위 밖의 문항은 쓰지 않습니다. 범위 안에 독해 문항이 없으면 passages를 빈 배열로 둡니다."""
+
+
+def _mock_nos_of(no):
+    """'41~42' → {41, 42}, '31' → {31}. 못 읽으면 빈 집합."""
+    m = re.match(r"^(\d+)(?:~(\d+))?$", no or "")
+    if not m:
+        return set()
+    lo, hi = int(m.group(1)), int(m.group(2) or m.group(1))
+    return set(range(lo, hi + 1)) if 0 <= hi - lo < 10 else {lo}
+
+
+def parse_mock_nos(raw):
+    """화면이 보낸 '풀어 채울 문항 번호' — 18~45 안의 정수만. 비면 None(맡은 범위 전부)."""
+    out = sorted({int(n) for n in (raw or []) if str(n).isdigit() and 18 <= int(n) <= 45})
+    return out or None
+
+
+def call_gemini_mock_restore(file, api_key, nos=None, model=None):
+    """모의고사 문제지 PDF 한 부 → 문항 범위마다 나눠 동시에 Pro로 풀고 복원한 지문 목록.
+    nos: 풀어 채울 문항 번호만(화면의 [📄 PDF에서 가져오기]가 규칙으로 못 꺼냈거나 풀리지 않은 채 꺼낸 번호 —
+    나머지는 규칙으로 무료로 꺼냈으므로 다시 만들지 않는다). None이면 범위 전부.
+    돌려주는 값: {"passages": [{name, text, type, answer, change}], "failed": 실패한 범위 수}."""
+    want = set(nos) if nos else None
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+                           "관리자에게 문의하세요.")
+    model = model if (model and _MODEL_RE.match(model)) else MODEL_PRO
+    pdf = {"inlineData": {"mimeType": PDF_MIME, "data": file["data"]}}
+    got, errors = {}, []
+    labels = _vertex_get_labels()   # 새 스레드에는 요청의 결제 라벨이 없어 옮겨 준다
+
+    def work(lo, hi):
+        _vertex_set_labels(labels)
+        if want:
+            only = ", ".join(str(n) for n in sorted(want) if lo <= n <= hi)
+            ask = (f"맡을 문항: {only}번. 이 번호의 문항만 풀고 원래 지문으로 되살려 적으세요. "
+                   "장문처럼 한 지문에 여러 문항이 딸려 있으면 그 지문을 한 번만 쓰고 no에 묶음 번호(예: 41~42)를 적습니다.")
+        else:
+            ask = f"맡을 범위: {lo}번부터 {hi}번까지. 이 범위의 독해 문항을 풀고 원래 지문으로 되살려 적으세요."
+        payload = {
+            "systemInstruction": {"parts": [{"text": MOCK_RESTORE_SYSTEM_PROMPT}]},
+            "contents": [{"role": "user", "parts": [pdf, {"text": ask}]}],
+            "generationConfig": {
+                # 옮겨 적기가 대부분이라 낮게 두되 0으로 두지 않는다 — RECITATION 차단(call_gemini_exam_ocr과 같은 사정)
+                "temperature": 0.15,
+                "maxOutputTokens": 32768,
+                "responseMimeType": "application/json",
+                "responseSchema": MOCK_RESTORE_SCHEMA,
+            },
+        }
+        try:
+            res = _gemini_json(payload, api_key, model,
+                               "지문이 너무 길어 옮기다가 잘렸습니다.", salvage=True, label="mockrestore")
+            got[(lo, hi)] = res.get("passages") or []
+        except Exception as e:   # 한 범위 실패가 전체를 막지 않게
+            errors.append(e)
+
+    ranges = [r for r in MOCK_RESTORE_RANGES if not want or any(r[0] <= n <= r[1] for n in want)]
+    threads = [threading.Thread(target=work, args=r, daemon=True) for r in ranges]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    out, seen = [], set()
+    for rng in ranges:
+        for p in got.get(rng) or []:
+            if not isinstance(p, dict):
+                continue
+            no = re.sub(r"\s+", "", str(p.get("no") or "")).replace("～", "~").replace("∼", "~").strip("번")
+            text = str(p.get("text") or "").strip()
+            # 범위 경계에 걸친 장문을 두 묶음이 함께 쓰는 일이 있어 번호로 한 번만 남긴다
+            if not no or no in seen or len(text) < EXAM_OCR_MIN_CHARS:
+                continue
+            # 고른 번호 밖의 지문은 버린다 — 이미 규칙으로 꺼낸 지문이라 값을 또 받으면 안 된다
+            if want and not (_mock_nos_of(no) & want):
+                continue
+            seen.add(no)
+            text = re.sub(r"[ \t]+", " ", text)
+            text = re.sub(r"\n{3,}", "\n\n", text)
+            out.append({
+                "no": no,
+                "name": f"{no}번",
+                "text": text,
+                "type": _norm_text(str(p.get("type") or ""))[:20],
+                "answer": _norm_text(str(p.get("answer") or ""))[:80],
+                "change": _norm_text(str(p.get("change") or ""))[:160],
+            })
+    first = lambda s: int(re.match(r"\d+", s).group()) if re.match(r"\d+", s) else 999
+    out.sort(key=lambda p: first(p["no"]))
+    if not out:
+        e = errors[0] if errors else None
+        if isinstance(e, (QuotaExceeded, ProUnavailable)):
+            raise e
+        raise RuntimeError(str(e) if e else "독해 지문을 찾지 못했습니다. 영어 모의고사 문제지인지 확인해 주세요.")
+    return {"passages": out, "failed": len(errors)}
+
+
 # 지문 하나로 인정하는 최소 길이. 이보다 짧은 것은 <보기> 상자나 각주를 지문으로 잘못
 # 잡은 것이라 버린다 — 입력칸에 부스러기가 쌓이면 선생님이 하나씩 지워야 한다.
 EXAM_OCR_MIN_CHARS = 120
@@ -11461,6 +11613,15 @@ CHANGELOG = [
             "시간·조건 부사절의 시제, 주장·요구 동사 + (should), It is said that, 부분부정 등).",
         ],
     },
+    {
+        "version": 87,
+        "date": "2026-10-20",
+        "items": [
+            "학생용 모의고사 문제지를 [📄 PDF에서 가져오기]로 올리면, 빈칸·순서 배열·문장 삽입·어법처럼 풀어야 원래 지문이 되는 문항을 "
+            "AI가 풀어 채울지 직접 채울지 묻습니다. AI로 채우면 문항 번호와 함께 원래 지문으로 넣어 드리고(되살린 지문당 포인트), "
+            "AI가 고른 답을 함께 보여 드리니 정답표와 맞춰 보세요.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -14689,6 +14850,8 @@ class Handler(BaseHTTPRequestHandler):
                 # PDF에서 지문 꺼내기 — 규칙으로 나눌 때는 언제나 0원이고,
                 # 'AI로 다시 시도'를 눌렀을 때만 이 값이 매겨진다
                 "pdfSplit": PRICE_PDFSPLIT_KRW,
+                # 모의고사 문제지 → 지문 복원 — 복원해 받아 낸 지문 1개당
+                "mockRestore": PRICE_MOCK_RESTORE_KRW,
                 # 단어장 탭 — 사진 인식은 매번, PDF는 규칙이 못 뽑아 AI로 다시 시도할 때만
                 "vocabOcr": PRICE_VOCAB_OCR_KRW,
                 "vocabPdf": PRICE_VOCAB_PDF_KRW,
@@ -15070,7 +15233,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/brief", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
-                        "/api/examtrend", "/api/pdfsplit", "/api/studentcomment",
+                        "/api/examtrend", "/api/pdfsplit", "/api/mockrestore", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
@@ -15149,7 +15312,7 @@ class Handler(BaseHTTPRequestHandler):
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
-                           "/api/examtrend", "/api/pdfsplit", "/api/studentcomment",
+                           "/api/examtrend", "/api/pdfsplit", "/api/mockrestore", "/api/studentcomment",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf")
         # /api/docx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
         # 않는다(그래서 GENERATE_PATHS가 아니라 여기 따로 붙는다).
@@ -15267,6 +15430,15 @@ class Handler(BaseHTTPRequestHandler):
                     # 'AI로 다시 시도'(ai=true)일 때만 값을 매긴다.
                     cost = PRICE_PDFSPLIT_KRW if req.get("ai") else 0
                     self._pending_label = "PDF에서 지문 꺼내기"
+                elif path == "/api/mockrestore":
+                    # 잔액은 쪽 수로 어림한 지문 수(한 쪽에 약 4지문, 많아야 28)로 미리 보고,
+                    # 실제 차감은 복원해 받아 낸 지문 수로 다시 센다(아래 /api/mockrestore 처리).
+                    f = req.get("file") if isinstance(req.get("file"), dict) else {}
+                    m_nos = parse_mock_nos(req.get("nos"))
+                    n_pages = _pdf_page_count(f.get("data") or "") or 1
+                    # 번호를 골라 보냈으면 그 수(장문 묶음은 하나로 줄어드니 넉넉한 쪽이다), 아니면 쪽 수로 어림
+                    cost = PRICE_MOCK_RESTORE_KRW * (len(m_nos) if m_nos else min(28, max(4, n_pages * 4)))
+                    self._pending_label = "모의고사 지문 복원"
                 elif path == "/api/vocabocr":
                     cost = PRICE_VOCAB_OCR_KRW
                     self._pending_label = "사진에서 단어장 인식"
@@ -16214,6 +16386,30 @@ class Handler(BaseHTTPRequestHandler):
         # PDF에서 지문 꺼내기. 사진 OCR과 달리 기본 경로는 Gemini를 부르지 않는다 —
         # 글자층을 그대로 꺼내 규칙으로 나눈다(요금 0원, 오타 없음).
         # 규칙이 못 나눈 파일만 화면이 ai=true로 다시 보내 경계를 물어본다.
+        if path == "/api/mockrestore":
+            file = req.get("file")
+            if not isinstance(file, dict) or (file.get("mime") or "").lower().split(";")[0].strip() != PDF_MIME:
+                self._send_json({"error": "모의고사 문제지 PDF를 올려 주세요."}, 400)
+                return
+            if not file.get("data"):
+                self._send_json({"error": "PDF 내용이 비어 있습니다."}, 400)
+                return
+            if len(file["data"]) > MAX_FILE_BYTES:
+                self._send_json({"error": f"PDF가 너무 큽니다 (최대 {MAX_FILE_BYTES // 1048576}MB)."}, 413)
+                return
+            try:
+                result = call_gemini_mock_restore(file, req.get("apiKey") or "", parse_mock_nos(req.get("nos")))
+                n = len(result["passages"])
+                # 받아 낸 지문 수만큼만 받는다 — 못 되살린 지문에 값이 나가면 안 된다
+                self._pending_charge = PRICE_MOCK_RESTORE_KRW * n
+                self._pending_label = f"모의고사 지문 복원 · {n}지문"
+                self._charge_and_send(path, req, result)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
         if path == "/api/pdfsplit":
             file = req.get("file")
             if not isinstance(file, dict):

@@ -2644,3 +2644,12 @@ input.st-in{width:100%; box-sizing:border-box;}
 .tp-item:disabled{opacity:.5; cursor:wait;}
 .tp-item .tp-title{flex:1; font-weight:600; min-width:0; white-space:normal; overflow-wrap:anywhere; line-height:1.45;}
 .tp-item .saved-list-tag{flex:0 0 auto;}
+
+/* 모의고사 문제지 → 지문 복원 — AI가 고른 답 목록(app.js runMockRestore) */
+.mock-restore-answers{margin-top:6px;}
+.mock-restore-answers summary{cursor:pointer; font-weight:700;}
+.mock-restore-answers ul{margin:6px 0 0; padding-left:18px; max-height:220px; overflow-y:auto; line-height:1.6;}
+.mock-fill-choices{display:flex; flex-direction:column; gap:8px; margin:10px 0;}
+.mock-fill-choice{display:flex; flex-direction:column; gap:3px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; line-height:1.55;}
+.mock-fill-choice b{font-size:14.5px;}
+.mock-fill-cost{font-weight:700; color:var(--accent);}

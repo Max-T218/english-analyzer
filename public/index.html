@@ -2623,6 +2623,31 @@
   </div>
 </div>
 
+<!-- 모의고사 문제지 — 답을 채워야 원래 지문이 되는 문항(빈칸·순서·삽입·어법…)을 AI로 채울지 묻는다
+     (app.js askMockFill). 그런 문항이 없으면 뜨지 않는다. -->
+<div class="print-guide" id="mockFillGuide" hidden>
+  <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="mockFillTitle">
+    <h3 id="mockFillTitle">🧩 답을 채워야 하는 문항이 있습니다</h3>
+    <p class="print-guide-lead" id="mockFillLead"></p>
+    <div class="mock-fill-choices">
+      <div class="mock-fill-choice">
+        <b>🧩 AI로 자동 채우기</b>
+        <span>AI가 문제를 풀어 빈칸을 채우고, 순서·문장 삽입을 맞추고, 어법·어휘의 틀린 곳을 고친 원래 지문으로 넣습니다. 문항 번호가 지문 이름이 됩니다.</span>
+        <span class="mock-fill-cost" id="mockFillCost"></span>
+      </div>
+      <div class="mock-fill-choice">
+        <b>원문 그대로 두기</b>
+        <span>문제지에서 꺼낸 그대로(빈칸·섞인 순서 그대로) 넣습니다. 포인트가 들지 않습니다.</span>
+      </div>
+    </div>
+    <p class="print-guide-note">AI가 푼 답은 넣은 뒤 목록으로 보여 드립니다. 정답표와 맞춰 보세요.</p>
+    <div class="print-guide-actions">
+      <button type="button" class="btn ghost" id="mockFillKeep">원문 그대로 두기</button>
+      <button type="button" class="btn" id="mockFillAi">🧩 AI로 자동 채우기</button>
+    </div>
+  </div>
+</div>
+
 <!-- 저장함 (지문 / 제작 자료 — 어느 쪽으로 열렸는지에 따라 제목·설명·목록이 바뀐다) -->
 <div class="print-guide" id="savedListModal" hidden>
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="savedListTitle">
