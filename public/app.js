@@ -9214,17 +9214,23 @@ function renderVocabSource() {
       `(지문을 다시 분석하면 그 결과만 갱신되고, 직접 만든 단어장은 남습니다)`
     : "아직 단어장이 없습니다. '지문 분석'을 실행하거나, 아래에서 직접 만들어 보세요.";
   if (!vocabPickEl) return;
+  // 체크할 때마다 목록을 다시 그리므로 보던 스크롤 자리를 되돌린다 — 안 그러면 누를 때마다 맨 위로 올라갔다(2026-10-20 사용자)
+  const oldList = vocabPickEl.querySelector(".vocab-pick-list");
+  const keepTop = oldList ? oldList.scrollTop : 0;
   vocabPickEl.innerHTML = sets.length < 2 ? "" : `<details class="vocab-pick"${vocabPickOpen ? " open" : ""}>
     <summary>📚 쓸 단어장 고르기 (${on.length}/${sets.length}개 선택)</summary>
     <div class="vocab-pick-tools">
       <button type="button" class="btn ghost small" data-pick="all">모두 선택</button>
       <button type="button" class="btn ghost small" data-pick="none">모두 해제</button>
+      <button type="button" class="btn ghost small" data-pick="save" title="체크한 단어장을 하나씩 저장함에 저장합니다.">💾 고른 단원 따로 저장</button>
       <span class="hint">고른 단어장의 단어만 모아 단어장·시험지를 만듭니다.</span>
     </div>
     <div class="vocab-pick-list">${sets.map((s, i) => `<label class="vocab-pick-item">
       <input type="checkbox" data-i="${i}"${s.off ? "" : " checked"}>
       <span>${esc(s.name)} <span class="hint">${(s.vocab || []).length}단어</span></span></label>`).join("")}</div>
   </details>`;
+  const newList = vocabPickEl.querySelector(".vocab-pick-list");
+  if (newList && keepTop) newList.scrollTop = keepTop;
 }
 if (vocabPickEl) {
   vocabPickEl.addEventListener("toggle", (e) => {
@@ -9242,10 +9248,59 @@ if (vocabPickEl) {
   vocabPickEl.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-pick]");
     if (!b) return;
+    if (b.dataset.pick === "save") { saveVocabSetsEach(b); return; }
     const sets = getVocabSets();
     sets.forEach((s) => { if (b.dataset.pick === "all") delete s.off; else s.off = true; });
     saveVocabSets(sets);
   });
+}
+
+/* 고른 단어장을 하나씩 따로 저장한다 — 단어장 책 PDF를 단원(Day)별로 나눠 읽어도 저장은 통째로
+   하나뿐이라, 다음에 Unit 7만 쓰려면 PDF를 다시 올려야 했다(2026-10-20 사용자). 하나씩 저장해 두면
+   저장함에서 그 단원만 불러오고, 반에 시험 낼 때도 단원을 체크해 합칠 수 있다. 이름은
+   "책 이름 · 단원 이름"이고, 단어장 저장본 중 같은 이름이 이미 있으면 새로 만들지 않고 덮어쓴다
+   (같은 책을 다시 저장해도 저장함에 겹쳐 쌓이지 않게). */
+async function saveVocabSetsEach(btn) {
+  if (!isLoggedIn) { alert("저장하려면 먼저 로그인해 주세요."); return; }
+  const picked = getVocabSets().filter((s) => !s.off && (s.vocab || []).length);
+  if (!picked.length) { alert("저장할 단어장을 먼저 체크해 주세요."); return; }
+  const book = (picked.find((s) => s.book) || {}).book || "";
+  const prefix = prompt(
+    `체크한 단어장 ${picked.length}개를 하나씩 저장합니다.
+저장 이름 앞에 붙일 책 이름을 적어 주세요 (비우면 단원 이름만).`,
+    book);
+  if (prefix === null) return;
+  const head = prefix.trim();
+  const titleOf = (s) => (head ? `${head} · ${s.name}` : s.name).slice(0, 200);
+  const label = btn.textContent;
+  btn.disabled = true;
+  let done = 0, replaced = 0;
+  try {
+    const list = await getJson("/api/saved", "저장 목록을 불러오지 못했습니다.");
+    const same = new Map();
+    (list.items || []).forEach((it) => { if (it.tab === "vocab" && !same.has(it.title)) same.set(it.title, it.id); });
+    const settings = TAB_SAVE.vocab.getPayload().settings;
+    for (const s of picked) {
+      btn.textContent = `저장 중… ${done + 1}/${picked.length}`;
+      const set = { ...s };
+      delete set.off;
+      const title = titleOf(s);
+      const id = same.get(title);
+      const payload = { vocabSets: [set], settings: { ...settings, title: s.name } };
+      await postJson("/api/saved", id ? { tab: "vocab", title, payload, id } : { tab: "vocab", title, payload },
+        "저장에 실패했습니다.");
+      if (id) replaced++;
+      done++;
+    }
+    vocabBuildStatus(`단어장 <b>${done}개</b>를 하나씩 저장했습니다` +
+      (replaced ? ` (같은 이름 ${replaced}개는 새 내용으로 덮어썼습니다)` : "") +
+      `. 단어장 탭의 [📂 불러오기]나 반에 시험 내기의 '낼 단어장'에서 단원별로 고를 수 있습니다.`, "ok");
+  } catch (err) {
+    vocabBuildStatus(`❌ ${esc(err.message || "저장에 실패했습니다.")} — ${done}개까지 저장했습니다.`, "warn");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
 }
 renderVocabSource();
 
@@ -9715,7 +9770,8 @@ async function runVocabPdf(fileList) {
       let res = await postGenerate("/api/vocabpdf", payload, "PDF에서 단어 목록을 꺼내지 못했습니다.");
       if (res.sections && res.sections.length) {
         // 번호 붙은 단어장 책 — 쪽(단원)마다 단어장 하나, 이름은 쪽에 써 있는 제목 그대로
-        bookSections.push(...res.sections);
+        const book = (file.name || "").replace(/\.pdf$/i, "").trim();
+        bookSections.push(...res.sections.map((s) => ({ ...s, book })));
         continue;
       }
       if (!res.items.length && res.canAi) {
@@ -9761,16 +9817,17 @@ async function runVocabPdf(fileList) {
     const many = bookSections.length > 1;
     const stamp = Date.now();
     const fresh = bookSections.map((s, i) => ({
-      name: s.title, vocab: s.items, src: "book", off: many ? true : undefined,
+      name: s.title, vocab: s.items, src: "book", book: s.book || undefined, off: many ? true : undefined,
       _id: `v${stamp}${i}${Math.floor(Math.random() * 1e6)}`,
     }));
-    fresh.forEach((s) => { if (s.off === undefined) delete s.off; });
+    fresh.forEach((s) => { if (s.off === undefined) delete s.off; if (!s.book) delete s.book; });
     const names = new Set(fresh.map((s) => s.name));
     saveVocabSets([...getVocabSets().filter((s) => !(s.src === "book" && names.has(s.name))), ...fresh]);
     const total = bookSections.reduce((n, s) => n + s.items.length, 0);
     parts.push(many
-      ? `<b>${bookSections.length}개 단어장</b>(${esc(bookSections[0].title)} … ${esc(bookSections[bookSections.length - 1].title)}) · ${total}단어를 쪽별로 나눠 저장했습니다. ` +
-        `위 <b>'📚 쓸 단어장 고르기'</b>에서 쓸 단원을 체크한 뒤 [단어장 만들기]를 누르세요.`
+      ? `<b>${bookSections.length}개 단어장</b>(${esc(bookSections[0].title)} … ${esc(bookSections[bookSections.length - 1].title)}) · ${total}단어를 쪽별로 나눴습니다. ` +
+        `위 <b>'📚 쓸 단어장 고르기'</b>에서 쓸 단원을 체크한 뒤 [단어장 만들기]를 누르세요. ` +
+        `다음에 PDF를 다시 올리지 않으려면 거기서 <b>[💾 고른 단원 따로 저장]</b>을 누르세요.`
       : `<b>${esc(bookSections[0].title)}</b> · ${total}단어를 저장했습니다. PDF와 대조해 확인하세요.`);
     if (many) {
       vocabPickOpen = true;
@@ -9926,6 +9983,15 @@ function savedTabOf(item) {
 }
 // 저장 종류 — "지문"만 따로 두고 나머지(제작 결과물)는 한 묶음으로 본다
 const PASSAGE_TAB = "passage";
+// 선생님이 그 탭의 제목 칸에 직접 적은 이름 — 저장창이 이 이름을 먼저 쓴다
+const typedTitle = (id) => { const el = $(id); return el ? el.value.trim() : ""; };
+const SAVE_TYPED_TITLE = {
+  mcq: () => (QUIZ_SHEET_TITLE.mcq && QUIZ_SHEET_TITLE.mcq.get()) || "",
+  saq: () => (QUIZ_SHEET_TITLE.saq && QUIZ_SHEET_TITLE.saq.get()) || "",
+  mix: () => (QUIZ_SHEET_TITLE.mix && QUIZ_SHEET_TITLE.mix.get()) || "",
+  workbook: () => typedTitle("wbTitle"),
+  vocab: () => typedTitle("vocabTitle"),
+};
 // 저장 제목 기본값 — 기존 인쇄 파일명 규칙을 재사용하고, 밑줄만 보기 좋게 공백으로 바꾼다
 const SAVE_TITLE_SUGGEST = {
   passage: () => passageBasedName("지문"),
@@ -9935,8 +10001,9 @@ const SAVE_TITLE_SUGGEST = {
   mcq: () => (QUIZ_SHEET_TITLE.mcq && QUIZ_SHEET_TITLE.mcq.get()) || passageBasedName("객관식문제"),
   saq: () => (QUIZ_SHEET_TITLE.saq && QUIZ_SHEET_TITLE.saq.get()) || passageBasedName("주관식문제"),
   mix: () => (QUIZ_SHEET_TITLE.mix && QUIZ_SHEET_TITLE.mix.get()) || passageBasedName("객관식주관식문제"),
-  workbook: () => titledName("워크북", "wbTitle"),
-  vocab: () => titledName("단어장", "vocabTitle"),
+  // 제목 칸에 적은 이름이 있으면 그 이름 그대로(문제 탭의 시험지명과 같은 방식, 2026-10-20 사용자)
+  workbook: () => SAVE_TYPED_TITLE.workbook() || titledName("워크북", "wbTitle"),
+  vocab: () => SAVE_TYPED_TITLE.vocab() || titledName("단어장", "vocabTitle"),
   /* 시험지는 공용 지문칸이 아니라 자기 지문칸을 쓰므로 passageBasedName을 못 쓴다.
      대신 시험지 머리글에 적어 둔 학교·고사 이름을 가져온다 — 기출에서 읽어 낸 고사
      이름(scan.title)은 저장하지 않으므로, 저장함에서 이 시험지가 어느 기출을 본뜬
@@ -10035,11 +10102,19 @@ function openSaveDialog(tab) {
   const from = saveDialogConfirmBtn.disabled ? null : LOADED_SAVED[tab];
   saveDialogOverwriteBtn.hidden = !from;
   saveDialogFromEl.hidden = !from;
+  /* 불러온 자료의 제목 칸을 다른 이름으로 바꿔 만들었으면(예: "어휘끝 day 31"을 불러와 "Day 32"로 새로 만듦)
+     새 자료로 본다 — 저장창이 옛 저장본 이름을 채우고 [덮어쓰기]를 앞세워, 그대로 누르면 31을 32로 덮어쓸 뻔했다
+     (2026-10-20 사용자). 적은 이름이 옛 이름 안에 들어 있으면("Day 31" ⊂ "어휘끝 day 31") 같은 자료로 본다. */
+  const typed = SAVE_TYPED_TITLE[tab] ? SAVE_TYPED_TITLE[tab]() : "";
+  const renamed = !!(from && typed && !from.title.toLowerCase().includes(typed.toLowerCase()));
   if (from) {
-    saveDialogFromEl.textContent = `이 자료는 저장함의 "${from.title}"과(와) 이어져 있습니다 — [덮어쓰기]를 누르면 그 자료가 바뀝니다.`;
-    saveTitleInputEl.value = from.title;
+    saveDialogFromEl.textContent = renamed
+      ? `불러온 "${from.title}"과(와) 제목이 달라 새 자료로 저장합니다. 그 자료를 바꾸려면 [덮어쓰기]를 누르세요.`
+      : `이 자료는 저장함의 "${from.title}"과(와) 이어져 있습니다 — [덮어쓰기]를 누르면 그 자료가 바뀝니다.`;
+    saveTitleInputEl.value = renamed ? typed : from.title;
     saveDialogConfirmBtn.textContent = "새로 저장";
-    saveDialogConfirmBtn.classList.add("ghost");
+    saveDialogConfirmBtn.classList.toggle("ghost", !renamed);
+    saveDialogOverwriteBtn.classList.toggle("ghost", renamed);
   } else {
     saveDialogConfirmBtn.textContent = "저장";
     saveDialogConfirmBtn.classList.remove("ghost");
@@ -10952,7 +11027,7 @@ const HOWTO = {
       "<b>형식</b>을 고릅니다 — 단어장, 또는 시험지(뜻 쓰기 · 영어 쓰기 · 섞어서).",
       "<b>[단어장 만들기]</b>를 누르고 <b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑습니다.",
     ],
-    tip: "사진·PDF로 읽은 단어는 편집 표에서 확인한 뒤 [이 단어장에 추가]를 눌러야 들어갑니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 온라인 단어시험을 낼 수 있습니다(요금 없음). 저장한 단어장을 여러 개 체크하면 한 시험으로 합쳐 냅니다.",
+    tip: "사진·PDF로 읽은 단어는 편집 표에서 확인한 뒤 [이 단어장에 추가]를 눌러야 들어갑니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 온라인 단어시험을 낼 수 있습니다(요금 없음). 저장한 단어장을 여러 개 체크하면 한 시험으로 합치거나 단어장마다 따로 낼 수 있습니다. 단어장 책 PDF를 단원별로 나눠 읽었으면 '📚 쓸 단어장 고르기'의 <b>[💾 고른 단원 따로 저장]</b>으로 단원마다 저장해 두세요 — 다음엔 PDF를 다시 올리지 않아도 됩니다.",
     shots: {
       0: [{ img: "howto-step-vocab-1.jpg", cap: "직접 입력 · 사진 · PDF로 단어 넣기" }],
       1: [{ img: "howto-step-vocab-2.jpg", cap: "형식 고르기" }],
@@ -13673,7 +13748,7 @@ function createVocabBox(p, getTexts, scope) {
         if (val === "current") rows = flattenVocabSets(activeVocabSets());
         else {
           const item = await getJson(`/api/saved/${encodeURIComponent(val)}`, "단어장을 불러오지 못했습니다.");
-          rows = flattenVocabSets((item.payload && item.payload.vocabSets) || []);
+          rows = flattenVocabSets(savedVocabOn(item));
         }
       } catch (err) {
         status(esc(err.message || "단어장을 불러오지 못했습니다."), "warn");
@@ -13765,7 +13840,7 @@ function createVocabBox(p, getTexts, scope) {
           if (val === "current") rows.push(...flattenVocabSets(activeVocabSets()));
           else {
             const item = await getJson(`/api/saved/${encodeURIComponent(val)}`, "단어장을 불러오지 못했습니다.");
-            rows.push(...flattenVocabSets((item.payload && item.payload.vocabSets) || []));
+            rows.push(...flattenVocabSets(savedVocabOn(item)));
           }
         } catch (_) {
           failed++;
@@ -15932,6 +16007,22 @@ let assignVocabDup = 0;          // 겹쳐서 뺀 단어 수(안내용)
 let assignVocabLoading = null;   // 저장본을 받아 오는 중이면 그 Promise — 제출이 기다린다
 let assignVocabSeq = 0;          // 체크를 빨리 여러 번 바꿨을 때 늦게 온 옛 결과를 버린다
 const assignSavedRowsCache = new Map(); // 저장본 id → 펼친 단어 줄(창을 열 때마다 비운다)
+/* 여러 단어장을 골랐을 때 하나로 합칠지, 단어장마다 따로 시험을 낼지(2026-10-20 사용자 — 어휘끝 day 29·30을
+   한꺼번에 내되 학생에게는 day별 시험으로 보이게). 따로 낼 때는 단어장 이름이 그 시험의 제목이 된다. */
+let assignVocabGroups = [];      // [{ id, title, rows }] — 체크한 단어장마다(그 안에서만 같은 단어를 한 번으로)
+const assignSourceTitles = new Map(); // 저장본 id → 이름
+const assignVocabModeWrapEl = $("assignVocabModeWrap");
+const assignVocabEach = () => assignVocabModeWrapEl && !assignVocabModeWrapEl.hidden &&
+  !!document.querySelector('input[name="assignVocabMode"][value="each"]:checked');
+
+/* 저장본에서 '쓰기로 고른' 단어장만 — 단어장 책을 통째로 저장한 것은 45단원이 모두 들어 있고
+   체크를 푼 단원은 off로 표시돼 있다. 이를 무시해 40단어짜리가 1,800단어로 나왔다(2026-10-20 사용자).
+   하나도 안 골라 둔 채 저장한 것이면 전부를 쓴다(빈 시험이 되지 않게). */
+function savedVocabOn(item) {
+  const sets = (item && item.payload && item.payload.vocabSets) || [];
+  const on = sets.filter((s) => !s.off);
+  return on.length ? on : sets;
+}
 
 // 저장해 둔 단어장 payload(vocabSets)를 buildVocab과 같은 규칙으로 한 줄씩 펼친다.
 function flattenVocabSets(sets) {
@@ -15946,8 +16037,19 @@ function flattenVocabSets(sets) {
 
 function updateAssignVocabHint() {
   const picked = assignVocabSourceListEl.querySelectorAll("input:checked").length;
+  if (assignVocabModeWrapEl) assignVocabModeWrapEl.hidden = picked < 2;
+  const each = assignVocabEach();
+  $("assignTitleLabel").textContent = each ? "시험 제목 (따로 낼 때는 단어장 이름이 제목이 됩니다)" : "시험 제목";
+  $("assignTitle").disabled = each;
   if (!picked) {
     assignVocabSourceHintEl.textContent = "낼 단어장을 하나 이상 골라 주세요.";
+    return;
+  }
+  if (each) {
+    const full = assignVocabGroups.filter((g) => g.rows.length);
+    assignVocabSourceHintEl.textContent = full.length
+      ? `시험 ${full.length}개를 따로 냅니다 — ` + full.map((g) => `${g.title} ${g.rows.length}개`).join(" · ")
+      : "고른 단어장이 비어 있습니다 — 다른 단어장을 골라 주세요.";
     return;
   }
   const rows = assignVocabRows;
@@ -15972,6 +16074,10 @@ async function refreshAssignVocabSourceSelect() {
     `<label class="chk" style="display:block; margin:4px 0;">` +
     `<input type="checkbox" value="${esc(value)}"${checked ? " checked" : ""}> ${text}</label>`;
   const cur = lastVocabRows.length;
+  assignSourceTitles.clear();
+  items.forEach((it) => assignSourceTitles.set(it.id, it.title || "제목 없음"));
+  const mergeRadio = document.querySelector('input[name="assignVocabMode"][value="merge"]');
+  if (mergeRadio) mergeRadio.checked = true;
   // 화면에 단어장이 있으면 그것을 기본으로 체크해 둔다(예전 기본값과 같다).
   assignVocabSourceListEl.innerHTML =
     row("current", `지금 화면에 있는 단어장 <span class="hint">(${cur ? cur + "개" : "비어 있음"})</span>`, cur > 0) +
@@ -15990,7 +16096,7 @@ function recomputeAssignVocabRows() {
     await Promise.all(need.map(async (id) => {
       try {
         const item = await getJson(`/api/saved/${encodeURIComponent(id)}`, "단어장을 불러오지 못했습니다.");
-        assignSavedRowsCache.set(id, flattenVocabSets((item.payload && item.payload.vocabSets) || []));
+        assignSavedRowsCache.set(id, flattenVocabSets(savedVocabOn(item)));
       } catch (err) {
         failed = err.message || "단어장을 불러오지 못했습니다.";
       }
@@ -16012,6 +16118,19 @@ function recomputeAssignVocabRows() {
     });
     assignVocabRows = rows;
     assignVocabDup = dup;
+    assignVocabGroups = ids.map((id) => {
+      const src = id === "current" ? lastVocabRows : (assignSavedRowsCache.get(id) || []);
+      const own = new Set();
+      const title = id === "current"
+        ? (($("vocabTitle").value || "").trim() || "지금 화면의 단어장")
+        : assignSourceTitles.get(id) || "단어시험";
+      return { id, title, rows: src.filter((r) => {
+        const key = String(r.word || "").trim().toLowerCase();
+        if (!key || own.has(key)) return false;
+        own.add(key);
+        return true;
+      }) };
+    });
     updateAssignVocabHint();
   })();
   assignVocabLoading = job;
@@ -16022,6 +16141,7 @@ assignVocabSourceListEl.addEventListener("change", () => {
   assignErrorEl.textContent = "";
   recomputeAssignVocabRows();
 });
+if (assignVocabModeWrapEl) assignVocabModeWrapEl.addEventListener("change", updateAssignVocabHint);
 
 vocabAssignBtn.addEventListener("click", async () => {
   assignErrorEl.textContent = "";
@@ -16044,8 +16164,12 @@ assignFormEl.addEventListener("submit", async (e) => {
     return;
   }
   if (assignVocabLoading) await assignVocabLoading; // 저장본을 받는 중이면 다 받고 나서 낸다
+  const each = assignVocabEach();
   const rows = assignVocabRows;
-  if (!rows.length) {
+  const tests = each
+    ? assignVocabGroups.filter((g) => g.rows.length).map((g) => ({ title: g.title, rows: g.rows }))
+    : [{ title: $("assignTitle").value, rows }];
+  if (!rows.length || !tests.length) {
     assignErrorEl.textContent = "먼저 단어장을 만들거나, 저장된 단어장을 골라 주세요.";
     return;
   }
@@ -16060,25 +16184,31 @@ assignFormEl.addEventListener("submit", async (e) => {
   }
   assignStatusEl.textContent = "내는 중…";
   $("assignSubmitBtn").disabled = true;
+  let sent = 0;
   try {
-    await postJson(
-      "/api/vocab-tests",
-      {
-        classId,
-        studentId: target === "class" ? null : target,
-        title: $("assignTitle").value,
-        format: $("assignFormat").value,
-        maxWrong,
-        vocab: rows.map((r) => ({
-          word: r.word, meaning: r.meaning, pos: r.pos, synonym: r.synonym, antonym: r.antonym,
-        })),
-      },
-      "시험 내기에 실패했습니다."
-    );
+    for (const t of tests) {
+      if (tests.length > 1) assignStatusEl.textContent = `내는 중… ${sent + 1}/${tests.length}`;
+      await postJson(
+        "/api/vocab-tests",
+        {
+          classId,
+          studentId: target === "class" ? null : target,
+          title: t.title,
+          format: $("assignFormat").value,
+          maxWrong,
+          vocab: t.rows.map((r) => ({
+            word: r.word, meaning: r.meaning, pos: r.pos, synonym: r.synonym, antonym: r.antonym,
+          })),
+        },
+        "시험 내기에 실패했습니다."
+      );
+      sent++;
+    }
     closeModal(assignModalEl);
-    alert("시험을 냈습니다. '학생 관리' 탭에서 결과를 확인할 수 있습니다.");
+    alert(`${tests.length > 1 ? `시험 ${sent}개를` : "시험을"} 냈습니다. '학생 관리' 탭에서 결과를 확인할 수 있습니다.`);
   } catch (err) {
-    assignErrorEl.textContent = err.message || "시험 내기에 실패했습니다.";
+    assignErrorEl.textContent = (err.message || "시험 내기에 실패했습니다.") +
+      (tests.length > 1 ? ` (${tests.length}개 중 ${sent}개는 냈습니다)` : "");
   } finally {
     assignStatusEl.textContent = "";
     $("assignSubmitBtn").disabled = false;
