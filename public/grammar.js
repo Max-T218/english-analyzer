@@ -279,7 +279,6 @@ function grRenderSubs() {
     return;
   }
   const text = grPassageText();
-  const lim = GRAMMAR_GRADE_IDX[grState.grade];
   const subs = grVisibleSubs(t);
   box.innerHTML = `<label class="gr-sub gr-sub-all"><input type="checkbox" id="grSubAll"> <b>전체 선택</b></label>` +
     subs.map((s) => {
@@ -287,7 +286,7 @@ function grRenderSubs() {
       const on = grState.picked.some((p) => p.name === name);
       const seen = text && s.re && s.re.test(text);
       return `<label class="gr-sub"><input type="checkbox" data-name="${esc(name)}"${on ? " checked" : ""}>
-        <span>${esc(s.name)}</span>${s.g === lim ? `<span class="gr-new" title="이 레벨에서 새로 배우는 항목">이번 레벨</span>` : ""}
+        <span>${esc(s.name)}</span>
         ${seen ? `<span class="gr-seen" title="넣은 지문에 이 문법이 보입니다(짐작)">✓ 지문</span>` : ""}</label>`;
     }).join("");
   const all = box.querySelectorAll("input[data-name]");
