@@ -2192,7 +2192,7 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
     // (문장번호가 남아 있으면 '번호 지우기' 안내가 자동으로 뜬다)
     ta.dispatchEvent(new Event("input", { bubbles: true }));
     renumber();
-    return true;
+    return ta;   // 채운 칸(참 값) — 사진 속 문제는 답을 정한 뒤 이 칸의 글을 되살린 지문으로 바꾼다
   }
 
   /* ocrSay — 이 칸에 캡처 이미지를 붙여넣었을 때 진행 상황을 쓸 곳. 비어 있으면 공용 칸의 상태 줄.
@@ -2525,6 +2525,197 @@ let ocrBusy = false;
 
 /* mgr·status — 어느 지문 칸에 넣고 어디에 진행 상황을 쓸지. 기본은 공용 지문칸이다. 동형 모의고사의
    '시험 범위 지문' 칸도 같은 길로 채운다(2026-10-02 — 시험 범위를 교과서 사진으로 넣는 쓰임). */
+/* ══════ 사진 속 '문제'를 원래 지문으로 (2026-10-21 사용자) ══════
+   순서·삽입·무관한 문장·빈칸 문제를 캡처해 넣으면 예전엔 (A)(B)(C)가 인쇄된 차례로 붙거나 주어진 문장이 맨 앞에
+   붙은 채 들어갔다. 사진을 읽을 때 서버가 문제 짜임(주어진 글·덩어리·①~⑤ 자리·보기, server.py problem_from_lines)을
+   함께 돌려주면, 답을 정하는 창을 띄워 ① 선생님이 고르거나 ② 정답표를 넣거나 ③ AI가 풀게(문제당 값, 틀릴 수 있음) 하고,
+   고른 답대로 assembleProblem이 조각을 다시 잇는다 — 글을 다시 옮겨 적지 않으므로 답만 맞으면 지문은 사진 그대로다
+   (모음집 31문항으로 공식 정답을 넣어 되살린 지문이 낱말 하나까지 같았다). */
+const PROB_CIRCLED = "①②③④⑤";
+const PROB_ORDER_STD = ["(A)-(C)-(B)", "(B)-(A)-(C)", "(B)-(C)-(A)", "(C)-(A)-(B)", "(C)-(B)-(A)"];
+const PROB_TYPE_NAME = { order: "글의 순서", insert: "문장 삽입", irrelevant: "무관한 문장", blank: "빈칸" };
+
+// 문제 짜임 + 답(①~⑤) → 원래 지문. 맞춰지지 않으면 "" (그 칸은 꺼낸 그대로 둔다)
+function assembleProblem(p, ans) {
+  const k = PROB_CIRCLED.indexOf(ans);
+  if (k < 0) return "";
+  const tidy = (t) => t.replace(/\s{2,}/g, " ").replace(/\s+([,.;:?!])/g, "$1").trim();
+  if (p.type === "order") {
+    const seq = ((p.choices && p.choices.length === 5 ? p.choices : PROB_ORDER_STD)[k].match(/[A-E]/g)) || [];
+    const by = {};
+    (p.parts || []).forEach((x) => { by[x.label] = x.text; });
+    if (!seq.length || seq.some((l) => !(l in by))) return "";
+    return tidy([p.given, ...seq.map((l) => by[l])].join(" "));
+  }
+  let body = String(p.body || "");
+  if (p.type === "insert") {
+    const slots = [...body.matchAll(/\(\s*([①②③④⑤])\s*\)/g)].filter((m) => m[1] === ans);
+    if (slots.length !== 1) return "";
+    const m = slots[0];
+    body = body.slice(0, m.index) + " " + p.given + " " + body.slice(m.index + m[0].length);
+    body = body.replace(/\(\s*[①②③④⑤]\s*\)/g, "");
+  } else if (p.type === "irrelevant") {
+    const ms = [...body.matchAll(/[①②③④⑤]/g)];
+    if (ms.filter((m) => m[0] === ans).length !== 1) return "";
+    const i = ms.findIndex((m) => m[0] === ans);
+    const st = ms[i].index;
+    let en;
+    if (i + 1 < ms.length) en = ms[i + 1].index;
+    else {
+      // 마지막 번호 — 그 문장 끝까지만 뺀다(뒤에 문장이 더 있을 수 있다)
+      const mm = /[.?!]["”’']?(\s|$)/.exec(body.slice(st));
+      en = st + (mm ? mm.index + mm[0].length : body.length - st);
+    }
+    body = (body.slice(0, st) + " " + body.slice(en)).replace(/[①②③④⑤]/g, "");
+  } else if (p.type === "blank") {
+    const c = (p.choices || [])[k];
+    if (!c || !/_{3,}/.test(body)) return "";
+    body = body.replace(/_{3,}/, c);
+  } else return "";
+  return tidy(body);
+}
+
+// 붙여 넣은 정답표 글 → { "31": "②" } (server.py parse_mock_answer_key의 짝 꼴만 — 가로 표 같은 나머지는 서버가 읽는다)
+function parseKeyText(text) {
+  const out = {};
+  const re = /(?<!\d)(\d{1,3})[ \t]*(?:번)?[ \t]*[.)\]:\-–=]?[ \t]*([①②③④⑤]|(?<![\d.])[1-5](?![\d.]))/g;
+  for (const m of String(text || "").matchAll(re)) {
+    const a = /[1-5]/.test(m[2]) ? PROB_CIRCLED[+m[2] - 1] : m[2];
+    if (!(m[1] in out)) out[m[1]] = a;
+  }
+  return out;
+}
+
+/* 답을 정하는 창. 문항마다 ①~⑤ 단추, 정답표(붙여 넣기·파일), AI로 풀기.
+   [원래 지문으로]를 누르면 답을 정한 문항만 그 칸의 글을 바꾸고 안내 HTML을 돌려준다. 닫으면 "". */
+function askProblemFill(probs) {
+  const box = $("probFillGuide");
+  const list = $("probFillList");
+  const per = PRICING ? PRICING.passageSolve : 0;
+  const rows = probs.map((it) => ({ it, ans: "", from: "", check: "", reason: "" }));
+  const msg = (html) => { $("probFillKeyMsg").innerHTML = html; };
+  $("probFillLead").innerHTML =
+    `캡처한 사진 중 <b>${probs.length}개</b>가 문제(순서·삽입·무관한 문장·빈칸)입니다. ` +
+    `답을 정하면 문제로 바꾸기 전의 <b>원래 지문</b>으로 바꿔 넣습니다.`;
+  $("probFillAiBtn").textContent = `🤖 AI로 풀기${per ? ` (문제당 ${pt(per)})` : ""}`;
+  $("probFillKeyText").value = "";
+  $("probFillKeyFile").value = "";
+  msg("");
+  const draw = () => {
+    list.innerHTML = rows.map((r, i) => {
+      const p = r.it.problem;
+      const head = `${p.qno ? `${esc(p.qno)}번 · ` : ""}${PROB_TYPE_NAME[p.type] || ""}`;
+      const btns = [...PROB_CIRCLED].map((c) =>
+        `<button type="button" class="prob-ans${r.ans === c ? " on" : ""}" data-i="${i}" data-a="${c}">${c}</button>`).join("");
+      const tag = r.from === "ai"
+        ? (r.check && r.check !== r.ans
+          ? `<span class="prob-tag warn" title="${esc(r.reason)}">AI · ⚠️ 답이 갈림(다른 풀이는 ${esc(r.check)}) — 확인 권장</span>`
+          : `<span class="prob-tag" title="${esc(r.reason)}">AI가 고름</span>`)
+        : r.from === "key" ? `<span class="prob-tag">정답표</span>` : "";
+      const peek = esc(String(p.given || p.body || "").slice(0, 80));
+      return `<div class="prob-row"><div class="prob-head"><b>${head}</b> ${tag}</div>` +
+        `<div class="prob-peek">${peek}…</div><div class="prob-btns">${btns}</div></div>`;
+    }).join("");
+    const n = rows.filter((r) => r.ans).length;
+    $("probFillApply").disabled = !n;
+    $("probFillApply").textContent = !n || n === rows.length ? "✔ 원래 지문으로 바꾸기" : `✔ 답 정한 ${n}개만 원래 지문으로`;
+  };
+  list.onclick = (e) => {
+    const b = e.target.closest(".prob-ans");
+    if (!b) return;
+    const r = rows[+b.dataset.i];
+    r.ans = r.ans === b.dataset.a ? "" : b.dataset.a;
+    r.from = r.ans ? "me" : "";
+    draw();
+  };
+  const fillFromKey = (key) => {
+    let hit = 0;
+    rows.forEach((r) => {
+      const a = key[String(+r.it.problem.qno || "")];
+      if (a) { r.ans = a; r.from = "key"; hit++; }
+    });
+    const miss = rows.filter((r) => !r.ans).length;
+    msg(hit
+      ? `정답표에서 ${hit}문제의 답을 채웠습니다.${miss ? ` ${miss}문제는 번호가 정답표에 없어 비어 있습니다.` : ""}`
+      : "정답표에서 이 문제들의 번호를 찾지 못했습니다. 문제 번호와 정답표 번호가 같은지 확인해 주세요.");
+    draw();
+  };
+  $("probFillKeyRead").onclick = async () => {
+    const text = $("probFillKeyText").value.trim();
+    const f = $("probFillKeyFile").files && $("probFillKeyFile").files[0];
+    if (!text && !f) { msg("정답을 붙여 넣거나 정답표 파일을 고르세요."); return; }
+    if (text) {
+      const key = parseKeyText(text);
+      if (Object.keys(key).length) { fillFromKey(key); return; }
+    }
+    msg(`<span class="spinner"></span> 정답표 읽는 중…`);
+    try {
+      const body = text ? { text }
+        : { file: isPdf(f) ? { mime: "application/pdf", data: await blobToBase64(f) } : await photoToPart(f) };
+      const res = await postGenerate("/api/answerkey", body, "정답표를 읽지 못했습니다.");
+      fillFromKey(res.key || {});
+    } catch (err) {
+      msg(esc(err.message || "정답표를 읽지 못했습니다."));
+    }
+  };
+  $("probFillKeyBtn").onclick = () => $("probFillKeyFile").click();
+  $("probFillKeyFile").onchange = () => {
+    const f = $("probFillKeyFile").files && $("probFillKeyFile").files[0];
+    if (f) { $("probFillKeyText").value = ""; $("probFillKeyRead").click(); }
+  };
+  $("probFillAiBtn").onclick = async () => {
+    const todo = rows.filter((r) => !r.ans);
+    if (!todo.length) { msg("모든 문제의 답이 이미 정해져 있습니다."); return; }
+    if (per && !(await hasEnoughPoints(per * todo.length, "문제 사진 답 풀기"))) return;
+    const btn = $("probFillAiBtn");
+    btn.disabled = true;
+    msg(`<span class="spinner"></span> AI가 ${todo.length}문제를 푸는 중… (30초쯤 걸립니다)`);
+    try {
+      const res = await postGenerate("/api/passagesolve", { problems: todo.map((r) => r.it.problem) },
+        "문제를 풀지 못했습니다.");
+      (res.answers || []).forEach((a, j) => {
+        const r = todo[j];
+        if (r && a.answer) Object.assign(r, { ans: a.answer, from: "ai", check: a.check || "", reason: a.reason || "" });
+      });
+      const split = todo.filter((r) => r.from === "ai" && r.check && r.check !== r.ans).length;
+      msg(`AI가 답을 골랐습니다. <b>AI가 푼 답은 틀릴 수 있습니다</b>` +
+        (split ? ` — 특히 '답이 갈림' ${split}문제는 꼭 확인해 주세요.` : "."));
+      refreshTokenDisplay();
+    } catch (err) {
+      msg(esc(err.message || "문제를 풀지 못했습니다."));
+    }
+    btn.disabled = false;
+    draw();
+  };
+  draw();
+  box.hidden = false;
+  return new Promise((resolve) => {
+    const close = (html) => {
+      box.hidden = true;
+      list.onclick = $("probFillApply").onclick = $("probFillKeep").onclick = box.onclick = null;
+      resolve(html);
+    };
+    $("probFillKeep").onclick = () => close("");
+    box.onclick = (e) => { if (e.target === box) close(""); };
+    $("probFillApply").onclick = () => {
+      let ok = 0;
+      const bad = [];
+      rows.forEach((r) => {
+        if (!r.ans) return;
+        const text = assembleProblem(r.it.problem, r.ans);
+        if (!text) { bad.push(r.it.who); return; }
+        r.it.ta.value = text;
+        r.it.ta.dispatchEvent(new Event("input", { bubbles: true }));
+        ok++;
+      });
+      const ai = rows.filter((r) => r.ans && r.from === "ai").length;
+      close(`🧩 문제 ${ok}개를 고른 답대로 <b>원래 지문</b>으로 바꿨습니다.` +
+        (ai ? ` 그중 ${ai}개는 AI가 푼 답이라 틀릴 수 있습니다 — 사진과 맞춰 확인하세요.` : "") +
+        (bad.length ? ` ${esc(bad.join(", "))}은(는) 문제 모양을 다 읽지 못해 꺼낸 그대로 두었습니다.` : ""));
+    };
+  });
+}
+
 async function runOcr(fileList, mgr = passageMgr, say = ocrStatus) {
   const files = [...fileList].filter((f) => f && isPhoto(f));
   if (!files.length) {
@@ -2538,6 +2729,7 @@ async function runOcr(fileList, mgr = passageMgr, say = ocrStatus) {
   let added = 0;
   const notes = [];
   const fails = [];
+  const probs = [];   // 사진 속 문제 — { who, ta(넣은 칸), problem }
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
@@ -2568,8 +2760,12 @@ async function runOcr(fileList, mgr = passageMgr, say = ocrStatus) {
         notes.push(`${who}: 널리 공개된 지문이라 사진을 나눠 읽었습니다. 문장이 이어지는지 특히 잘 확인하세요.`);
       }
       if (data.note) notes.push(`${who}: ${data.note}`);
-      if (mgr.fillText(data.text)) added++;
-      else fails.push(`${who} — 지문 칸이 가득 차 더 넣지 못했습니다.`);
+      const ta = mgr.fillText(data.text);
+      if (ta) {
+        added++;
+        // 순서·삽입·무관한 문장·빈칸 문제 사진 — 일단 꺼낸 그대로 넣고, 다 읽은 뒤 답을 정할 창을 띄운다
+        if (data.problem) probs.push({ who, ta, problem: data.problem });
+      } else fails.push(`${who} — 지문 칸이 가득 차 더 넣지 못했습니다.`);
     } catch (err) {
       const msg = err.message || String(err);
       fails.push(`${who} — ${msg}`);
@@ -2593,6 +2789,12 @@ async function runOcr(fileList, mgr = passageMgr, say = ocrStatus) {
   fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
   if (!parts.length) parts.push("옮길 지문을 찾지 못했습니다.");
   say(parts.join("<br>"), added ? (fails.length ? "warn" : "ok") : "warn");
+
+  // 문제 사진이 있으면 답을 정할 창 — 고른 답대로 그 칸의 글을 원래 지문으로 바꾼다
+  if (probs.length) {
+    const done = await askProblemFill(probs);
+    if (done) say(parts.join("<br>") + "<br>" + done, added ? (fails.length ? "warn" : "ok") : "warn");
+  }
 
   ocrBusy = false;
   [ocrBtn, examOcrPhotoBtn].forEach((b) => b && (b.disabled = false));
@@ -11076,7 +11278,7 @@ const HOWTO = {
       "<b>[✏️ 직접 수정]</b>으로 글자를, <b>[📄 쪽 구성]</b>으로 인쇄될 쪽 경계를 고칩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
     ],
-    tip: "요약 이미지는 사이트에 저장해야 다음에 불러올 때 남습니다. 학생용 모의고사 문제지를 <b>[📄 PDF에서 가져오기]</b>로 올리면 빈칸·순서·문장 삽입 문항을 AI가 풀어 채울지 묻습니다(채우면 지문당 포인트). 그 창에 정답표를 붙여 넣거나 올리면 정답표의 답대로 채웁니다." + HOWTO_PAUSE_TIP,
+    tip: "요약 이미지는 사이트에 저장해야 다음에 불러올 때 남습니다. 학생용 모의고사 문제지를 <b>[📄 PDF에서 가져오기]</b>로 올리면 빈칸·순서·문장 삽입 문항을 AI가 풀어 채울지 묻습니다(채우면 지문당 포인트). 그 창에 정답표를 붙여 넣거나 올리면 정답표의 답대로 채웁니다. 순서·삽입·무관한 문장·빈칸 <b>문제를 캡처해 넣으면</b> 답을 정하는 창이 떠, 답을 고르거나 정답표를 넣거나 AI에게 풀게 하면(문제당 포인트) 원래 지문으로 바꿔 넣습니다." + HOWTO_PAUSE_TIP,
     shots: {
       0: [{ img: "howto-step-mcq-1.jpg", cap: "지문을 붙여 넣은 모습" }],
       1: [{ img: "howto-step-analyze-1.jpg", cap: "표지 제목 · 요약 이미지" }],

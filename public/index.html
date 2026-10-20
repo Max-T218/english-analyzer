@@ -2660,6 +2660,36 @@
   </div>
 </div>
 
+<!-- 사진 속 문제(순서·삽입·무관한 문장·빈칸) — 답을 정하면 원래 지문으로 바꾼다 (app.js askProblemFill).
+     답은 ① 직접 고르기 ② 정답표(붙여 넣기·파일) ③ AI로 풀기(문제당 값, 틀릴 수 있음) -->
+<div class="print-guide" id="probFillGuide" hidden>
+  <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="probFillTitle">
+    <h3 id="probFillTitle">🧩 문제 사진이 있습니다 — 답을 정해 주세요</h3>
+    <p class="print-guide-lead" id="probFillLead"></p>
+    <div class="prob-list" id="probFillList"></div>
+    <div class="mock-fill-key">
+      <b>답을 정하는 세 가지 방법</b>
+      <span>① 위에서 문제마다 <b>답 번호를 직접 누르거나</b></span>
+      <span>② <b>정답표</b>를 붙여 넣거나 올리면 문제 번호대로 채웁니다(무료)</span>
+      <textarea id="probFillKeyText" rows="2" placeholder="예: 36 ④ 37 ② 38 ③  (정답표를 그대로 복사해 붙여 넣어도 됩니다)"></textarea>
+      <div class="mock-fill-key-file">
+        <button type="button" class="btn ghost small" id="probFillKeyRead">📋 정답표로 채우기</button>
+        <button type="button" class="btn ghost small" id="probFillKeyBtn">📎 정답표 파일 올리기 (PDF·사진)</button>
+        <input type="file" id="probFillKeyFile" accept="application/pdf,image/*" hidden>
+      </div>
+      <span>③ 정답을 모르면 <b>AI가 풉니다</b> — 포인트가 들고, <b>AI가 푼 답은 틀릴 수 있습니다</b></span>
+      <div class="mock-fill-key-file">
+        <button type="button" class="btn ghost small" id="probFillAiBtn">🤖 AI로 풀기</button>
+      </div>
+      <span class="prob-msg" id="probFillKeyMsg"></span>
+    </div>
+    <div class="print-guide-actions">
+      <button type="button" class="btn ghost" id="probFillKeep">꺼낸 그대로 두기</button>
+      <button type="button" class="btn" id="probFillApply" disabled>✔ 원래 지문으로 바꾸기</button>
+    </div>
+  </div>
+</div>
+
 <!-- 저장함 (지문 / 제작 자료 — 어느 쪽으로 열렸는지에 따라 제목·설명·목록이 바뀐다) -->
 <div class="print-guide" id="savedListModal" hidden>
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="savedListTitle">

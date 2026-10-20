@@ -426,6 +426,10 @@ PRICE_PDFSPLIT_KRW = int(os.environ.get("PRICE_PDFSPLIT_KRW", "0"))
 # 원래 지문으로 되돌린다. 복원해 받아 낸 지문 1개당이다(못 받은 지문은 받지 않는다).
 # 원가(2026-10-20 실측 전 어림): 문제지 한 부(독해 28지문)를 다섯 묶음으로 나눠 Pro로 부르면 약 300~500원.
 PRICE_MOCK_RESTORE_KRW = int(os.environ.get("PRICE_MOCK_RESTORE_KRW", "30"))
+# 사진 속 문제(순서·삽입·무관한 문장·빈칸)를 AI가 풀기(/api/passagesolve) — 문제 1개당.
+# 지문은 사진에서 읽은 조각을 화면이 다시 이으므로 AI는 답 번호만 낸다. Pro로 풀고 Flash로 한 번 더 풀어
+# 두 답이 다르면 화면이 '확인 권장'으로 짚는다. 원가(2026-10-21 실측) Pro 문항당 약 15~25원 + Flash 약 1원
+PRICE_PASSAGE_SOLVE_KRW = int(os.environ.get("PRICE_PASSAGE_SOLVE_KRW", "30"))
 # 단어장 탭 — 사진에서 단어 목록 인식. 지문 사진(PRICE_OCR_KRW)과 같은 자리이지만
 # 값은 따로 매긴다(단어장은 지문 분석 없이도 쓸 수 있어 씀씀이가 다르다).
 PRICE_VOCAB_OCR_KRW = int(os.environ.get("PRICE_VOCAB_OCR_KRW", "0"))
@@ -3693,9 +3697,14 @@ OCR_SCHEMA = {
         "kind": {"type": "STRING"},
         "lines": {"type": "ARRAY", "items": {"type": "STRING"}},
         "note": {"type": "STRING"},
+        # 사진이 '문제'(순서·삽입·무관한 문장·빈칸)이면 그 종류와 문항 번호(2026-10-21 사용자).
+        # 짜임은 lines 안에 표시([주어진]·(A)·( ① )·[보기])로 남기게 하고 서버가 나눈다 — 글을 두 번
+        # 옮기게 했더니 Flash가 조각을 비워 두고, 출력이 두 배라 잘림·재현 차단이 늘었다. problem_from_lines 참고
+        "problem": {"type": "STRING"},
+        "qno": {"type": "STRING"},
     },
-    "required": ["kind", "lines", "note"],
-    "propertyOrdering": ["kind", "lines", "note"],
+    "required": ["kind", "problem", "qno", "lines", "note"],
+    "propertyOrdering": ["kind", "problem", "qno", "lines", "note"],
 }
 
 OCR_SYSTEM_PROMPT = r"""You transcribe the English reading passage from ONE photo of Korean
@@ -3755,6 +3764,27 @@ Report any problem you hit in `note`.
   Drop those numbers, and put an empty item "" BETWEEN the mini-dialogues so the
   teacher can tell where one conversation ends and the next begins.
 - Everything in "Transcribe EXACTLY" still holds — do not fix, translate or shorten.
+
+## problem / qno — when the photo is an exam QUESTION built from a passage
+Set `problem` to one of these, or "none" for anything else (a plain passage, other question types):
+- "order" — 글의 순서 (주어진 글 다음에 이어질 글의 순서로 가장 적절한 것)
+- "insert" — 문장 삽입 (주어진 문장이 들어가기에 가장 적절한 곳)
+- "irrelevant" — 무관한 문장 (전체 흐름과 관계 없는 문장)
+- "blank" — 빈칸 추론 with exactly ONE blank (two blanks (A)(B) or 요약문 → "none")
+`qno` = the printed question number only, digits ("2", "38"); "" if none.
+
+When `problem` is not "none", the rules above about REMOVING marks change — keep these marks
+in `lines` so the question can be rebuilt later (still one sentence per item, still word for word):
+- The boxed text above the passage (주어진 글 / 주어진 문장): ONE item per sentence, each
+  starting with "[주어진] ".
+- order: start the FIRST sentence item of each lettered block with its label "(A) ", "(B) " …,
+  in printed order.
+- insert: keep each slot exactly as "( ① )" … "( ⑤ )" inside the sentence items where printed.
+- irrelevant: keep ① … ⑤ right before the sentences they mark.
+- blank: write the blank as "_____".
+- order / blank: add each of the five options as its own item at the END, starting with
+  "[보기] " and without the circled number: "[보기] (A)-(C)-(B)" / "[보기] the power of habit".
+Still remove the question prompt, footnotes (*word: 뜻), Korean text and source tags.
 
 ## note (Korean, short)
 - "" when the photo was clean and fully readable.
@@ -3848,14 +3878,252 @@ def call_gemini_ocr(file, api_key, model, partial=False):
     }
     result = _gemini_json(payload, api_key, model, _OCR_TRUNC_MSG, label="ocr")
 
+    # 문제 사진이면 표시를 남긴 줄에서 짜임을 꺼내고, 지문칸에 넣을 글은 표시를 지운 줄로 만든다.
+    # 조각으로 나눠 읽은 사진은 짜임이 쪼개져 있어 쓰지 않는다(표시만 지운다)
+    lines, prob = problem_from_lines(result.get("lines"), result.get("problem"), result.get("qno"))
+    if partial:
+        prob = None
     # 문장별 배열을 다시 잇는다 (태그가 섞여 오면 걷어낸다)
-    text = _join_ocr_lines(result.get("lines"), result.get("kind"))
+    text = _join_ocr_lines(lines, result.get("kind"))
     note = str(result.get("note") or "").strip()
     if not text:
         raise RuntimeError(
             note or "사진에서 영어 지문을 찾지 못했습니다. 지문이 잘 보이게 다시 찍어 올려 주세요."
         )
-    return {"text": text, "note": note}
+    out = {"text": text, "note": note}
+    if prob:
+        out["problem"] = prob
+    return out
+
+
+# ── 사진 속 '문제'를 원래 지문으로 (2026-10-21 사용자) ──
+# 순서·삽입·무관한 문장·빈칸 문제 사진은 그대로 옮기면 글이 뒤섞이거나 빈칸이 빈 채로 들어간다.
+# 사진을 읽을 때 문제 짜임(주어진 글·(A)(B)(C)·①~⑤ 자리·보기)을 함께 받아 두고, 답을 정하면
+# 화면이 그 조각을 다시 잇는다(public/app.js의 assembleProblem) — 글을 다시 옮겨 적지 않으므로
+# 답만 맞으면 지문은 사진 그대로다. 답은 선생님이 고르거나, 정답표를 넣거나, AI가 푼다(solve_passage_problems).
+OCR_PROBLEM_TYPES = ("order", "insert", "irrelevant", "blank")
+_CIRCLED_ALL = "①②③④⑤"
+
+
+def normalize_ocr_problem(raw):
+    """사진 읽기가 돌려준 problem을 거른다. 되살릴 수 있는 짜임만 남기고 아니면 None."""
+    if not isinstance(raw, dict):
+        return None
+    kind = str(raw.get("type") or "").strip().lower()
+    if kind not in OCR_PROBLEM_TYPES:
+        return None
+    clean = lambda v, n=4000: _TAG_STRIP_RE.sub("", str(v or "")).strip()[:n]
+    p = {"type": kind, "qno": re.sub(r"\D", "", clean(raw.get("qno"), 6))[:3],
+         "given": clean(raw.get("given")), "body": clean(raw.get("body"), 6000), "parts": [], "choices": []}
+    for part in (raw.get("parts") or [])[:5]:
+        if isinstance(part, dict):
+            label = re.sub(r"[^A-E]", "", clean(part.get("label"), 6).upper())[:1]
+            text = re.sub(r"^\(?[A-E]\)\s*", "", clean(part.get("text")))
+            if label and text:
+                p["parts"].append({"label": label, "text": text})
+    p["choices"] = [re.sub(rf"^[{_CIRCLED_ALL}]\s*", "", clean(c, 300)) for c in (raw.get("choices") or [])[:5]]
+    if kind == "order":
+        ok = p["given"] and len(p["parts"]) >= 3
+    elif kind == "insert":
+        ok = p["given"] and len(re.findall(rf"\(\s*[{_CIRCLED_ALL}]\s*\)", p["body"])) >= 4
+    elif kind == "irrelevant":
+        ok = len(re.findall(f"[{_CIRCLED_ALL}]", p["body"])) >= 4
+    else:
+        ok = "___" in p["body"] and len([c for c in p["choices"] if c]) == 5
+    if not ok:
+        return None
+    if kind == "order" and len(p["choices"]) != 5:
+        p["choices"] = []
+    if kind not in ("order", "blank"):
+        p["choices"] = []
+    return p
+
+
+_SLOT_RE = re.compile(rf"\(\s*[{_CIRCLED_ALL}]\s*\)")
+_GIVEN_TAG_RE = re.compile(r"^\[\s*주어진\s*\]\s*")
+_CHOICE_TAG_RE = re.compile(r"^\[\s*보기\s*\]\s*")
+_PART_TAG_RE = re.compile(r"^\(([A-E])\)\s*")
+
+
+def problem_from_lines(lines, kind, qno):
+    """사진 읽기의 줄 배열(문제면 [주어진]·(A)·( ① )·[보기] 표시가 남아 있다) →
+    (표시를 지운 줄 배열, 문제 짜임 또는 None). 지운 줄 배열은 예전과 같은 '원문 그대로' 글이 된다 —
+    주어진 글이 맨 앞, 덩어리는 인쇄된 차례, 보기는 뺀다."""
+    lines = [str(x or "") for x in (lines or [])]
+    kind = str(kind or "").strip().lower()
+    given, parts, body, choices, plain = [], [], [], [], []
+    for raw in lines:
+        t = raw.strip()
+        if _CHOICE_TAG_RE.match(t):
+            choices.append(_CHOICE_TAG_RE.sub("", t))
+            continue
+        if _GIVEN_TAG_RE.match(t):
+            t = _GIVEN_TAG_RE.sub("", t)
+            given.append(t)
+        elif kind == "order" and _PART_TAG_RE.match(t):
+            parts.append({"label": _PART_TAG_RE.match(t).group(1), "text": _PART_TAG_RE.sub("", t)})
+            t = _PART_TAG_RE.sub("", t)
+        elif t:
+            if kind == "order" and parts:
+                parts[-1]["text"] += " " + t
+            else:
+                body.append(t)
+        # 지문칸에 넣을 글 — 삽입 자리·무관한 문장 번호를 지운다(빈칸 밑줄은 예전처럼 남긴다)
+        plain.append(re.sub(r"\s{2,}", " ", re.sub(f"[{_CIRCLED_ALL}]", "", _SLOT_RE.sub("", t))).strip()
+                     if t else "")
+    if kind not in OCR_PROBLEM_TYPES:
+        return plain, None
+    raw = {"type": kind, "qno": qno, "given": " ".join(given), "parts": parts,
+           "body": " ".join(body), "choices": choices}
+    return plain, normalize_ocr_problem(raw)
+
+
+def _problem_text(p):
+    """AI에게 보일 문제 한 개(글자)."""
+    head = {"order": "주어진 글 다음에 이어질 글의 순서로 가장 적절한 것은?",
+            "insert": "글의 흐름으로 보아, 주어진 문장이 들어가기에 가장 적절한 곳은?",
+            "irrelevant": "다음 글에서 전체 흐름과 관계 없는 문장은?",
+            "blank": "다음 빈칸에 들어갈 말로 가장 적절한 것은?"}[p["type"]]
+    out = [head]
+    if p["type"] == "order":
+        out += [f"[주어진 글] {p['given']}"] + [f"({x['label']}) {x['text']}" for x in p["parts"]]
+        choices = p["choices"] or ["(A)-(C)-(B)", "(B)-(A)-(C)", "(B)-(C)-(A)", "(C)-(A)-(B)", "(C)-(B)-(A)"]
+        out.append("  ".join(f"{_CIRCLED_ALL[i]} {c}" for i, c in enumerate(choices)))
+    elif p["type"] == "insert":
+        out += [f"[주어진 문장] {p['given']}", p["body"]]
+    elif p["type"] == "irrelevant":
+        out.append(p["body"])
+    else:
+        out += [p["body"], "  ".join(f"{_CIRCLED_ALL[i]} {c}" for i, c in enumerate(p["choices"]))]
+    return "\n".join(out)
+
+
+SOLVE_PROBLEM_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {"answer": {"type": "STRING"}, "reason": {"type": "STRING"}},
+    "required": ["answer", "reason"],
+}
+SOLVE_PROBLEM_SYSTEM_PROMPT = """당신은 한국 수능 영어 1등급 강사입니다. 입력은 영어 독해 문제 하나입니다. 꼼꼼히 풀어 답을 고릅니다.
+- 글의 순서: 보기의 다섯 순서를 하나씩 실제로 이어 읽고, 각 덩어리의 첫 문장이 앞 덩어리의 마지막 문장과 지시어(this, these, such, it, they)·연결어(however, for example, so)·대명사·관사(a→the)로 이어지는지 확인합니다.
+- 문장 삽입: 주어진 문장을 ①~⑤ 다섯 자리에 하나씩 넣어 보고, 주어진 문장의 지시어·연결어가 가리키는 대상이 바로 앞 문장에 있는지, 넣은 뒤 다음 문장이 주어진 문장을 자연스럽게 이어받는지, 원래 자리에서 논리의 단절(갑작스런 대상 변화·지시어의 대상 없음)이 있는지 봅니다.
+- 무관한 문장: 각 문장을 빼 보고 글의 중심 소재·주장과 흐름을 확인합니다.
+- 빈칸: 글의 중심 생각과 빈칸 앞뒤 근거를 찾아 보기를 하나씩 넣어 봅니다.
+answer는 보기 번호(①~⑤) 하나, reason은 결정적 근거를 한국어 한두 문장으로."""
+
+
+def solve_passage_problems(problems, api_key, model=None):
+    """문제 여러 개를 하나씩 동시에 풀어 [{answer: '③' 또는 '', reason}]을 같은 차례로 돌려준다.
+    한 문제씩 따로 부른다 — 여럿을 한 번에 시키면 어려운 문항에 생각을 덜 쓴다(2026-10-21 실측)."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+                           "관리자에게 문의하세요.")
+    model = model if (model and _MODEL_RE.match(model)) else MODEL_PRO
+    out = [None] * len(problems)
+    labels = _vertex_get_labels()
+
+    def work(i, p):
+        _vertex_set_labels(labels)
+        payload = {
+            "systemInstruction": {"parts": [{"text": SOLVE_PROBLEM_SYSTEM_PROMPT}]},
+            "contents": [{"role": "user", "parts": [{"text": _problem_text(p)}]}],
+            "generationConfig": {"temperature": 1.0, "maxOutputTokens": 16384,
+                                 "responseMimeType": "application/json", "responseSchema": SOLVE_PROBLEM_SCHEMA},
+        }
+        try:
+            r = _gemini_json(payload, api_key, model, "답이 잘렸습니다.", label="passagesolve")
+            m = re.search(f"[{_CIRCLED_ALL}]", str(r.get("answer") or ""))
+            out[i] = {"answer": m.group() if m else "", "reason": _norm_text(str(r.get("reason") or ""))[:300]}
+        except QuotaExceeded:
+            raise
+        except Exception as e:
+            out[i] = {"answer": "", "reason": "", "error": str(e)[:200]}
+
+    threads = [threading.Thread(target=work, args=(i, p), daemon=True) for i, p in enumerate(problems)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return [o or {"answer": "", "reason": ""} for o in out]
+
+
+def parse_solve_problems(raw):
+    """화면이 보낸 문제 목록을 다시 거른다(사진 읽기 결과를 그대로 돌려보내지만 믿지 않는다)."""
+    out = []
+    for p in (raw or [])[:SOLVE_PROBLEMS_MAX]:
+        q = normalize_ocr_problem(p)
+        if q:
+            out.append(q)
+    return out
+
+
+SOLVE_PROBLEMS_MAX = 40
+
+ANSWER_KEY_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "answers": {"type": "ARRAY", "items": {
+            "type": "OBJECT",
+            "properties": {"no": {"type": "STRING"}, "answer": {"type": "STRING"}},
+            "required": ["no", "answer"],
+        }},
+    },
+    "required": ["answers"],
+}
+ANSWER_KEY_SYSTEM_PROMPT = """입력은 영어 시험·문제집의 정답표(또는 정답과 해설) 사진이나 PDF입니다.
+문항 번호와 정답 번호(①~⑤)만 차례대로 옮깁니다. no는 숫자만("31"), answer는 ①~⑤ 중 하나.
+- 영어 과목이 아닌 정답(국어·수학 등)은 싣지 않습니다.
+- 정답이 ①~⑤가 아닌 문항(서술형 등)은 싣지 않습니다.
+- 보이지 않는 번호를 짐작해 채우지 않습니다."""
+
+
+def _pdf_rows_text(pages):
+    """read_pdf_pages 결과를 쪽마다 같은 높이끼리 한 줄로 이어 붙인 글 — 가로 정답표를 읽으려고."""
+    out = []
+    for page in pages:
+        rows = {}
+        for r in page:
+            rows.setdefault(round(r["y"]), []).append(r)
+        out += [" ".join(r["t"] for r in sorted(rows[y], key=lambda r: r["x0"])) for y in sorted(rows)]
+    return "\n".join(out)
+
+
+def read_answer_key(text, file, api_key):
+    """정답표 → {"key": {"31": "②", …}, "how": "text"|"pdf"|"ai"}.
+    글과 글자가 든 PDF는 규칙으로 읽고(0원·틀림 없음), 사진과 스캔 PDF만 Flash로 읽는다."""
+    if text and str(text).strip():
+        key = parse_mock_answer_key(str(text))
+        if not key:
+            raise ValueError("정답을 읽지 못했습니다. '31 ② 32 ④'처럼 번호와 답을 함께 적어 주세요.")
+        return {"key": {str(n): a for n, a in key.items()}, "how": "text"}
+    part = parse_mock_answer_file(file)
+    if not part:
+        raise ValueError("정답표를 붙여 넣거나 파일을 올려 주세요.")
+    mime = part["inlineData"]["mimeType"]
+    if mime == PDF_MIME:
+        try:
+            key = parse_mock_answer_key(_pdf_rows_text(read_pdf_pages(base64.b64decode(part["inlineData"]["data"]))))
+        except Exception:
+            key = {}
+        if len(key) >= 3:
+            return {"key": {str(n): a for n, a in key.items()}, "how": "pdf"}
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    payload = {
+        "systemInstruction": {"parts": [{"text": ANSWER_KEY_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [part, {"text": "이 정답표의 번호와 정답을 옮기세요."}]}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 16384,
+                             "responseMimeType": "application/json", "responseSchema": ANSWER_KEY_SCHEMA},
+    }
+    r = _gemini_json(payload, api_key, MODEL, "정답표가 너무 깁니다.", label="answerkey")
+    key = {}
+    for a in r.get("answers") or []:
+        no = re.sub(r"\D", "", str(a.get("no") or ""))
+        ans = _mock_key_ans(re.sub(r"\s", "", str(a.get("answer") or ""))[:1])
+        if no and ans and 1 <= int(no) <= 200:
+            key.setdefault(str(int(no)), ans)
+    if not key:
+        raise ValueError("정답표에서 번호와 정답을 찾지 못했습니다. 정답이 잘 보이게 다시 올려 주세요.")
+    return {"key": key, "how": "ai"}
 
 
 # ══════════════ 단어장 탭 — 사진·PDF에서 단어 목록 가져오기 ══════════════
@@ -11733,6 +12001,15 @@ CHANGELOG = [
             "정답표 PDF·사진을 올리면 AI가 직접 풀지 않고 정답표의 답대로 원래 지문을 되살립니다(포인트는 같습니다).",
         ],
     },
+    {
+        "version": 89,
+        "date": "2026-10-21",
+        "items": [
+            "순서·문장 삽입·무관한 문장·빈칸 문제를 캡처해 지문 칸에 넣으면, 답을 정하는 창이 뜹니다. 답 번호를 직접 누르거나, "
+            "정답표를 붙여 넣거나 올리거나, AI에게 풀게 하면(문제당 포인트, 틀릴 수 있음) 문제로 바꾸기 전의 원래 지문으로 바꿔 넣습니다. "
+            "지문은 사진에서 읽은 글을 그대로 다시 이어 만들어, 답만 맞으면 사진 그대로입니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -14963,6 +15240,7 @@ class Handler(BaseHTTPRequestHandler):
                 "pdfSplit": PRICE_PDFSPLIT_KRW,
                 # 모의고사 문제지 → 지문 복원 — 복원해 받아 낸 지문 1개당
                 "mockRestore": PRICE_MOCK_RESTORE_KRW,
+                "passageSolve": PRICE_PASSAGE_SOLVE_KRW,
                 # 단어장 탭 — 사진 인식은 매번, PDF는 규칙이 못 뽑아 AI로 다시 시도할 때만
                 "vocabOcr": PRICE_VOCAB_OCR_KRW,
                 "vocabPdf": PRICE_VOCAB_PDF_KRW,
@@ -15344,7 +15622,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/brief", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
-                        "/api/examtrend", "/api/pdfsplit", "/api/mockrestore", "/api/studentcomment",
+                        "/api/examtrend", "/api/pdfsplit", "/api/mockrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/logout", "/api/auth/delete",
@@ -15423,7 +15701,7 @@ class Handler(BaseHTTPRequestHandler):
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
-                           "/api/examtrend", "/api/pdfsplit", "/api/mockrestore", "/api/studentcomment",
+                           "/api/examtrend", "/api/pdfsplit", "/api/mockrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf")
         # /api/docx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
         # 않는다(그래서 GENERATE_PATHS가 아니라 여기 따로 붙는다).
@@ -15541,6 +15819,13 @@ class Handler(BaseHTTPRequestHandler):
                     # 'AI로 다시 시도'(ai=true)일 때만 값을 매긴다.
                     cost = PRICE_PDFSPLIT_KRW if req.get("ai") else 0
                     self._pending_label = "PDF에서 지문 꺼내기"
+                elif path == "/api/passagesolve":
+                    # 사진 속 문제를 AI가 푼다 — 문제 1개당. 실제 차감은 답을 받아 낸 문제 수로 다시 센다
+                    cost = PRICE_PASSAGE_SOLVE_KRW * len(parse_solve_problems(req.get("problems")))
+                    self._pending_label = "문제 사진 답 풀기"
+                elif path == "/api/answerkey":
+                    cost = 0   # 정답표 읽기 — 사진 옮기기(PRICE_OCR_KRW 0원)와 같은 자리라 값을 받지 않는다
+                    self._pending_label = "정답표 읽기"
                 elif path == "/api/mockrestore":
                     # 잔액은 쪽 수로 어림한 지문 수(한 쪽에 약 4지문, 많아야 28)로 미리 보고,
                     # 실제 차감은 복원해 받아 낸 지문 수로 다시 센다(아래 /api/mockrestore 처리).
@@ -16497,6 +16782,60 @@ class Handler(BaseHTTPRequestHandler):
         # PDF에서 지문 꺼내기. 사진 OCR과 달리 기본 경로는 Gemini를 부르지 않는다 —
         # 글자층을 그대로 꺼내 규칙으로 나눈다(요금 0원, 오타 없음).
         # 규칙이 못 나눈 파일만 화면이 ai=true로 다시 보내 경계를 물어본다.
+        if path == "/api/passagesolve":
+            problems = parse_solve_problems(req.get("problems"))
+            if not problems:
+                self._send_json({"error": "풀 문제가 없습니다."}, 400)
+                return
+            try:
+                key = req.get("apiKey") or ""
+                main, check = [None], [None]
+
+                def run_check():
+                    try:
+                        check[0] = solve_passage_problems(problems, key, MODEL)
+                    except Exception:
+                        check[0] = None   # 맞춰 보기용이라 실패해도 본 답은 낸다
+                labels = _vertex_get_labels()
+
+                def run_check_labeled():
+                    _vertex_set_labels(labels)
+                    run_check()
+                t = threading.Thread(target=run_check_labeled, daemon=True)
+                t.start()
+                main[0] = solve_passage_problems(problems, key, MODEL_PRO)
+                t.join()
+                answers = []
+                for i, a in enumerate(main[0]):
+                    c = (check[0] or [{}] * len(problems))[i] or {}
+                    answers.append({"answer": a.get("answer", ""), "reason": a.get("reason", ""),
+                                    "check": c.get("answer", "")})
+                n = sum(1 for a in answers if a["answer"])
+                if not n:
+                    self._send_json({"error": "문제를 풀지 못했습니다. 잠시 뒤 다시 시도해 주세요."}, 502)
+                    return
+                # 답을 받아 낸 문제 수만큼만 받는다
+                self._pending_charge = PRICE_PASSAGE_SOLVE_KRW * n
+                self._pending_label = f"문제 사진 답 풀기 · {n}문제"
+                self._charge_and_send(path, req, {"answers": answers})
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        if path == "/api/answerkey":
+            try:
+                result = read_answer_key(req.get("text"), req.get("file"), req.get("apiKey") or "")
+                self._charge_and_send(path, req, result)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
         if path == "/api/mockrestore":
             file = req.get("file")
             if not isinstance(file, dict) or (file.get("mime") or "").lower().split(";")[0].strip() != PDF_MIME:
