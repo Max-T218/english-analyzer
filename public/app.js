@@ -2575,6 +2575,25 @@ function assembleProblem(p, ans) {
   return tidy(body);
 }
 
+/* 캡처본 그대로 — 사진에 보이는 문제 모양 그대로의 글(2026-10-21 사용자: 정답을 채우지 않고 그대로 넣고 싶을 때).
+   주어진 글·(A)(B)(C)·( ① ) 자리·①~⑤ 번호·빈칸·보기를 살린다. 한글 발문·각주는 사진 읽기에서 이미 빠진다.
+   답 창을 띄우기 전에 칸에 이것을 먼저 넣어 두므로 [📷 캡처본 그대로 두기]는 칸을 건드리지 않는 것과 같다. */
+function problemAsShown(p) {
+  const choices = (p.choices || []).length === 5
+    ? p.choices.map((c, i) => `${PROB_CIRCLED[i]} ${c}`).join("  ") : "";
+  let parts;
+  if (p.type === "order") {
+    parts = [p.given, ...(p.parts || []).map((x) => `(${x.label}) ${x.text}`), choices];
+  } else if (p.type === "insert") {
+    parts = [p.given, p.body];
+  } else if (p.type === "blank") {
+    parts = [p.body, choices];
+  } else {
+    parts = [p.body];
+  }
+  return parts.filter((t) => t && String(t).trim()).join("\n\n");
+}
+
 // 붙여 넣은 정답표 글 → { "31": "②" } (server.py parse_mock_answer_key의 짝 꼴만 — 가로 표 같은 나머지는 서버가 읽는다)
 function parseKeyText(text) {
   const out = {};
@@ -2596,7 +2615,8 @@ function askProblemFill(probs) {
   const msg = (html) => { $("probFillKeyMsg").innerHTML = html; };
   $("probFillLead").innerHTML =
     `캡처한 사진 중 <b>${probs.length}개</b>가 문제(순서·삽입·무관한 문장·빈칸)입니다. ` +
-    `답을 정하면 문제로 바꾸기 전의 <b>원래 지문</b>으로 바꿔 넣습니다.`;
+    `답을 정하면 문제로 바꾸기 전의 <b>원래 지문</b>으로 바꿔 넣습니다. ` +
+    `문제 모양 그대로 쓰시려면 <b>[📷 캡처본 그대로 두기]</b>를 누르세요 — 지금 칸에 캡처본 그대로 들어가 있습니다.`;
   $("probFillAiBtn").textContent = `🤖 AI로 풀기${per ? ` (문제당 ${pt(per)})` : ""}`;
   $("probFillKeyText").value = "";
   $("probFillKeyFile").value = "";
@@ -2711,7 +2731,8 @@ function askProblemFill(probs) {
       const ai = rows.filter((r) => r.ans && r.from === "ai").length;
       close(`🧩 문제 ${ok}개를 고른 답대로 <b>원래 지문</b>으로 바꿨습니다.` +
         (ai ? ` 그중 ${ai}개는 AI가 푼 답이라 틀릴 수 있습니다 — 사진과 맞춰 확인하세요.` : "") +
-        (bad.length ? ` ${esc(bad.join(", "))}은(는) 문제 모양을 다 읽지 못해 꺼낸 그대로 두었습니다.` : ""));
+        (bad.length ? ` ${esc(bad.join(", "))}은(는) 문제 모양을 다 읽지 못해 캡처본 그대로 두었습니다.` : "") +
+        (rows.some((r) => !r.ans) ? " 답을 정하지 않은 문제는 캡처본 그대로 두었습니다." : ""));
     };
   });
 }
@@ -2760,7 +2781,8 @@ async function runOcr(fileList, mgr = passageMgr, say = ocrStatus) {
         notes.push(`${who}: 널리 공개된 지문이라 사진을 나눠 읽었습니다. 문장이 이어지는지 특히 잘 확인하세요.`);
       }
       if (data.note) notes.push(`${who}: ${data.note}`);
-      const ta = mgr.fillText(data.text);
+      // 문제 사진은 캡처본 그대로(문제 모양을 살린 글)를 먼저 넣고, 답을 정하면 원래 지문으로 바꾼다
+      const ta = mgr.fillText((data.problem && problemAsShown(data.problem)) || data.text);
       if (ta) {
         added++;
         // 순서·삽입·무관한 문장·빈칸 문제 사진 — 일단 꺼낸 그대로 넣고, 다 읽은 뒤 답을 정할 창을 띄운다
@@ -11278,7 +11300,7 @@ const HOWTO = {
       "<b>[✏️ 직접 수정]</b>으로 글자를, <b>[📄 쪽 구성]</b>으로 인쇄될 쪽 경계를 고칩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
     ],
-    tip: "요약 이미지는 사이트에 저장해야 다음에 불러올 때 남습니다. 학생용 모의고사 문제지를 <b>[📄 PDF에서 가져오기]</b>로 올리면 빈칸·순서·문장 삽입 문항을 AI가 풀어 채울지 묻습니다(채우면 지문당 포인트). 그 창에 정답표를 붙여 넣거나 올리면 정답표의 답대로 채웁니다. 순서·삽입·무관한 문장·빈칸 <b>문제를 캡처해 넣으면</b> 답을 정하는 창이 떠, 답을 고르거나 정답표를 넣거나 AI에게 풀게 하면(문제당 포인트) 원래 지문으로 바꿔 넣습니다." + HOWTO_PAUSE_TIP,
+    tip: "요약 이미지는 사이트에 저장해야 다음에 불러올 때 남습니다. 학생용 모의고사 문제지를 <b>[📄 PDF에서 가져오기]</b>로 올리면 빈칸·순서·문장 삽입 문항을 AI가 풀어 채울지 묻습니다(채우면 지문당 포인트). 그 창에 정답표를 붙여 넣거나 올리면 정답표의 답대로 채웁니다. 순서·삽입·무관한 문장·빈칸 <b>문제를 캡처해 넣으면</b> 답을 정하는 창이 떠, 답을 고르거나 정답표를 넣거나 AI에게 풀게 하면(문제당 포인트) 원래 지문으로 바꿔 넣습니다. 문제 모양 그대로 쓰려면 <b>[📷 캡처본 그대로 두기]</b>를 누르세요." + HOWTO_PAUSE_TIP,
     shots: {
       0: [{ img: "howto-step-mcq-1.jpg", cap: "지문을 붙여 넣은 모습" }],
       1: [{ img: "howto-step-analyze-1.jpg", cap: "표지 제목 · 요약 이미지" }],
