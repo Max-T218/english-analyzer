@@ -4969,10 +4969,12 @@ def call_gemini_infographic(passage, api_key, model=None, lang="mix"):
         "contents": [{"role": "user", "parts": [{"text": _infographic_prompt(plan)}]}],
         "generationConfig": {
             "responseModalities": ["IMAGE"],
-            # 그림 한 장이 1120, 생각이 많아야 1300쯤이다. 상한이 없을 때 그림을 7장(7840)
+            # 생각과 그림이 이 한도를 함께 쓴다. 상한이 없을 때 그림을 7장(7840)
             # 그리다 MAX_TOKENS로 통째로 잘려 101초를 쓰고 한 장도 못 받았다(2026-10-13).
-            # 이 상한이면 한 장은 넉넉히 들고, 폭주는 둘째 장에서 일찍 끊겨 다시 그릴 시간이 남는다.
-            "maxOutputTokens": 4096,
+            # 4096이던 때는 그림 한 장이 1680, 생각이 1,700~2,950까지 나와 생각이 2,400을
+            # 넘은 요청이 그림 없이 MAX_TOKENS로 끊겼다(2026-10-21 로그 4건). 한 장 + 생각
+            # 3,000대는 들고, 여러 장 폭주는 넷째 장 전에 끊긴다. 쓴 만큼만 값이 나간다.
+            "maxOutputTokens": 7168,
             "imageConfig": {
                 "aspectRatio": IMAGE_ASPECT,
                 "imageSize": IMAGE_SIZE,
@@ -5022,7 +5024,7 @@ def call_gemini_infographic(passage, api_key, model=None, lang="mix"):
         if any(k in up for k in ("SAFETY", "PROHIBITED", "BLOCK", "RECITATION")):
             why = "그림 모델이 이 내용의 그림을 거절했습니다(안전 필터)."
         elif "MAX_TOKENS" in up:
-            why = "그림 모델이 한 장이 아니라 여러 장을 그리다 중간에 끊겼습니다."
+            why = "그림 모델이 그림을 다 그리기 전에 출력 한도에 걸려 끊겼습니다."
         else:
             why = "그림 모델이 그림 대신 다른 답을 돌려주었습니다."
         raise RuntimeError(
