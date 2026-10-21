@@ -4806,6 +4806,46 @@ function rangeBadges(text) {
     .join("");
 }
 
+/* 배경지식 칸(outline.background) — 독해를 돕는 자료 묶음.
+   상세분석은 바탕 설명·쉽게 말하면·개념 카드·읽으며 붙잡을 질문(compact=false),
+   소책자는 분야·쉽게 말하면·개념 한 줄 정의 2개(compact=true)로 그린다.
+   채울 것이 하나도 없으면 ""을 돌려줘 칸 자체가 없다. */
+function buildBackgroundHtml(bg, compact) {
+  if (!bg || typeof bg !== "object") return "";
+  let cs = (Array.isArray(bg.concepts) ? bg.concepts : []).filter((c) => c && (c.en || c.ko));
+  const qs = (Array.isArray(bg.questions) ? bg.questions : []).filter((x) => x && x.q);
+  if (!cs.length && !qs.length && !bg.analogy) return "";
+  const head = bg.field ? `<span class="bg-field">${esc(bg.field)}</span>` : "";
+  const analogy = bg.analogy
+    ? `<div class="bg-analogy"><b>🧩 쉽게 말하면</b> ${safeHTML(bg.analogy)}</div>` : "";
+  if (compact) {
+    // 소책자는 질문을 싣지 않으므로, 질문만 있는 지문(이야기·편지)은 칸을 통째로 뺀다
+    if (!cs.length && !bg.analogy) return "";
+    cs = cs.slice(0, 2);
+    const items = cs.map((c) => `<div class="bg-row"><b>${esc(c.en || "")}${c.ko ? ` · ${esc(c.ko)}` : ""}</b>` +
+      `<span>${safeHTML(c.short || c.explain || "")}</span></div>`).join("");
+    return `<div class="bf-sub">알아 두면 쉬워지는 배경지식 ${head}</div>` +
+      (bg.primer ? `<div class="bg-primer">${safeHTML(bg.primer)}</div>` : "") +
+      analogy + (items ? `<div class="bg-list">${items}</div>` : "");
+  }
+  const cards = cs.map((c) => `<div class="bg-card">
+      <div class="bg-term"><b>${esc(c.en || "")}</b>${c.ko ? ` <span>${esc(c.ko)}</span>` : ""}</div>
+      ${c.short ? `<div class="bg-short">${safeHTML(c.short)}</div>` : ""}
+      ${c.explain ? `<div class="bg-exp">${safeHTML(c.explain)}</div>` : ""}
+      ${c.link ? `<div class="bg-link">📖 이 글에서는: ${safeHTML(c.link)}</div>` : ""}
+    </div>`).join("");
+  // 이야기·편지처럼 배경지식이 필요 없는 지문은 질문만 남는다 — 그때는 제목도 질문으로 단다
+  const onlyQs = !cs.length && !bg.analogy && !bg.primer;
+  const quest = qs.length
+    ? `<div class="bg-qs">${onlyQs ? "" : `<div class="bg-qs-hd">🔎 읽으면서 붙잡을 질문</div>`}${
+        qs.map((x, i) => `<div class="bg-q"><b>Q${i + 1}.</b> ${safeHTML(x.q)}<div class="bg-a">→ ${safeHTML(x.a || "")}</div></div>`).join("")
+      }</div>` : "";
+  if (onlyQs) return `<div class="ol-sub">⑤ 🔎 읽으면서 붙잡을 질문</div>` + quest;
+  return `<div class="ol-sub">⑤ 알아 두면 쉬워지는 배경지식 ${head}</div>` +
+    (bg.primer ? `<div class="ol-box bg-primer-box">${safeHTML(bg.primer)}</div>` : "") +
+    analogy + (cards ? `<div class="bg-cards">${cards}</div>` : "") + quest;
+}
+
 /* d.outline을 종이 한 쪽짜리 요약으로 그린다.
    값이 없거나(옛 자료) 알맹이가 비면 ""을 돌려주고, 부르는 쪽이 옛 표로 되돌아간다.
    덩어리마다 따로 없어도 되게 만들었다 — AI가 한 항목을 비워 보내도 그 자리만 빠지고
@@ -4893,7 +4933,8 @@ function buildOutlineHtml(o) {
     if (o.keywordNote) out.push(`<div class="ol-kw-note">${safeHTML(o.keywordNote)}</div>`);
   }
 
-  return { front, back: out.join("") };
+  // ⑤ 배경지식 — 지문 밖 지식. 흐름도 덩어리와 따로 돌려준다(buildAnalysisHtml 참고).
+  return { front, back: out.join(""), bg: buildBackgroundHtml(o.background, false) };
 }
 
 function buildAnalysisHtml(d, job, total, idx) {
@@ -4992,6 +5033,12 @@ function buildAnalysisHtml(d, job, total, idx) {
        '쪽 구성'에서 끌 수 있는 기본값이므로, 굳이 붙이고 싶으면 손으로 옮기면 된다. */
     if (outline.back) {
       parts.push(`<div class="pg-blk" data-sec="outline" data-brk="page" data-brk-def="page">${outline.back}</div>`);
+    }
+    /* 배경지식은 흐름도 뒤에 따로 붙는 덩어리다(새 쪽을 강제하지 않는다). 흐름도 덩어리에
+       넣었더니 실제 시험지 지문 6개 중 2개가 A4 한 쪽(1017px)을 넘었다. data-sec이 같아
+       쪽 구성에서 '주제 & 흐름 요약'을 지우면 함께 지워진다. */
+    if (outline.bg) {
+      parts.push(`<div class="pg-blk" data-sec="outline">${outline.bg}</div>`);
     }
   } else if (d.summary && d.summary.length) {
     const rows = d.summary.map(
@@ -5322,6 +5369,12 @@ function buildBriefHtml(d, job, total, images) {
       <h3 class="section"><span class="num">Ⅱ.</span> 주제 &amp; 흐름 요약</h3>
       ${body.join("")}
       </div>`);
+    /* 배경지식은 덩어리를 따로 둔다. 요약 덩어리에 넣었더니 185px가 늘어 실제 시험지
+       지문 6개 중 4개가 A4 한 쪽(1017px)을 넘었다 — brief-tail은 쪽 사이에서 안 잘리게
+       묶여 있어 넘치면 통째로 다음 쪽으로 밀린다. 따로 두면 요약은 제자리에 남고
+       배경지식만 남는 자리(또는 다음 쪽)로 간다. */
+    const bgHtml = buildBackgroundHtml(bo.background, true);
+    if (bgHtml) parts.push(`<div class="pg-blk brief-tail">${bgHtml}</div>`);
   } else if (d.summary && d.summary.length) {
     const rows = d.summary.map(
       (r) => `<tr><td>${esc(r.label)}</td><td>${safeHTML(r.content)}</td></tr>`

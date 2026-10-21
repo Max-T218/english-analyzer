@@ -1276,6 +1276,44 @@ def _parse_retry_delay(detail):
     return None
 
 # ── Gemini 구조화 출력 스키마 (파싱을 보장) ──
+# 배경지식(2026-10-22) — 지문을 이해하는 데 필요한 지문 밖 지식. outline 안에 들어 있어
+# 상세분석·소책자가 이 한 벌을 같이 쓴다(규칙은 _OUTLINE_RULES). 필요 없는 지문(일상 이야기·
+# 대화문)은 concepts를 빈 배열로 보내고 화면은 그 칸을 그리지 않는다.
+_BACKGROUND_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "field": {"type": "STRING"},
+        "primer": {"type": "STRING"},
+        "analogy": {"type": "STRING"},
+        "questions": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {"q": {"type": "STRING"}, "a": {"type": "STRING"}},
+                "required": ["q", "a"],
+                "propertyOrdering": ["q", "a"],
+            },
+        },
+        "concepts": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "en": {"type": "STRING"},
+                    "ko": {"type": "STRING"},
+                    "short": {"type": "STRING"},
+                    "explain": {"type": "STRING"},
+                    "link": {"type": "STRING"},
+                },
+                "required": ["en", "ko", "short", "explain", "link"],
+                "propertyOrdering": ["en", "ko", "short", "explain", "link"],
+            },
+        },
+    },
+    "required": ["field", "primer", "analogy", "questions", "concepts"],
+    "propertyOrdering": ["field", "primer", "analogy", "questions", "concepts"],
+}
+
 GEMINI_SCHEMA = {
     "type": "OBJECT",
     "properties": {
@@ -1373,9 +1411,12 @@ GEMINI_SCHEMA = {
                     },
                 },
                 "keywordNote": {"type": "STRING"},
+                "background": _BACKGROUND_SCHEMA,
             },
-            "required": ["topicEn", "oneLine", "stages", "keywords", "keywordNote"],
-            "propertyOrdering": ["topicEn", "oneLine", "stages", "keywords", "keywordNote"],
+            "required": ["topicEn", "oneLine", "stages", "keywords", "keywordNote",
+                         "background"],
+            "propertyOrdering": ["topicEn", "oneLine", "stages", "keywords", "keywordNote",
+                                 "background"],
         },
         "vocab": {
             "type": "ARRAY",
@@ -7842,6 +7883,52 @@ _OUTLINE_RULES = r"""## outline (주제 & 흐름 요약)
   각각 {en: 지문에 실제로 나온 영어 그대로, ko: 짧은 우리말 뜻}.
   어려운 단어를 고르는 자리가 아니다. **한 방향을 함께 가리키는** 낱말을 골라라.
 - `keywordNote` — 그 낱말들이 왜 한 방향인지 우리말 한 문장.
+- `background` — **지문 밖의 배경지식.** 위 항목들과 달리 이것만은 **지문에 없는 지식**을
+  채우는 자리다(나머지는 지문 안만 다룬다). 요즘 지문은 과학·경제·철학·예술·기술 등
+  여러 분야에서 나와, 영어 실력이 아니라 **분야를 몰라서** 못 읽는 학생이 많다.
+  그 틈을 메워 주는 칸이다.
+  · `field` — 이 지문의 분야를 우리말 짧게. "인지심리학", "행동경제학", "생태학"처럼.
+  · `primer` — 읽기 전에 알아 두면 좋은 상식을 **쉬운 우리말 2~3문장**으로. 지문의
+    내용(결론·주장·연구 결과)을 미리 알려 주지 마라 — 지문이 **무엇을 주장하는지는 한 마디도
+    말하지 말고**, 그 분야가 원래 어떤 것을 다루는 학문·영역인지 같은 **분야의 바탕**만
+    깔아 준다. (나쁜 예: 지문의 결론을 풀어 쓴 문장. 좋은 예: "경제학은 한정된 자원을
+    어떻게 나눠 쓸지를 연구하는 학문이다.")
+  · `analogy` — 이 글의 **핵심 구조를 학생이 아는 일상 장면에 빗댄** 쉬운 우리말 1~2문장.
+    "쉽게 말하면 ~와 같다"로 읽히게. 지문에 나온 사례를 되풀이하지 말고 **전혀 다른 일상 장면**
+    (학교·게임·음식·스마트폰 등)을 쓴다. 빗댄 것이 지문의 논리와 **정확히 맞아야** 한다 —
+    비슷해 보이기만 하는 비유는 쓰지 마라. 지문의 결론을 그대로 적지는 마라.
+    **'쉽게 말하면'은 쓰지 마라**(화면이 붙인다). 논리가 맞는 비유가 안 떠오르면 억지로
+    쓰지 말고 **빈 문자열 ""**로 보내라 — 틀린 비유가 비유 없는 것보다 해롭다. 한 비유 안에서
+    두 장면을 오가며 서로 모순되게 말하지 마라(하나의 장면으로 끝까지).
+  · `questions` — 학생이 **읽으면서 붙잡을 질문 2~3개**. 낱말 뜻이 아니라 **글의 내용·흐름**을
+    묻는다("왜 ~일까?", "~와 ~는 어떻게 다른가?", "그래서 글쓴이가 말하려는 것은?").
+    `q`는 우리말 질문, `a`는 지문 근거로 답할 수 있는 **우리말 1문장 답**. 지문에 없는 내용을
+    묻지 마라.
+  · 개념의 비유·예시는 **그 개념과 정확히 같은 현상**이어야 한다(비슷한 다른 현상에 빗대지
+    마라). 학생이 이미 아는 평범한 낱말(예: iteration=반복, increase=증가)은 개념으로
+    고르지 마라 — **그 분야 사람이 아니면 모를 용어**만 고른다.
+  · 문장은 모두 **'~이다 / ~한다' 문어체**로 통일한다('~입니다'를 섞지 마라).
+  · 개념은 **지문에 실제로 나온 전문 용어**를 먼저 고르고, 그것만으로 2개가 안 되면
+    지문을 읽는 데 꼭 필요한 선행 개념을 **최대 1개** 더한다(지문에 안 나온 용어는 그 1개까지만).
+    지문에 있는 문장 번호는 쓰지 말고 내용으로 가리킨다.
+  · `concepts` — 지문을 이해하는 데 필요한 개념 **2~4개**. 각각
+    - `en` — 지문에 실제로 나온 영어 용어 그대로(지문에 없으면 그 개념을 가리키는 영어 표준 용어).
+    - `ko` — 우리말 용어.
+    - `short` — 한 줄 정의. 우리말 40자 안쪽.
+    - `explain` — 학생 눈높이의 쉬운 설명 2~3문장. 일상의 예를 하나 들어도 좋다.
+    - `link` — 이 개념이 **지문의 어느 대목을 읽는 데** 쓰이는지 한 문장(문장 번호를 쓰지 말고 내용으로).
+  · ⚠️ **틀린 정보가 나가면 안 된다.** 교과서·개론서에 실리는 **널리 인정된 개념**만 쓰고,
+    확실하지 않은 수치·연도·사람 이름·연구 결과는 **쓰지 마라**(모르면 빼라). 지문이 소개한
+    실험이나 사례의 세부를 지어내지 마라. 개념의 정의가 학계에서 갈리면 가장 흔한 정의 하나만.
+  · **지문이 그 개념의 흔한 정의를 반박하거나 다르게 쓰면 지문의 입장과 어긋나게 쓰지 마라.**
+    흔한 정의를 적고 "이 글은 ~라는 점을 짚는다"처럼 지문과의 차이를 `link`에서 밝힌다.
+    (예: 지문이 "생물학적 불멸이라 해서 사망률이 안 오른다는 뜻은 아니다"라고 하는데
+    정의에 "사망률이 오르지 않는 상태"라고만 적으면 학생은 지문과 해설이 다르다고 느낀다.)
+  · 지문에 이미 풀어 설명된 개념을 되풀이하지 마라 — 학생이 **모를 만한 것**만 고른다.
+  · **배경지식이 필요 없는 지문**(일상 이야기·대화문·편지·광고·안내문·공지·도표 설명·
+    단순한 경험담)은 `field`와
+    `primer`·`analogy`를 빈 문자열로, `concepts`를 빈 배열 `[]`로 보내라. 억지로 채우지 마라.
+    (`questions`는 이런 지문에서도 내용 파악에 도움이 되면 그대로 만든다.)
 
 ### 지문이 대화문일 때
 위 규칙을 그대로 두되, 읽는 대상이 '글'이 아니라 '대화'임을 잊지 마라.
@@ -8384,9 +8471,12 @@ BRIEF_SCHEMA = {
                     },
                 },
                 "keywordNote": {"type": "STRING"},
+                "background": _BACKGROUND_SCHEMA,
             },
-            "required": ["topicEn", "oneLine", "stages", "keywords", "keywordNote"],
-            "propertyOrdering": ["topicEn", "oneLine", "stages", "keywords", "keywordNote"],
+            "required": ["topicEn", "oneLine", "stages", "keywords", "keywordNote",
+                         "background"],
+            "propertyOrdering": ["topicEn", "oneLine", "stages", "keywords", "keywordNote",
+                                 "background"],
         },
     },
     "required": ["englishTitle", "koreanTitle", "sentences", "outline"],
@@ -8642,7 +8732,44 @@ def _finish_brief(result):
             for k in ("en", "ko"):
                 if kw.get(k):
                     kw[k] = _fix_known_typos(sanitize_inline(str(kw[k])))
+        _sanitize_background(ol)
     return result
+
+
+def _sanitize_background(ol):
+    """outline.background(배경지식)를 정화한다. 상세분석·소책자가 같이 쓴다.
+    개념이 하나도 안 남으면 칸 전체를 비운 모양으로 돌려 화면이 그리지 않게 한다."""
+    bg = ol.get("background")
+    if not isinstance(bg, dict):
+        ol.pop("background", None)
+        return
+    for k in ("field", "primer"):
+        bg[k] = _fix_known_typos(sanitize_inline(str(bg.get(k) or ""))).strip()
+    concepts = []
+    for c in bg.get("concepts") or []:
+        if not isinstance(c, dict):
+            continue
+        item = {k: _fix_known_typos(sanitize_inline(str(c.get(k) or ""))).strip()
+                for k in ("en", "ko", "short", "explain", "link")}
+        if item["en"] or item["ko"]:
+            concepts.append(item)
+    # 화면이 '쉽게 말하면' 머리글을 붙이므로 AI가 같은 말로 시작했으면 떼어 낸다
+    bg["analogy"] = re.sub(
+        r"^\s*쉽게\s*말(?:하면|해)[\s,:]*", "",
+        _fix_known_typos(sanitize_inline(str(bg.get("analogy") or "")))).strip()
+    qs = []
+    for c in bg.get("questions") or []:
+        if not isinstance(c, dict):
+            continue
+        q = _fix_known_typos(sanitize_inline(str(c.get("q") or ""))).strip()
+        a = _fix_known_typos(sanitize_inline(str(c.get("a") or ""))).strip()
+        if q and a:
+            qs.append({"q": q, "a": a})
+    bg["questions"] = qs[:3]
+    bg["concepts"] = concepts[:4]
+    if not concepts and not qs and not bg["analogy"]:
+        bg["field"] = ""
+        bg["primer"] = ""
 
 
 def brief_english_incomplete(result, passage):
@@ -10291,6 +10418,7 @@ def finalize_analysis(result):
             for k in ("en", "ko"):
                 if kw.get(k):
                     kw[k] = _fix_known_typos(sanitize_inline(str(kw[k])))
+        _sanitize_background(ol)
     result["_conjMiss"] = missed
     result["_numBroken"] = broken_nums
     result["_rubyBad"] = ruby_bad
@@ -12040,6 +12168,15 @@ CHANGELOG = [
             "[워크북 만들기]가 막히고, 만들지 않은 단계를 더하면 새로 만들 때까지 인쇄·저장·워드·시험 내기가 막힙니다.",
             "워크북 — 단계 번호가 체크한 순서가 아니라 칸이 놓인 순서대로 붙습니다. 단계를 껐다 켜도 순서가 바뀌지 않으며, "
             "순서는 만든 뒤 [📄 쪽 구성]의 [▲ 앞으로] · [▼ 뒤로]로 바꿉니다. 내용 O/X는 영작 연습하기 바로 뒤로 옮겼습니다.",
+        ],
+    },
+    {
+        "version": 92,
+        "date": "2026-10-22",
+        "items": [
+            "상세분석·요약분석 — '주제 & 흐름 요약' 끝에 '알아 두면 쉬워지는 배경지식'이 들어갑니다. 지문의 분야(예: 행동경제학)와 "
+            "핵심 개념을 쉬운 말로 풀어 주고, 글 전체를 일상에 빗댄 '쉽게 말하면' 한 줄을 붙입니다. 상세분석에는 읽으면서 답을 찾아 볼 "
+            "내용 질문과 답도 들어갑니다. 배경지식이 필요 없는 지문(이야기·편지·안내문)에는 질문만 나오며, 요금은 그대로입니다.",
         ],
     },
 ]
