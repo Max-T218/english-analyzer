@@ -5239,6 +5239,13 @@ def _pdf_columns(rows, depth=2):
             continue
         if sum(1 for r in left if r["x1"] > cut) > allowed:
             continue     # 이 자리를 가로지르는 줄이 많다 = 여백이 아니다
+        # 왼쪽 조각이 '경계를 가로지르는 줄'뿐이면 단이 아니라 들여쓰기다. 모의고사 오른쪽 단은
+        # 문항 머리글("23. 다음 글의…")이 본문보다 22pt 왼쪽에서 시작해, 한 쪽에 머리글이 둘뿐이면
+        # 위 '몇 개쯤은 봐준다'에 걸려 머리글만 따로 한 단이 됐다 — 머리글 둘을 먼저 읽고 본문을
+        # 나중에 읽어 23번 본문에 24번이 붙고 진짜 24번은 사라졌다(2026-10 고1·2·3 학력평가 모두,
+        # 도표+인물 소개가 한 지문으로 붙기도 했다). 왼쪽에 경계 안쪽에서 끝나는 진짜 줄이 있어야 단이다.
+        if sum(1 for r in left if r["x1"] <= cut) < 3:
+            continue
         return _pdf_columns(left, depth - 1) + _pdf_columns(right, depth - 1)
     return [rows]
 

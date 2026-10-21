@@ -3012,7 +3012,10 @@ $("pdfHeldAdd").addEventListener("click", () => {
   let added = 0;
   let full = false;
   for (const it of picked) {
-    if (mgr.fillText(it.text)) added++;
+    const ok = it.name
+      ? mgr.appendJobs([{ name: it.name, text: it.text, named: true }]).added
+      : mgr.fillText(it.text);
+    if (ok) added++;
     else {
       full = true;
       break;
@@ -3119,11 +3122,25 @@ function askMockFill(who, nos) {
   });
 }
 
+/* 모의고사 지문을 문항 번호 순서로 줄 세워 이름('18번')을 단 채 넣을 모양으로 만든다.
+   규칙으로 바로 꺼낸 지문과 AI로 되살린 지문이 따로 들어가 이름이 반만 붙고(규칙 쪽은 비어 '지문 1'),
+   순서도 18~22 → 40 → 23 → 29…로 섞였다(2026-10-23 사용자). 모의고사는 번호가 또렷해 이름으로 맞으므로
+   양쪽 모두 번호를 이름으로 단다 — 교과서 PDF는 여전히 이름을 비운다(fillText 주석). */
+function mockJobsInOrder(jobs) {
+  return jobs
+    .map((j, i) => {
+      const no = pdfQuestionNos(j.name)[0];
+      return { j, i, k: no === undefined ? Infinity : no };
+    })
+    .sort((a, b) => a.k - b.k || a.i - b.i)
+    .map(({ j }) => ({ name: j.name, text: j.text, named: true, restored: !!j.restored }));
+}
+
 /* 모의고사 문제지 → 원래 지문. 서버(/api/mockrestore, call_gemini_mock_restore)가 AI(Pro)로 고른 번호의 문제만
    풀어 되살린 지문을 돌려준다. '31번'처럼 문항 번호를 이름으로 달아 지문칸에 이어 붙이고(모의고사는 번호가
    또렷해 이름이 맞는다), AI가 고른 답을 모두 적어 선생님이 정답표와 맞춰 보게 한다 — 틀리면 지문도 틀린다.
    돌려주는 값: 안내에 붙일 HTML 조각. 실패하면 예외. */
-async function mockRestoreInto(mgr, data, nos, status, key = {}) {
+async function mockRestoreInto(mgr, data, nos, status, key = {}, extra = []) {
   const hasKey = !!(key.keyText || key.keyFile);
   status(`<span class="spinner"></span> ${hasKey ? "정답표대로" : "AI가"} ${esc(mockNosText(nos))}번 ` +
     `${hasKey ? "답을 채워" : "문제를 풀어"} 지문을 되살리는 중… (1분쯤 걸립니다)`);
@@ -3134,7 +3151,11 @@ async function mockRestoreInto(mgr, data, nos, status, key = {}) {
     "지문을 되살리지 못했습니다.",
     (n) => status(`<span class="spinner"></span> 연결이 끊겨 다시 받아 오는 중… (${n})`));
   const list = res.passages || [];
-  const { added, full } = mgr.appendJobs(list.map((p) => ({ name: p.name, text: p.text, named: true })));
+  const jobs = mockJobsInOrder([...extra, ...list.map((p) => ({ name: p.name, text: p.text, restored: true }))]);
+  const put = mgr.appendJobs(jobs);
+  const full = put.full;
+  const added = jobs.slice(0, put.added).filter((j) => j.restored).length;
+  const plain = put.added - added;
   const solved = list.filter((p) => p.answer || p.change);
   // 정답표를 줬는데 그 답대로 안 된 지문(정답표에 번호가 없었거나 AI가 어겼다)은 빨갛게 짚는다
   const off = (p) => hasKey && (p.keyMismatch || !p.keyed);
@@ -3149,6 +3170,7 @@ async function mockRestoreInto(mgr, data, nos, status, key = {}) {
       (offN ? ` <b>${offN}개</b>는 정답표대로 되지 않았을 수 있으니 목록의 빨간 줄을 확인하세요.` : "")
     : `🧩 AI가 문제를 풀어 <b>지문 ${added}개</b>를 원래 지문으로 되살려 넣었습니다.`;
   return head +
+    (plain ? ` 바로 꺼낸 지문 ${plain}개와 함께 <b>문항 번호 순서대로</b> 넣었습니다.` : "") +
     (full ? " 지문 칸이 가득 차 나머지는 넣지 못했습니다." : "") +
     (res.failed ? ` 일부 문항(${res.failed}묶음)은 읽지 못했습니다 — 빠진 번호를 확인하세요.` : "") +
     (hasKey ? "" : ` AI가 푼 답이니 <b>정답표와 맞춰 보고</b>, 다르면 그 지문을 고쳐 주세요.`) +
@@ -3209,13 +3231,14 @@ async function runPdfImport(fileList, mgr, status) {
       const nosOf = res.passages.map((p) => pdfQuestionNos(p.name));
       const useNoRule = Math.max(0, ...nosOf.flat()) >= 29;
       const unsolved = [];   // 규칙으로 꺼냈지만 풀리지 않은 채인 지문 — 직접 채우기를 고르면 그대로 넣는다
+      const ruleJobs = [];   // 모의고사에서 규칙으로 바로 꺼낸 지문 — AI로 되살린 지문과 번호 순서로 함께 넣는다
 
       for (let k = 0; k < res.passages.length; k++) {
         const p = res.passages[k];
         // p.name은 지문 이름칸에 쓰지 않는다 — fillText 주석 참고. 여기서 번호만 읽고 버린다.
         const nos = nosOf[k];
         if (useNoRule && nos.some((n) => MOCK_SOLVE_NOS.has(n))) {
-          unsolved.push(p.text);
+          unsolved.push({ name: p.name, text: p.text });
           continue;   // 아래에서 AI로 채울지 묻는다
         }
         const hitNo = useNoRule ? nos.find((n) => PDF_SKIP_NOS.has(n)) : undefined;
@@ -3227,8 +3250,13 @@ async function runPdfImport(fileList, mgr, status) {
               ? nos.length > 1 ? `${nos[0]}~${nos[nos.length - 1]}번` : `${nos[0]}번`
               : "",
             kind: shape || PDF_SKIP_LABEL[hitNo] || "",
+            name: useNoRule ? p.name : "",   // 모의고사면 넣을 때 번호를 이름으로 단다
           });
           continue;   // 빼 두고 아래 확인 창에서 물어본다
+        }
+        if (useNoRule) {
+          ruleJobs.push({ name: p.name, text: p.text });
+          continue;   // 아래에서 AI로 되살린 지문과 번호 순서로 함께 넣는다
         }
         if (mgr.fillText(p.text)) added++;
         else {
@@ -3246,7 +3274,12 @@ async function runPdfImport(fileList, mgr, status) {
           if (PDF_SKIP_NOS.has(n)) continue;
           if (MOCK_SOLVE_NOS.has(n) || !found.has(n)) need.push(n);
         }
-        if (need.length) mocks.push({ who, data, need, unsolved });
+        if (need.length) mocks.push({ who, data, need, unsolved, ruleJobs });
+        else if (ruleJobs.length) {
+          const put = mgr.appendJobs(mockJobsInOrder(ruleJobs));
+          added += put.added;
+          if (put.full) full = true;
+        }
       }
       if (res.note) notes.push(`${who}: ${res.note}`);
       if (full) {
@@ -3300,16 +3333,17 @@ async function runPdfImport(fileList, mgr, status) {
     if (useAi && per) useAi = await hasEnoughPoints(per * m.need.length, "모의고사 지문 자동 채우기");
     if (useAi) {
       try {
-        parts.push(await mockRestoreInto(mgr, m.data, m.need, status, pick));
+        parts.push(await mockRestoreInto(mgr, m.data, m.need, status, pick, m.ruleJobs));
         added++;
       } catch (err) {
         parts.push(`❌ ${esc(m.who)} — ${esc(err.message || "지문을 되살리지 못했습니다.")} 꺼낸 그대로 넣었습니다.`);
-        m.unsolved.forEach((t) => mgr.fillText(t));
+        mgr.appendJobs(mockJobsInOrder([...m.ruleJobs, ...m.unsolved]));
       }
     } else {
-      let n = 0;
-      for (const t of m.unsolved) if (mgr.fillText(t)) n++;
-      parts.push(`✍️ ${esc(m.who)}: 답을 채워야 하는 문항은 원문 그대로 ${n}개를 넣었습니다(빈칸·순서·삽입이 풀리지 않은 채입니다). ` +
+      const put = mgr.appendJobs(mockJobsInOrder([...m.ruleJobs, ...m.unsolved]));
+      const n = Math.max(0, put.added - m.ruleJobs.length);
+      parts.push(`✍️ ${esc(m.who)}: 지문 ${put.added}개를 <b>문항 번호 순서대로</b> 넣었습니다. ` +
+        `그중 답을 채워야 하는 문항 ${n}개는 원문 그대로입니다(빈칸·순서·삽입이 풀리지 않은 채입니다). ` +
         `빠진 문항(${esc(mockNosText(m.need))}번 가운데 넣지 못한 것)은 <b>[＋ 지문 추가]</b>로 직접 넣어 채워 주세요.`);
     }
     draw();
