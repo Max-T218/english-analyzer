@@ -243,6 +243,29 @@ def fix_underlines(tests):
     return log
 
 
+# ── 그림 보정 (2026-10-21 사용자) ──
+# 초등 저학년 그림 보고 Yes/No 1~4번은 원본에서 그림이 엇갈려 있었다 — 파일 이름과 실제 그림도 다르다
+# ('kitchen' 파일은 서재, 'museum' 파일은 부엌). 원본 정답(1 Yes · 2~4 No)이 맞도록 그림을 바로잡는다.
+IMAGE_FIX = {
+    ("elem_low", "vocabulary", 1): "museum",    # This is a kitchen. (Yes) — 부엌 그림
+    ("elem_low", "vocabulary", 2): "kitchen",   # This is a hospital. (No) — 서재 그림
+    ("elem_low", "vocabulary", 4): "hospital",  # There is a museum. (No) — 병원 그림
+}
+
+
+def fix_images(tests):
+    log = []
+    for gid, t in tests.items():
+        for sec in t.get("sections") or []:
+            for grp in sec.get("groups") or []:
+                for q in grp.get("questions") or []:
+                    key = (gid, sec.get("id"), q.get("n"))
+                    if key in IMAGE_FIX and q.get("image"):
+                        log.append(f"{key} 그림 {q['image']} → {IMAGE_FIX[key]}")
+                        q["image"] = IMAGE_FIX[key]
+    return log
+
+
 def build(html):
     """원본에서 시험지 8개와 음성·그림을 꺼낸다. 문항 모양을 검사해 이상하면 멈춘다."""
     import base64
@@ -253,6 +276,8 @@ def build(html):
     tests = read_const(html, "TESTS", env)
     for line in fix_underlines(tests):
         print("  밑줄 보정:", line)
+    for line in fix_images(tests):
+        print("  그림 보정:", line)
     audio = read_const(html, "AUDIO_TRACKS")
     images = read_const(html, "IMAGES")
 
