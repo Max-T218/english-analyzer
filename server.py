@@ -18491,16 +18491,23 @@ class Handler(BaseHTTPRequestHandler):
                             and len(retry.get("sentences") or []) >= len(result.get("sentences") or [])
                             and not brief_english_incomplete(retry, passage)):
                         result = retry
+            # 실패도 '[소책자]' 한 줄을 남긴다 — 예전엔 502만 찍혀 왜 실패했는지 몰랐다
+            # (2026-10-21 오후 Vertex 429가 이어질 때 세 번). 사유는 첫 줄만 짧게 붙인다.
             except NeedsPro as e:
+                trace.log(MODEL, passage, error="needs_pro", label="소책자")
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
                 return
             except ProUnavailable as e:
+                trace.log(MODEL, passage, error="pro_unavailable", label="소책자")
                 self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
                 return
             except QuotaExceeded as e:
+                trace.log(MODEL, passage, error="quota", label="소책자")
                 self._send_json({"error": str(e), "code": "quota"}, 429)
                 return
             except Exception as e:
+                why = (str(e).strip().splitlines() or [""])[0][:200]
+                trace.log(MODEL, passage, error=f"{type(e).__name__} {why}".strip(), label="소책자")
                 self._send_json({"error": str(e)}, 502)
                 return
             trace.log(MODEL, passage, label="소책자")
