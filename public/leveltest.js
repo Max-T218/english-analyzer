@@ -321,8 +321,15 @@
   });
 
   // 탭을 처음 열 때(그리고 다시 열 때마다) 목록을 받아 온다 — 학생이 막 제출했을 수 있다
+  // 탭을 누르면 언제나 목록으로 — 리포트를 보던 중이면 [← 목록으로]를 누른 것과 같다(2026-10-21 사용자).
+  // 목록은 다시 받아 온다(학생이 막 제출했을 수 있다)
   tabBtn.addEventListener("click", () => {
-    if (!$("ltReportView").hidden) return;
+    if (!$("ltReportView").hidden) {
+      ltOpen = null;
+      $("ltReportView").hidden = true;
+      $("ltListView").hidden = false;
+      window.scrollTo({ top: 0 });
+    }
     ltRefresh();
   });
   window.ltReset = () => {   // 로그아웃 — 다음 사람이 이 화면을 보지 않게
