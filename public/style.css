@@ -831,6 +831,10 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 }
 /* 유형 선택 칸 아래 실시간 요약 (총 문항 수 · 예상 금액) */
 .cost-hint{margin-top:8px;}
+/* 만든 워크북이 화면에 있을 때 — 단계 체크를 바꾸면 AI 없이 그 단계만 다시 늘어놓는다는 안내 */
+.wb-made-hint{margin-top:8px; padding:9px 12px; border-left:3px solid var(--accent); border-radius:0 8px 8px 0;
+  background:var(--accent-soft); color:var(--ink); font-size:13px; line-height:1.6;}
+.wb-made-hint .wb-made-warn{display:block; margin-top:4px; color:#92400e;}
 /* 순서 번호 — 워크북 '단계' 칸에서만 쓴다. 체크한 항목에만 붙고 즉시 다시 매겨진다.
    (문제 제작 탭의 유형 칩에는 번호를 붙이지 않는다 — 유형 이름·문항 수 스테퍼와
     함께 두기엔 정보가 많고, 번호가 자리를 먹어 긴 유형 이름이 잘렸다.) */

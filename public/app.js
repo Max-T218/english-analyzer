@@ -3364,7 +3364,7 @@ function syncFloatPrint() {
       "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #mixPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn, #grPrintBtn"
     );
   // 묶음은 페이지 이동 버튼도 담고 있으므로 통째로 감추지 않고 인쇄 버튼만 여닫는다
-  floatPrintBtn.hidden = !(btn && btn.style.display !== "none");
+  floatPrintBtn.hidden = !(btn && btn.style.display !== "none" && !btn.disabled);
   // 되돌리기도 이 묶음 안에 있다 — 지문 분석 탭에서 고치는 중일 때만 보인다
   syncUndoBtn();
 }
@@ -7692,10 +7692,6 @@ document.addEventListener("click", (e) => {
 // 1(지문 연습하기)·2(빈칸 완성하기·우리말)는 제외한 3~10단계만 만든다.
 const WB_STAGES = [
   { id: 1,  name: "좌지문 우해석",         guide: "지문 원문(왼쪽)과 우리말 해석(오른쪽)을 나란히 놓고 읽어 보세요.", def: true },
-  /* 12 — 내용 O/X(2026-10-16). 워크북 AI 호출이 아니라 주관식 탭의 OX진위(/api/quiz)를 불러 만든다.
-     그래서 server.py의 WORKBOOK_STAGE_IDS에 없다 — 워크북 값(단계 수)에 안 들어가고 주관식 OX 값을 따로 받는다.
-     개수는 #wbOxBox(우리말·영어 × 기본·고난도), 해독제 내용이해 워크북 차례대로 지문 바로 뒤에 둔다. */
-  { id: 12, name: "내용 O/X",              guide: "글의 내용과 일치하면 O, 일치하지 않으면 X를 고르세요.", def: false },
   { id: 3,  name: "빈칸 완성하기(영문)",   guide: "우리말 해석을 읽고 영문의 빈칸을 완성해 보세요.", def: true },
   { id: 4,  name: "해석 연습하기",         guide: "문장 전체의 자연스러운 해석을 써 보세요.", def: true },
   { id: 5,  name: "동사형 연습하기",       guide: "괄호 안에 주어진 단어를 알맞게 고쳐 쓰세요.", def: true },
@@ -7704,6 +7700,12 @@ const WB_STAGES = [
   { id: 8,  name: "순서 배열하기",         guide: "우리말과 같은 뜻이 되도록 주어진 단어를 바르게 배열해 보세요.", def: true },
   { id: 9,  name: "문단 배열하기",         guide: "다음 문단을 흐름상 알맞게 배열해 보세요.", def: true },
   { id: 10, name: "영작 연습하기",         guide: "우리말과 같은 뜻이 되도록 주어진 단어를 순서대로 사용하여 영작하세요.", def: true },
+  /* 12 — 내용 O/X(2026-10-16). 워크북 AI 호출이 아니라 주관식 탭의 OX진위(/api/quiz)를 불러 만든다.
+     그래서 server.py의 WORKBOOK_STAGE_IDS에 없다 — 워크북 값(단계 수)에 안 들어가고 주관식 OX 값을 따로 받는다.
+     개수는 #wbOxBox(우리말·영어 × 기본·고난도). **자리는 영작 연습하기 바로 뒤다**(2026-10-21 사용자 — 처음엔 지문 바로 뒤
+     둘째 칸이었는데, 원래 1~10단계 뒤에 나중에 더한 단계(O/X·목표어법 배열 영작·단어 쓰기)를 모으는 쪽이 맞다).
+     칸 차례가 곧 처음 인쇄 순서라 여기 두면 O/X는 영작 다음에 나온다(WB_STAGES 배열 차례 = 칸 차례). */
+  { id: 12, name: "내용 O/X",              guide: "글의 내용과 일치하면 O, 일치하지 않으면 X를 고르세요.", def: false },
   /* 11 — 해독제식 '내용이해 워크북'의 배열 영작(2026-10-16). 지문 문장 2개 + 목표 어법을 쓴 새 문장 3개.
      목표 어법은 지문칸 아래 공용 '목표 어법' 칸을 쓰고, 비어 있으면 AI가 지문에서 고른다.
      이 단계를 골랐을 때만 서버가 재료(grammarArrange)를 만든다 — 그래서 기본은 꺼 둔다. */
@@ -7733,19 +7735,35 @@ WB_STAGES.forEach((s) => {
   wbStageGridEl.appendChild(label);
 });
 
-/* 단계 인쇄 순서 = 체크한 차례(2026-10-19 — 예전엔 칸이 놓인 차례로 고정이라 선생님이 순서를 못 바꿨다).
-   wbStageOrder에 체크한 단계 id를 누른 차례대로 쌓는다. 순서를 바꾸려면 체크를 풀었다가 원하는 차례에
-   다시 누른다. 이 목록에 없는데 체크된 것(처음 기본값·전체 선택)은 칸 차례대로 뒤에 붙는다. */
-let wbStageOrder = [];
+/* 단계 인쇄 순서 = 칸이 놓인 차례(WB_STAGES 배열 차례)다. 단계를 껐다 켜도 번호가 바뀌지 않는다.
+   2026-10-19에 '체크한 차례가 인쇄 순서'로 바꿨다가(칸 차례로 고정이라 선생님이 순서를 못 바꿨다) 2026-10-21에 되돌렸다 —
+   만든 워크북에서 필요한 단계만 보려고 껐다 켜면 그 단계가 맨 뒤 번호로 가서 순서가 뒤섞였다(사용자). 순서를 바꾸는 길은
+   만든 뒤 [📄 쪽 구성]의 [▲ 앞으로] · [▼ 뒤로](wbMoveStage)다.
+   wbStageOrder는 체크 여부와 상관없이 **모든 단계의 차례**다(처음엔 칸 차례). 고른 단계의 차례는 그중 체크된 것만 걸러 낸다. */
+let wbStageOrder = WB_STAGES.map((s) => s.id);
 function wbStageOrderSync() {
-  const on = Array.from(wbStageGridEl.querySelectorAll("input:checked"), (i) => parseInt(i.value, 10));
-  wbStageOrder = wbStageOrder.filter((id) => on.includes(id)).concat(on.filter((id) => !wbStageOrder.includes(id)));
-  return wbStageOrder;
+  const on = new Set(Array.from(wbStageGridEl.querySelectorAll("input:checked"), (i) => parseInt(i.value, 10)));
+  return wbStageOrder.filter((id) => on.has(id));
 }
-wbStageOrderSync();   // 처음 기본값 — 칸 차례대로
+/* 저장해 둔 차례(settings.stages — 체크했던 단계의 인쇄 순서)로 전체 차례를 만든다. 저장본에 없는 단계는 칸 차례에서
+   바로 앞에 놓인 단계의 뒤에 끼워 넣어(앞 단계가 없으면 맨 앞), 나중에 체크해도 칸 위치와 비슷한 자리에 놓이게 한다. */
+function wbBuildOrder(saved) {
+  const all = WB_STAGES.map((s) => s.id);
+  const out = [...new Set((saved || []).map(Number).filter((id) => all.includes(id)))];
+  all.forEach((id, gi) => {
+    if (out.includes(id)) return;
+    let at = 0;
+    for (let k = gi - 1; k >= 0; k--) {
+      const p = out.indexOf(all[k]);
+      if (p >= 0) { at = p + 1; break; }
+    }
+    out.splice(at, 0, id);
+  });
+  return out;
+}
 
 // 체크한 단계에만 1번부터 번호를 붙인다. WB_STAGES의 id는 렌더 분기를 고르는
-// 내부 키이자 참고 자료의 단계 번호이고, 화면·인쇄물에 찍히는 번호는 '체크한 차례'다.
+// 내부 키이자 참고 자료의 단계 번호이고, 화면·인쇄물에 찍히는 번호는 인쇄 순서(칸 차례, 만든 뒤 ▲▼로 바꾼 차례)다.
 function renumberWbStages() {
   const order = wbStageOrderSync();
   wbStageGridEl.querySelectorAll("label").forEach((label) => {
@@ -7765,7 +7783,6 @@ function syncWbAll() {
 wbStageAllEl.addEventListener("change", () => {
   const check = wbStageAllEl.checked;
   wbStageGridEl.querySelectorAll("input").forEach((b) => (b.checked = check));
-  wbStageOrder = [];   // 전체 선택은 칸 차례대로 — 하나씩 누른 차례는 지운다
   syncWbAll();
   renumberWbStages();
   syncWbOxBox();
@@ -7886,7 +7903,7 @@ function wbOxCost(calls = wbOxCalls()) {
   return calls.reduce((s, call) =>
     s + call.types.reduce((a, t) => a + (PRICING.saq || 0) + extra * (t.count - 1), 0), 0);
 }
-// 고른 단계 — 체크한 차례(= 인쇄 순서)대로
+// 고른 단계 — 인쇄 순서대로(칸 차례, 만든 뒤 ▲▼로 바꾼 차례)
 const wbPickedStages = () => wbStageOrderSync().slice();
 // 워크북 AI 호출(/api/workbook)로 만드는 단계만 — 값이 이 수에 걸린다
 const wbServerStages = (stages) => stages.filter((id) => id !== WB_OX_STAGE);
@@ -7983,20 +8000,14 @@ function updateWbCostHint() {
   wbCostHintEl.innerHTML = parts.join(" ");
 }
 
-wbStageGridEl.addEventListener("change", (e) => {
-  // 새로 체크한 단계는 맨 뒤 차례로 간다(wbStageOrderSync가 체크를 푼 것은 빼 준다)
-  const box = e.target.closest("input");
-  if (box) {
-    const id = parseInt(box.value, 10);
-    wbStageOrder = wbStageOrder.filter((x) => x !== id);
-    if (box.checked) wbStageOrder.push(id);
-  }
+wbStageGridEl.addEventListener("change", () => {
+  // 체크를 바꿔도 단계의 차례(wbStageOrder)는 그대로다 — 번호는 체크한 것만 칸 차례대로 다시 센다
   syncWbAll();
   renumberWbStages();
   syncWbOxBox();
   updateWbCostHint();
   // 이미 만든 워크북은 새 차례로 다시 늘어놓는다 — AI를 다시 부르지 않는다(안 만든 단계는 빠진다)
-  if (lastWorkbookResults.length) drawWorkbook(lastWorkbookResults);
+  if (lastWorkbookResults.length) drawWorkbook(lastWorkbookResults, { noScroll: true });
 });
 syncWbAll();
 renumberWbStages();
@@ -8218,7 +8229,7 @@ function wbLayoutPages() {
   return pages;
 }
 
-// 지금 화면에 실제로 그려진 단계 — 체크한 차례대로. 내용이 없어 빠진 단계와는 자리를 바꾸지 않는다
+// 지금 화면에 실제로 그려진 단계 — 인쇄 순서대로. 내용이 없어 빠진 단계와는 자리를 바꾸지 않는다
 function wbShownStages() {
   return wbPickedStages().filter((id) => workbookDocEl.querySelector(`table.wb-page[data-stage="${id}"]`));
 }
@@ -8228,11 +8239,10 @@ function wbMoveStage(id, dir) {
   const i = shown.indexOf(id);
   const j = i + dir;
   if (i < 0 || j < 0 || j >= shown.length) return;
-  const order = wbStageOrderSync().slice();
-  const a = order.indexOf(id);
-  const b = order.indexOf(shown[j]);
-  [order[a], order[b]] = [order[b], order[a]];
-  wbStageOrder = order;
+  // 전체 차례에서 두 단계의 자리를 맞바꾼다 — 그 사이에 꺼 둔 단계가 있어도 고른 단계끼리 순서가 바뀐다
+  const a = wbStageOrder.indexOf(id);
+  const b = wbStageOrder.indexOf(shown[j]);
+  [wbStageOrder[a], wbStageOrder[b]] = [wbStageOrder[b], wbStageOrder[a]];
   renumberWbStages();
   drawWorkbook(lastWorkbookResults, { scrollStage: id });
 }
@@ -8365,7 +8375,7 @@ workbookDocxBtn.addEventListener("click", () =>
     strip: wbAnswerChk.checked ? [] : [".wb-ans"],
     // 워크북만 1단이다 — 단계마다 답을 적는 칸이 있어 2단으로 좁히면 쓸 자리가 모자란다
     columns: 1,
-  })
+  }).finally(() => syncWbActions())   // 내려받는 동안 단계를 바꿨으면 끝난 뒤 단추를 다시 맞춘다
 );
 
 // 답지만 — 문제 내용을 감추고 뒤쪽 '정답' 모음만 지면에 올린다.
@@ -8404,6 +8414,7 @@ async function generateWorkbook() {
   }
 
   wbBtn.disabled = true;
+  wbGenerating = true;   // 만드는 동안 syncWbActions가 단추를 건드리지 않는다
   lockPassagePanel(true);
   dropStaleSavedLink("workbook");
   wbLoadingEl.classList.add("on");
@@ -8500,10 +8511,13 @@ async function generateWorkbook() {
     }
   }
 
+  wbGenerating = false;
+  wbMadeStages = new Set(stages);   // 이 워크북을 만들 때 요청한 단계 — 내용이 비어 나와도 '새로 만들 단계'로 치지 않는다
   const okCount = drawWorkbook(results);
   if (wbEndedNote) wbErrorEl.textContent = wbEndedNote;
   wbLoadingEl.classList.remove("on");
   wbBtn.disabled = false;
+  syncWbActions();   // 다 만든 워크북이면 [워크북 만들기]를 다시 막는다
   lockPassagePanel(false);
   refreshTokenDisplay();
   // 워크북에도 '직접 수정'은 없다
@@ -8521,6 +8535,8 @@ function renderWorkbookEntries(entries) {
    돌려주는 값은 그려진 지문 수. */
 let lastWorkbookResults = [];
 // opts.scrollStage: 다시 그린 뒤 그 단계로 화면을 옮긴다(쪽 구성의 ▲/▼ — 맨 위로 튀지 않게)
+// opts.noScroll: 화면을 옮기지 않는다 — 단계 체크·출력 순서를 바꿀 때마다 문서 쪽으로 끌려 내려가면 다음 체크를
+//   누르러 다시 올라와야 한다(2026-10-21 사용자: 사용자가 내릴 때까지 가만히 둔다). 만들기·불러오기는 예전처럼 문서로 간다.
 function drawWorkbook(results, opts = {}) {
   lastWorkbookResults = results;
   const entries = results.filter((r) => r.data);
@@ -8575,14 +8591,108 @@ function drawWorkbook(results, opts = {}) {
   workbookSaveBtn.style.display = total ? "inline-flex" : "none";
   workbookDocxBtn.style.display = total ? "inline-flex" : "none";
   lastWorkbookEntries = entries; // 저장 버튼이 이 값을 그대로 payload로 보낸다
+  if (!total) wbMadeStages = new Set();   // 만든 워크북이 없으면 '요청했던 단계'도 없다
   syncWbAssignBtn();
+  syncWbActions();
   syncFloatPrint();
   // 비우는 호출일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
   const to = opts.scrollStage && workbookDocEl.querySelector(`table.wb-page[data-stage="${opts.scrollStage}"]`);
   if (to) to.scrollIntoView({ block: "center" });
-  else if (results.length) workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  else if (results.length && !opts.noScroll) workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
   return total;
 }
+
+/* ── 만든 워크북이 화면에 있을 때 단추 잠그기 + 안내 한 줄 ──
+   단계 체크를 바꾸면 drawWorkbook이 받아 둔 결과로 다시 그리므로 AI를 부르지 않는다 — 불러온 자료에서 필요한 단계만
+   체크해 바로 인쇄할 수 있다. 그런데 이 단추들이 늘 눌려서 헷갈렸다(2026-10-21 사용자):
+   · 만든 워크북에서 단계를 **빼기만** 했으면 새로 만들 것이 없는데도 [워크북 만들기]가 눌려, 잘못 누르면 값이 나갔다
+     → 같은 지문으로 다 만든 워크북이 화면에 있고 새로 만들 단계가 없으면 [워크북 만들기]를 막는다.
+   · 만든 워크북에 **없는 단계를 더했으면** 화면의 문서에 그 단계가 없는데도 인쇄·저장·워드·시험 내기가 눌려, 빠진 채
+     나갔다 → 그 단계를 새로 만들 때까지 [인쇄 / PDF 변환]·[답지만]·[사이트 저장]·[워드 다운로드]·[반에 시험 내기]를 막는다.
+   '새로 만들 단계' = 체크했는데 화면 문서에 없고(table.wb-page[data-stage]) 이 워크북을 만들 때 요청하지도 않은 단계다.
+   만들 때 요청했는데 내용이 비어 나온 단계(이 지문으로는 못 만드는 단계)는 새로 만들어도 소용없으므로 막지 않는다
+   — 요청했던 단계는 wbMadeStages에 적어 둔다(만든 직후 = 그때 고른 단계, 불러온 직후 = 저장해 둔 settings.stages).
+   지문 칸이 바뀌었거나 일부 지문이 실패했으면 '다 만든 워크북'이 아니므로 [워크북 만들기]를 열어 둔다. */
+const wbMadeHintEl = $("wbMadeHint");
+let wbMadeStages = new Set();   // 지금 화면의 워크북을 만들 때 요청했던 단계
+let wbGenerating = false;       // 만드는 중에는 단추를 건드리지 않는다(generateWorkbook이 직접 잠근다)
+
+// 화면의 워크북이 지금 지문 칸의 지문과 같은 것으로 전부 만들어진 것인가
+function wbMadeCurrent() {
+  const res = lastWorkbookResults;
+  if (!res.length || res.some((r) => !r.data)) return false;
+  const now = passageMgr.getJobs().map((j) => String(j.text || "").trim());
+  const made = res.map((r) => String((r.job && r.job.text) || "").trim());
+  return now.length === made.length && now.every((t, i) => t === made[i]);
+}
+// 체크했는데 화면 문서에 없고 만들 때 요청하지도 않은 단계 = 새로 만들어야 하는 단계
+function wbDrawnStages() {
+  return new Set([...workbookDocEl.querySelectorAll("table.wb-page[data-stage]")].map((t) => t.dataset.stage));
+}
+const wbStageName = (id) => (WB_STAGES.find((s) => s.id === id) || {}).name || String(id);
+// 단추의 title을 바꿨다가 처음 글로 되돌린다
+function wbSetTitle(btn, text) {
+  if (!btn) return;
+  if (btn.dataset.title0 === undefined) btn.dataset.title0 = btn.title || "";
+  btn.title = text || btn.dataset.title0;
+}
+const WB_LOCK_BTNS = () => [workbookPrintBtn, wbAnswerPrintBtn, workbookSaveBtn, workbookDocxBtn, $("wbAssignBtn")];
+
+function syncWbActions() {
+  if (wbGenerating) return;
+  const total = lastWorkbookResults.filter((r) => r.data).length;
+  const made = wbMadeCurrent();
+  const drawn = wbDrawnStages();
+  const picked = wbPickedStages();
+  const need = made ? picked.filter((id) => !drawn.has(String(id)) && !wbMadeStages.has(id)) : [];
+  const emptyMade = made ? picked.filter((id) => !drawn.has(String(id)) && wbMadeStages.has(id)) : [];
+  const nothingToMake = made && !need.length;
+  const needNames = need.map(wbStageName);
+
+  wbBtn.disabled = nothingToMake;
+  wbSetTitle(wbBtn, nothingToMake
+    ? "이미 만든 워크북입니다 — 새로 만들 단계가 없습니다. 필요한 단계만 체크해 인쇄하세요. 처음부터 다시 만들려면 지문 칸의 [🆕 새로 만들기]를 누르세요."
+    : "");
+  WB_LOCK_BTNS().forEach((b) => {
+    if (!b) return;
+    b.disabled = need.length > 0;
+    wbSetTitle(b, need.length
+      ? `체크한 단계 중 이 워크북에 아직 없는 단계(${needNames.join(" · ")})가 있습니다. [워크북 만들기]로 새로 만들거나, 그 단계의 체크를 풀면 쓸 수 있습니다.`
+      : "");
+  });
+  syncWbMadeHint(total, nothingToMake, needNames, emptyMade.map(wbStageName));
+  syncFloatPrint();
+}
+
+function syncWbMadeHint(total, nothingToMake, needNames, emptyNames) {
+  if (!wbMadeHintEl) return;
+  if (!total) { wbMadeHintEl.hidden = true; wbMadeHintEl.innerHTML = ""; return; }
+  let tail;
+  if (needNames.length) {
+    tail = `<span class="wb-made-warn">⚠️ 체크한 단계 중 이 워크북에 없는 단계: <b>${needNames.map(esc).join(" · ")}</b> — ` +
+      "<b>[워크북 만들기]</b>로 새로 만들어야 인쇄·저장·워드·시험 내기를 할 수 있습니다(그때까지 막혀 있습니다). " +
+      "새로 만들면 지금 체크한 <b>모든 단계가 다시 만들어지고 값이 나갑니다</b>. 새로 만들지 않으려면 그 단계의 체크를 푸세요.</span>";
+  } else if (nothingToMake) {
+    tail = "새로 만들 단계가 없어 <b>[워크북 만들기]는 막혀 있습니다</b>. 처음부터 다시 만들려면 지문 칸의 <b>[🆕 새로 만들기]</b>를 누르세요.";
+  } else {
+    tail = "<b>[워크북 만들기]</b>를 누르면 새로 만들고 값이 나갑니다.";
+  }
+  wbMadeHintEl.innerHTML =
+    "✅ 만든 워크북이 화면에 있습니다. <b>단계 체크를 바꾸면 AI를 부르지 않고 바로</b> 그 단계만 다시 늘어놓으니 " +
+    "필요한 단계만 체크해 <b>[🖨️ 인쇄 / PDF 변환]</b>을 누르세요 — 인쇄만 할 때는 요금이 없습니다. " +
+    "번호(인쇄 순서)는 칸 차례대로이고 단계를 껐다 켜도 바뀌지 않습니다. 순서를 바꾸려면 <b>[📄 쪽 구성]</b>의 [▲ 앞으로] · [▼ 뒤로]를 쓰세요. " +
+    tail +
+    (emptyNames.length
+      ? `<span class="wb-made-warn" style="color:var(--ink-soft)">ℹ️ 만들었지만 이 지문으로는 내용이 나오지 않아 비어 있는 단계: <b>${emptyNames.map(esc).join(" · ")}</b></span>`
+      : "");
+  wbMadeHintEl.hidden = false;
+}
+
+// 지문 칸이 바뀌면(글을 고치거나 칸을 더하고 지울 때) 같은 지문인지 다시 본다 — 키를 칠 때마다 세지 않게 잠깐 모아서
+let wbSyncTimer = 0;
+const wbSyncSoon = () => { clearTimeout(wbSyncTimer); wbSyncTimer = setTimeout(syncWbActions, 150); };
+passageListEl.addEventListener("input", wbSyncSoon);
+new MutationObserver(wbSyncSoon).observe(passageListEl, { childList: true });
 
 /* ── 출력 순서 ──
    passage — 지문 하나의 1~9단계를 다 찍고 다음 지문으로(예전 그대로)
@@ -8604,7 +8714,7 @@ if (wbOrderEl) {
     localStorage.setItem(WB_ORDER_STORE, wbOrderEl.value);
     updateWbOrderHint();
     // 이미 만든 결과가 있으면 그 자리에서 다시 늘어놓는다 — AI를 다시 부르지 않는다
-    if (lastWorkbookResults.length) drawWorkbook(lastWorkbookResults);
+    if (lastWorkbookResults.length) drawWorkbook(lastWorkbookResults, { noScroll: true });
   });
   updateWbOrderHint();
 }
@@ -8627,7 +8737,8 @@ function applyWorkbookSettings(settings) {
   wbStageGridEl.querySelectorAll("input").forEach((b) => {
     b.checked = wanted.has(parseInt(b.value, 10));
   });
-  wbStageOrder = (settings.stages || []).map(Number);   // 저장해 둔 인쇄 순서 그대로
+  wbStageOrder = wbBuildOrder(settings.stages);   // 저장해 둔 인쇄 순서 그대로(저장본에 없는 단계는 칸 위치 근처에)
+  wbMadeStages = new Set((settings.stages || []).map(Number));   // 불러온 워크북을 만들 때 요청했던 단계
   // 내용 O/X 고르기 — 담지 않은 옛 저장본은 지금 값을 그대로 둔다
   wbOxApply(settings.ox);
   wbWordApply(settings.words);
@@ -11402,11 +11513,11 @@ const HOWTO = {
     lead: "한 지문을 여러 단계로 나눠 학생이 차례로 풀어 나가는 학습지를 만듭니다.",
     steps: [
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
-      "넣을 <b>단계</b>를 체크합니다. <b>체크한 차례가 인쇄 순서</b>입니다. (선택) <b>내용 O/X</b>·<b>목표어법 배열 영작</b>·<b>단어 쓰기 세 가지</b>(단어 수는 − / +)도 고를 수 있습니다.",
+      "넣을 <b>단계</b>를 체크합니다. 번호는 <b>칸 차례대로</b> 붙고 그것이 인쇄 순서입니다(순서는 만든 뒤 <b>[📄 쪽 구성]</b>의 ▲▼로 바꿉니다). (선택) <b>내용 O/X</b>·<b>목표어법 배열 영작</b>·<b>단어 쓰기 세 가지</b>(단어 수는 − / +)도 고를 수 있습니다.",
       "<b>[워크북 만들기]</b>를 누릅니다. <b>정답 표시 (교사용)</b>를 켜면 선생님용으로 인쇄됩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 학생이 사이트에서 풀게 할 수 있습니다.",
     ],
-    tip: "단계 뒤가 비면 <b>[📄 쪽 구성]</b>에서 <b>[⤴ 위로 올리기]</b>로 앞 쪽에 이어 붙이세요. 같은 화면의 <b>[▲ 앞으로] · [▼ 뒤로]</b>로 단계 순서도 바꿀 수 있습니다. 값은 단계 수에 따라 오르다가 일정 단계부터 더 오르지 않습니다. 지문이 여럿이면 <b>지문별로 묶기 / 단계별로 묶기</b>를 고를 수 있습니다." + HOWTO_PAUSE_TIP,
+    tip: "<b>이미 만든 워크북</b>(저장함에서 불러온 것 포함)은 <b>단계 체크를 바꾸면 AI 없이 바로</b> 그 단계만 다시 늘어놓으니, 필요한 단계만 체크해 인쇄하세요(요금 없음). 단계를 <b>빼기만</b> 하면 [워크북 만들기]는 막히고, 만들지 않은 단계를 <b>더하면</b> 새로 만들 때까지 인쇄·저장·워드·시험 내기가 막힙니다. 단계 뒤가 비면 <b>[📄 쪽 구성]</b>에서 <b>[⤴ 위로 올리기]</b>로 앞 쪽에 이어 붙이세요. 같은 화면의 <b>[▲ 앞으로] · [▼ 뒤로]</b>로 단계 순서도 바꿀 수 있습니다. 값은 단계 수에 따라 오르다가 일정 단계부터 더 오르지 않습니다. 지문이 여럿이면 <b>지문별로 묶기 / 단계별로 묶기</b>를 고를 수 있습니다." + HOWTO_PAUSE_TIP,
     shots: {
       0: [{ img: "howto-step-mcq-1.jpg", cap: "지문을 붙여 넣은 모습" }],
       1: [{ img: "howto-step-workbook-1.jpg", cap: "넣을 단계 체크" }],

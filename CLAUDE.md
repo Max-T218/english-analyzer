@@ -220,7 +220,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 단어 쓰기끼리는 잇기 — 과 같다. 워크북 단계는 여러 쪽에 걸쳐 이어지므로 지문 상세분석의 `layoutPages`를 쓰지 않고
 `wbSimulate`가 문항(`.wb-q`)을 하나씩 담아 쪽을 센다 — `wbCountPages`(쪽 조이기 안내)도 같은 함수다. 실제 인쇄와 쪽 수가 맞는 것을
 헤드리스 크롬 PDF로 확인했다. 다시 그려도 같은 자리의 나눔은 남지만 출력 순서(지문별/단계별)를 바꾸면 처음 상태가 되고, 저장본에는 안 담긴다) ·
-워크북 단계 인쇄 순서는 **체크한 차례**다(`wbStageOrder`/`wbPickedStages`, 2026-10-19 — 예전엔 칸 차례로 고정). 저장본 `settings.stages`가 그 차례를 담는다.
+워크북 단계 인쇄 순서는 **칸 차례(`WB_STAGES` 배열 차례)**다(`wbStageOrder`는 모든 단계의 전체 차례, `wbPickedStages`는 그중 체크한 것). 2026-10-19에 '체크한 차례'로 바꿨다가 2026-10-21에 되돌렸다 — 껐다 켜면 그 단계가 맨 뒤 번호로 가서 순서가 뒤섞였다(사용자). 체크를 바꿔도 차례는 안 바뀌고, 순서를 바꾸는 길은 만든 뒤 [📄 쪽 구성]의 ▲▼(`wbMoveStage`)뿐이다. 저장본 `settings.stages`가 그 차례를 담고, 불러올 때 `wbBuildOrder`가 저장본에 없는 단계를 칸 위치 근처에 끼워 전체 차례로 만든다. **만든 워크북이 화면에 있을 때 단추를 잠근다**(`syncWbActions`, 2026-10-21 사용자): 같은 지문으로 다 만든 워크북이고(`wbMadeCurrent` — 지문 칸이 바뀌었거나 일부 지문이 실패했으면 아니다) 새로 만들 단계가 없으면 [워크북 만들기]를 막고, 체크한 단계가 화면 문서에 없고 만들 때 요청하지도 않았으면(`wbMadeStages` — 만든 직후는 그때 고른 단계, 불러온 직후는 저장해 둔 `settings.stages`) 인쇄·답지만·사이트 저장·워드·반에 시험 내기를 막는다. 요청했는데 내용이 비어 나온 단계는 새로 만들어도 소용없어 막지 않고 안내만 한다. 다시 만들려면 지문 칸의 [🆕 새로 만들기]. 새로 만들면 체크한 모든 단계가 다시 만들어지고 값이 나간다(없는 단계만 더하는 길은 없다).
 쪽 구성 화면의 단계마다 `[▲ 앞으로]·[▼ 뒤로]`(`wbMoveStage` — 화면에 그려진 단계(`wbShownStages`)끼리 맞바꾸고 받아 둔 결과로 다시 그린다)가 있고,
 다시 그릴 때 `drawWorkbook`이 단위의 `data-key`(지문·단계 자리, `buildWorkbookHtml`/`buildWorkbookByStage`가 단다)로 쪽 나눔을 되찾는다 ·
 `getVocabSets` / `replaceAnalyzeVocabSets` / `appendVocabSet`(단어장 저장소 — 지문 분석·직접
@@ -367,7 +367,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 | `QUIZ_TYPE_MAX` | `TYPE_MAX` (안내 문구는 `TYPE_MAX_REASON`) |
 | `QUIZ_TYPE_LABELS` | `MCQ_TYPES`, `SAQ_TYPES` |
 | `MCQ_ONLY_TYPES` | `MCQ_TRANSFORM_TYPES` |
-| `WORKBOOK_STAGE_IDS` | `WB_STAGES`의 id — 워크북 요금이 단계 수에 걸려 있다. 11(목표어법 배열 영작, 2026-10-16)만은 고를 때만 AI가 재료(`grammarArrange`)를 만들고(`_workbook_schema`), 공용 `targetGrammar` 칸을 받으며(비면 AI가 지문에서 고른다), 기출 유형 매칭이 켜지 않게 `WORKBOOK_STAGE_LABELS`에는 넣지 않았다. **12(내용 O/X)는 서버 목록에 일부러 없다** — 워크북 호출이 아니라 화면이 주관식 OX진위(`/api/quiz`)를 지문마다 기본·고난도로 따로 불러 만들고(`wbOxCalls`, 결과는 `data.ox`), 값도 주관식 OX 값을 받는다(`wbOxCost`). 워크북 값에 넣으면 두 번 받는다 |
+| `WORKBOOK_STAGE_IDS` | `WB_STAGES`의 id — 워크북 요금이 단계 수에 걸려 있다. 11(목표어법 배열 영작, 2026-10-16)만은 고를 때만 AI가 재료(`grammarArrange`)를 만들고(`_workbook_schema`), 공용 `targetGrammar` 칸을 받으며(비면 AI가 지문에서 고른다), 기출 유형 매칭이 켜지 않게 `WORKBOOK_STAGE_LABELS`에는 넣지 않았다. **12(내용 O/X)는 서버 목록에 일부러 없다** — 워크북 호출이 아니라 화면이 주관식 OX진위(`/api/quiz`)를 지문마다 기본·고난도로 따로 불러 만들고(`wbOxCalls`, 결과는 `data.ox`), 값도 주관식 OX 값을 받는다(`wbOxCost`). 워크북 값에 넣으면 두 번 받는다. **칸 차례(= `WB_STAGES` 배열 차례)가 처음 인쇄 순서다 — 원래 1~10단계 뒤에 나중에 더한 단계를 모으고, O/X는 영작 연습하기 바로 뒤다**(2026-10-21 사용자, 처음엔 둘째 칸이었다). 소개 쪽 `workbook.html` 목록도 같은 차례 |
 | `EXAM_MAX_PAGES` | `EXAM_MAX_PAGES` — 기출을 여러 부 쌓으므로 한 부의 서너 배가 든다 |
 | `QUIZ_HARD_RULES` 8~12번(주관식 유형) | `SAQ_HARD_TYPES` — 주관식 고난도가 되는 유형. 화면이 이 목록 밖의 유형은 고난도로 보내지 않는다 |
 | `RECHARGE_AMOUNTS` | `index.html`의 `recharge-preset-btn` 금액 단추 — 금액 직접 입력은 카카오페이 입점 조건 때문에 뺐다(2026-09-27) |
