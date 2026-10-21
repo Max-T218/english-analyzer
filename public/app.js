@@ -2611,6 +2611,14 @@ function parseKeyText(text) {
 
 /* 답을 정하는 창. 문항마다 ①~⑤ 단추, 정답표(붙여 넣기·파일), AI로 풀기.
    [원래 지문으로]를 누르면 답을 정한 문항만 그 칸의 글을 바꾸고 안내 HTML을 돌려준다. 닫으면 "". */
+/* 정답표 칸에 붙여 넣은(Ctrl+V) 캡처 사진·PDF를 꺼낸다. 없으면 null(글 붙여 넣기는 그대로 둔다).
+   두 정답표 창(askProblemFill·askMockFill)이 같이 쓴다 — 예전엔 [📎 정답표 파일 올리기]로만 사진이
+   들어가 캡처를 붙여 넣으면 아무 일도 없었다(2026-10-23 사용자). */
+function pastedKeyFile(e) {
+  const files = [...((e.clipboardData && e.clipboardData.files) || [])];
+  return files.find((f) => /^image\//.test(f.type || "") || isPdf(f)) || null;
+}
+
 function askProblemFill(probs) {
   const box = $("probFillGuide");
   const list = $("probFillList");
@@ -2624,6 +2632,7 @@ function askProblemFill(probs) {
   $("probFillAiBtn").textContent = `🤖 AI로 풀기${per ? ` (문제당 ${pt(per)})` : ""}`;
   $("probFillKeyText").value = "";
   $("probFillKeyFile").value = "";
+  let pastedKey = null;   // 붙여 넣은 캡처 — 파일 고르기 창은 값을 코드로 채울 수 없어 따로 둔다
   msg("");
   const draw = () => {
     list.innerHTML = rows.map((r, i) => {
@@ -2666,7 +2675,7 @@ function askProblemFill(probs) {
   };
   $("probFillKeyRead").onclick = async () => {
     const text = $("probFillKeyText").value.trim();
-    const f = $("probFillKeyFile").files && $("probFillKeyFile").files[0];
+    const f = pastedKey || ($("probFillKeyFile").files && $("probFillKeyFile").files[0]);
     if (!text && !f) { msg("정답을 붙여 넣거나 정답표 파일을 고르세요."); return; }
     if (text) {
       const key = parseKeyText(text);
@@ -2685,7 +2694,18 @@ function askProblemFill(probs) {
   $("probFillKeyBtn").onclick = () => $("probFillKeyFile").click();
   $("probFillKeyFile").onchange = () => {
     const f = $("probFillKeyFile").files && $("probFillKeyFile").files[0];
-    if (f) { $("probFillKeyText").value = ""; $("probFillKeyRead").click(); }
+    if (f) { pastedKey = null; $("probFillKeyText").value = ""; $("probFillKeyRead").click(); }
+  };
+  // 창 어디서든 캡처 사진을 붙여 넣으면 정답표 파일로 받아 바로 읽는다
+  box.onpaste = (e) => {
+    const f = pastedKeyFile(e);
+    if (!f) return;
+    e.preventDefault();
+    e.stopPropagation();   // 단어장 탭의 붙여넣기 처리(document)가 같이 받지 않게
+    pastedKey = f;
+    $("probFillKeyFile").value = "";
+    $("probFillKeyText").value = "";
+    $("probFillKeyRead").click();
   };
   $("probFillAiBtn").onclick = async () => {
     const todo = rows.filter((r) => !r.ans);
@@ -2941,14 +2961,14 @@ function closePdfHeldGuide() {
 function openPdfHeldGuide(mgr, status, items) {
   pdfHeldBack = { mgr, status, items };
   $("pdfHeldLead").innerHTML =
-    `지문 <b>${items.length}개</b>를 넣지 않고 남겨 두었습니다. ` +
+    `아래 <b>${items.length}개</b>는 입력칸에 넣지 않았습니다. ` +
     `모의고사의 <b>도표(25번) · 인물 소개(26번) · 안내문(27·28번)</b>은 ` +
-    `빈칸·순서·문장삽입 같은 유형에 맞지 않아 기본으로 빼 둡니다.`;
+    `빈칸·순서·문장삽입 문제로 만들기 어려워서 빼 둡니다.`;
   pdfHeldListEl.innerHTML = items
     .map(
       (it, i) => `
     <label class="pdf-held-item">
-      <input type="checkbox" data-i="${i}" checked>
+      <input type="checkbox" data-i="${i}">
       <span class="pdf-held-body">
         <span class="pdf-held-head">
           ${it.no ? `<span class="pdf-held-no">${esc(it.no)}</span>` : ""}
@@ -2959,8 +2979,21 @@ function openPdfHeldGuide(mgr, status, items) {
     </label>`
     )
     .join("");
+  syncPdfHeldAdd();
   pdfHeldGuideEl.hidden = false;
 }
+
+/* [체크한 지문 넣기]에 체크한 개수를 달고, 하나도 없으면 잠근다.
+   예전엔 처음부터 모두 체크된 채 [그대로 두기] · [＋ 선택한 지문 추가]였는데, '그대로 두기'가
+   넣는 건지 안 넣는 건지 알 수 없었다(2026-10-23 사용자). 이제 처음엔 아무것도 체크하지 않고
+   [넣지 않기]가 기본이다. */
+function syncPdfHeldAdd() {
+  const n = pdfHeldListEl.querySelectorAll("input:checked").length;
+  const btn = $("pdfHeldAdd");
+  btn.disabled = !n;
+  btn.textContent = n ? `체크한 지문 ${n}개 넣기` : "체크한 지문 넣기";
+}
+pdfHeldListEl.addEventListener("change", syncPdfHeldAdd);
 
 $("pdfHeldSkip").addEventListener("click", closePdfHeldGuide);
 pdfHeldGuideEl.addEventListener("click", (e) => {
@@ -3040,9 +3073,7 @@ function askMockFill(who, nos) {
   textEl.oninput = sync;
   $("mockFillKeyBtn").onclick = () => fileEl.click();
   $("mockFillKeyClear").onclick = () => { keyFile = null; fileEl.value = ""; sync(); };
-  fileEl.onchange = async () => {
-    const f = fileEl.files && fileEl.files[0];
-    if (!f) return;
+  const takeFile = async (f) => {
     $("mockFillKeyName").textContent = "읽는 중…";
     try {
       const part = isPdf(f) ? { mime: "application/pdf", data: await blobToBase64(f) } : await photoToPart(f);
@@ -3058,13 +3089,26 @@ function askMockFill(who, nos) {
     }
     sync();
   };
+  fileEl.onchange = () => {
+    const f = fileEl.files && fileEl.files[0];
+    if (f) takeFile(f);
+  };
   sync();
   const box = $("mockFillGuide");
+  // 창 어디서든 캡처 사진·PDF를 붙여 넣으면 정답표 파일로 받는다(글은 그대로 칸에 들어간다)
+  box.onpaste = (e) => {
+    const f = pastedKeyFile(e);
+    if (!f) return;
+    e.preventDefault();
+    e.stopPropagation();   // 단어장 탭의 붙여넣기 처리(document)가 같이 받지 않게
+    fileEl.value = "";
+    takeFile(f);
+  };
   box.hidden = false;
   return new Promise((resolve) => {
     const done = (mode) => {
       box.hidden = true;
-      $("mockFillAi").onclick = $("mockFillKeep").onclick = box.onclick = null;
+      $("mockFillAi").onclick = $("mockFillKeep").onclick = box.onclick = box.onpaste = null;
       const kf = keyFile ? { mime: keyFile.mime, data: keyFile.data } : null;
       resolve({ mode, keyText: textEl.value.trim(), keyFile: kf });
     };
