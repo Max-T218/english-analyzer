@@ -18,6 +18,7 @@ import csv
 import difflib
 import hashlib
 import hmac
+import html
 import http.client
 import io
 import json
@@ -32,6 +33,7 @@ import sys
 import threading
 import time
 import traceback
+import unicodedata
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -1092,7 +1094,7 @@ def _asset_version():
     stamp = 0.0
     # 만드는 법·결과물 예시 그림(howto-*)도 본다 — 2026-10-07에 그림만 갈아 끼웠다가 표식이 그대로여서
     # 옛 그림('홍보용' 제목)이 계속 보였다.
-    names = ["app.js", "trend.js", "grammar.js", "quiztest.js", "style.css"] + [
+    names = ["app.js", "trend.js", "grammar.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
         p.name for pat in ("sample-*.jpg", "howto-*.jpg", "howto-*.png") for p in sorted(PUBLIC_DIR.glob(pat))
     ]
     for name in names:
@@ -11073,6 +11075,15 @@ def delete_user_account(user_id, by_admin=False):
     # 계정이 없어진 뒤에도 남아 있을 이유가 없다.
     for row in DB.collection(POINT_LEDGER).where("user_id", "==", user_id).stream():
         row.reference.delete()
+    # 레벨테스트 — 이 선생님의 응시 링크와 응시 결과(상담 온 학생 이름이 들어 있다)
+    for col in (LT_LINKS, LT_RESULTS):
+        for doc in DB.collection(col).where("owner", "==", user_id).select(["owner"]).stream():
+            doc.reference.delete()
+    for doc in DB.collection(LT_STUDENTS).where("owner", "==", user_id).stream():
+        d = doc.to_dict() or {}
+        _lt_release_login_id(d.get("login_id"), doc.id)
+        _lt_drop_sessions(doc.id)
+        doc.reference.delete()
     for sess in DB.collection("sessions").where("user_id", "==", user_id).stream():
         sess.reference.delete()
     DB.collection("users").document(user_id).delete()
@@ -12072,6 +12083,8 @@ def _account_payload(user_id):
         "krwPaid": paid,
         # 반/학생 관리 탭을 보여줄지 — 관리자가 켜 준 선생님만 True
         "classroomApproved": bool(info.get("classroom_approved")),
+        # 레벨테스트 탭 — 특정 학원 자료라 관리자가 켜 준 선생님만(_leveltest_approved)
+        "leveltestApproved": bool(info.get("leveltest_approved")),
         # 동형 모의고사 제작 탭을 보여줄지 — 위와 같은 모양이지만 별개의 승인이다.
         # EXAM_OPEN_TO_ALL이 켜져 있으면 모두에게 보인다(_exam_approved 주석 참고)
         "examApproved": EXAM_OPEN_TO_ALL or bool(info.get("exam_approved")),
@@ -12967,6 +12980,7 @@ def list_all_users():
             "createdAt": d.get("created_at", ""),
             "classroomApproved": bool(d.get("classroom_approved")),
             "examApproved": bool(d.get("exam_approved")),
+            "leveltestApproved": bool(d.get("leveltest_approved")),
             # 모두에게 열려 있으면 회원별 허용 단추가 뜻이 없다 — 화면이 '전체 공개'로 바꿔 보인다
             "examOpen": EXAM_OPEN_TO_ALL,
             "lastLogin": _kst_date(d.get("last_login")) or "",
@@ -15076,6 +15090,962 @@ def _qt_question_stats(assignment, attempts):
     return stats
 
 
+# =============================================================================
+# 레벨테스트 (2026-10-21) — 학원이 따로 쓰던 레벨테스트 사이트(leveltestara, Node+Postgres)를
+# 옮겨 왔다. 그 학원만 쓰는 자료라 **관리자가 켜 준 선생님만** 쓴다(users.leveltest_approved,
+# 반/학생 승인과 별개). 시험지(문항·정답·음성·그림)는 공개 저장소에 넣지 않고 Firestore에
+# 둔다 — tools/leveltest_import.py로 한 번 올린다.
+#
+#   선생님: 레벨테스트 학생을 등록하고 시험지를 낸다(시험 출제) → 결과 목록·리포트·인쇄
+#   학생:   레벨테스트 사이트(test.html)에 아이디·비밀번호로 로그인 → 목록에서 응시 → 서버가 채점
+#           (계정은 선생님이 레벨테스트 탭에서 등록한다 — 학생 관리의 학생과 따로)
+#
+# 원본은 정답을 화면에 통째로 싣고 점수도 학생 브라우저가 매겨 보냈다. 여기서는 정답이 서버
+# 밖으로 나가지 않는다. 우리말로 답하는 문항(정답에 한글이 든 빈칸)은 모범답안과 글자가
+# 다르면 '확인 대기'로 두고 선생님이 [맞음]/[틀림]을 누른다 — 원본은 한 글자만 달라도 틀림이었다.
+# AI를 부르지 않아 요금이 없다.
+# =============================================================================
+
+LT_SETS = "leveltest_sets"
+LT_MEDIA = "leveltest_media"
+LT_LINKS = "leveltest_links"
+LT_RESULTS = "leveltest_results"
+LT_STUDENTS = "leveltest_students"      # 레벨테스트 학생 계정(학생 관리의 students와 따로)
+LT_LOGIN_IDS = "leveltest_login_ids"    # 아이디 → 학생(문서 ID가 아이디 — create()로 선점해 겹치지 않게)
+LT_SESSIONS = "leveltest_sessions"      # test.html 로그인(쿠키 lt_session)
+LT_NAME_MAX = 30
+LT_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"   # 헷갈리는 i·l·o·0·1을 뺐다 — 학생이 손으로 친다
+LT_CODE_LEN = 8
+LT_CACHE_SECONDS = 300          # 시험지를 다시 올리면 5분 안에 반영된다
+LT_LIST_MAX = 300               # 결과 목록에 보이는 최근 응시 수
+LT_ANSWER_MAX = 500             # 빈칸 답 한 칸의 글자 수
+LT_BEGIN_IP_MAX = 60            # IP 하나가 한 시간에 시작할 수 있는 응시 수(학원 한 곳이 같은 IP다)
+LT_BEGIN_WINDOW = 3600
+# 레벨 구간 — 원본 그대로(점수 이하이면 그 구간). 화면 public/ltreport.js의 LT_BANDS와 같은 값
+LT_LEVEL_BANDS = [(40, "Low Beginner", "#E8564B"), (60, "Beginner", "#F0A93B"),
+                  (85, "Intermediate", "#2FA893"), (100, "Advanced", "#3E7FD6")]
+
+_lt_lock = threading.Lock()
+_lt_cache = {"sets": None, "at": 0.0}
+_lt_media_cache = {}
+_lt_begin_hits = {}
+
+
+def _leveltest_approved(user_id):
+    """관리자가 이 선생님에게 레벨테스트를 켜 줬는지(admin.html). 특정 학원의 자료라 기본은 꺼짐."""
+    _require_db()
+    snap = DB.collection("users").document(user_id).get()
+    return bool((snap.to_dict() or {}).get("leveltest_approved")) if snap.exists else False
+
+
+def set_leveltest_approved(user_id, approved):
+    _require_db()
+    ref = DB.collection("users").document(user_id)
+    if not ref.get().exists:
+        raise ValueError("회원을 찾을 수 없습니다.")
+    ref.update({"leveltest_approved": bool(approved)})
+
+
+def _lt_sets():
+    """시험지 id → {이름·시간제한…, test(원본 모양 그대로)}. 5분 동안 메모리에 둔다."""
+    now = time.monotonic()
+    with _lt_lock:
+        if _lt_cache["sets"] is not None and now - _lt_cache["at"] < LT_CACHE_SECONDS:
+            return _lt_cache["sets"]
+    _require_db()
+    out = {}
+    for snap in DB.collection(LT_SETS).stream():
+        d = snap.to_dict() or {}
+        try:
+            test = json.loads(d.get("data") or "")
+        except ValueError:
+            print(f"[레벨테스트] 시험지 {snap.id}를 읽지 못했습니다", flush=True)
+            continue
+        out[snap.id] = {
+            "id": snap.id,
+            "label": str(d.get("label") or snap.id),
+            "gradeLabel": str(d.get("gradeLabel") or d.get("label") or snap.id),
+            "order": int(d.get("order") or 0),
+            "timeLimitSec": int(d.get("timeLimitSec") or 0),
+            "hasListening": bool(d.get("hasListening")),
+            "audioKey": str(d.get("audioKey") or ""),
+            "audioLabel": str(d.get("audioLabel") or ""),
+            "test": test,
+        }
+        out[snap.id]["items"] = _lt_items(test)
+    with _lt_lock:
+        _lt_cache["sets"], _lt_cache["at"] = out, now
+    return out
+
+
+def _lt_set_meta(s):
+    return {"id": s["id"], "label": s["label"], "gradeLabel": s["gradeLabel"],
+            "timeLimitSec": s["timeLimitSec"], "hasListening": s["hasListening"],
+            "questionCount": len(s["items"])}
+
+
+def _lt_set_list(sets, ids=None):
+    """시험지 목록(정답 없음) — ids가 비면 전부."""
+    rows = [s for s in sets.values() if not ids or s["id"] in ids]
+    rows.sort(key=lambda s: s["order"])
+    return [_lt_set_meta(s) for s in rows]
+
+
+def _lt_items(test):
+    """영역 → 묶음 → 문항을 한 줄로 편다. 문항 차례(i)가 답안의 열쇠다."""
+    out = []
+    for sec in test.get("sections") or []:
+        for grp in sec.get("groups") or []:
+            for q in grp.get("questions") or []:
+                out.append({"sec": sec, "grp": grp, "q": q,
+                            "type": q.get("type") or "mc"})   # 듣기 문항에는 type이 없다(원본: 고르기)
+    return out
+
+
+_LT_TAG_RE = re.compile(
+    r"&lt;(/?)(u|b|i|br|tr|td|th|table|div)(\s+class=['\"](?:q-table|q-table-wrap)['\"])?\s*/?&gt;")
+
+
+def _lt_html(s):
+    """문항 글은 밑줄·표 몇 가지만 태그로 살리고 나머지는 글자로 보인다('<조건>' 같은 글)."""
+    t = html.escape(str(s or ""), quote=False)
+
+    def keep(m):
+        cls = ""
+        if m.group(3):
+            cls = ' class="q-table-wrap"' if "wrap" in m.group(3) else ' class="q-table"'
+        return f"<{m.group(1)}{m.group(2)}{cls}>"
+    return _LT_TAG_RE.sub(keep, t)
+
+
+def _lt_media_names(s):
+    names = {s["audioKey"]} if s["hasListening"] and s["audioKey"] else set()
+    for it in s["items"]:
+        q = it["q"]
+        if q.get("image"):
+            names.add(str(q["image"]))
+        names.update(str(v) for v in (q.get("choiceImages") or {}).values())
+    return names
+
+
+_LT_UNDERLINE_RE = re.compile(r"\s*\(밑줄:\s*([^)]+?)\s*\)")
+
+
+def _lt_mark_underline(text):
+    """원본의 '(밑줄: Lisa)' 표시를 지우고 문장 속 그 낱말에 밑줄(<u>)을 긋는다(2026-10-21 사용자).
+    낱말을 문장에서 못 찾으면 표시를 그대로 둔다."""
+    t = str(text or "")
+    m = _LT_UNDERLINE_RE.search(t)
+    if not m:
+        return t
+    word = m.group(1)
+    body = t[:m.start()] + t[m.end():]
+    hit = re.search(r"(?<![A-Za-z])" + re.escape(word) + r"(?![A-Za-z])", body)
+    if not hit:
+        return t
+    return body[:hit.start()] + "<u>" + hit.group(0) + "</u>" + body[hit.end():]
+
+
+_LT_NOTE_OPTS_RE = re.compile(r"^\s*([^\s/]+(?:\s*/\s*[^\s/]+)+)\s*중에서")
+_LT_PAREN_OPTS_RE = re.compile(r"\(([^()]*?/[^()]*?)\)")
+
+
+def _lt_fill_options(q, grp):
+    """답이 정해진 몇 개 중 하나인 빈칸 — 학생이 치지 않고 단추로 고른다(2026-10-21 사용자: 선택지가 있으면
+    단추로). ① 안내문이 'A/B/C/D 중에서 …'로 시작하면 그 낱말들(품사 쓰기) ② 발문에 '고르'가 있고
+    '(A / B)' 괄호가 있으면 그 둘. 정답이 고른 낱말 중에 없으면 단추를 만들지 않는다(잘못 읽은 것이다).
+    '(decide / smoke / not)'처럼 '이용하여' 쓰는 낱말 묶음은 '고르'가 없어 걸리지 않는다."""
+    opts = []
+    m = _LT_NOTE_OPTS_RE.match(str(grp.get("note") or ""))
+    if m:
+        opts = [o.strip() for o in m.group(1).split("/")]
+    elif "고르" in str(q.get("q") or ""):
+        p = _LT_PAREN_OPTS_RE.search(re.sub(r"<[^>]+>", "", str(q.get("q") or "")))
+        if p:
+            opts = [o.strip() for o in p.group(1).split("/")]
+    opts = [o for o in opts if o]
+    answers = [_lt_norm(a) for a in _lt_answers_list(q.get("answer"))]
+    if len(opts) < 2 or not any(_lt_norm(o) in answers for o in opts):
+        return []
+    return opts
+
+
+def _lt_student_test(s):
+    """학생에게 내려보낼 시험지 — 정답(answer)과 문법 분류(skill)를 뺀다."""
+    items = []
+    for i, it in enumerate(s["items"]):
+        q, grp, sec = it["q"], it["grp"], it["sec"]
+        row = {"i": i, "sec": sec.get("id"), "secTitle": sec.get("title"), "part": grp.get("part") or "",
+               "note": _lt_html(grp.get("note")), "passage": _lt_html(grp.get("passage")),
+               "wordbank": [str(w) for w in grp.get("wordbank") or []],
+               "type": it["type"], "n": q.get("n"), "q": _lt_html(_lt_mark_underline(q.get("q")))}
+        if it["type"] == "fill":
+            opts = _lt_fill_options(q, grp)
+            if opts:
+                row["options"] = opts
+        if q.get("choices"):
+            row["choices"] = {k: _lt_html(v) for k, v in q["choices"].items()}
+        if q.get("choiceImages"):
+            row["choiceImages"] = {k: str(v) for k, v in q["choiceImages"].items()}
+        if q.get("image"):
+            row["image"] = str(q["image"])
+        if it["type"] == "order":
+            row["chunks"] = [str(c) for c in q.get("chunks") or []]
+            row["joinChar"] = q.get("joinChar") if q.get("joinChar") is not None else " "
+            row["prompt"] = str(q.get("prompt") or "")
+        items.append(row)
+    sections = [{"id": sec.get("id"), "title": sec.get("title"), "instruction": sec.get("instruction") or ""}
+                for sec in s["test"].get("sections") or []]
+    return {"id": s["id"], "gradeLabel": s["gradeLabel"], "timeLimitSec": s["timeLimitSec"],
+            "hasListening": s["hasListening"], "audioKey": s["audioKey"] if s["hasListening"] else "",
+            "audioLabel": s["audioLabel"], "sections": sections, "items": items}
+
+
+_LT_HANGUL_RE = re.compile(r"[가-힣]")
+
+
+def _lt_norm(v):
+    t = str(v or "").replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+    t = re.sub(r"\s+", " ", t).strip().lower()
+    return re.sub(r"[.!?]+$", "", t).strip()
+
+
+def _lt_answers_list(ans):
+    return [str(a) for a in ans] if isinstance(ans, list) else [str(ans or "")]
+
+
+def _lt_grade(it, given):
+    """(맞음 True/틀림 False/확인 대기 None, 학생 답 글자, 정답 글자)."""
+    q, typ = it["q"], it["type"]
+    choices = q.get("choices") or {}
+    choice_imgs = q.get("choiceImages") or {}
+
+    def fmt(letters):
+        return " / ".join(f"{l}) {html.unescape(re.sub(r'<[^>]+>', '', str(choices.get(l) or choice_imgs.get(l) or '')))}"
+                          .rstrip() for l in letters)
+    answers = _lt_answers_list(q.get("answer"))
+    if typ in ("mc", "mc_multi"):
+        correct_text = fmt(sorted(answers) if typ == "mc_multi" else answers[:1])
+    else:
+        correct_text = answers[0]
+    if given in (None, "", []):
+        return False, "(무응답)", correct_text
+    if typ == "mc":
+        g = str(given)[:4]
+        return g == answers[0], fmt([g]), correct_text
+    if typ == "mc_multi":
+        picked = sorted({str(x)[:4] for x in (given if isinstance(given, list) else str(given).split(",")) if x})
+        return picked == sorted(answers), fmt(picked), correct_text
+    if typ == "order":
+        chunks = [str(c) for c in q.get("chunks") or []]
+        join = q.get("joinChar") if q.get("joinChar") is not None else " "
+        try:
+            idx = [int(x) for x in given][:len(chunks)]
+        except (TypeError, ValueError):
+            idx = []
+        if len(set(idx)) != len(idx) or any(not (0 <= k < len(chunks)) for k in idx):
+            idx = []
+        text = join.join(chunks[k] for k in idx)
+        if not text:
+            return False, "(무응답)", correct_text
+        return any(_lt_norm(text) == _lt_norm(a) for a in answers), text, correct_text
+    # fill
+    text = str(given)[:LT_ANSWER_MAX].strip()
+    if not text:
+        return False, "(무응답)", correct_text
+    if any(_lt_norm(text) == _lt_norm(a) for a in answers):
+        return True, text, correct_text
+    # 우리말로 답하는 칸은 같은 뜻을 다르게 쓸 수 있다 — 선생님이 본다
+    if any(_LT_HANGUL_RE.search(a) for a in answers):
+        return None, text, correct_text
+    return False, text, correct_text
+
+
+def _lt_reading_skill(t):
+    t = t or ""
+    rules = [
+        (r"들어가기에 가장 적절한 곳|주어진 문장이 들어가기", "문장 삽입"),
+        (r"순서로 가장 적절한|글의 순서", "글의 순서"),
+        (r"제목으로 가장 적절한|제목으로 알맞은", "제목 추론"),
+        (r"빈칸에 (들어갈|알맞은)", "빈칸 추론"),
+        (r"(?i)가리키는|지칭|refers to", "지칭 추론"),
+        (r"분위기", "분위기 파악"),
+        (r"심경|심정", "심경 파악"),
+        (r"요지|주장|요약", "요지·주장 파악"),
+        (r"(?i)일치하지 않는|NOT true|다른 것은", "세부내용 파악(불일치 찾기)"),
+    ]
+    for pat, name in rules:
+        if re.search(pat, t):
+            return name
+    return "세부내용 파악"
+
+
+def _lt_grammar_skill(q):
+    if q.get("skill"):
+        return str(q["skill"])
+    t = str(q.get("q") or "")
+    for pat, name in [(r"to\s*부정사", "to부정사"), (r"분사구문", "분사구문"), (r"관계대명사", "관계대명사"),
+                      (r"관계부사", "관계부사"), (r"수동태", "수동태"), (r"가정법", "가정법"), (r"동명사", "동명사"),
+                      (r"비교급|최상급|원급", "비교급·최상급"), (r"형식", "문장의 형식")]:
+        if re.search(pat, t):
+            return name
+    return "기타 문법 개념"
+
+
+# 영역별 코멘트 — 원본 문구 그대로(성취도 40% 미만 / 70% 미만 / 그 이상)
+_LT_NARRATIVE = {
+    "Listening": ("긴 대화문과 독백을 듣고 세부 내용을 파악하는 연습이 필요합니다. 짧은 대화부터 반복해서 듣고 핵심 정보를 받아 적는 훈련을 추천합니다.",
+                  "전반적으로 이해하고 있으나 세부 정보 파악 연습을 더하면 좋습니다. 숫자, 시간, 장소처럼 구체적인 정보에 집중해서 듣는 연습이 도움이 될 거예요.",
+                  "대화의 흐름과 세부 내용을 정확히 파악하고 있습니다. 좀 더 빠른 속도의 원어민 대화에도 도전해 보면 좋겠습니다."),
+    "Vocabulary": ("핵심 어휘의 의미와 쓰임에 대한 반복 학습이 필요합니다. 단어를 문장 속에서 여러 번 접하며 의미를 자연스럽게 익히는 것을 추천합니다.",
+                   "기본 어휘는 갖추었으나 다양한 문맥에서의 활용 연습이 필요합니다. 유의어와 반의어를 함께 학습하면 어휘력을 더 탄탄히 다질 수 있어요.",
+                   "어휘력이 우수하며 문맥 속 의미 파악도 정확합니다. 좀 더 수준 높은 어휘와 관용 표현으로 확장해도 좋겠습니다."),
+    "Reading": ("글의 중심 내용을 찾고 세부 정보를 파악하는 독해 훈련이 필요합니다. 문단별로 핵심 문장을 표시하며 읽는 습관을 들이면 도움이 됩니다.",
+                "전반적인 이해는 가능하나 추론이 필요한 문제에서 어려움을 보일 수 있습니다. 답의 근거를 지문에서 직접 찾아 표시하는 연습을 추천합니다.",
+                "다양한 유형의 지문을 정확히 이해하고 있습니다. 더 길고 복잡한 지문으로 독해 범위를 넓혀가면 좋겠습니다."),
+    "Writing": ("문장 구조와 어순에 대한 기초 학습이 필요합니다. 짧은 문장을 정확한 어순으로 쓰는 연습부터 차근차근 시작하면 좋겠습니다.",
+                "기본 문장 구성은 가능하나 좀 더 정확한 어순 훈련이 필요합니다. 주어-동사-목적어 순서를 의식하며 문장을 써보는 연습을 추천합니다.",
+                "문법과 어순을 정확히 이해하고 문장을 구성할 수 있습니다. 더 길고 복잡한 문장 쓰기에도 도전해 보면 좋겠습니다."),
+    "Grammar": ("핵심 문법 개념에 대한 보충 학습이 필요합니다. 아래 오답 문항을 통해 어떤 개념이 부족한지 확인하고 기초부터 다시 정리하는 것을 추천합니다.",
+                "기본 문법은 이해하고 있으나 정확도를 높이는 연습이 필요합니다. 아래 오답 문항을 다시 풀어보며 헷갈린 개념을 점검해 보세요.",
+                "문법 개념을 정확히 이해하고 적용할 수 있습니다. 더 복잡한 문장 구조와 고난도 어법 문제로 실력을 확장해도 좋겠습니다."),
+    "Alphabet": ("알파벳과 소리의 연결에 대한 반복 연습이 필요합니다. 매일 조금씩 알파벳 소리를 듣고 따라 말하는 연습을 추천합니다.",
+                 "기본적인 알파벳 인지는 되어 있으나 좀 더 정확한 연습이 필요합니다. 헷갈리는 글자를 따로 모아 반복 학습하면 좋겠습니다.",
+                 "알파벳과 소리를 정확하게 연결하고 있습니다. 단어 단위의 파닉스 학습으로 자연스럽게 넘어가면 좋겠습니다."),
+}
+
+
+def _lt_pct(a, b):
+    return int(a * 100 / b + 0.5) if b else 0   # 자바스크립트 Math.round와 같게(.5는 올림)
+
+
+def _lt_band(score):
+    for mx, label, color in LT_LEVEL_BANDS:
+        if score <= mx:
+            return {"label": label, "color": color}
+    return {"label": LT_LEVEL_BANDS[-1][1], "color": LT_LEVEL_BANDS[-1][2]}
+
+
+def _lt_summarize(rep):
+    """문항 줄(items)로 점수·레벨·영역별 성취도를 다시 센다 — 선생님이 확인 대기 칸을 채점하면
+    시험지를 다시 읽지 않고 여기만 다시 돈다(나중에 시험지를 고쳐도 옛 결과는 그대로다)."""
+    rows = rep.get("items") or []
+    total = len(rows)
+    correct = sum(1 for r in rows if r.get("ok") is True)
+    rep["totalCorrect"], rep["totalCount"] = correct, total
+    rep["pending"] = sum(1 for r in rows if r.get("ok") is None)
+    rep["score"] = _lt_pct(correct, total)
+    rep["band"] = _lt_band(rep["score"])
+    cats = []
+    for name in dict.fromkeys(r.get("section") for r in rows):
+        mine = [r for r in rows if r.get("section") == name]
+        c = sum(1 for r in mine if r.get("ok") is True)
+        pct = _lt_pct(c, len(mine))
+        tier = 0 if pct < 40 else 1 if pct < 70 else 2
+        detail = None
+        wrong = [r for r in mine if r.get("ok") is False]
+        if name == "Reading":
+            w = list(dict.fromkeys(r.get("skill") for r in wrong))
+            right = [s for s in dict.fromkeys(r.get("skill") for r in mine if r.get("ok") is True) if s not in w]
+            detail = {"type": "reading", "wrong": w, "right": right}
+        elif name == "Grammar":
+            groups = {}
+            for r in wrong:
+                groups.setdefault(r.get("skill"), []).append(r.get("n"))
+            detail = {"type": "grammar", "wrong": [{"skill": k, "nums": sorted(v, key=lambda x: (str(type(x)), x))}
+                                                   for k, v in groups.items()]}
+        cats.append({"name": name, "correct": c, "total": len(mine), "pct": pct,
+                     "bandLabel": _lt_band(pct)["label"],
+                     "narrative": (_LT_NARRATIVE.get(name) or ("", "", ""))[tier], "detail": detail})
+    rep["cats"] = cats
+    return rep
+
+
+def _lt_build_report(s, answers, name):
+    rows = []
+    for i, it in enumerate(s["items"]):
+        ok, given_text, correct_text = _lt_grade(it, answers.get(str(i)))
+        sec_title = it["sec"].get("title") or ""
+        skill = _lt_reading_skill(it["q"].get("q")) if sec_title == "Reading" else \
+            _lt_grammar_skill(it["q"]) if sec_title == "Grammar" else ""
+        rows.append({"no": i + 1, "i": i, "n": it["q"].get("n"), "section": sec_title, "skill": skill,
+                     "ok": ok, "correctText": correct_text[:LT_ANSWER_MAX], "givenText": given_text[:LT_ANSWER_MAX]})
+    rep = {"v": 1, "studentName": name, "setId": s["id"], "gradeLabel": s["gradeLabel"],
+           "date": datetime.now(KST).strftime("%Y-%m-%d"),
+           "items": rows}
+    return _lt_summarize(rep)
+
+
+def _lt_student_summary(rep):
+    """학생 화면에 보일 리포트 — 문항별 정답은 뺀다(같은 시험지를 다음 학생도 본다)."""
+    return {k: rep.get(k) for k in ("studentName", "gradeLabel", "date", "score", "totalCorrect",
+                                    "totalCount", "pending", "band", "cats")}
+
+
+# --- 레벨테스트 학생 계정 (선생님이 레벨테스트 탭에서 등록 → test.html에서 로그인) ---
+# 2026-10-21 사용자: 학생 관리처럼 학생들이 한 사이트에 아이디·비밀번호로 로그인하되, 학생 관리(student.html)와는
+# 따로 둔다 — 상담 온 학생처럼 아직 반에 없는 학생도 바로 등록해 보게 하려는 것이다. 아이디·비밀번호 규칙은
+# 학생 관리와 같지만(_check_student_pw·_pw_key) 아이디 이름표는 따로 센다(LT_LOGIN_IDS).
+# 아이디는 한글도 된다(2026-10-21 사용자: 이름을 그대로 아이디로) — 학생 관리 아이디 규칙(STUDENT_LOGIN_ID_RE)과 다르다.
+
+LT_LOGIN_ID_RE = re.compile(r"^[0-9a-z가-힣._-]{2,20}$")
+
+
+def _lt_norm_login_id(login_id):
+    """공백을 빼고 소문자로, 한글은 NFC로 맞춘다 — 맥·아이폰은 한글을 자모로 풀어(NFD) 보내기도 해서
+    같은 '김민수'가 다른 글자로 저장·대조되는 일을 막는다."""
+    t = unicodedata.normalize("NFC", str(login_id or ""))
+    return re.sub(r"\s+", "", t).lower()
+
+
+def _lt_check_login_id(login_id):
+    if not LT_LOGIN_ID_RE.match(login_id):
+        raise ValueError("아이디는 한글·영문 소문자·숫자(점·밑줄·하이픈 가능)로 2~20자여야 합니다.")
+
+def _lt_claim_login_id(login_id, sid):
+    from google.api_core.exceptions import AlreadyExists
+    try:
+        DB.collection(LT_LOGIN_IDS).document(login_id).create({"student_id": sid})
+    except AlreadyExists:
+        raise ValueError("이미 사용 중인 아이디입니다. 다른 아이디로 정해 주세요.")
+
+
+def _lt_release_login_id(login_id, sid):
+    if not login_id:
+        return
+    ref = DB.collection(LT_LOGIN_IDS).document(login_id)
+    snap = ref.get()
+    if snap.exists and (snap.to_dict() or {}).get("student_id") == sid:
+        ref.delete()
+
+
+def _lt_own_student(user_id, sid):
+    ref = DB.collection(LT_STUDENTS).document(str(sid or "_"))
+    snap = ref.get()
+    if not snap.exists or (snap.to_dict() or {}).get("owner") != user_id:
+        raise ValueError("학생을 찾을 수 없습니다.")
+    return ref, snap.to_dict() or {}
+
+
+def _lt_clean_name(name):
+    name = "".join(ch for ch in str(name or "") if ch.isprintable() and ch not in "<>").strip()[:LT_NAME_MAX]
+    if not name:
+        raise ValueError("학생 이름을 입력하세요.")
+    return name
+
+
+def lt_list_students(user_id):
+    _require_db()
+    rows = []
+    for doc in DB.collection(LT_STUDENTS).where("owner", "==", user_id).stream():
+        d = doc.to_dict() or {}
+        rows.append({"id": doc.id, "name": d.get("name", ""), "loginId": d.get("login_id", ""),
+                     "memo": d.get("memo", ""), "pwSetBy": d.get("pw_set_by", ""), "createdAt": d.get("created_at", "")})
+    rows.sort(key=lambda r: r["createdAt"], reverse=True)
+    return rows
+
+
+def lt_create_student(user_id, name, login_id, memo=""):
+    """아이디만으로 로그인하므로(lt_login) 비밀번호는 쓰지 않는다. 예전 판과 문서 모양을 맞추려고 1234 해시를
+    그대로 적어 둔다(다시 비밀번호를 쓰게 되면 그대로 살아난다)."""
+    _require_db()
+    name = _lt_clean_name(name)
+    # 아이디를 비우면 이름을 아이디로 쓴다(띄어쓰기는 뺀다)
+    login_id = _lt_norm_login_id(login_id) or _lt_norm_login_id(name)
+    _lt_check_login_id(login_id)
+    password = STUDENT_PW_DEFAULT
+    ref = DB.collection(LT_STUDENTS).document()
+    _lt_claim_login_id(login_id, ref.id)
+    salt, digest = _hash_password(_pw_key(password))
+    ref.set({"owner": user_id, "name": name, "login_id": login_id, "memo": str(memo or "").strip()[:LT_NAME_MAX],
+             "pw_salt": salt, "pw_hash": digest, "pw_set_by": "teacher", "created_at": _now_iso()})
+    return {"id": ref.id}
+
+
+def _lt_drop_sessions(sid):
+    for s in DB.collection(LT_SESSIONS).where("student_id", "==", sid).stream():
+        s.reference.delete()
+
+
+def lt_update_student(user_id, sid, name=None, login_id=None, reset_pw=False):
+    """이름·아이디를 고치고, reset_pw면 비밀번호를 1234(STUDENT_PW_DEFAULT)로 되돌린다 — 비밀번호는
+    무조건 1234라 선생님이 다른 값을 정하는 길은 두지 않았다(2026-10-21 사용자)."""
+    _require_db()
+    ref, cur = _lt_own_student(user_id, sid)
+    upd = {}
+    if name is not None:
+        upd["name"] = _lt_clean_name(name)
+    new_id = _lt_norm_login_id(login_id) if login_id is not None else cur.get("login_id")
+    if new_id != cur.get("login_id"):
+        _lt_check_login_id(new_id)
+        _lt_claim_login_id(new_id, sid)
+        _lt_release_login_id(cur.get("login_id"), sid)
+        upd["login_id"] = new_id
+    if reset_pw:
+        upd["pw_salt"], upd["pw_hash"] = _hash_password(_pw_key(STUDENT_PW_DEFAULT))
+        upd["pw_set_by"] = "teacher"
+    if upd:
+        ref.update(upd)
+    if "login_id" in upd or "pw_hash" in upd:
+        _lt_drop_sessions(sid)   # 아이디·비밀번호가 바뀌면 로그인을 끊는다
+
+
+def _lt_drop_results(user_id, field, value):
+    """응시 결과를 지운다(field = "link" 또는 "student_id"). 내 것만."""
+    n = 0
+    for doc in DB.collection(LT_RESULTS).where(field, "==", value).stream():
+        if (doc.to_dict() or {}).get("owner") == user_id:
+            doc.reference.delete()
+            n += 1
+    return n
+
+
+def lt_delete_student(user_id, sid):
+    """학생을 지운다 — 아이디(계정)·로그인과 함께 이 학생에게 낸 시험과 응시 결과도 모두 지운다
+    (2026-10-21 사용자: 남겨 둘 필요 없다)."""
+    _require_db()
+    ref, cur = _lt_own_student(user_id, sid)
+    _lt_release_login_id(cur.get("login_id"), sid)
+    _lt_drop_sessions(sid)
+    for doc in DB.collection(LT_LINKS).where("student_id", "==", sid).stream():
+        if (doc.to_dict() or {}).get("owner") == user_id:
+            doc.reference.delete()
+    _lt_drop_results(user_id, "student_id", sid)
+    ref.delete()
+
+
+def lt_login(login_id, ip):
+    """test.html 로그인 — **아이디만 받는다**(2026-10-21 사용자: 레벨테스트 보는 학생에게 비밀번호까지 정해 줄
+    필요가 없다). 아이디가 곧 이름이라 이름을 아는 사람이면 들어올 수 있다는 것은 알고 고른 것이다 — 결과 화면에는
+    정답이 없고, 낸 시험은 제출하면 닫힌다. 없는 아이디를 계속 넣는 것은 학생 관리와 같은 장치로 막는다
+    (열쇠를 'lt:'로 나눈다). 회원 문서의 pw_hash는 예전 판이 남긴 것이라 더는 보지 않는다."""
+    _require_db()
+    login_id = _lt_norm_login_id(login_id)
+    if not login_id:
+        raise ValueError("아이디를 입력하세요.")
+    key = "lt:" + login_id
+    if _student_login_blocked(ip, key):
+        raise ValueError("시도가 너무 많습니다. 5분 뒤 다시 시도하세요.")
+    sid = None
+    if LT_LOGIN_ID_RE.match(login_id):
+        sid = (DB.collection(LT_LOGIN_IDS).document(login_id).get().to_dict() or {}).get("student_id")
+    snap = DB.collection(LT_STUDENTS).document(sid).get() if sid else None
+    d = snap.to_dict() if snap is not None and snap.exists else None
+    if not d:
+        _student_login_record_fail(ip, key)
+        raise ValueError("없는 아이디입니다. 선생님께 받은 아이디를 확인해 주세요.")
+    if not _leveltest_approved(d.get("owner") or ""):
+        raise ValueError("지금은 레벨테스트를 볼 수 없습니다. 선생님께 문의해 주세요.")
+    _student_login_clear(key)
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(seconds=STUDENT_SESSION_MAX_AGE)
+    DB.collection(LT_SESSIONS).document(token).set({"student_id": sid, "created_at": _now_iso(),
+                                                    "expires_at": expires.isoformat()})
+    return token, d.get("name") or ""
+
+
+def lt_logout(token):
+    if DB is not None and token:
+        DB.collection(LT_SESSIONS).document(token).delete()
+
+
+def _lt_session_user(handler):
+    """test.html 로그인 쿠키(lt_session) → 레벨테스트 학생 id. 없거나 만료됐으면 None."""
+    if DB is None:
+        return None
+    token = _parse_cookies(handler.headers.get("Cookie", "")).get("lt_session")
+    if not token:
+        return None
+    ref = DB.collection(LT_SESSIONS).document(token)
+    snap = ref.get()
+    if not snap.exists:
+        return None
+    sess = snap.to_dict() or {}
+    try:
+        if datetime.now(timezone.utc) >= datetime.fromisoformat(sess["expires_at"]):
+            ref.delete()
+            return None
+    except Exception:
+        return None
+    return sess.get("student_id")
+
+
+def lt_me(sid):
+    snap = DB.collection(LT_STUDENTS).document(sid).get()
+    d = snap.to_dict() if snap.exists else None
+    if not d:
+        raise ValueError("학생 정보를 찾을 수 없습니다.")
+    brand = {"name": "", "logo": ""}
+    try:
+        b = get_brand_mark(d.get("owner") or "")
+        brand = {"name": b.get("name") or "", "logo": b.get("logo") or ""}
+    except Exception:
+        pass
+    return {"name": d.get("name") or "", "academy": brand["name"], "logo": brand["logo"]}
+
+
+# --- 시험 출제 (선생님) ---
+# 2026-10-21 사용자: 학생 관리처럼 학생들이 한 사이트(student.html)에 아이디·비밀번호로 로그인해서 본다.
+# 처음엔 로그인 없이 링크 주소로 보게 만들었다가 바꿨다. 출제 한 건 = 학생 한 명 × 시험지 하나이고,
+# 문서 ID(8자 코드)는 학생 화면 주소(/lt/<코드>)에만 쓰인다 — 그 주소도 출제받은 학생이 로그인해
+# 있어야 열린다(_lt_link). 제출하면 그 출제를 닫는다(lt_submit) — 다시 보게 하려면 선생님이 연다.
+
+def _lt_gen_code():
+    return "".join(secrets.choice(LT_CODE_ALPHABET) for _ in range(LT_CODE_LEN))
+
+
+LT_ASSIGN_MAX = 60   # 한 번에 낼 수 있는 학생 수
+
+
+def lt_assign(user_id, set_id, student_ids):
+    """학생 관리에 등록한 학생들에게 레벨테스트를 낸다 — 학생마다 출제 한 건."""
+    _require_db()
+    sets = _lt_sets()
+    if str(set_id or "") not in sets:
+        raise ValueError("시험지를 골라 주세요.")
+    ids = list(dict.fromkeys(str(x) for x in (student_ids or []) if x))[:LT_ASSIGN_MAX]
+    if not ids:
+        raise ValueError("시험을 낼 학생을 골라 주세요.")
+    students = [(sid, _lt_own_student(user_id, sid)[1]) for sid in ids]   # 내 학생인지 먼저 모두 확인
+    made = 0
+    for sid, st in students:
+        for _ in range(10):
+            ref = DB.collection(LT_LINKS).document(_lt_gen_code())
+            try:
+                ref.create({"owner": user_id, "set_ids": [set_id], "student_id": sid,
+                            "student_name": st.get("name") or "", "login_id": st.get("login_id") or "",
+                            "active": True, "created_at": _now_iso(), "uses": 0})
+            except Exception:
+                continue   # 같은 코드가 이미 있다(드물다) — 다시 뽑는다
+            made += 1
+            break
+    return {"made": made}
+
+
+def lt_list_links(user_id):
+    _require_db()
+    sets = _lt_sets()
+    rows = []
+    for snap in DB.collection(LT_LINKS).where("owner", "==", user_id).stream():
+        d = snap.to_dict() or {}
+        ids = d.get("set_ids") or []
+        rows.append({"code": snap.id, "active": bool(d.get("active")),
+                     "studentName": d.get("student_name") or "", "loginId": d.get("login_id") or "",
+                     "doneAt": d.get("done_at") or "",
+                     "createdAt": d.get("created_at") or "", "uses": int(d.get("uses") or 0),
+                     "setIds": ids, "sets": [sets[x]["gradeLabel"] for x in ids if x in sets]})
+    rows.sort(key=lambda r: r["createdAt"], reverse=True)
+    return rows
+
+
+def _lt_own_link(user_id, code):
+    ref = DB.collection(LT_LINKS).document(str(code or ""))
+    snap = ref.get() if code else None
+    if snap is None or not snap.exists or (snap.to_dict() or {}).get("owner") != user_id:
+        raise ValueError("출제한 시험을 찾을 수 없습니다.")
+    return ref
+
+
+def lt_update_link(user_id, code, active=None):
+    _require_db()
+    ref = _lt_own_link(user_id, code)
+    if active is not None:
+        upd = {"active": bool(active)}
+        if active:
+            upd["done_at"] = ""   # 다시 열면 한 번 더 볼 수 있다
+        ref.update(upd)
+
+
+def lt_delete_link(user_id, code):
+    """출제를 지운다 — 그 시험의 응시 결과도 함께 지우고, 그 학생에게 남은 출제가 없으면 학생 아이디(계정)도
+    지운다(2026-10-21 사용자: 남겨 둘 필요 없다). 돌려주는 값: 학생 계정도 지웠는지."""
+    _require_db()
+    ref = _lt_own_link(user_id, code)
+    sid = (ref.get().to_dict() or {}).get("student_id")
+    ref.delete()
+    _lt_drop_results(user_id, "link", str(code))
+    if not sid:
+        return False
+    if any(True for _ in DB.collection(LT_LINKS).where("student_id", "==", sid).limit(1).stream()):
+        return False   # 다른 시험이 남아 있으면 그 시험을 볼 수 있게 아이디를 둔다
+    try:
+        lt_delete_student(user_id, sid)
+    except ValueError:
+        return False   # 이미 지운 학생
+    return True
+
+
+def lt_student_list(student_id):
+    """test.html 목록에 보일 레벨테스트 — 이 학생에게 낸 것만."""
+    _require_db()
+    sets = _lt_sets()
+    rows = []
+    for snap in DB.collection(LT_LINKS).where("student_id", "==", student_id).stream():
+        d = snap.to_dict() or {}
+        if not _leveltest_approved(d.get("owner") or ""):
+            continue
+        ids = [x for x in d.get("set_ids") or [] if x in sets]
+        if not ids:
+            continue
+        s = sets[ids[0]]
+        done = bool(d.get("done_at"))
+        rows.append({"code": snap.id, "title": s["gradeLabel"], "questionCount": len(s["items"]),
+                     "timeLimitSec": s["timeLimitSec"], "hasListening": s["hasListening"],
+                     "open": bool(d.get("active")), "done": done, "started": int(d.get("uses") or 0) > 0,
+                     "createdAt": d.get("created_at") or ""})
+    rows.sort(key=lambda r: r["createdAt"], reverse=True)
+    return rows
+
+
+# --- 응시 (학생 — test.html에 로그인한 상태로) ---
+
+def _lt_link_doc(code, student_id):
+    """출제 문서를 읽고 이 학생의 것인지 본다(열려 있는지는 따지지 않는다)."""
+    _require_db()
+    if not student_id:
+        raise ValueError("레벨테스트 사이트(test.html)에 로그인한 뒤 열어 주세요.")
+    code = str(code or "").strip().lower()
+    if not re.fullmatch(f"[{LT_CODE_ALPHABET}]{{{LT_CODE_LEN}}}", code):
+        raise ValueError("시험을 찾을 수 없습니다. 시험 목록에서 다시 열어 주세요.")
+    snap = DB.collection(LT_LINKS).document(code).get()
+    d = snap.to_dict() if snap.exists else None
+    if not d or d.get("student_id") != student_id or not _leveltest_approved(d.get("owner") or ""):
+        raise ValueError("시험을 찾을 수 없습니다. 시험 목록에서 다시 열어 주세요.")
+    d["code"] = code
+    return d
+
+
+def _lt_link(code, student_id):
+    """응시할 수 있는 출제 — 제출해 닫혔거나 선생님이 닫았으면 막는다."""
+    d = _lt_link_doc(code, student_id)
+    if not d.get("active"):
+        raise ValueError("이미 제출한 시험입니다. 결과는 선생님께 전달되었어요." if d.get("done_at")
+                         else "선생님이 닫은 시험입니다. 선생님께 문의해 주세요.")
+    return d
+
+
+def _lt_link_sets(link):
+    sets = _lt_sets()
+    ids = [x for x in link.get("set_ids") or [] if x in sets]
+    return sets, (ids or list(sets.keys()))
+
+
+def lt_info(code, student_id):
+    link = _lt_link_doc(code, student_id)
+    brand = {"name": "", "logo": ""}
+    try:
+        b = get_brand_mark(link["owner"])
+        brand = {"name": b.get("name") or "", "logo": b.get("logo") or ""}
+    except Exception:
+        pass
+    out = {"academy": brand["name"], "logo": brand["logo"], "student": link.get("student_name") or ""}
+    if link.get("done_at") and not link.get("active"):
+        # 이미 낸 시험 — 마지막 결과 요약을 보여 준다(정오답표는 빼고)
+        best = None
+        for r in DB.collection(LT_RESULTS).where("link", "==", link["code"]).stream():
+            rd = r.to_dict() or {}
+            if rd.get("status") == "done" and (best is None or (rd.get("submitted_at") or "") > (best.get("submitted_at") or "")):
+                best = rd
+        if best:
+            out["done"] = True
+            out["report"] = _lt_student_summary(json.loads(best.get("report") or "{}"))
+            return out
+    link = _lt_link(code, student_id)
+    sets, ids = _lt_link_sets(link)
+    out["sets"] = _lt_set_list(sets, ids)
+    return out
+
+
+def _lt_begin_limited(ip):
+    now = time.monotonic()
+    with _lt_lock:
+        hits = [t for t in _lt_begin_hits.get(ip, []) if now - t < LT_BEGIN_WINDOW]
+        if len(hits) >= LT_BEGIN_IP_MAX:
+            _lt_begin_hits[ip] = hits
+            return True
+        hits.append(now)
+        _lt_begin_hits[ip] = hits
+        # 오래된 IP는 치운다(한없이 쌓이지 않게)
+        if len(_lt_begin_hits) > 5000:
+            for k in [k for k, v in _lt_begin_hits.items() if not v or now - v[-1] > LT_BEGIN_WINDOW]:
+                _lt_begin_hits.pop(k, None)
+    return False
+
+
+def _lt_token_hash(token):
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
+def lt_begin(code, set_id, ip, student_id):
+    link = _lt_link(code, student_id)
+    sets, ids = _lt_link_sets(link)
+    if set_id not in ids:
+        set_id = ids[0]
+    st = DB.collection(LT_STUDENTS).document(student_id).get()
+    name = ((st.to_dict() or {}).get("name") if st.exists else "") or link.get("student_name") or "학생"
+    s = sets[set_id]
+    token = secrets.token_urlsafe(24)
+    # 이 출제로 보던 중인 응시가 있으면 이어서 본다(다른 기기로 옮겨 열어도) — 열쇠만 새로 준다
+    for r in DB.collection(LT_RESULTS).where("link", "==", link["code"]).stream():
+        rd = r.to_dict() or {}
+        if rd.get("status") == "taking" and rd.get("student_id") == student_id:
+            r.reference.update({"token_hash": _lt_token_hash(token)})
+            return {"attemptId": r.id, "token": token, "startedAt": rd.get("started_at"), "name": name,
+                    "test": _lt_student_test(sets.get(rd.get("set_id")) or s), "resumed": True}
+    if _lt_begin_limited(ip):
+        raise ValueError("잠시 뒤 다시 시작해 주세요.")
+    ref = DB.collection(LT_RESULTS).document()
+    started = _now_iso()
+    ref.set({"owner": link["owner"], "link": link["code"], "memo": "",
+             "student_id": student_id,
+             "set_id": set_id, "set_label": s["gradeLabel"], "student_name": name,
+             "status": "taking", "started_at": started, "token_hash": _lt_token_hash(token)})
+    try:
+        DB.collection(LT_LINKS).document(link["code"]).update({"uses": firestore.Increment(1)})
+    except Exception:
+        pass
+    return {"attemptId": ref.id, "token": token, "startedAt": started, "name": name,
+            "test": _lt_student_test(s)}
+
+
+def _lt_own_attempt(attempt_id, token):
+    _require_db()
+    if not attempt_id or not re.fullmatch(r"[A-Za-z0-9]{10,40}", str(attempt_id)):
+        raise ValueError("응시 기록을 찾을 수 없습니다.")
+    ref = DB.collection(LT_RESULTS).document(str(attempt_id))
+    snap = ref.get()
+    d = snap.to_dict() if snap.exists else None
+    if not d or not hmac.compare_digest(d.get("token_hash") or "", _lt_token_hash(token)):
+        raise ValueError("응시 기록을 찾을 수 없습니다.")
+    return ref, d
+
+
+def lt_resume(attempt_id, token):
+    """새로고침·창을 다시 연 학생 — 보던 시험지를 다시 내려준다(시작 시각은 그대로)."""
+    ref, d = _lt_own_attempt(attempt_id, token)
+    if d.get("status") == "done":
+        return {"done": True, "report": _lt_student_summary(json.loads(d.get("report") or "{}"))}
+    s = _lt_sets().get(d.get("set_id"))
+    if not s:
+        raise ValueError("시험지를 찾을 수 없습니다. 선생님께 문의해 주세요.")
+    return {"attemptId": ref.id, "startedAt": d.get("started_at"), "name": d.get("student_name"),
+            "test": _lt_student_test(s)}
+
+
+def lt_submit(attempt_id, token, answers):
+    ref, d = _lt_own_attempt(attempt_id, token)
+    if d.get("status") == "done":   # 같은 답안을 두 번 보내도(끊겨서 다시 누름) 한 번만 채점한다
+        return {"report": _lt_student_summary(json.loads(d.get("report") or "{}"))}
+    s = _lt_sets().get(d.get("set_id"))
+    if not s:
+        raise ValueError("시험지를 찾을 수 없습니다. 선생님께 문의해 주세요.")
+    if not isinstance(answers, dict):
+        answers = {}
+    clean = {}
+    for k, v in list(answers.items())[:len(s["items"]) + 5]:
+        if not re.fullmatch(r"\d{1,4}", str(k)):
+            continue
+        if isinstance(v, list):
+            clean[str(k)] = [x if isinstance(x, int) else str(x)[:10] for x in v[:40]]
+        elif v is not None:
+            clean[str(k)] = str(v)[:LT_ANSWER_MAX]
+    rep = _lt_build_report(s, clean, d.get("student_name") or "")
+    elapsed = None
+    try:
+        elapsed = int((datetime.now(timezone.utc) - datetime.fromisoformat(d["started_at"])).total_seconds())
+    except Exception:
+        pass
+    ref.update({"status": "done", "submitted_at": _now_iso(), "elapsed_sec": elapsed,
+                "answers": json.dumps(clean, ensure_ascii=False), "report": json.dumps(rep, ensure_ascii=False),
+                "score": rep["score"], "level": rep["band"]["label"], "pending": rep["pending"]})
+    # 제출하면 그 출제를 닫는다 — 다시 보게 하려면 선생님이 [다시 보게 하기]
+    if d.get("link"):
+        try:
+            DB.collection(LT_LINKS).document(d["link"]).update({"active": False, "done_at": _now_iso()})
+        except Exception as e:
+            print(f"[레벨테스트] 링크 끄기 실패: {e}", flush=True)
+    return {"report": _lt_student_summary(rep)}
+
+
+def lt_media(code, name, student_id):
+    """듣기 음성·문항 그림 — 그 출제의 시험지에 든 것만, 출제받은 학생에게만 내보낸다."""
+    link = _lt_link(code, student_id)
+    sets, ids = _lt_link_sets(link)
+    name = str(name or "")
+    if not any(name in _lt_media_names(sets[x]) for x in ids):
+        raise ValueError("찾을 수 없습니다.")
+    with _lt_lock:
+        hit = _lt_media_cache.get(name)
+    if hit:
+        return hit
+    parts = sorted((p.to_dict() or {} for p in DB.collection(LT_MEDIA).where("name", "==", name).stream()),
+                   key=lambda p: int(p.get("i") or 0))
+    if not parts:
+        raise ValueError("찾을 수 없습니다.")
+    out = (parts[0].get("mime") or "application/octet-stream", b"".join(bytes(p.get("data") or b"") for p in parts))
+    with _lt_lock:
+        _lt_media_cache[name] = out
+    return out
+
+
+# --- 결과 (선생님) ---
+
+def lt_list_results(user_id):
+    _require_db()
+    rows = []
+    q = DB.collection(LT_RESULTS).where("owner", "==", user_id).select(
+        ["student_name", "set_label", "status", "score", "level", "pending", "started_at", "submitted_at",
+         "memo", "elapsed_sec"])
+    for snap in q.stream():
+        d = snap.to_dict() or {}
+        rows.append({"id": snap.id, "name": d.get("student_name") or "", "setLabel": d.get("set_label") or "",
+                     "status": d.get("status") or "taking", "score": d.get("score"), "level": d.get("level") or "",
+                     "pending": int(d.get("pending") or 0), "startedAt": d.get("started_at") or "",
+                     "submittedAt": d.get("submitted_at") or "", "memo": d.get("memo") or "",
+                     "elapsedSec": d.get("elapsed_sec")})
+    rows.sort(key=lambda r: r["startedAt"], reverse=True)
+    return rows[:LT_LIST_MAX]
+
+
+def _lt_own_result(user_id, rid):
+    _require_db()
+    ref = DB.collection(LT_RESULTS).document(str(rid or "x"))
+    snap = ref.get()
+    d = snap.to_dict() if snap.exists else None
+    if not d or d.get("owner") != user_id:
+        raise ValueError("결과를 찾을 수 없습니다.")
+    return ref, d
+
+
+def lt_get_result(user_id, rid):
+    _, d = _lt_own_result(user_id, rid)
+    if d.get("status") != "done":
+        raise ValueError("아직 제출하지 않은 응시입니다.")
+    return {"id": rid, "report": json.loads(d.get("report") or "{}"), "memo": d.get("memo") or "",
+            "submittedAt": d.get("submitted_at") or "", "elapsedSec": d.get("elapsed_sec")}
+
+
+def lt_grade(user_id, rid, idx, ok):
+    """확인 대기(또는 이미 채점한) 칸을 선생님이 맞음/틀림으로 정한다."""
+    ref, d = _lt_own_result(user_id, rid)
+    rep = json.loads(d.get("report") or "{}")
+    try:
+        row = next(r for r in rep.get("items") or [] if r.get("i") == int(idx))
+    except (StopIteration, TypeError, ValueError):
+        raise ValueError("채점할 문항을 찾을 수 없습니다.")
+    row["ok"] = bool(ok)
+    row["byTeacher"] = True
+    _lt_summarize(rep)
+    ref.update({"report": json.dumps(rep, ensure_ascii=False), "score": rep["score"],
+                "level": rep["band"]["label"], "pending": rep["pending"]})
+    return {"report": rep}
+
+
+def lt_delete_result(user_id, rid):
+    ref, _ = _lt_own_result(user_id, rid)
+    ref.delete()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "PassageAnalyzer/1.0"
 
@@ -15553,6 +16523,71 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 404)
             return
 
+        # --- 레벨테스트 (선생님 쪽 GET) ---
+        if path in ("/api/leveltest/sets", "/api/leveltest/links", "/api/leveltest/results",
+                    "/api/leveltest/result", "/api/leveltest/students"):
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _leveltest_approved(user_id):
+                self._send_json({"error": "레벨테스트는 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                if path == "/api/leveltest/sets":
+                    self._send_json({"sets": _lt_set_list(_lt_sets())})
+                elif path == "/api/leveltest/links":
+                    self._send_json({"links": lt_list_links(user_id)})
+                elif path == "/api/leveltest/students":
+                    self._send_json({"students": lt_list_students(user_id)})
+                elif path == "/api/leveltest/results":
+                    self._send_json({"results": lt_list_results(user_id)})
+                else:
+                    query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+                    self._send_json(lt_get_result(user_id, (query.get("id") or [""])[0]))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+            return
+
+        # --- 레벨테스트 (학생 쪽 GET — test.html 로그인 쿠키 lt_session) ---
+        if path in ("/api/lt/info", "/api/lt/media", "/api/lt/tests", "/api/lt/me"):
+            if DB is None:
+                self._send_json({"error": "지금은 쓸 수 없습니다."}, 503)
+                return
+            sid = _lt_session_user(self)
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            code = (query.get("k") or [""])[0]
+            try:
+                if path in ("/api/lt/tests", "/api/lt/me"):
+                    if not sid:
+                        self._send_json({"error": "로그인이 필요합니다.", "login": True}, 401)
+                        return
+                    self._send_json({"tests": lt_student_list(sid)} if path == "/api/lt/tests" else lt_me(sid))
+                    return
+                if path == "/api/lt/info":
+                    if not sid:
+                        self._send_json({"error": "레벨테스트 사이트(test.html)에 로그인한 뒤 열어 주세요.", "login": True}, 401)
+                        return
+                    self._send_json(lt_info(code, sid))
+                    return
+                mime, body = lt_media(code, (query.get("name") or [""])[0], sid)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+                return
+            self.send_response(200)
+            self.send_header("content-type", mime)
+            self.send_header("content-length", str(len(body)))
+            self.send_header("cache-control", "private, max-age=3600")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # 학생이 손으로 치기 쉽게 /lt/<코드>로 받는다 — 화면은 lt.html 하나(코드는 주소에서 읽는다)
+        if path == "/lt" or path.startswith("/lt/"):
+            path = "/lt.html"
+        if path == "/test":   # 레벨테스트 사이트 — 학생에게 알려 주기 쉽게 짧은 주소도 받는다
+            path = "/test.html"
+
         if path == "/":
             path = "/index.html"
         target = (PUBLIC_DIR / path.lstrip("/")).resolve()
@@ -15647,7 +16682,12 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/vocab-tests", "/api/vocab-tests/delete",
                         "/api/vocab-tests/update", "/api/vocab-tests/retake",
                         "/api/quiz-tests", "/api/quiz-tests/grade",
-                        "/api/student/login", "/api/student/logout", "/api/student/tests/submit"):
+                        "/api/student/login", "/api/student/logout", "/api/student/tests/submit",
+                        "/api/admin/approve-leveltest",
+                        "/api/leveltest/links", "/api/leveltest/links/update", "/api/leveltest/links/delete",
+                        "/api/leveltest/grade", "/api/leveltest/results/delete",
+                        "/api/lt/begin", "/api/lt/resume", "/api/lt/submit", "/api/lt/login", "/api/lt/logout",
+                        "/api/leveltest/students", "/api/leveltest/students/update", "/api/leveltest/students/delete"):
             self.send_error(404, "Not found")
             return
         try:
@@ -16165,6 +17205,102 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 404)
                 return
             self._send_json({"ok": True})
+            return
+
+        if path == "/api/admin/approve-leveltest":
+            if not _admin_session_valid(self):
+                self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
+                return
+            user_id = (req.get("userId") or "").strip()
+            if not user_id:
+                self._send_json({"error": "회원을 지정하세요."}, 400)
+                return
+            try:
+                set_leveltest_approved(user_id, bool(req.get("approved")))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+                return
+            self._send_json({"ok": True})
+            return
+
+        # --- 레벨테스트 (선생님 쪽 POST) ---
+        if path in ("/api/leveltest/links", "/api/leveltest/links/update", "/api/leveltest/links/delete",
+                    "/api/leveltest/grade", "/api/leveltest/results/delete", "/api/leveltest/students",
+                    "/api/leveltest/students/update", "/api/leveltest/students/delete"):
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _leveltest_approved(user_id):
+                self._send_json({"error": "레벨테스트는 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                if path == "/api/leveltest/links":
+                    result = lt_assign(user_id, req.get("setId"), req.get("studentIds") or [])
+                elif path == "/api/leveltest/links/update":
+                    lt_update_link(user_id, req.get("code"), req.get("active"))
+                    result = {"ok": True}
+                elif path == "/api/leveltest/links/delete":
+                    result = {"ok": True, "studentDeleted": lt_delete_link(user_id, req.get("code"))}
+                elif path == "/api/leveltest/students":
+                    result = lt_create_student(user_id, req.get("name"), req.get("loginId"), req.get("memo"))
+                elif path == "/api/leveltest/students/update":
+                    lt_update_student(user_id, req.get("id"), req.get("name"), req.get("loginId"),
+                                      bool(req.get("resetPassword")))
+                    result = {"ok": True}
+                elif path == "/api/leveltest/students/delete":
+                    lt_delete_student(user_id, req.get("id"))
+                    result = {"ok": True}
+                elif path == "/api/leveltest/grade":
+                    result = lt_grade(user_id, req.get("id"), req.get("i"), req.get("ok"))
+                else:
+                    lt_delete_result(user_id, req.get("id"))
+                    result = {"ok": True}
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json(result)
+            return
+
+        # --- 레벨테스트 (학생 쪽 POST — test.html 로그인. 시작은 로그인 + 출제 코드, 이어 보기·제출은 응시 번호와 그 열쇠) ---
+        if path == "/api/lt/login":
+            if DB is None:
+                self._send_json({"error": "지금은 쓸 수 없습니다."}, 503)
+                return
+            try:
+                token, name = lt_login(req.get("loginId"), _client_ip(self))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 401)
+                return
+            secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+            # Max-Age를 일부러 붙이지 않는다 — 브라우저 창을 닫으면 함께 사라지는 쿠키라, 학원 태블릿·공용 PC에서
+            # 창만 닫아도 로그아웃된다(2026-10-21 사용자). 서버 쪽 세션은 그대로 12시간 뒤 끝난다.
+            self._send_json({"loggedIn": True, "name": name}, cookies=[
+                f"lt_session={token}; Path=/; HttpOnly; SameSite=Lax{secure}"])
+            return
+
+        if path == "/api/lt/logout":
+            lt_logout(_parse_cookies(self.headers.get("Cookie", "")).get("lt_session"))
+            secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+            self._send_json({"ok": True}, cookies=[f"lt_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"])
+            return
+
+        if path in ("/api/lt/begin", "/api/lt/resume", "/api/lt/submit"):
+            if DB is None:
+                self._send_json({"error": "지금은 쓸 수 없습니다."}, 503)
+                return
+            try:
+                if path == "/api/lt/begin":
+                    result = lt_begin(req.get("k"), str(req.get("setId") or ""), _client_ip(self),
+                                      _lt_session_user(self))
+                elif path == "/api/lt/resume":
+                    result = lt_resume(req.get("attemptId"), req.get("token"))
+                else:
+                    result = lt_submit(req.get("attemptId"), req.get("token"), req.get("answers"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json(result)
             return
 
         if path == "/api/admin/approve-exam":

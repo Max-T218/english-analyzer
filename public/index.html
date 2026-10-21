@@ -1070,6 +1070,8 @@
     <button type="button" class="tab-btn" data-tab="trend" id="trendTabBtn" hidden>📊 시험지 분석 리포트</button>
     <!-- 관리자가 허가한 선생님에게만 보인다 — renderAccount가 hidden을 켜고 끈다 -->
     <button type="button" class="tab-btn" data-tab="students" id="studentsTabBtn" hidden>🏫 학생 관리</button>
+    <!-- 레벨테스트 — 특정 학원의 자료라 관리자가 켜 준 선생님에게만 보인다(public/leveltest.js) -->
+    <button type="button" class="tab-btn" data-tab="leveltest" id="leveltestTabBtn" hidden>🎯 레벨테스트</button>
     <!-- 지금 열려 있는 탭의 만드는 순서를 보여 준다. 사이드바가 sticky라 스크롤해도
          따라와서, 탭을 누른 자리에서 바로 눌러 볼 수 있다. -->
     <button type="button" class="howto-btn" id="howtoBtn"
@@ -2370,6 +2372,70 @@
     </section>
   </section>
 
+  <!-- 레벨테스트 — 상담 온 학생에게 응시 링크(/lt/<코드>)를 주고, 결과 리포트를 받아 본다.
+       시험지는 서버(Firestore)에만 있다. 동작은 public/leveltest.js, 학생 화면은 lt.html. -->
+  <section class="tab-page" id="tab-leveltest">
+    <div id="ltListView">
+      <section class="panel">
+        <div class="field-head"><label>📝 시험 출제</label></div>
+        <p class="hint">학생 이름을 적고 시험지를 고른 뒤 [시험 출제]를 누르면 학생 등록과 출제가 한 번에 됩니다. 아이디는 이름과 같게 채워지고(같은 이름의 학생이 있으면 '김민수2'처럼 바꿔 주세요), 학생은 아래 주소에서 <b>그 아이디만 넣고</b> 로그인해 봅니다(비밀번호 없음). 제출하면 그 시험은 닫힙니다.</p>
+        <div class="brand-panel" style="margin:8px 0 12px;">
+          <div class="brand-title">🔗 학생에게 알려 줄 주소</div>
+          <div class="brand-body" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <code id="ltStudentUrl" style="font-size:15px; font-weight:700; word-break:break-all;"></code>
+            <button type="button" class="btn ghost small" id="ltCopyUrlBtn">복사</button>
+          </div>
+        </div>
+        <label style="margin:6px 0 4px;">① 학생</label>
+        <div class="row" style="margin-top:0; align-items:flex-end;">
+          <div class="field" style="flex:1 1 140px;"><label for="ltNewName">이름</label>
+            <input type="text" id="ltNewName" maxlength="30" autocomplete="off"></div>
+          <div class="field" style="flex:1 1 140px;"><label for="ltNewId">아이디 (이름과 같게 저절로 채워집니다 · 한글 가능)</label>
+            <input type="text" id="ltNewId" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+        </div>
+        <details id="ltPickWrap" style="margin-top:10px;">
+          <summary class="hint" style="cursor:pointer; font-size:13px;">이미 등록한 학생에게 내기</summary>
+          <div id="ltStudentPicker" class="lt-sets" style="margin-top:6px;"></div>
+        </details>
+        <label style="margin:16px 0 4px;">② 시험지</label>
+        <div id="ltSetPicker" class="lt-sets"></div>
+        <div style="margin-top:12px;">
+          <button type="button" class="btn" id="ltMakeLinkBtn">시험 출제</button>
+        </div>
+        <div class="hint" id="ltNotice" style="color:var(--accent, #2f6fdb); font-weight:700;"></div>
+        <div class="error" id="ltError"></div>
+        <div class="field-head" style="margin-top:16px;"><label>출제한 시험</label></div>
+        <div id="ltLinkList"></div>
+      </section>
+
+      <!-- 레벨테스트 학생 — 학생 관리(student.html)의 학생과 따로다. 이 학생들은 test.html에서만 로그인한다 -->
+      <section class="panel">
+        <div class="field-head"><label>👤 등록한 학생</label></div>
+        <p class="hint">시험 출제 때 등록한 학생입니다. 학생은 아이디만으로 로그인합니다. 시험 삼아 넣을 때는 '테스트'처럼 적어 주세요.</p>
+        <div class="error" id="ltStudentError"></div>
+        <div id="ltStudentList" style="margin-top:10px;"></div>
+      </section>
+
+      <section class="panel">
+        <div class="field-head">
+          <label for="ltSearch">📋 응시 결과</label>
+          <button type="button" class="btn ghost small" id="ltRefreshBtn">새로고침</button>
+        </div>
+        <input type="text" id="ltSearch" placeholder="이름으로 찾기" autocomplete="off" style="max-width:260px;">
+        <p class="hint">우리말로 쓰는 문항은 모범답안과 글자가 다르면 '확인 대기'로 남습니다 — [리포트]에서 [맞음]/[틀림]을 눌러 주세요.</p>
+        <div id="ltResultList"></div>
+      </section>
+    </div>
+
+    <section class="panel" id="ltReportView" hidden>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+        <button type="button" class="btn ghost small" id="ltBackBtn">← 목록으로</button>
+        <button type="button" class="btn small" id="ltPrintBtn">🖨️ 리포트 인쇄</button>
+      </div>
+      <div id="ltReportBox"></div>
+    </section>
+  </section>
+
   </div><!-- /.main-content -->
 
   </div><!-- /#workspace -->
@@ -2766,5 +2832,7 @@
 <script src="/app.js?v=%%ASSET_V%%"></script>
 <script src="/trend.js?v=%%ASSET_V%%"></script>
 <script src="/grammar.js?v=%%ASSET_V%%"></script>
+<script src="/ltreport.js?v=%%ASSET_V%%"></script>
+<script src="/leveltest.js?v=%%ASSET_V%%"></script>
 </body>
 </html>

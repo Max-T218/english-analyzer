@@ -80,7 +80,7 @@
         <!-- 칸을 늘리면 아래 col도 반드시 함께 늘리고 합이 100%가 되게 할 것 —
              빠뜨리면 마지막 칸(관리)이 폭을 못 받아 세로로 찌그러진다. -->
         <colgroup>
-          <col style="width:17%">   <!-- 이메일 -->
+          <col style="width:15%">   <!-- 이메일 -->
           <col style="width:7%">    <!-- 이름 -->
           <col style="width:5%">    <!-- 가입 -->
           <col style="width:9%">    <!-- 가입일 -->
@@ -88,7 +88,8 @@
           <col style="width:7%">    <!-- 잔액 -->
           <col style="width:7%">    <!-- 학생기능 -->
           <col style="width:7%">    <!-- 모의고사 -->
-          <col style="width:32%">   <!-- 관리 — 칸·고르개·단추 셋이 한 줄에 들어갈 폭 -->
+          <col style="width:7%">    <!-- 레벨테스트 -->
+          <col style="width:27%">   <!-- 관리 — 칸·고르개·단추 셋이 한 줄에 들어갈 폭 -->
         </colgroup>
         <thead>
           <tr style="text-align:left; border-bottom:1px solid var(--line);">
@@ -100,6 +101,7 @@
             <th style="padding:8px 6px; text-align:right;">잔액(원)</th>
             <th style="padding:8px 6px;" title="반/학생 등록 기능 사용 허가 — 미성년자 데이터가 걸려 있어 기본은 꺼짐">학생기능</th>
             <th style="padding:8px 6px;" title="동형 모의고사 제작 사용 허가 — 남의 학교 기출 시험지를 올려 읽는 기능이라 기본은 꺼짐">모의고사</th>
+            <th style="padding:8px 6px;" title="레벨테스트 탭 사용 허가 — 특정 학원의 시험지라 기본은 꺼짐">레벨테스트</th>
             <th style="padding:8px 6px;">관리</th>
           </tr>
         </thead>
@@ -340,6 +342,13 @@ function renderUsers() {
         </button>`}
       </td>
       <td style="padding:8px 6px;">
+        <button type="button" class="btn ${u.leveltestApproved ? "" : "ghost"} small leveltest-btn"
+                style="padding:4px 7px; font-size:11.5px;"
+                title="레벨테스트 탭을 이 선생님에게 허용할지">
+          ${u.leveltestApproved ? "허용됨" : "미허용"}
+        </button>
+      </td>
+      <td style="padding:8px 6px;">
         <!-- flex-wrap: 창이 좁아지면 넘치는 대신 아래로 접히게 한다. 넘치면 오른쪽 끝의
              '탈퇴'가 화면 밖으로 밀려 아예 보이지 않는다. -->
         <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
@@ -363,7 +372,7 @@ function renderUsers() {
         </div>
       </td>
     </tr>
-  `).join("") || `<tr><td colspan="9" style="padding:16px 6px; color:var(--ink-soft);">회원이 없습니다.</td></tr>`;
+  `).join("") || `<tr><td colspan="10" style="padding:16px 6px; color:var(--ink-soft);">회원이 없습니다.</td></tr>`;
 }
 
 /* 회원 강제 탈퇴 — 되돌릴 수 없다. 계정·저장 자료·이용 내역·잔액이 함께 사라지고,
@@ -423,7 +432,7 @@ async function toggleUsage(row, uid) {
   }
   const tr = document.createElement("tr");
   tr.className = "usage-row";
-  tr.innerHTML = `<td colspan="9" style="padding:8px 12px; background:var(--bg-soft, #fafafa); font-size:12.5px;">불러오는 중…</td>`;
+  tr.innerHTML = `<td colspan="10" style="padding:8px 12px; background:var(--bg-soft, #fafafa); font-size:12.5px;">불러오는 중…</td>`;
   row.after(tr);
   try {
     const data = await getJson("/api/admin/usage?userId=" + encodeURIComponent(uid));
@@ -471,6 +480,34 @@ $("userTableBody").addEventListener("click", async (e) => {
       alert(err.message || "처리에 실패했습니다.");
     } finally {
       classroomBtn.disabled = false;
+    }
+    return;
+  }
+  const leveltestBtn = e.target.closest(".leveltest-btn");
+  if (leveltestBtn) {
+    const uid = leveltestBtn.closest("tr").dataset.uid;
+    const u = currentUsers.find((x) => x.id === uid);
+    if (!u) return;
+    const next = !u.leveltestApproved;
+    if (next && !confirm(
+        `${u.email} 선생님에게 레벨테스트 탭을 허용합니다.
+
+` +
+        `학원이 쓰는 레벨테스트 시험지(문항·정답·음성)를 이 선생님이 학생에게 내보낼 수 있게 됩니다. ` +
+        `그 학원 선생님이 맞는지 확인한 뒤에 켜세요.
+
+계속할까요?`)) {
+      return;
+    }
+    leveltestBtn.disabled = true;
+    try {
+      await postJson("/api/admin/approve-leveltest", { userId: uid, approved: next });
+      u.leveltestApproved = next;
+      renderUsers();
+    } catch (err) {
+      alert(err.message || "처리에 실패했습니다.");
+    } finally {
+      leveltestBtn.disabled = false;
     }
     return;
   }

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>레벨테스트 · English Lab</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="/mark.png">
+<link rel="stylesheet" href="/style.css">
+<!-- 레벨테스트 사이트 — 선생님이 레벨테스트 탭에서 등록한 학생이 아이디·비밀번호로 로그인해 자기에게 낸
+     레벨테스트를 본다(2026-10-21 사용자: 학생 관리처럼 한 사이트에서 로그인하되 student.html과 따로).
+     목록의 [응시하기]는 응시 화면 lt.html(/lt/<출제 코드>)로 간다. 로그인 쿠키는 lt_session(server.py lt_login).
+     모양은 학생 사이트(student.html)와 같은 틀 — style.css의 .app-head·.panel·.st-card를 그대로 쓴다. -->
+</head>
+<body class="st-page">
+<div class="wrap" style="max-width:640px;">
+
+  <header class="app-head">
+    <h1 class="eyebrow" id="headTitle">레벨테스트</h1>
+    <p id="headSub">선생님이 정해 준 아이디로 로그인합니다.</p>
+  </header>
+
+  <!-- 로그인 -->
+  <section class="panel" id="loginCard" hidden>
+    <form class="auth-panel" id="loginForm" style="max-width:320px;">
+      <label for="loginId">아이디</label>
+      <input type="text" id="loginId" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="본인 이름을 작성해 주세요">
+      <div class="gate-actions">
+        <button type="submit" class="btn" id="loginBtn">로그인</button>
+        <span class="gate-status" id="loginStatus"></span>
+      </div>
+      <div class="error" id="loginErr"></div>
+    </form>
+  </section>
+
+  <!-- 내 레벨테스트 목록 -->
+  <section id="listCard" hidden>
+    <div class="panel" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+      <span class="hint" id="hello"></span>
+      <button type="button" class="btn ghost small" id="logoutBtn">로그아웃</button>
+    </div>
+    <div class="error" id="listErr"></div>
+    <div id="tests"></div>
+  </section>
+</div>
+<script src="/test.js"></script>
+</body>
+</html>

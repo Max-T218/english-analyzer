@@ -2668,3 +2668,19 @@ input.st-in{width:100%; box-sizing:border-box;}
 .prob-tag{font-size:11.5px; padding:1px 7px; border-radius:10px; background:#eef3ff; color:#2f5fd0;}
 .prob-tag.warn{background:#fff1e6; color:#c0392b; font-weight:700;}
 .prob-msg{font-size:13px;}
+
+/* ── 레벨테스트 탭(public/leveltest.js) ── */
+.lt-sets{display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:6px 14px; margin-top:8px;}
+.lt-set{display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer; margin:0;}
+.lt-set input{width:auto; margin:0;}
+.lt-table{width:100%; border-collapse:collapse; font-size:13px;}
+.lt-table th{text-align:left; padding:7px 8px; border-bottom:2px solid var(--line, #e3e6ea); white-space:nowrap;}
+.lt-table td{padding:7px 8px; border-bottom:1px solid var(--line, #e3e6ea); vertical-align:top;}
+.lt-table code{font-size:12.5px; word-break:break-all;}
+.lt-table .btn.small{padding:4px 9px; font-size:12px; margin:3px 2px 0 0;}
+.lt-table tr.lt-off td{opacity:.55;}
+.lt-pill{display:inline-block; padding:2px 9px; border-radius:20px; color:#fff; font-weight:700; font-size:11.5px; white-space:nowrap;}
+.lt-wait{color:#b7791f; font-weight:700;}
+#ltListView .panel{overflow-x:auto;}
+.lt-table td:nth-child(2) b, .lt-wait{white-space:nowrap;}
+.lt-done{color:#2f855a; font-weight:700;}

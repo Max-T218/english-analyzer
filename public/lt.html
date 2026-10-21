@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>레벨테스트 · English Lab</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="/mark.png">
+<link rel="stylesheet" href="/style.css">
+<!-- 레벨테스트 사이트(test.html)에 로그인한 학생이 목록의 [응시하기]로 들어오는 레벨테스트 화면(/lt/<출제 코드>).
+     동작은 lt.js, 결과 성적표는 선생님 탭과 같은 ltreport.js. 모양은 학생 사이트(student.html)와 같은 틀 —
+     style.css의 .app-head·.panel·.btn·.actions를 쓰고, 레벨테스트에만 있는 것(진행 막대·영역 단추·보기 칸·
+     단어 은행·낱말 배열)만 사이트 색(var(--accent) 등)으로 아래에 더했다(2026-10-21 사용자: 사이트와 통일). -->
+<style>
+  .hidden{display:none !important}
+  .lt-prog{position:sticky; top:0; z-index:20; background:var(--card); padding:12px 0 10px; margin:-6px 0 6px}
+  .lt-prog-bar{height:8px; border-radius:20px; background:var(--line-soft); overflow:hidden}
+  .lt-prog-fill{height:100%; background:var(--accent); transition:width .25s}
+  .lt-prog-meta{display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:13px; color:var(--ink-soft); margin-top:8px}
+  .lt-timer{font-weight:800; color:var(--accent); background:var(--accent-soft); padding:3px 11px; border-radius:20px; font-variant-numeric:tabular-nums}
+  .lt-timer.warn{color:#fff; background:#d97706}
+  .lt-timer.danger{color:#fff; background:var(--g)}
+  .lt-tabs{display:flex; gap:6px; margin-top:10px; flex-wrap:wrap}
+  .lt-tabs .tab{font:inherit; font-size:12.5px; font-weight:700; padding:4px 12px; border-radius:20px; cursor:pointer;
+    background:var(--paper); color:var(--ink-soft); border:1px solid var(--line)}
+  .lt-tabs .tab.on{background:var(--accent); border-color:var(--accent); color:#fff}
+  .lt-audio{margin-top:12px; padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:var(--paper)}
+  .lt-audio .lbl{font-size:12.5px; font-weight:700; color:var(--ink-soft); margin-bottom:8px}
+  .lt-audio audio{width:100%}
+  .lt-eyebrow{font-size:12px; font-weight:800; color:var(--accent); letter-spacing:.04em; text-transform:uppercase; margin:14px 0 6px}
+  .lt-note{font-size:14px; color:var(--ink); background:var(--paper); border-left:3px solid var(--accent); padding:8px 12px; border-radius:0 8px 8px 0; margin-bottom:12px; line-height:1.6}
+  .passage{background:var(--paper); border:1px dashed var(--line); border-radius:9px; padding:12px 14px; margin-bottom:12px; line-height:1.8; font-size:14.5px; white-space:pre-line}
+  .passage u{text-decoration-color:var(--accent); text-decoration-thickness:2px}
+  .wordbank{display:flex; flex-wrap:wrap; gap:7px; padding:10px 12px; margin-bottom:12px; border-radius:10px; background:var(--accent-soft)}
+  .wordbank span{background:var(--card); border:1px solid var(--line); border-radius:7px; padding:4px 10px; font-size:14px; font-weight:600}
+  .wordbank .wb-word{font:inherit; font-size:14.5px; font-weight:600; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:7px 13px; cursor:pointer; color:var(--ink)}
+  .wordbank .wb-word:hover{border-color:var(--accent)}
+  .wordbank .wb-word.sel{background:var(--accent); border-color:var(--accent); color:#fff}
+  .qimg{max-width:100%; border-radius:10px; border:1px solid var(--line); margin-bottom:12px}
+  .qt{font-weight:800; font-size:17px; line-height:1.5; margin-bottom:12px}
+  .choices{display:flex; flex-direction:column; gap:7px}
+  .choices.imgs{display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr))}
+  .choices.opts{flex-direction:row; flex-wrap:wrap}
+  .choices.opts .choice{width:auto; min-width:84px; justify-content:center; font-weight:600}
+  .qt u{text-decoration-color:var(--accent); text-decoration-thickness:2px; text-underline-offset:3px}
+  .choice{display:flex; gap:10px; align-items:center; text-align:left; width:100%; font:inherit; font-size:15px; line-height:1.5;
+    padding:10px 13px; cursor:pointer; background:var(--card); border:1px solid var(--line); border-radius:9px; color:var(--ink)}
+  .choice:hover{border-color:var(--accent)}
+  .choice .lt{font-weight:800; color:var(--accent); min-width:1.2em}
+  .choices.imgs .choice{flex-direction:column; text-align:center}
+  .choices.imgs .choice img{width:100%; border-radius:7px}
+  .choice.sel{border-color:var(--accent); background:color-mix(in srgb, var(--accent) 10%, var(--card)); font-weight:700}
+  .hint{font-size:13px}
+  .fill input{max-width:340px}
+  .oprompt{font-size:14px; color:var(--ink-soft); margin-bottom:10px}
+  .built{min-height:50px; border:1.5px dashed var(--line); border-radius:10px; padding:9px 11px; display:flex; flex-wrap:wrap; gap:7px; align-items:center; margin-bottom:12px; background:var(--paper)}
+  .chip{font:inherit; font-size:14.5px; font-weight:600; padding:7px 12px; border-radius:8px; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--ink)}
+  .built .chip{background:var(--accent); border-color:var(--accent); color:#fff}
+  .chip.used{visibility:hidden}
+  .pool{display:flex; flex-wrap:wrap; gap:7px}
+  .lt-name{font-size:17px; font-weight:800; padding:10px 12px; border-radius:9px; background:var(--accent-soft)}
+  .grade{font:inherit; text-align:left; padding:12px; border:1px solid var(--line); border-radius:10px; background:var(--card); cursor:pointer; color:var(--ink)}
+  .grade b{display:block; font-size:14.5px}
+  .grade span{display:block; font-size:12.5px; color:var(--ink-soft); margin-top:2px}
+  .grade.sel{border-color:var(--accent); background:var(--accent-soft)}
+  .lt-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:8px}
+  table.q-table{border-collapse:collapse; width:100%; max-width:520px; font-size:14px}
+  table.q-table th{background:var(--accent-soft); padding:7px 10px}
+  table.q-table td{padding:7px 10px; text-align:center; border:1px solid var(--line)}
+  .q-table-wrap{overflow-x:auto; margin-top:10px; font-weight:400}
+  .lt-done{background:#dcfce7; color:#15803d; border-radius:10px; padding:11px 14px; font-weight:700; margin-bottom:14px}
+  #reportBox{background:var(--card); border-radius:14px; padding:20px; box-shadow:var(--shadow)}
+  @media (max-width:640px){ .choice{font-size:16px; padding:12px 14px} .fill input{font-size:16px} #reportBox{padding:14px} }
+  @media print{ #reportBox{box-shadow:none; padding:0} body{background:#fff} }
+</style>
+</head>
+<body class="st-page">
+<div class="wrap" style="max-width:760px;">
+
+  <header class="app-head">
+    <h1 class="eyebrow" id="brand">레벨테스트</h1>
+    <p id="crumbs">선생님이 낸 레벨테스트입니다.</p>
+  </header>
+
+  <!-- 불러오는 중 · 오류 -->
+  <section class="panel" id="scrLoading">
+    <p class="hint" id="loadingMsg" style="margin:0 0 12px; font-size:14px;">불러오는 중…</p>
+    <a class="btn ghost small" href="/test.html">← 시험 목록으로</a>
+  </section>
+
+  <!-- 시작 -->
+  <section class="panel hidden" id="scrStart">
+    <a class="btn ghost small" href="/test.html">← 시험 목록으로</a>
+    <h3 style="margin:14px 0 4px;">시험 시작</h3>
+    <p class="hint" id="startSub" style="font-size:14px; margin:0 0 14px;"></p>
+    <label for="nameInput" style="margin-top:4px;">응시하는 학생</label>
+    <input type="text" id="nameInput" maxlength="30" autocomplete="off">
+    <div class="lt-name hidden" id="nameFixed"></div>
+    <div id="setWrap" style="margin-top:14px;">
+      <label>시험지</label>
+      <div class="lt-grid" id="setGrid"></div>
+    </div>
+    <div class="actions"><button type="button" class="btn" id="startBtn" disabled>시험 시작하기</button></div>
+    <div class="error" id="startErr"></div>
+  </section>
+
+  <!-- 시험 -->
+  <section class="panel hidden" id="scrTest">
+    <div class="lt-prog">
+      <div class="lt-prog-bar"><div class="lt-prog-fill" id="progFill"></div></div>
+      <div class="lt-prog-meta">
+        <span id="progLabel"></span>
+        <span id="timer" class="lt-timer hidden">⏱ <span id="timerText"></span></span>
+        <span id="secLabel"></span>
+      </div>
+      <div class="lt-tabs" id="tabs"></div>
+    </div>
+    <div class="lt-audio hidden" id="audioDock">
+      <div class="lbl">🎧 듣기 음성 — 처음부터 끝까지 순서대로 들려줍니다</div>
+      <audio id="audio" controls preload="auto"></audio>
+      <div class="hint" id="audioMsg" style="margin-top:6px;"></div>
+    </div>
+    <div id="qbox"></div>
+    <div class="actions" style="justify-content:space-between;">
+      <button type="button" class="btn ghost" id="prevBtn">← 이전</button>
+      <button type="button" class="btn" id="nextBtn">다음</button>
+    </div>
+  </section>
+
+  <!-- 제출 확인 -->
+  <section class="panel hidden" id="scrConfirm">
+    <h3 style="margin:0 0 6px;">제출 전 확인</h3>
+    <p class="hint" id="confirmText" style="font-size:14px;"></p>
+    <div class="actions">
+      <button type="button" class="btn ghost" id="backBtn">다시 보기</button>
+      <button type="button" class="btn" id="submitBtn">제출하기</button>
+    </div>
+    <div class="error" id="submitErr"></div>
+  </section>
+
+  <!-- 결과 -->
+  <div class="hidden" id="scrReport">
+    <div class="lt-done no-print" id="doneMsg">제출했습니다. 결과는 선생님께도 전달되었어요.</div>
+    <div id="reportBox"></div>
+    <div class="actions no-print">
+      <button type="button" class="btn ghost" id="printBtn">🖨️ 인쇄 / PDF로 저장</button>
+      <button type="button" class="btn" id="againBtn">← 시험 목록으로</button>
+    </div>
+  </div>
+</div>
+<script src="/ltreport.js"></script>
+<script src="/lt.js"></script>
+</body>
+</html>

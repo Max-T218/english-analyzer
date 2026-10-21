@@ -905,6 +905,8 @@ function renderAccount(info) {
     currentKrwFree = currentKrwPaid = null;
     isClassroomApproved = false;
     studentsTabBtn.hidden = true;
+    hideLeveltestTab();
+    if (typeof window.ltReset === "function") window.ltReset();
     isExamApproved = false;
     hideExamTab();
     brandClearLocal();   // 공용 PC — 다음 사람 인쇄물에 이 계정의 학원 마크가 찍히지 않게
@@ -922,6 +924,8 @@ function renderAccount(info) {
   if (info.name) currentAccountName = info.name;
   isClassroomApproved = !!info.classroomApproved;
   studentsTabBtn.hidden = !isClassroomApproved;
+  if (info.leveltestApproved) $("leveltestTabBtn").hidden = false;
+  else hideLeveltestTab();
   isExamApproved = !!info.examApproved;
   if (isExamApproved) { examTabBtn.hidden = false; trendTabBtn.hidden = false; }
   else hideExamTab();
@@ -3450,7 +3454,7 @@ function syncTabChrome(tab) {
   const onTrend = tab === "trend";
   // 문법문제 마법사는 '넣은 지문으로'를 골랐을 때만 지문칸을 쓴다(grammar.js grammarWantsPassage)
   const grammarNoPassage = tab === "grammar" && !(typeof grammarWantsPassage === "function" && grammarWantsPassage());
-  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || grammarNoPassage || tab === "vocab" || tab === "students";
+  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || grammarNoPassage || tab === "vocab" || tab === "students" || tab === "leveltest";
   // 공용 지문칸 아래 단어장은 문제 탭에서만 쓰인다(분석·워크북은 단어장을 보지 않는다)
   const quizVocabWrap = $("quizVocabWrap");
   if (quizVocabWrap) quizVocabWrap.hidden = !["mcq", "saq", "mix"].includes(tab);
@@ -3471,6 +3475,14 @@ function syncTabChrome(tab) {
   if (brandPanelEl) brandPanelEl.hidden = !slot;
 }
 syncTabChrome(null);   // 탭을 고르기 전에는 마크 칸을 감춘다
+
+// 레벨테스트 탭 — 승인이 꺼졌는데 그 탭을 보고 있었다면 첫 탭으로 물러난다(hideExamTab과 같은 까닭)
+function hideLeveltestTab() {
+  const b = $("leveltestTabBtn");
+  if (!b) return;
+  b.hidden = true;
+  if (b.classList.contains("active")) document.querySelector('.tab-btn[data-tab="brief"]').click();
+}
 
 function hideExamTab() {
   examTabBtn.hidden = true;
@@ -11449,6 +11461,18 @@ const HOWTO = {
       "결과는 시험의 <b>[결과 보기]</b>, 학생 한 명은 <b>[성적표]</b>에서 봅니다.",
     ],
     tip: "합격 기준을 두면 못 미친 학생은 재시험을 봅니다. 비밀번호를 잊은 학생은 <b>[🔑 비번 초기화]</b>. 시험 삼아 넣을 때는 실제 학생 이름을 쓰지 마세요.",
+  },
+
+  leveltest: {
+    title: "🎯 레벨테스트 쓰는 법",
+    lead: "레벨테스트 학생을 등록하고 시험을 내면, 학생이 레벨테스트 사이트에 로그인해 보고 결과 리포트가 이 탭에 모입니다. 요금이 없습니다.",
+    steps: [
+      "<b>📝 시험 출제</b>의 <b>① 학생</b>에 이름·아이디를 적고, <b>② 시험지</b>를 고른 뒤 <b>[시험 출제]</b>를 누릅니다. 학생 등록과 출제가 한 번에 됩니다. 아이디는 이름과 같게 채워집니다.",
+      "<b>🔗 학생에게 알려 줄 주소</b>를 <b>[복사]</b>해 아이디와 함께 알려 줍니다. 학생은 <b>아이디만</b> 넣고 로그인해 목록의 <b>[응시하기]</b>를 누릅니다. 제출하면 그 시험은 닫힙니다.",
+      "<b>📋 응시 결과</b>에서 학생 줄의 <b>[리포트]</b>를 누르면 점수·레벨·영역별 성취도·정오답표가 나옵니다.",
+      "'확인 대기' 칸(우리말로 쓰는 문항)은 <b>[맞음]</b>/<b>[틀림]</b>을 누르면 점수가 다시 계산됩니다. <b>[🖨️ 리포트 인쇄]</b>로 상담 자료를 뽑습니다.",
+    ],
+    tip: "학생 화면에는 정답이 나오지 않습니다. 단어 은행이 있는 빈칸은 학생이 단어를 눌러 채웁니다. 한 번 더 보게 하려면 <b>[다시 보게 하기]</b>. 리포트 머리에는 학원 마크 칸에 저장한 학원 이름·로고가 들어갑니다.",
   },
 };
 // 공용 지문칸을 쓰는 탭마다 같은 안내 — 지문칸의 [🆕 새로 만들기](newWorkBtn)

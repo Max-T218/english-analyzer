@@ -62,7 +62,7 @@ foreach ($n in 'GEMINI_API_KEY','GOOGLE_APPLICATION_CREDENTIALS_JSON','GOOGLE_CL
 
 dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를 로컬 서버와 배포 서버가
 똑같이 바라봅니다 — 컬렉션은 `users`, `sessions`, `saved_items`, `pending_signups`,
-`deleted_accounts`, `admin_sessions`, `payment_intents`, `saved_images`(요약 이미지 — 저장본에 딸린 그림), `brand_marks`(학원 마크 — 문서 `{uid}`=학원명, `{uid}__logo`·`{uid}__wm`=그림. `/api/brand` GET/POST, 화면 `brandPull`(로그인 때 받기)·`brandPush`(**[💾 계정에 저장] 단추를 눌렀을 때만** 바꾼 칸을 올린다 — 2026-10-19 사용자 결정, 처음엔 바꿀 때마다 저절로 올렸다)·`brandClearLocal`(로그아웃 때 화면에서 지우기), 그림은 `shrinkBrandImage`로 줄여 보낸다. 탈퇴 때 함께 지운다).
+`deleted_accounts`, `admin_sessions`, `payment_intents`, `saved_images`(요약 이미지 — 저장본에 딸린 그림), `brand_marks`(학원 마크 — 문서 `{uid}`=학원명, `{uid}__logo`·`{uid}__wm`=그림. `/api/brand` GET/POST, 화면 `brandPull`(로그인 때 받기)·`brandPush`(**[💾 계정에 저장] 단추를 눌렀을 때만** 바꾼 칸을 올린다 — 2026-10-19 사용자 결정, 처음엔 바꿀 때마다 저절로 올렸다)·`brandClearLocal`(로그아웃 때 화면에서 지우기), 그림은 `shrinkBrandImage`로 줄여 보낸다. 탈퇴 때 함께 지운다), `leveltest_sets`·`leveltest_media`(레벨테스트 시험지·음성·그림 — `tools/leveltest_import.py`로만 올린다), `leveltest_links`(레벨테스트 출제 — 학생 한 명 × 시험지 하나)·`leveltest_results`(응시 결과)·`leveltest_students`·`leveltest_login_ids`·`leveltest_sessions`(레벨테스트 학생 계정·아이디·로그인 — 학생 관리의 `students`와 따로다. 모두 탈퇴 때 함께 지운다).
 
 따라서 로컬 테스트가 곧 실데이터 조작입니다.
 
@@ -253,7 +253,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 
 ### `public/index.html`
 
-탭 — `analyze`, `brief`, `mcq`, `saq`, `mix`, `grammar`(문법문제 마법사, `public/grammar.js`), `workbook`, `vocab`, `exam`, `trend`, `students`.
+탭 — `analyze`, `brief`, `mcq`, `saq`, `mix`, `grammar`(문법문제 마법사, `public/grammar.js`), `workbook`, `vocab`, `exam`, `trend`, `students`, `leveltest`(레벨테스트 — 승인된 선생님만, 아래 '레벨테스트' 참고).
 사이드바에서는 `analyze`·`brief`가 상위 단추 **'📖 지문 분석'**(상세분석 / 요약분석) 아래로, `mcq`·`saq`·`mix` 셋이 **'📝 문제 제작'**(객관식 / 주관식 / 객관식+주관식) 아래로 묶여 있다(`TAB_GROUPS`) — 하위 버튼은 그대로 `.tab-btn`+`data-tab`이라 저장함 불러오기 등이 누르는 길은 안 바뀌고, 상위 단추의 켜짐·하위 줄의 보임은 `syncTabGroups`가 맞춘다. `mix`(객관식+주관식, 2026-10-06)는 두 유형을 한 시험지에 섞는 탭이다 —
 `setupQuizTab`을 `prefix:"mix"`로 한 번 더 부르는 것뿐이고(`MIX_TYPES` = `MCQ_TYPES` + `SAQ_TYPES`,
 고난도 가능 유형 `MIX_HARD_TYPES`), 서버는 유형 이름만 보고 요금·모델을 정하므로
@@ -292,6 +292,61 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 - `%%ASSET_V%%` 같은 치환 표시를 쓰면 안 됩니다 — `server.py`는 그 치환을
   `index.html`에만 해 주므로 다른 쪽에서는 글자 그대로 남아 깨진 주소가 됩니다.
 - **요금 숫자를 적지 마세요.** 아래 '가격은 예외입니다' 항목과 같은 이유입니다.
+
+### 레벨테스트 — `public/leveltest.js`(탭) · `public/test.html`+`test.js`(학생 로그인·목록) · `public/lt.html`+`lt.js`(응시) · `public/ltreport.js`(리포트, 탭과 응시 화면이 같이 씀)
+
+2026-10-21. 학원이 따로 쓰던 레벨테스트 사이트(leveltestara, Node+Postgres)를 옮겨 왔다.
+**그 학원만 쓰는 자료라 관리자가 켜 준 선생님에게만 보인다** — `users.leveltest_approved`
+(`_leveltest_approved`/`set_leveltest_approved`, `admin.html`의 '레벨테스트' 칸, `/api/me`의
+`leveltestApproved` → `renderAccount`가 `leveltestTabBtn`을 켜고 끈다). 반/학생 승인과 별개다.
+
+- **시험지는 공개 저장소에 없다.** 문항·정답은 `leveltest_sets/{id}`의 `data`(원본 모양 JSON 글자),
+  음성·그림은 `leveltest_media/{이름}__{n}` 조각(900KB씩). 원본 index.html(또는 zip)에서
+  `tools/leveltest_import.py`(`--dry-run`이면 읽기만)로 올린다 — 다시 돌리면 덮어쓴다. 서버는 5분 캐시(`_lt_sets`).
+  시험지 8종(Phonics·Starters·Movers·Flyers·중고등 Type A~D, 424문항), 문제 모양은 mc·mc_multi·fill·order.
+- **학생은 레벨테스트 사이트 `test.html`(짧은 주소 `/test`)에 아이디·비밀번호로 로그인한다**(2026-10-21 사용자 —
+  학생 관리처럼 한 사이트에서 로그인하되 student.html과 따로). 계정은 선생님이 탭의 '👤 레벨테스트 학생'에서
+  등록한다(`lt_create_student`/`lt_update_student`/`lt_delete_student` — 무차별 대입 제한은 학생 관리와 같은 함수를 쓰고,
+  아이디 이름표는 `leveltest_login_ids`로 따로 센다. **아이디는 한글도 된다**(`LT_LOGIN_ID_RE`, 2~20자, 띄어쓰기 빼고 NFC·소문자로
+  맞춘다 — `_lt_norm_login_id`) — 화면이 이름을 따라 아이디 칸을 채우고, 비우면 서버도 이름을 아이디로 쓴다(2026-10-21 사용자).
+  같은 이름이 있으면 '이미 사용 중인 아이디' — 선생님이 아이디만 바꾼다. 쿠키는 `lt_session`, `_lt_session_user` — **Max-Age 없는 쿠키라 브라우저 창을 닫으면 로그아웃된다**(2026-10-21 사용자, 공용 태블릿)).
+  상담 온 학생처럼 아직 반에 없는 학생을 위해 학생 관리와 따로 뒀다. **등록은 시험 출제 칸 맨 위(① 학생)에서 한다** —
+  이름·아이디를 적고 시험지를 고른 뒤 [시험 출제] 한 번이면 화면이 등록(`/api/leveltest/students`) → 출제를
+  잇따라 부른다(2026-10-21 사용자: 한 단계로). 이미 등록한 학생은 '이미 등록한 학생에게 내기'에서 체크한다.
+  아래 '👤 등록한 학생' 표는 고치기·삭제만 한다. **출제를 지우면 그 시험의 응시 결과도 지우고, 그 학생에게 남은 출제가
+  없으면 아이디(계정)도 지운다**(`lt_delete_link`). **학생을 지우면 그 학생의 출제·응시 결과도 모두 지운다**
+  (`lt_delete_student`, 2026-10-21 사용자: 남겨 둘 필요 없다). **학생은 아이디만으로 로그인한다**(`lt_login`, 2026-10-21 사용자 —
+  레벨테스트 학생에게 비밀번호까지 정해 줄 필요가 없다. 아이디가 이름이라 이름을 아는 사람이면 들어올 수 있다는 것은
+  알고 고른 것이다. 결과 화면에 정답은 없고, 낸 시험은 제출하면 닫힌다). 없는 아이디 반복 입력은 학생 관리와 같은
+  제한(`_student_login_blocked`, 열쇠 'lt:')으로 막는다. 회원 문서의 1234 해시(`pw_hash`)는 예전 판의 흔적이라 더는 보지 않는다.
+- **화면 모양은 사이트와 같다**(2026-10-21 사용자): `test.html`·`lt.html`은 `style.css`를 불러 학생 사이트(student.html)와
+  같은 `.app-head`·`.panel`·`.st-card`·`.btn`을 쓰고, 레벨테스트에만 있는 칸(진행 막대·보기·단어 은행·낱말 배열)만
+  `lt.html` 안에서 사이트 색 변수로 그린다(처음엔 원래 학원 사이트의 보라색이었다).
+- **성적표는 학생 관리의 월간 성적표와 같은 틀**이다(`ltreport.js` — 표지 머리 `.rp-head` → 숫자 카드 4칸 → 번호 소제목 →
+  게이지·방사형 그래프·영역별 표 → 영역별 코멘트 → 정오답표(선생님만)). 그 CSS는 trend.js `TREND_CSS`인데 학생 화면은
+  trend.js를 못 불러서 **쓰는 규칙만 `ltreport.js`의 `BASE_CSS`로 옮겨 왔다 — TREND_CSS의 표지·카드·표 모양을 고치면
+  `BASE_CSS`도 함께 고칠 것.** 선생님 탭·인쇄 창은 TREND_CSS가 있어 `EXTRA_CSS`만 더한다.
+- **시험 출제**(`lt_assign`) = 시험지 하나 × 체크한 학생마다 출제 한 건(`leveltest_links/{8자 코드}`). 학생은 test.html 목록
+  (`lt_student_list`)에서 [응시하기] → `lt.html`(`/lt/<코드>`, 출제받은 학생이 로그인해 있어야 열린다 — `_lt_link`).
+  이름은 서버가 학생 계정에서 쓴다. **제출하면 그 출제를 닫는다**(`lt_submit` → `done_at`), 다시 보게 하려면
+  선생님이 [다시 보게 하기]. 보던 중에 다른 기기로 열면 같은 응시를 이어 받는다(`lt_begin`의 `resumed`).
+  처음엔 로그인 없는 링크 주소로 보게 만들었다가 이 방식으로 바꿨다.
+- 단어 은행이 있는 빈칸(8종 13묶음 60문항 — 모두 fill)은 학생이 단어 단추를 눌러 답을 채운다(`lt.js`, 직접 쳐도 된다).
+  답이 정해진 몇 개 중 하나인 빈칸(안내문 'A/B/C/D 중에서' — 품사 쓰기, 발문에 '고르'가 있는 '(Don't / Doesn't)')도
+  단추로 고른다(`_lt_fill_options` → 학생 시험지의 `options`). 원본의 '(밑줄: Lisa)' 표시는 서버가 문장 속 그 낱말의
+  `<u>`로 바꾼다(`_lt_mark_underline`).
+- **원본에 밑줄이 빠진 문항은 올리는 도구가 고친다**(`tools/leveltest_import.py`의 `fix_underlines` — 발문의 '밑줄 친 <영어 구절>'을
+  지문에서 찾거나, ①~⑤ 번호 뒤의 말에 긋는다). 초등 고학년 문법 6·13번은 원본에 밑줄 위치 정보가 아예 없어
+  `UNDERLINE_CHOICES`에 동사 자리를 정해 넣었다(2026-10-21 — 원본 출제자 확인 전). 시험지를 다시 올리면 함께 적용된다.
+- **정답은 서버 밖으로 나가지 않는다** — 학생에게는 `_lt_student_test`(answer·skill을 뺀 것)만 내려가고
+  채점은 `lt_submit` → `_lt_grade`(대소문자·끝 마침표 무시). 원본은 정답을 화면에 싣고 점수도 브라우저가 매겼다.
+  정답에 한글이 든 빈칸은 글자가 다르면 `ok:None`(확인 대기) → 선생님이 리포트에서 [맞음]/[틀림](`lt_grade`).
+  점수·레벨·영역별은 `_lt_summarize`가 문항 줄로만 다시 세므로 시험지를 고쳐도 옛 결과는 그대로다.
+  학생 화면 리포트에는 정오답표를 싣지 않는다(`_lt_student_summary` — 다음 학생도 같은 시험지를 본다).
+- 응시 기록 `leveltest_results`는 시작할 때 `status:"taking"`으로 생기고(열쇠 `token_hash`), 학생 화면은
+  응시 번호·열쇠·답을 sessionStorage에 두어 새로고침해도 `/api/lt/resume`으로 이어 본다.
+- 레벨 구간 `LT_LEVEL_BANDS` ↔ `ltreport.js`의 `LT_BANDS`(게이지 색만) — 같은 값. 영역 코멘트는 원본 문구(`_LT_NARRATIVE`).
+- 리포트 머리의 학원 이름·로고는 학원 마크(`brand_marks`)를 쓴다. 인쇄는 `openPrintWindow`. AI를 안 불러 요금이 없다.
 
 ### `public/student.html` + `public/student.js`
 
@@ -382,6 +437,13 @@ GET=조회/POST=생성. `/api/vocab-tests`에 `studentId`를 실으면 그 학�
 `/api/student/login`(`loginId`+`password`) `/api/student/logout` `/api/student/password`(학생 본인 비밀번호 변경) `/api/students/update`(선생님이 이름·아이디·비밀번호 수정)
 `/api/student/tests/submit`
 `/api/quiz-tests`(문제 시험 내기) `/api/quiz-tests/grade`(확인 대기 칸 채점) — GET `/api/quiz-tests/attempt`(학생 한 명 답안)
+
+**레벨테스트** — 선생님(로그인 + `_leveltest_approved`): GET `/api/leveltest/sets` `/api/leveltest/links`
+`/api/leveltest/results` `/api/leveltest/result?id=` `/api/leveltest/students` · POST `/api/leveltest/links`(시험 출제)
+`/api/leveltest/links/update` `/api/leveltest/links/delete` `/api/leveltest/grade` `/api/leveltest/results/delete`
+`/api/leveltest/students`(등록) `/api/leveltest/students/update` `/api/leveltest/students/delete` · 관리자 POST `/api/admin/approve-leveltest`.
+학생(test.html 로그인 쿠키 `lt_session`): POST `/api/lt/login` `/api/lt/logout` · GET `/api/lt/me` `/api/lt/tests`
+`/api/lt/info?k=` `/api/lt/media?k=&name=`(음성·그림) · POST `/api/lt/begin` `/api/lt/resume` `/api/lt/submit`.
 
 ## 업데이트 소식(로그인 시 플로팅 창)
 
