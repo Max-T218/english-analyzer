@@ -6226,6 +6226,132 @@ function sheetPaletteSet(list, save) {
     if (isLoggedIn) brandPush({ palette: sheetPalette }).catch(() => {});
   }
 }
+/* 색 판 창 — 브라우저 기본 색 고르기(<input type=color>)와 같은 모양(색 판 · 무지개 띠 · 스포이트 · R/G/B)을
+   직접 그린다. 기본 창 안에는 단추를 넣을 수 없어서다(2026-10-22 사용자: 색 판 안에서 [＋ 색 추가]를 누르게).
+   창은 하나만 두고, 연 꾸미기 칸이 ctx({get, set, canAdd, add})로 값을 주고받는다.
+   h(0~360)·s·v(0~1)를 들고 있다가 바뀔 때마다 ctx.set(#rrggbb)으로 바로 반영한다. 바깥을 누르거나 Esc면 닫는다. */
+const sheetPicker = (() => {
+  let el = null, ctx = null, anchor = null, h = 0, s = 0, v = 0, lastHex = "";
+  const toHex = (rgb) => "#" + rgb.map((x) => Math.round(x).toString(16).padStart(2, "0")).join("");
+  const hsvToRgb = (H, S, V) => {
+    const f = (n) => { const k = (n + H / 60) % 6; return V - V * S * Math.max(0, Math.min(k, 4 - k, 1)); };
+    return [f(5) * 255, f(3) * 255, f(1) * 255];
+  };
+  const setFromHex = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const mx = Math.max(r, g, b), d = mx - Math.min(r, g, b);
+    v = mx;
+    s = mx ? d / mx : 0;
+    // 회색·검정이면 색상이 없다 — 지금 띠 위치를 그대로 둔다
+    if (d) h = 60 * (mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4);
+    lastHex = hex;
+  };
+  function build() {
+    el = document.createElement("div");
+    el.className = "sheet-picker";
+    el.hidden = true;
+    el.innerHTML = `
+      <div class="sp-sv"><div class="sp-knob"></div></div>
+      <div class="sp-mid">
+        <button type="button" class="sp-eye" title="화면에서 색을 찍어 옵니다" aria-label="스포이트">💧</button>
+        <span class="sp-cur"></span>
+        <input type="range" class="sp-hue" min="0" max="359" step="1" aria-label="색상">
+      </div>
+      <div class="sp-rgb">
+        ${["R", "G", "B"].map((c, i) => `<label>${c}<input type="number" min="0" max="255" step="1" data-i="${i}"></label>`).join("")}
+      </div>
+      <div class="sp-actions">
+        <button type="button" class="btn small sp-add">＋ 색 추가</button>
+        <button type="button" class="btn ghost small sp-close">닫기</button>
+      </div>
+      <div class="sp-note" role="status" aria-live="polite"></div>`;
+    document.body.appendChild(el);
+    const sv = el.querySelector(".sp-sv");
+    const fromPoint = (e) => {
+      const r = sv.getBoundingClientRect();
+      s = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+      v = 1 - Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+      emit();
+    };
+    sv.addEventListener("pointerdown", (e) => { sv.setPointerCapture(e.pointerId); fromPoint(e); });
+    sv.addEventListener("pointermove", (e) => { if (sv.hasPointerCapture(e.pointerId)) fromPoint(e); });
+    el.querySelector(".sp-hue").addEventListener("input", (e) => { h = Number(e.target.value); emit(); });
+    el.querySelectorAll(".sp-rgb input").forEach((inp) => inp.addEventListener("input", () => {
+      const rgb = [...el.querySelectorAll(".sp-rgb input")].map((x) => Math.min(255, Math.max(0, Math.round(Number(x.value) || 0))));
+      setFromHex(toHex(rgb));
+      emit(true);
+    }));
+    const eye = el.querySelector(".sp-eye");
+    if ("EyeDropper" in window) {
+      eye.addEventListener("click", async () => {
+        try {
+          const r = await new window.EyeDropper().open();
+          const hex = sheetToneOf(r.sRGBHex);
+          if (hex) { setFromHex(hex); emit(); }
+        } catch (_) { /* Esc로 그만둠 */ }
+      });
+    } else {
+      eye.hidden = true;   // 크롬·엣지 밖 브라우저에는 스포이트가 없다
+    }
+    el.querySelector(".sp-add").addEventListener("click", () => {
+      if (!ctx || !ctx.canAdd(lastHex)) return;
+      ctx.add(lastHex);
+      el.querySelector(".sp-note").textContent = "자주 쓰는 색에 더했습니다.";
+      render(true);
+    });
+    el.querySelector(".sp-close").addEventListener("click", close);
+    document.addEventListener("pointerdown", (e) => {
+      if (!el.hidden && !el.contains(e.target) && !(anchor && anchor.contains(e.target))) close();
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !el.hidden) close(); });
+  }
+  // keepRgb: R/G/B 칸을 치는 중이면 그 칸 글자를 되쓰지 않는다
+  function render(keepRgb) {
+    const rgb = hsvToRgb(h, s, v);
+    el.querySelector(".sp-sv").style.background =
+      `linear-gradient(to top,#000,transparent),linear-gradient(to right,#fff,transparent),hsl(${h},100%,50%)`;
+    const knob = el.querySelector(".sp-knob");
+    knob.style.left = s * 100 + "%";
+    knob.style.top = (1 - v) * 100 + "%";
+    el.querySelector(".sp-hue").value = String(Math.round(h));
+    el.querySelector(".sp-cur").style.background = lastHex;
+    if (!keepRgb) el.querySelectorAll(".sp-rgb input").forEach((x, i) => { x.value = Math.round(rgb[i]); });
+    const add = el.querySelector(".sp-add");
+    add.disabled = !ctx || !ctx.canAdd(lastHex);
+    add.title = add.disabled ? "이미 자주 쓰는 색에 있거나(기본 남색 포함) 24개가 다 찼습니다." : "이 색을 자주 쓰는 색 동그라미에 더합니다(계정에 저장).";
+  }
+  function emit(keepRgb) {
+    if (!keepRgb) lastHex = toHex(hsvToRgb(h, s, v));
+    el.querySelector(".sp-note").textContent = "";
+    render(keepRgb);
+    if (ctx) ctx.set(lastHex);
+  }
+  function open(btn, c) {
+    if (!el) build();
+    ctx = c;
+    anchor = btn;
+    setFromHex(c.get());
+    el.querySelector(".sp-note").textContent = "";
+    el.hidden = false;
+    const r = btn.getBoundingClientRect();
+    const w = el.offsetWidth;
+    el.style.left = Math.max(8, Math.min(r.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - w - 8)) + "px";
+    el.style.top = r.bottom + window.scrollY + 6 + "px";
+    render();
+  }
+  function close() {
+    if (el) el.hidden = true;
+    ctx = null;
+    anchor = null;
+  }
+  // 꾸미기 칸에서 코드·동그라미로 색이 바뀌면 열린 창도 따라간다(창이 낸 색이면 그대로 둔다 — 회색에서 띠가 튀지 않게)
+  function sync(c, hex) {
+    if (!el || el.hidden || ctx !== c || hex === lastHex) { if (el && !el.hidden && ctx === c) render(); return; }
+    setFromHex(hex);
+    render();
+  }
+  return { open, close, sync, isOpenFor: (c) => !!el && !el.hidden && ctx === c };
+})();
 /* 글자 크기 세 묶음. def = 지금 인쇄 크기(문제 탭은 2단 조판의 style.css 인쇄 값, 워크북은 화면=인쇄 값).
    워크북은 보기 대신 우리말 해석이라 이름이 다르다. */
 // 탭 종류마다 묶음이 다르다 — quiz: 문제 탭·문법문제·동형 모의고사 / wb: 워크북 / vocab: 단어장·단어 시험지.
@@ -6385,19 +6511,18 @@ function createSheetStyle(boxId, resultEl, kind) {
   function syncToneUi() {
     if (!box) return;
     const hex = cur.tone || SHEET_TONES[0].hex;
-    const picker = box.querySelector(".sheet-tone-picker");
+    const pickBtn = box.querySelector(".sheet-tone-pick");
     const code = box.querySelector(".sheet-tone-code");
-    if (picker) picker.value = hex;
+    if (pickBtn) pickBtn.style.background = hex;
     if (code && document.activeElement !== code) code.value = hex;
     box.querySelectorAll(".sheet-tone-sw").forEach((b) => {
       b.classList.toggle("on", b.dataset.tone === cur.tone);
     });
-    // ＋ = 지금 색이 팔레트에 없고 자리가 남을 때 / － = 고른 색이 팔레트에 있을 때(기본 남색은 못 뺀다)
+    sheetPicker.sync(pickerCtx, hex);
+    // － = 고른 색이 팔레트에 있을 때(기본 남색은 못 뺀다). ＋ 색 추가는 색 판 창 안에 있다(sheetPicker)
     const pal = sheetPaletteNow();
-    const add = box.querySelector(".sheet-pal-add");
     const del = box.querySelector(".sheet-pal-del");
     const reset = box.querySelector(".sheet-pal-reset");
-    if (add) add.disabled = !cur.tone || pal.includes(cur.tone) || pal.length >= SHEET_PALETTE_MAX;
     if (del) del.disabled = !cur.tone || !pal.includes(cur.tone);
     if (reset) reset.hidden = sheetPalette == null;
     box.querySelectorAll(".sheet-fs-in").forEach((inp) => {
@@ -6409,16 +6534,25 @@ function createSheetStyle(boxId, resultEl, kind) {
     cur = { ...cur, tone: t === SHEET_TONES[0].hex ? "" : t };
     apply();
   }
+  // 색 판 창(sheetPicker)과 주고받는 손잡이 — 기본 남색은 늘 맨 앞에 있어 더할 수 없다
+  const pickerCtx = {
+    get: () => cur.tone || SHEET_TONES[0].hex,
+    set: setTone,
+    canAdd: (hx) => {
+      const pal = sheetPaletteNow();
+      return !!hx && hx !== SHEET_TONES[0].hex && !pal.includes(hx) && pal.length < SHEET_PALETTE_MAX;
+    },
+    add: (hx) => sheetPaletteSet(sheetPaletteNow().concat(hx), true),
+  };
   if (box) {
     box.innerHTML = `
       <span class="sheet-style-title">🎨 시험지 꾸미기</span>
       <div class="sheet-tone">
         <span class="sheet-tone-label">테마 색상</span>
-        <label class="sheet-tone-pick" title="눌러서 색 판에서 고릅니다"><input type="color" class="sheet-tone-picker" value="${SHEET_TONES[0].hex}"></label>
+        <button type="button" class="sheet-tone-pick" title="눌러서 색 판을 엽니다 — 색 판 안의 [＋ 색 추가]로 자주 쓰는 색에 더할 수 있습니다" aria-label="색 판 열기" style="background:${SHEET_TONES[0].hex}"></button>
         <input type="text" class="sheet-tone-code" maxlength="7" spellcheck="false" value="${SHEET_TONES[0].hex}" aria-label="색 코드 (#으로 시작하는 6자리)">
         <span class="sheet-tone-sws"></span>
         <span class="sheet-pal-btns">
-          <button type="button" class="sheet-pal-btn sheet-pal-add" title="지금 고른 색을 자주 쓰는 색에 더합니다(계정에 저장되어 다음 로그인에도 남습니다)">＋ 색 추가</button>
           <button type="button" class="sheet-pal-btn sheet-pal-del" title="지금 고른 동그라미를 자주 쓰는 색에서 뺍니다">－ 빼기</button>
           <button type="button" class="sheet-pal-btn sheet-pal-reset" title="자주 쓰는 색을 처음 상태로 되돌립니다" hidden>↺ 처음 팔레트</button>
         </span>
@@ -6431,7 +6565,7 @@ function createSheetStyle(boxId, resultEl, kind) {
         <button type="button" class="btn ghost small sheet-fs-reset">처음 크기로</button>
       </div>
       <label>글꼴 <select data-k="font">${opts(SHEET_FONTS, "")}</select></label>
-      <div class="hint">색은 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다. 자주 쓰는 색은 <b>＋ 색 추가</b>로 동그라미에 더하고 <b>－ 빼기</b>로 뺍니다 — 계정에 저장되어 모든 탭과 다음 로그인에도 남습니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 글자 크기는 숫자를 적거나 칸의 ▲▼(또는 키보드 ↑↓)로 1px씩 바꿉니다 — 처음 숫자는 인쇄되는 크기이고, 바꾸면 화면도 그 크기로 보입니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글자를 키우면 쪽 수가 늘어납니다. 워드 다운로드에는 들어가지 않습니다.</div>`;
+      <div class="hint">색은 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다. 자주 쓰는 색은 네모를 눌러 연 색 판의 <b>＋ 색 추가</b>로 동그라미에 더하고 <b>－ 빼기</b>로 뺍니다 — 계정에 저장되어 모든 탭과 다음 로그인에도 남습니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 글자 크기는 숫자를 적거나 칸의 ▲▼(또는 키보드 ↑↓)로 1px씩 바꿉니다 — 처음 숫자는 인쇄되는 크기이고, 바꾸면 화면도 그 크기로 보입니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글자를 키우면 쪽 수가 늘어납니다. 워드 다운로드에는 들어가지 않습니다.</div>`;
     const changed = () => { if (box.onSheetStyle) box.onSheetStyle(); };
     box.addEventListener("change", (e) => {
       const k = e.target && e.target.dataset && e.target.dataset.k;
@@ -6440,8 +6574,12 @@ function createSheetStyle(boxId, resultEl, kind) {
       apply();
       changed();
     });
-    // 색 판은 끄는 동안에도 바로 바뀌어 보이게 input으로 받는다
-    box.querySelector(".sheet-tone-picker").addEventListener("input", (e) => setTone(e.target.value));
+    // 네모 = 색 판 창 열기(다시 누르면 닫는다)
+    const pickBtn = box.querySelector(".sheet-tone-pick");
+    pickBtn.addEventListener("click", () => {
+      if (sheetPicker.isOpenFor(pickerCtx)) sheetPicker.close();
+      else sheetPicker.open(pickBtn, pickerCtx);
+    });
     const code = box.querySelector(".sheet-tone-code");
     code.addEventListener("input", () => {
       let v = code.value.trim();
@@ -6466,9 +6604,6 @@ function createSheetStyle(boxId, resultEl, kind) {
       if (!b) return;
       cur = { ...cur, tone: b.dataset.tone };
       apply();
-    });
-    box.querySelector(".sheet-pal-add").addEventListener("click", () => {
-      if (cur.tone) sheetPaletteSet(sheetPaletteNow().concat(cur.tone), true);
     });
     box.querySelector(".sheet-pal-del").addEventListener("click", () => {
       if (cur.tone) sheetPaletteSet(sheetPaletteNow().filter((h) => h !== cur.tone), true);

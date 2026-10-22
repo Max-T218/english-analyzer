@@ -1560,11 +1560,40 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 .sheet-style select{width:auto; padding:5px 8px; font-size:13px;}
 .sheet-tone{display:flex; flex-wrap:wrap; align-items:center; gap:8px;}
 .sheet-tone-label{font-size:12.5px; font-weight:700; color:var(--ink-soft);}
-/* 네모 = 지금 색. 누르면 브라우저 색 판(색 판·색상 띠·코드)이 뜬다 */
-.panel .sheet-style .sheet-tone-pick{display:inline-flex; margin:0; cursor:pointer;}
-.sheet-tone-picker{width:34px; height:28px; padding:0; border:1px solid var(--line); border-radius:7px; background:none; cursor:pointer;}
-.sheet-tone-picker::-webkit-color-swatch-wrapper{padding:2px;}
-.sheet-tone-picker::-webkit-color-swatch{border:none; border-radius:5px;}
+/* 네모 = 지금 색. 누르면 색 판 창(app.js sheetPicker)이 뜬다 */
+.sheet-tone-pick{width:34px; height:28px; padding:0; border:3px solid var(--card); border-radius:8px;
+  box-shadow:0 0 0 1px var(--line); cursor:pointer; flex:0 0 auto;}
+.sheet-tone-pick:hover{box-shadow:0 0 0 2px var(--ink-soft);}
+
+/* 색 판 창 — 브라우저 기본 색 고르기와 같은 짜임(색 판 · 스포이트·지금 색·무지개 띠 · R/G/B)에 [＋ 색 추가]를 더했다 */
+.sheet-picker{
+  position:absolute; z-index:1000; width:236px; padding:12px;
+  background:var(--card); border:1px solid var(--line); border-radius:12px;
+  box-shadow:0 10px 30px rgba(15,27,45,.18);
+}
+.sheet-picker[hidden]{display:none;}
+.sp-sv{position:relative; height:140px; border-radius:6px; cursor:crosshair; touch-action:none;}
+.sp-knob{position:absolute; width:14px; height:14px; margin:-7px 0 0 -7px; border-radius:50%;
+  border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none;}
+.sp-mid{display:flex; align-items:center; gap:8px; margin:10px 0 8px;}
+.sp-eye{width:28px; height:28px; padding:0; border:none; background:none; font-size:16px; cursor:pointer; flex:0 0 auto;}
+.sp-eye[hidden]{display:none;}
+.sp-cur{width:28px; height:28px; border-radius:50%; flex:0 0 auto; box-shadow:inset 0 0 0 1px rgba(0,0,0,.12);}
+.sp-hue{flex:1; min-width:0; height:10px; margin:0; border-radius:999px; appearance:none; -webkit-appearance:none;
+  background:linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00); cursor:pointer;}
+.sp-hue::-webkit-slider-thumb{-webkit-appearance:none; width:14px; height:14px; border-radius:50%;
+  background:#fff; border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.45);}
+.sp-hue::-moz-range-thumb{width:12px; height:12px; border-radius:50%; background:#fff; border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.45);}
+.sp-rgb{display:flex; gap:6px;}
+.sp-rgb label{flex:1; display:flex; flex-direction:column-reverse; align-items:center; gap:3px;
+  margin:0; font-size:11.5px; font-weight:700; color:var(--ink-soft);}
+.sp-rgb input{width:100%; padding:5px 4px; font-size:13px; text-align:center;}
+.sp-actions{display:flex; gap:6px; margin-top:10px;}
+.sp-actions .sp-add{flex:1;}
+.sp-actions .sp-add:disabled{opacity:.5; cursor:default;}
+.sp-note{margin-top:6px; font-size:11.5px; color:var(--accent); min-height:0;}
+.sp-note:empty{display:none;}
+@media print{ .sheet-picker{display:none !important;} }
 .sheet-style input.sheet-tone-code{width:92px; padding:5px 8px; font-size:13px; font-family:Consolas,"SFMono-Regular",monospace;}
 .sheet-tone-sws{display:inline-flex; flex-wrap:wrap; gap:6px;}
 .sheet-tone-sw{width:22px; height:22px; padding:0; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 1px var(--line); cursor:pointer;}
