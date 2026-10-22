@@ -277,7 +277,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 
 ### 검색으로 들어오는 문 — `public/*.html` 소개 페이지
 
-`analyze` · `brief` · `quiz` · `workbook` · `vocab` · `exam` · `trend` · `textbook` · `faq` 아홉 쪽(`brief`·`trend`·`textbook`은 2026-10-14에 더했다 — `textbook`은 교재 이름으로 찾는 선생님용 — 처음엔 네이버 검색어 1위 "수능완성 영어 분석본"에 맞췄다가, 그 교재 내신은 1학기에 끝나 2026-10-15에 고1·2 기말 범위(교과서 공통영어·영어Ⅰ·Ⅱ + 학력평가 + 부교재) 중심으로 고쳐 쓰고 수능특강·수능완성은 한 칸으로 남겼다. 교재·교과서 지문 자체는 싣지 않는다). 앱이 아니라
+`analyze` · `brief` · `quiz` · `grammar`(2026-10-23) · `workbook` · `vocab` · `exam` · `trend` · `textbook` · `faq` 열 쪽(`brief`·`trend`·`textbook`은 2026-10-14에 더했다 — `textbook`은 교재 이름으로 찾는 선생님용 — 처음엔 네이버 검색어 1위 "수능완성 영어 분석본"에 맞췄다가, 그 교재 내신은 1학기에 끝나 2026-10-15에 고1·2 기말 범위(교과서 공통영어·영어Ⅰ·Ⅱ + 학력평가 + 부교재) 중심으로 고쳐 쓰고 수능특강·수능완성은 한 칸으로 남겼다. 교재·교과서 지문 자체는 싣지 않는다). 앱이 아니라
 **검색 결과에서 눌러 들어오는 자리**라 `app.js`를 부르지 않고 가벼운 `page.css`
 하나만 씁니다(까닭은 그 파일 맨 위 주석).
 
@@ -389,7 +389,8 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 | 출처 | 옮겨 적은 곳 |
 |---|---|
 | `QUIZ_TYPE_LABELS` / `MCQ_ONLY_TYPES` | `public/quiz.html`의 유형 목록(객관식 23 · 중학교 내신 13 · 주관식 18) |
-| `WORKBOOK_STAGE_IDS` / `WB_STAGES` | `public/workbook.html`의 11단계 |
+| `WORKBOOK_STAGE_IDS` / `WB_STAGES` | `public/workbook.html`의 14단계(O/X 포함) — 다른 소개 쪽·`index.html`의 "14단계" 문구도 같이 |
+| `GRAMMAR_GRADES` / `GRAMMAR_MC_SHAPES` / `GRAMMAR_SA_SHAPES` | `public/grammar.html`의 레벨·객관식 10·주관식 8 |
 
 **화면을 바꾸면 '만드는 법'도 같은 커밋에서 고치세요.** 탭마다 뜨는 [❓ 만드는 법] 창의
 글은 `public/app.js`의 `HOWTO`에 손으로 적혀 있어, 화면과 자동으로 맞춰지지 않습니다.

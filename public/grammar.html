@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- 앱의 '문법문제 마법사' 탭(grammar, public/grammar.js) 소개. 레벨·문제 모양은 grammar.js의
+     GRAMMAR_GRADES·GRAMMAR_MC_SHAPES·GRAMMAR_SA_SHAPES(= server.py의 같은 이름)를 옮긴 것이다 —
+     그쪽을 고치면 여기도 함께 고칠 것. 요금 숫자는 적지 않는다. -->
+
+<title>영어 문법 문제 만들기 — 레벨별 문법 시험지 자동 제작 — English Lab</title>
+<meta name="description" content="초등 고학년부터 수능까지 레벨을 고르고 문법 항목을 체크하면, 객관식·주관식 문법 문제와 정답·해설이 담긴 시험지를 자동으로 만듭니다. 지문 없이도, 가지고 있는 지문으로도 낼 수 있습니다.">
+<link rel="canonical" href="https://englishlab.ai.kr/grammar.html">
+<link rel="icon" href="/mark.png">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="English Lab">
+<meta property="og:locale" content="ko_KR">
+<meta property="og:url" content="https://englishlab.ai.kr/grammar.html">
+<meta property="og:title" content="영어 문법 문제 만들기 — English Lab">
+<meta property="og:description" content="레벨과 문법 항목만 고르면 객관식·주관식 문법 문제와 정답·해설이 나옵니다.">
+<meta property="og:image" content="https://englishlab.ai.kr/howto-mcq-1.jpg">
+
+<link rel="stylesheet" href="/page.css">
+</head>
+<body>
+
+<div class="topbar"><div class="wrap">
+  <a class="home" href="/">English Lab</a>
+  <nav>
+    <a href="/analyze.html">지문 분석</a>
+    <a href="/brief.html">요약분석</a>
+    <a href="/quiz.html">변형문제</a>
+    <a href="/grammar.html">문법문제</a>
+    <a href="/workbook.html">워크북</a>
+    <a href="/vocab.html">단어장</a>
+    <a href="/exam.html">모의고사</a>
+    <a href="/trend.html">기출 분석</a>
+    <a href="/faq.html">자주 묻는 질문</a>
+  </nav>
+</div></div>
+
+<header class="hero"><div class="wrap">
+  <span class="kicker">문법문제 마법사</span>
+  <h1>레벨과 문법 항목만 고르면 문법 시험지가 나옵니다</h1>
+  <p class="lead">
+    문법 문제를 교재에서 일일이 고르거나 손으로 만들 필요가 없습니다.
+    학생 레벨을 고르고 시험에 낼 문법 항목에 체크하면, 객관식과 주관식을 섞은
+    문법 시험지가 정답·해설과 함께 만들어집니다. 그대로 인쇄해 쓰시면 됩니다.
+  </p>
+  <a class="cta" href="/?signup=1">문법 문제 만들어 보기</a>
+  <p class="cta-note">쓰시려면 회원가입이 필요합니다. 가입만 하면 바로 써 보실 수 있는 포인트를 드립니다.</p>
+</div></header>
+
+<main class="wrap">
+
+<section>
+  <h2>이렇게 만듭니다</h2>
+  <ol class="steps">
+    <li><b>레벨을 고릅니다</b>초등 고학년 · 중등 Level 1~3 · 수능 Level 중에서 고르면, 그 레벨에서 배우는 문법 항목이 목록에 나옵니다.</li>
+    <li><b>문법 항목을 체크합니다</b>항목을 누르면 세부 분류가 펼쳐집니다. 시험 범위에 맞는 것만 체크하고, 목록에 없는 문법은 직접 적어 넣을 수 있습니다.</li>
+    <li><b>객관식·주관식 개수와 문제 모양을 정합니다</b>두 종류를 합쳐 한 시험지에 최대 50문제까지 낼 수 있습니다. 문제 모양은 체크해서 고르거나, AI가 그중에서 골라 섞게 맡길 수 있습니다. 1단 또는 2단 편집을 고릅니다.</li>
+    <li><b>[문제 만들기]를 누릅니다</b>문제가 만들어지면 화면에서 문항을 직접 고칠 수 있습니다.</li>
+    <li><b>인쇄하거나 저장합니다</b>문제지와 정답·해설을 나눠 인쇄할 수 있고, 저장함에 저장해 다음에 다시 불러올 수 있습니다.</li>
+  </ol>
+  <a class="cta" href="/?signup=1">지금 만들어 보기</a>
+</section>
+
+<section>
+  <h2>레벨별 문법 항목</h2>
+  <ul class="ticks">
+    <li><b>초등 고학년</b>be동사와 일반동사, 기초 시제, 의문문처럼 처음 배우는 문법.</li>
+    <li><b>중등 Level 1 · 2 · 3</b>to부정사와 동명사, 수동태, 관계대명사, 현재완료처럼 학년이 올라가며 깊어지는 문법.</li>
+    <li><b>수능 Level</b>동사 vs 준동사, 관계대명사 vs 관계부사, that vs what처럼 수능 어법에서 헷갈리게 나오는 판별 항목까지.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>객관식 10가지 · 주관식 8가지 모양</h2>
+  <h3>객관식</h3>
+  <ul class="ticks">
+    <li><b>옳은 문장 고르기 · 틀린 문장 고르기</b>다섯 문장 중 문법에 맞는 것, 어긋난 것을 찾습니다.</li>
+    <li><b>빈칸에 알맞은 말</b>문맥에 맞는 문법 형태를 고릅니다.</li>
+    <li><b>밑줄 ①~⑤ 틀린 것 · 네모 (A)(B)(C)</b>수능·내신 어법 문제와 같은 모양입니다.</li>
+    <li><b>옳은 문장 개수 · 옳은 것끼리 짝짓기</b>판단을 여러 번 해야 하는 응용 문제입니다.</li>
+    <li><b>쓰임이 다른 것 · 바르게 고친 것 · 우리말 맞는 영문</b>같은 문법이 다른 쓰임으로 나온 것을 가리거나, 우리말과 뜻이 같은 영문을 고릅니다.</li>
+  </ul>
+  <h3>주관식</h3>
+  <ul class="ticks">
+    <li><b>동사 형태 바꾸기 · 빈칸 쓰기</b>괄호 안 단어를 알맞게 바꿔 쓰거나 빈칸을 채웁니다. 낱말을 직접 쓰는 빈칸에는 정답의 첫 글자 힌트가 붙기도 합니다.</li>
+    <li><b>틀린 곳 고쳐 쓰기</b>문장에서 틀린 부분을 찾아 바르게 고칩니다.</li>
+    <li><b>문장 전환 · 두 문장 합치기 · 같은 뜻 빈칸</b>문장 구조를 바꾸는 서술형입니다.</li>
+    <li><b>배열 영작 · 조건 영작</b>단어를 배열하거나 조건에 맞춰 문장을 씁니다.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>정답과 해설이 함께 나옵니다</h2>
+  <p>
+    문항마다 정답이 붙고, 왜 그 답인지 해설이 적힙니다. 정답이 여러 가지로 가능한 주관식은
+    인정되는 답을 함께 보여 줍니다. 문제지와 답지를 나눠 인쇄할 수 있어, 학생에게는 문제지만 주면 됩니다.
+    객관식 정답 번호는 ①~⑤에 고르게 흩어져 한쪽으로 쏠리지 않습니다.
+  </p>
+</section>
+
+<section>
+  <h2>지문 없이도, 가지고 있는 지문으로도</h2>
+  <div class="card">
+    <h3>문법만 고를 때</h3>
+    <p class="muted small" style="margin:0">지문을 넣지 않아도 됩니다. 고른 문법 항목에 맞는 문장을 새로 지어 문제를 냅니다.</p>
+  </div>
+  <div class="card">
+    <h3>넣은 지문으로 낼 때</h3>
+    <p class="muted small" style="margin:0">시험 범위 지문을 넣으면 그 지문에 실제로 나오는 문법 항목에 표시가 붙어, 어느 항목을 낼지 고르기 쉽습니다.</p>
+  </div>
+</section>
+
+<section>
+  <h2>만든 뒤에</h2>
+  <ul class="ticks">
+    <li><b>문항 고치기</b>마음에 안 드는 문항은 화면에서 직접 고친 뒤 뽑습니다.</li>
+    <li><b>반에 시험 내기</b>반과 학생을 등록해 둔 선생님은 만든 문제를 학생이 사이트에서 직접 풀게 낼 수 있습니다. 객관식은 자동으로 채점되고, 주관식 중 어순만 다른 답처럼 정답이 갈릴 수 있는 것은 선생님이 확인합니다. (반/학생 기능은 관리자 승인 후 쓸 수 있습니다.)</li>
+    <li><b>학원 마크</b>학원명·로고·워터마크를 넣어 두면 인쇄물 쪽마다 함께 찍힙니다.</li>
+  </ul>
+</section>
+
+</main>
+
+<div class="more"><div class="wrap">
+  <h2>다른 기능도 보기</h2>
+  <ul>
+    <li><a href="/analyze.html"><b>지문 분석</b><span>끊어읽기·색 구분·문장별 해설과 출제 포인트</span></a></li>
+    <li><a href="/brief.html"><b>요약분석</b><span>얇게 들고 다니는 지문 요약 학습지</span></a></li>
+    <li><a href="/quiz.html"><b>변형문제</b><span>객관식 23 · 중학교 13 · 주관식 18유형</span></a></li>
+    <li><a href="/workbook.html"><b>워크북</b><span>빈칸·해석·영작까지 14단계 학습지</span></a></li>
+    <li><a href="/vocab.html"><b>단어장</b><span>지문에서 뽑은 어휘, 단어 시험지까지</span></a></li>
+    <li><a href="/exam.html"><b>동형 모의고사</b><span>기출 시험지 구성을 읽어 같은 모양으로</span></a></li>
+    <li><a href="/trend.html"><b>기출 분석 리포트</b><span>학교 기출의 출제경향 보고서</span></a></li>
+    <li><a href="/faq.html"><b>자주 묻는 질문</b><span>요금·저작권·인쇄에 대한 답</span></a></li>
+  </ul>
+</div></div>
+
+<footer><div class="wrap">
+  <nav>
+    <a href="/">홈</a>
+    <a href="/terms.html">이용약관</a>
+    <a href="/privacy.html">개인정보처리방침</a>
+    <a href="/refund.html">환불정책</a>
+  </nav>
+  <div>English Lab — 영어 지문 분석·내신 변형문제 자동 제작</div>
+</div></footer>
+
+</body>
+</html>
