@@ -6181,6 +6181,10 @@ GRAMMAR_MC_SHAPES = {
     "mc_underline": "밑줄 ①~⑤ 중 틀린 것 고르기",
     "mc_box": "네모 (A)(B)(C) 어법 고르기",
     "mc_count": "옳은 문장의 개수 고르기",
+    "mc_combo": "옳은 문장끼리 짝지은 것 고르기",
+    "mc_same": "밑줄 친 부분의 쓰임이 같은/다른 것 고르기",
+    "mc_fixed": "밑줄 친 부분을 바르게 고친 것 고르기",
+    "mc_korean": "우리말과 뜻이 같은 영어 문장 고르기",
 }
 GRAMMAR_SA_SHAPES = {
     "sa_verb": "괄호 안 동사 알맞은 형태로 쓰기",
@@ -6189,12 +6193,14 @@ GRAMMAR_SA_SHAPES = {
     "sa_convert": "문장 전환",
     "sa_order": "배열 영작",
     "sa_compose": "조건 영작",
+    "sa_combine": "두 문장을 한 문장으로 합치기",
+    "sa_same": "같은 뜻이 되도록 빈칸 완성",
 }
 _GRAMMAR_SHAPE_FORMAT = {
     "mc_right": "mc", "mc_wrong": "mc", "mc_blank": "mc", "mc_underline": "mc",
-    "mc_box": "mc", "mc_count": "mc",
+    "mc_box": "mc", "mc_count": "mc", "mc_combo": "mc", "mc_same": "mc", "mc_fixed": "mc", "mc_korean": "mc",
     "sa_verb": "verb", "sa_fill": "fill", "sa_fix": "fix", "sa_convert": "convert",
-    "sa_order": "write", "sa_compose": "compose",
+    "sa_order": "write", "sa_compose": "compose", "sa_combine": "convert", "sa_same": "fill",
 }
 # 모양마다 무엇을 어떤 칸에 담는지 — 프롬프트에 그대로 싣는다. 칸 이름은 문제 탭과 같다.
 _GRAMMAR_SHAPE_RULES = {
@@ -6202,10 +6208,16 @@ _GRAMMAR_SHAPE_RULES = {
     "mc_wrong": 'format "mc". instruction "다음 중 어법상 틀린 문장은?". passageHtml은 빈 글자. choices는 영어 문장 5개 — 정확히 하나만 그 문법 항목에서 틀리고 넷은 완벽히 옳다. answer는 틀린 문장의 번호.',
     "mc_blank": 'format "mc". instruction "다음 빈칸에 들어갈 말로 알맞은 것은?". passageHtml은 영어 문장 하나(대화 두 줄도 됨, 줄은 <br>)에 빈칸을 "_____"(밑줄 다섯 개)로 한 곳만. choices는 낱말·짧은 구 5개, 정답은 하나뿐. answer는 그 번호.',
     "mc_underline": 'format "mc". instruction "다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?". passageHtml은 영어 2~4문장짜리 짧은 글에 밑줄 다섯 곳을 "①<u>낱말</u>"처럼 원문자를 밑줄 바로 앞에 붙여 ①~⑤ 차례로 표시. 틀린 곳은 정확히 하나이고 그 문법 항목에서 나온다. choices는 ["①","②","③","④","⑤"] 그대로. answer는 틀린 곳의 번호.',
-    "mc_box": 'format "mc". instruction "(A), (B), (C)의 각 네모 안에서 어법에 맞는 표현으로 가장 적절한 것은?". passageHtml은 영어 1~3문장에 네모 세 곳을 "(A) <b>[was / were]</b>"처럼 적는다(둘 중 하나만 옳다). choices는 5개 조합을 "were – who – to go"처럼 (A)–(B)–(C) 차례로. 정답 조합은 하나. answer는 그 번호.',
+    "mc_box": 'format "mc". instruction "(A), (B), (C)의 각 네모 안에서 어법에 맞는 표현으로 가장 적절한 것은?". passageHtml은 영어 1~3문장에 네모 세 곳을 "(A) <b>[was / were]</b>"처럼 적는다(둘 중 하나만 옳다). choices는 5개 조합을 "were – who – to go"처럼 (A)–(B)–(C) 차례로. 정답 조합은 하나. answer는 그 번호. 세 네모는 난이도가 비슷해야 하고, 각 네모의 두 후보는 둘 다 그 자리에 문법적으로 성립할 수 있는 형태여야 한다 — 한 후보가 어떤 문법으로도 불가능하면(예: 조동사 cannot 뒤의 handled, 수식어 없이 명백히 안 맞는 시제) 그 네모는 공짜 점수가 되므로 쓰지 않는다. 시간 부사(last week 등)나 앞뒤 단어 하나만 보고 바로 풀리는 네모도 피하고, 문맥 전체를 따져야 갈리는 함정(주장·요구 동사 뒤 가정법 현재 vs 사실 전달, 시제 일치, 수일치 등)을 쓴다. 세 네모가 서로 다른 함정이어야 하고, 오답 조합 넷은 정답과 한두 네모만 달라 한 네모만 알아서는 못 고르게 한다.',
     "mc_count": 'format "mc". instruction "다음 중 어법상 옳은 문장의 개수는?". countItems에 영어 문장 정확히 5개를 {"text": 문장, "isTrue": 어법상 옳으면 true, "why": 그렇게 판정한 근거 한국어 한 문장}으로 적는다. 이 slot의 정답 번호 N은 옳은 문장(isTrue)이 N개라는 뜻이다. 문장마다 판정을 먼저 정하고 근거를 쓴 뒤, 다시 한번 판정이 맞는지 따진다(서버가 isTrue를 세어 정답을 정하고 why로 해설을 만든다). passageHtml·choices·answer는 빈 값으로 둔다.',
+    "mc_combo": 'format "mc". instruction "다음 (a)~(e) 중 어법상 옳은 것끼리 짝지어진 것은?". passageHtml은 "(a) 문장<br>(b) 문장<br>…(e) 문장" 영어 문장 정확히 5개 — 옳은 것은 정확히 2개(또는 3개)이고 나머지는 그 문법 항목에서 하나씩 틀린다. choices는 "(a), (c)"처럼 짝 5개로, 정답 짝은 하나뿐이고 오답 짝은 옳은 문장 하나만 맞게 섞는다. answer는 그 번호.',
+    "mc_same": 'format "mc". instruction "다음 중 밑줄 친 부분의 쓰임이 나머지와 <u>다른</u> 것은?". passageHtml은 빈 글자. choices는 영어 문장 5개로 같은 낱말·형태(예: to부정사, that, -ing, as)에 <u>밑줄</u>을 긋되 넷은 같은 쓰임, 하나만 다른 쓰임(예: 명사적 용법 vs 부사적 용법). answer는 다른 쓰임인 문장의 번호. 해설에 각 쓰임을 한 줄씩 밝힌다.',
+    "mc_fixed": 'format "mc". instruction "다음 문장의 밑줄 친 부분을 바르게 고친 것은?". passageHtml은 틀린 곳 하나에 <u>밑줄</u>을 그은 영어 문장 하나. choices는 밑줄 부분을 대신할 영어 표현 5개 — 정답 하나만 고치면 문장이 완벽해지고, 오답 넷은 서로 다른 그럴듯한 오류(시제·수일치·형태·품사)를 만든다. answer는 그 번호.',
+    "mc_korean": 'format "mc". instruction "다음 우리말과 뜻이 같은 영어 문장으로 알맞은 것은?". passageHtml은 우리말 문장 하나. choices는 영어 문장 5개 — 정답 하나만 그 문법 항목까지 옳고 넷은 어법이나 낱말 선택에서 하나씩 틀리거나 뜻이 달라진다. answer는 그 번호.',
+    "sa_combine": 'format "convert". instruction "다음 두 문장을 <조건>에 맞게 한 문장으로 합쳐 쓰시오.". passageHtml은 영어 문장 둘("문장1<br>문장2"). conditions는 쓸 문법 장치 한두 줄(예: "관계대명사를 사용할 것", "분사구문으로 쓸 것"). answerText는 합친 문장 하나(대표 답). 다른 정당한 답이 있으면 alts에 한 문장씩.',
+    "sa_same": 'format "fill". instruction "두 문장이 같은 뜻이 되도록 빈칸에 알맞은 말을 쓰시오.". passageHtml은 "영어 문장1<br>영어 문장2"로, 둘째 문장의 빈칸 자리를 "(|정답)"으로 1~2곳 심는다 — 첫 문장을 그 문법 항목으로 바꿔 쓰는 문제(예: 수동태·부정사·가정법·비교급). 낱말을 고르는 빈칸은 괄호 앞에 정답 첫 글자를 적는다. 정당한 답이 둘 이상이면 "/"로 잇는다.',
     "sa_verb": 'format "verb". instruction "괄호 안의 동사를 알맞은 형태로 바꿔 쓰시오.". passageHtml은 영어 문장 하나(또는 두 문장)에 바꿀 자리를 "(원형|정답)"으로 1~2곳 심는다 — 예: "She (live|has lived) here since 2020." 괄호 앞은 동사 원형, 뒤는 정답 형태. 정당한 답이 둘 이상이면 "/"로 이어 적는다 — 예: "(be|is / was)" 처럼 시제가 열려 있을 때.',
-    "sa_fill": 'format "fill". instruction "우리말과 같은 뜻이 되도록 빈칸에 알맞은 말을 쓰시오.". passageHtml은 "우리말 문장<br>영어 문장"으로, 영어 문장의 빈칸 자리를 "(|정답)"으로 1~2곳 심는다(괄호 안 앞쪽은 비워 둔다) — 예: "그는 나보다 키가 크다.<br>He is (|taller) than me." 정당한 답이 둘 이상이면 "/"로 이어 적는다 — 예: "(|whom / who / that)".',
+    "sa_fill": 'format "fill". instruction "우리말과 같은 뜻이 되도록 빈칸에 알맞은 말을 쓰시오.". passageHtml은 "우리말 문장<br>영어 문장"으로, 영어 문장의 빈칸 자리를 "(|정답)"으로 1~2곳 심는다(괄호 안 앞쪽은 아래 힌트 규칙대로) — 예: "그는 나보다 키가 크다.<br>He is (|taller) than me." 정당한 답이 둘 이상이면 "/"로 이어 적는다 — 예: "(|whom / who / that)". 우리말만으로 영어 낱말이 하나로 정해지지 않는 빈칸(동사·명사·형용사·부사 — 예: "아껴 쓰다"는 save·conserve 모두 가능)은 정답의 첫 글자를 힌트로 괄호 앞에 적는다 — 예: "(c|conserve)" ("c____"로 보인다). 문법 기능어(관계사·접속사·전치사·조동사)만 묻는 빈칸은 힌트를 비운다. 그 문법 항목에 맞는 낱말·형태가 정답으로 정해지도록 우리말과 문장 앞뒤 단서를 충분히 준다.',
     "sa_fix": 'format "fix". instruction "다음 문장에서 어법상 틀린 부분을 찾아 바르게 고쳐 쓰시오.". passageHtml은 틀린 곳이 정확히 하나 있는 영어 문장(태그 없이 평문). fixes는 [{"wrong": 틀린 낱말(들), "right": 고친 말}] 하나 — wrong은 passageHtml에 글자 그대로 있어야 한다. 고친 말이 둘 이상 가능하면 right에 "/"로 이어 적는다 — 예: "whom / who / that".',
     "sa_convert": 'format "convert". instruction "다음 문장을 <조건>에 맞게 바꿔 쓰시오.". passageHtml은 바꿀 영어 문장 하나. conditions는 무엇으로 바꾸는지 한두 줄(예: "수동태 문장으로 쓸 것", "관계대명사를 사용하여 한 문장으로 쓸 것"). answerText는 바꾼 문장 하나(대표 답). 다른 정당한 답이 있으면 alts에 한 문장씩.',
     "sa_order": 'format "write". instruction "우리말과 같은 뜻이 되도록 주어진 단어를 바르게 배열하시오.". passageHtml은 우리말 문장 하나. answerText는 그 뜻의 영어 문장(5~14단어, 그 문법 항목이 꼭 들어간다) — 화면이 이 문장의 낱말을 섞어 <보기>로 보여 준다. 첫 낱말을 소문자로 바꿔 섞으므로 문장을 사람 이름·지명으로 시작하지 않는다(I·대명사·명사구로 시작). 부사·부사구 자리가 바뀔 수 있어 다른 어순도 정답이 되는 문장은 피한다 — 부득이하면 다른 정답을 alts에 적는다.',
@@ -6268,6 +6280,8 @@ GRAMMAR_SYSTEM_PROMPT = """당신은 한국 중·고등학교와 초등학교 �
 - 모양이 하나로 정해진 slot은 그 모양으로, 후보가 여럿인 slot은 그 문법을 묻기에 가장 알맞은 모양을 골라 shape에 그 열쇠(예: "mc_right")를 적습니다. 같은 항목이 여러 문항이면 모양을 골고루 섞습니다.
 - format·instruction·각 칸은 '모양별 작성 규칙'을 글자 그대로 따릅니다. 쓰지 않는 칸은 빈 글자나 빈 배열로 둡니다.
 - 정답은 하나뿐이어야 합니다. 옳다고 둔 문장은 원어민이 보아도 완전히 자연스럽고 어법상 흠이 없어야 하고, 틀리다고 둔 곳은 분명히 틀려야 합니다. 만든 뒤 보기 하나하나를 다시 검토합니다.
+- 객관식 보기는 쉽게 소거되면 안 됩니다. 오답은 학생이 실제로 헷갈리는 형태여야 하며, 한눈에 비문인 보기(조동사 뒤 과거형, 주어와 어긋난 be동사 등)나 시간 부사 하나로 바로 가려지는 보기는 쓰지 않습니다. 오답마다 서로 다른 함정(예: 시제, 수일치, 형태, 의미 호응)을 씁니다.
+- 우리말을 보고 영어로 쓰는 주관식은 정답이 하나로 정해져야 합니다. 같은 뜻의 다른 낱말(save/conserve 등)이 정답이 될 수 있으면 정답 첫 글자 힌트를 주거나 alts에 모두 적습니다.
 - 문항끼리 같은 문장·같은 낱말 재료를 되풀이하지 않습니다. 주어·시제·상황을 다양하게 바꿉니다.
 - 학년 수준(낱말 난이도·문장 길이)을 지킵니다.
 - 문항 목록에 '정답은 N번'이 적힌 객관식 slot은 정답(틀린 문장·틀린 밑줄 포함)을 반드시 그 번호에 둡니다. mc_count는 옳은 문장 수가 N개가 되게 합니다. 번호가 한쪽으로 쏠리지 않게 하려는 것이니 마음대로 바꾸지 않습니다.
@@ -6397,7 +6411,7 @@ def _grammar_user_prompt(plan, slots, theme=None, avoid=None):
 
 
 _CIRCLED_NO = "①②③④⑤"
-_GRAMMAR_SWAPPABLE = ("mc_right", "mc_wrong", "mc_blank", "mc_box")
+_GRAMMAR_SWAPPABLE = ("mc_right", "mc_wrong", "mc_blank", "mc_box", "mc_combo", "mc_same", "mc_fixed", "mc_korean")
 # 해설에 AI가 스스로 고쳐 말한 흔적("다시 점검…")이 남은 문항 — 정답이 흔들렸다는 신호라 버린다
 # '부자연스럽'·'(여기서는'은 혼잣말이라기보다 틀린 보기가 사실 틀리지 않았다는 표시다 — 2026-10-20 시험에서
 # so/such 문항의 해설이 "such hot sun은 부자연스럽습니다(여기서는 …)"로 흐렸고, 그 보기는 옳게도 읽혔다.
@@ -6507,6 +6521,31 @@ def _grammar_place_answer(q, shape, target):
     q["explanation"] = _grammar_remap_numbers(str(q.get("explanation") or ""), i, j)
 
 
+# 문법 기능어 — 이 낱말로 시작하는 빈칸은 문법 자체를 묻는 것이라 첫 글자 힌트를 주지 않는다
+_GRAMMAR_NO_HINT = frozenset("""a an the who whom whose which that what where when why how if whether while although though
+because since unless until as so but and or nor yet for of in on at by to with from about into over under than
+be am is are was were been being do does did have has had having will would shall should can could may might must
+not no never it its he she they we you i me him her them us his their our my your this these those there here
+more most less least much many few little very too""".split())
+
+
+def _grammar_hint_fill(q):
+    """빈칸 쓰기('우리말과 같은 뜻이 되도록')에서 낱말을 고르는 빈칸에는 정답 첫 글자를 힌트로 단다.
+    힌트 없이 우리말만 주면 '아껴 쓰다'를 save로 쓰는 식으로 정답(conserve)과 다른 동의어가 나와 학생이
+    억울하게 틀린다(2026-10-22 사용자). 문법 기능어(관계사·조동사·전치사 …)나 정답이 여럿인 빈칸은 그대로 둔다."""
+    if q.get("format") != "fill":
+        return
+
+    def one(m):
+        hint, ans = m.group(1).strip(), m.group(2).strip()
+        first = ans.split()[0].lower() if ans.split() else ""
+        if hint or "/" in ans or not first or first in _GRAMMAR_NO_HINT or not first[0].isalpha():
+            return m.group(0)
+        return f"({first[0]}|{ans})"
+
+    q["passageHtml"] = re.sub(r"\(([^()|]*)\|([^()|]*)\)", one, str(q.get("passageHtml") or ""))
+
+
 def _grammar_finish(raw, slot):
     """AI가 만든 문항 하나를 다듬어 화면·문제 시험이 쓰는 모양으로. 못 쓰면 None."""
     if not isinstance(raw, dict):
@@ -6529,6 +6568,7 @@ def _grammar_finish(raw, slot):
     if q["format"] == "mc" and len(q.get("choices") or []) != 5:
         return None
     _grammar_place_answer(q, shape, slot.get("target"))
+    _grammar_hint_fill(q)
     if q["format"] == "fix":
         q["passageHtml"] = re.sub(r"<[^>]+>", "", str(q.get("passageHtml") or ""))
         fixes = [f for f in (q.get("fixes") or []) if isinstance(f, dict) and f.get("wrong")

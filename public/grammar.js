@@ -26,6 +26,10 @@ const GRAMMAR_MC_SHAPES = [
   { id: "mc_underline", label: "밑줄 ①~⑤ 틀린 것" },
   { id: "mc_box", label: "네모 (A)(B)(C)" },
   { id: "mc_count", label: "옳은 문장 개수" },
+  { id: "mc_combo", label: "옳은 것끼리 짝짓기" },
+  { id: "mc_same", label: "쓰임이 다른 것" },
+  { id: "mc_fixed", label: "바르게 고친 것" },
+  { id: "mc_korean", label: "우리말 맞는 영문" },
 ];
 const GRAMMAR_SA_SHAPES = [
   { id: "sa_verb", label: "동사 형태 바꾸기" },
@@ -34,6 +38,8 @@ const GRAMMAR_SA_SHAPES = [
   { id: "sa_convert", label: "문장 전환" },
   { id: "sa_order", label: "배열 영작" },
   { id: "sa_compose", label: "조건 영작" },
+  { id: "sa_combine", label: "두 문장 합치기" },
+  { id: "sa_same", label: "같은 뜻 빈칸" },
 ];
 const GRAMMAR_MAX_Q = 50;   // server.py GRAMMAR_MAX_QUESTIONS
 
