@@ -1202,6 +1202,13 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
 .sheet-toned .doc-cover h1, .sheet-toned .wb-cover h1{
   color:var(--accent); display:inline-block; padding:0 6px 8px; border-bottom:3px solid var(--accent);
 }
+/* 같은 때 시험지명 띠(.qz-sheet-title)에도 표지와 같은 그라데이션을 깔고, 문제 칸 테두리를 테마 색으로 —
+   색이 글자·번호에만 있으면 지면에서 잘 안 보였다(2026-10-22 사용자). 워크북 내용 O/X 칸도 .qz-card다. */
+.sheet-toned .qz-sheet-title{
+  padding:10px 14px 8px; border-radius:10px 10px 0 0;
+  background:linear-gradient(180deg, var(--accent-soft) 0%, var(--card) 100%);
+}
+.sheet-toned .qz-card, .sheet-toned .wb-q.wb-ox-card{border-color:var(--accent);}
 
 .wb-titlebar{
   display:flex; flex-wrap:wrap; align-items:baseline; gap:10px;
