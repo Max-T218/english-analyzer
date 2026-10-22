@@ -7949,6 +7949,52 @@ function setupQuizTab({ prefix, types, footer }) {
     clearResults: () => renderQuizEntries([]),
   };
 
+  /* ── 이 사이트로 만든 문제 PDF를 올려 문항을 되살리기 ──
+     서버(/api/quizrestore)가 PDF의 문제지와 정답·해설을 함께 읽어 문항을 문제 탭이 쓰는 모양으로 돌려준다.
+     그러면 고치기·인쇄·저장·반에 시험 내기가 만든 문제와 똑같이 된다. 되살린 문항 수만큼만 값이 나간다. */
+  const restoreBtn = $(`${prefix}RestoreBtn`);
+  if (restoreBtn) {
+    const restoreFile = document.createElement("input");
+    restoreFile.type = "file";
+    restoreFile.accept = "application/pdf,.pdf";
+    restoreFile.style.display = "none";
+    restoreBtn.after(restoreFile);
+    restoreBtn.addEventListener("click", () => restoreFile.click());
+    restoreFile.addEventListener("change", async () => {
+      const f = restoreFile.files && restoreFile.files[0];
+      restoreFile.value = "";
+      if (!f) return;
+      errorEl.textContent = "";
+      if (f.size > 20 * 1024 * 1024) {
+        errorEl.textContent = "PDF가 너무 큽니다(20MB까지). 쪽을 나눠 올려 주세요.";
+        return;
+      }
+      if (lastEntries.length && !confirm("지금 화면에 있는 문제가 사라지고 PDF의 문제로 바뀝니다. 계속할까요?")) return;
+      const per = (PRICING && PRICING.quizRestore) || 0;
+      if (!(await costConfirmed(per * 10, `PDF에서 문제 불러오기\n되살린 문항 1개당 ${pt(per)}씩 받습니다(아래는 10문항일 때)`))) return;
+      const label = restoreBtn.textContent;
+      restoreBtn.disabled = true;
+      restoreBtn.textContent = "⏳ PDF 읽는 중… (1분쯤 걸립니다)";
+      try {
+        const data = await blobToBase64(f);
+        const res = await postGenerate("/api/quizrestore", { file: { mime: "application/pdf", data } },
+          "문제를 불러오지 못했습니다.",
+          (n) => { restoreBtn.textContent = `⏳ 연결이 끊겨 다시 받는 중… (${n})`; });
+        const qs = res.questions || [];
+        if (!qs.length) throw new Error("문항을 찾지 못했습니다. 이 사이트에서 만든 문제 PDF인지 확인해 주세요.");
+        renderQuizEntries([{ job: { name: "", named: false }, label: "", set: { questions: qs, variations: [] }, total: 1 }]);
+        setSheetTitle(f.name.replace(/\.pdf$/i, ""));
+        errorEl.textContent = res.failed
+          ? `⚠️ ${qs.length}문항을 불러왔지만 일부 구간은 읽지 못했습니다. 번호가 빠졌는지 확인해 주세요.` : "";
+      } catch (err) {
+        errorEl.textContent = err.message || "문제를 불러오지 못했습니다.";
+      } finally {
+        restoreBtn.disabled = false;
+        restoreBtn.textContent = label;
+      }
+    });
+  }
+
   btn.addEventListener("click", generate);
   /* 시험지명을 지면에 반영한다. 만든 뒤(인쇄 직전)에 적어도 되도록 DOM을 직접 고친다 —
      이름이 정해질 때마다 문항을 다시 그리면 '전체 문항 섞기'가 다시 섞여 버린다. */
