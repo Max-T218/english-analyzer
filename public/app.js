@@ -1080,7 +1080,9 @@ async function submitRecharge(amount) {
   }
   rechargeStatusEl.textContent = "결제창을 여는 중…";
   try {
-    const intent = await postJson("/api/account/recharge", { amount }, "결제 요청에 실패했습니다.");
+    const methodEl = document.querySelector('input[name="rechargeMethod"]:checked');
+    const method = methodEl && methodEl.value === "kakaopay" ? "kakaopay" : "card";
+    const intent = await postJson("/api/account/recharge", { amount, method }, "결제 요청에 실패했습니다.");
     rechargeStatusEl.textContent = "결제 진행 중…";
     const result = await window.PortOne.requestPayment({
       storeId: intent.storeId,
@@ -1089,7 +1091,8 @@ async function submitRecharge(amount) {
       orderName: intent.orderName,
       totalAmount: intent.amount,
       currency: "CURRENCY_KRW",
-      payMethod: "CARD",
+      payMethod: intent.method === "kakaopay" ? "EASY_PAY" : "CARD",
+      ...(intent.method === "kakaopay" ? { easyPay: { easyPayProvider: "KAKAOPAY" } } : {}),
       customer: {
         email: currentAccountEmail || undefined,
         phoneNumber: phoneDigits,
@@ -1120,6 +1123,8 @@ const openRechargeBtn = $("openRechargeBtn");
 if (openRechargeBtn) {
   openRechargeBtn.addEventListener("click", () => {
     rechargeErrorEl.textContent = "";
+    const methodField = $("rechargeMethodField");
+    if (methodField) methodField.hidden = !(PRICING && PRICING.kakaopay);
     openModal(rechargeModalEl);
   });
 }

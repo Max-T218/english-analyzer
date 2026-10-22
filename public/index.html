@@ -943,6 +943,12 @@
         <input type="tel" id="rechargePhone" placeholder="010-1234-5678" autocomplete="tel">
       </div>
 
+      <div class="field" id="rechargeMethodField" hidden>
+        <label>결제 수단</label>
+        <label style="display:inline-block; margin-right:14px; font-weight:normal;"><input type="radio" name="rechargeMethod" value="card" checked> 카드</label>
+        <label style="display:inline-block; font-weight:normal;"><input type="radio" name="rechargeMethod" value="kakaopay"> 카카오페이</label>
+      </div>
+
       <div class="recharge-presets" id="rechargePresets">
         <button type="button" class="btn ghost small recharge-preset-btn" data-amount="1000">1,000원</button>
         <button type="button" class="btn ghost small recharge-preset-btn" data-amount="2000">2,000원</button>

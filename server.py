@@ -194,6 +194,9 @@ TERMS_VERSION = "2026-09-01"
 # 안 붙었다는 뜻이므로 무상으로 채워 주던 옛 동작으로 조용히 되돌아가지 않는다.
 PORTONE_STORE_ID = os.environ.get("PORTONE_STORE_ID", "")
 PORTONE_CHANNEL_KEY_CARD = os.environ.get("PORTONE_CHANNEL_KEY_CARD", "")
+# 카카오페이 채널(포트원 콘솔 '결제 연동 → 채널 관리'의 카카오페이 채널 키). 비어 있으면
+# 화면에 카카오페이 단추가 안 보이고 서버도 그 방식을 거부한다 — 카드는 그대로 된다.
+PORTONE_CHANNEL_KEY_KAKAOPAY = os.environ.get("PORTONE_CHANNEL_KEY_KAKAOPAY", "")
 PORTONE_API_SECRET = os.environ.get("PORTONE_API_SECRET", "")
 PORTONE_API_BASE = "https://api.portone.io"
 # 충전할 수 있는 금액. 화면(public/index.html의 recharge-preset-btn)과 반드시 같이 고칠 것 —
@@ -12799,7 +12802,7 @@ def confirm_payment_intent(user_id, payment_id):
         reasons.append(f"통화={got_currency!r}")
     if payment.get("storeId") != PORTONE_STORE_ID:
         reasons.append("상점 식별코드(storeId)가 서버 환경변수와 다름")
-    if got_channel != PORTONE_CHANNEL_KEY_CARD:
+    if got_channel not in {k for k in (PORTONE_CHANNEL_KEY_CARD, PORTONE_CHANNEL_KEY_KAKAOPAY) if k}:
         reasons.append("채널키가 서버 환경변수와 다름 — 결제창은 다른 채널로 열렸다")
 
     if reasons:
@@ -16397,6 +16400,8 @@ class Handler(BaseHTTPRequestHandler):
                 "trendScanPage": PRICE_TREND_SCAN_PAGE_KRW,
                 "trendOcrPage": PRICE_TREND_OCR_PAGE_KRW,
                 "studentComment": PRICE_STUDENT_COMMENT_KRW,
+                # 충전 창의 카카오페이 선택 — 채널 키가 있을 때만 보인다
+                "kakaopay": bool(PORTONE_CHANNEL_KEY_KAKAOPAY),
                 # 문법문제 마법사 — 시험지 한 장에 기본값 + 문제당(객관식·주관식 합쳐서)
                 "grammarBase": PRICE_GRAMMAR_BASE_KRW,
                 "grammarPerQ": PRICE_GRAMMAR_PER_Q_KRW,
@@ -17232,11 +17237,21 @@ class Handler(BaseHTTPRequestHandler):
             if not (PORTONE_STORE_ID and PORTONE_CHANNEL_KEY_CARD and PORTONE_API_SECRET):
                 self._send_json({"error": "결제 기능이 아직 설정되지 않았습니다."}, 503)
                 return
+            method = (req.get("method") or "card").strip()
+            if method == "kakaopay":
+                if not PORTONE_CHANNEL_KEY_KAKAOPAY:
+                    self._send_json({"error": "카카오페이 결제가 아직 설정되지 않았습니다."}, 503)
+                    return
+                channel_key = PORTONE_CHANNEL_KEY_KAKAOPAY
+            else:
+                method = "card"
+                channel_key = PORTONE_CHANNEL_KEY_CARD
             payment_id = create_payment_intent(user_id, amount)
             self._send_json({
                 "paymentId": payment_id,
                 "storeId": PORTONE_STORE_ID,
-                "channelKey": PORTONE_CHANNEL_KEY_CARD,
+                "channelKey": channel_key,
+                "method": method,
                 "amount": amount,
                 "orderName": f"English Lab 포인트 충전 {amount:,}원",
             })
