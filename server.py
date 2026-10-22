@@ -1100,7 +1100,10 @@ def _vertex_post(model, data):
            f"/locations/{VERTEX_LOCATION}/publishers/google/models/{model}:generateContent")
     req = urllib.request.Request(url, data=data, method="POST", headers={
         "content-type": "application/json", "authorization": "Bearer " + creds.token})
-    with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT) as resp:
+    # Flash 글자 호출은 매달리면 기다림을 줄여 한 번 더 보낸다(_gemini_call_with_retry) — 그림 모델은 원래 오래 걸린다
+    low = (model or "").lower()
+    wait = min(GEMINI_TIMEOUT, GEMINI_FLASH_ATTEMPT_TIMEOUT) if "flash" in low and "image" not in low else GEMINI_TIMEOUT
+    with urllib.request.urlopen(req, timeout=wait) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -1238,6 +1241,8 @@ MAX_RETRY_TOTAL = _env("MAX_RETRY_TOTAL", 150.0, float)
                          # 누적 재시도 대기가 이 시간(초)을 넘으면 포기하고 명확히 안내
                          # (호출 1건마다 따로 적용된다)
 GEMINI_TIMEOUT = _env("GEMINI_TIMEOUT", 300.0, float)
+# Flash 글자 호출 한 번을 기다리는 시간. 넘기면 한 번 다시 보낸다(_gemini_call_with_retry). 한 번에 2분 넘게 걸리는 정상 호출(큰 PDF 읽기)이 있으면 이 값을 올릴 것
+GEMINI_FLASH_ATTEMPT_TIMEOUT = _env("GEMINI_FLASH_ATTEMPT_TIMEOUT", 120.0, float)
                          # Gemini 호출 1회의 소켓 타임아웃(초)
 REFINE_BUDGET = _env("REFINE_BUDGET", 55.0 if os.environ.get("RENDER") else 86400.0, float)
                          # 이 시간(초)을 이미 쓴 뒤에는 보정 재요청을 시작하지 않는다
@@ -10261,6 +10266,15 @@ def _gemini_call_with_retry(data, api_key, model, url=None, allow_fallback=True,
     if vertex_data is None and url is None:
         vertex_data = data
 
+    def _attempt_timeout(use_model):
+        # Flash 글자 호출은 보통 수십 초 안에 끝나는데, 가끔 응답이 아예 안 오고 매달린다 — 그러면 300초를 통째로
+        # 기다렸다 '시간 초과'로 실패했다(2026-10-22 지문 6개 기본 문제 제작). 한 번의 기다림을 줄이고
+        # 한 번 더 보낸다(_generate). 그림(url을 따로 넘기는 호출)·Pro는 원래 오래 걸리므로 그대로 둔다.
+        low = (use_model or "").lower()
+        if url is None and "flash" in low and "image" not in low:
+            return min(GEMINI_TIMEOUT, GEMINI_FLASH_ATTEMPT_TIMEOUT)
+        return GEMINI_TIMEOUT
+
     def _post(use_model):
         if vertex_data is not None and _vertex_ready():
             body = _vertex_try(use_model, vertex_data)
@@ -10272,7 +10286,7 @@ def _gemini_call_with_retry(data, api_key, model, url=None, allow_fallback=True,
             method="POST",
             headers={"content-type": "application/json", "x-goog-api-key": api_key},
         )
-        with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=_attempt_timeout(use_model)) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         return body
 
@@ -10281,9 +10295,15 @@ def _gemini_call_with_retry(data, api_key, model, url=None, allow_fallback=True,
         attempt = 0
         waited = 0.0
         quota_tries = 0   # 429 재시도는 따로 세어 짧게 끊는다
+        hung = 0          # 응답이 안 와 줄인 기다림을 넘긴 횟수 — 한 번만 다시 보낸다
         while True:
             try:
                 return _post(use_model)
+            except TimeoutError:
+                if hung >= 1 or _attempt_timeout(use_model) >= GEMINI_TIMEOUT:
+                    raise
+                hung += 1
+                print(f"[gemini] {use_model} 응답 없음 {_attempt_timeout(use_model):.0f}초 — 다시 보냅니다", flush=True)
             except urllib.error.HTTPError as e:
                 retryable = e.code in (500, 502, 503, 504) or (e.code == 429 and is_flash)
                 if not retryable:
