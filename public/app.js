@@ -12579,6 +12579,51 @@ function samplePagesHtml(tab, captions, note, ext) {
     <p class="howto-pages-note">${note || "실제로 만든 결과물의 일부입니다 — 지문에 따라 구성과 내용은 매번 달라집니다."}</p>`;
 }
 
+/* 예시 쪽 그림 크게 보기 — 화면 위에 띄우는 창 하나. 같은 묶음의 그림을 ◀ ▶(방향키)로
+   넘기고, 바깥·✕·Esc로 닫는다. 그림이 화면보다 길면 창 안에서 내려 본다. */
+function openPageViewer(imgs, at) {
+  if (!imgs.length) return;
+  let i = Math.max(0, at);
+  const ov = document.createElement("div");
+  ov.className = "page-viewer";
+  ov.innerHTML = `<div class="pv-box" role="dialog" aria-modal="true">
+      <div class="pv-head"><span class="pv-cap"></span><button type="button" class="pv-x" aria-label="닫기">✕</button></div>
+      <div class="pv-body"><img alt=""></div>
+    </div>
+    <button type="button" class="pv-nav pv-prev" aria-label="이전 그림">◀</button>
+    <button type="button" class="pv-nav pv-next" aria-label="다음 그림">▶</button>`;
+  const im = ov.querySelector("img");
+  const body = ov.querySelector(".pv-body");
+  const show = () => {
+    const src = imgs[i];
+    im.src = src.src;
+    im.alt = src.alt;
+    const cap = src.closest("figure")?.querySelector("figcaption")?.textContent || src.alt;
+    ov.querySelector(".pv-cap").textContent = imgs.length > 1 ? `${cap}  (${i + 1}/${imgs.length})` : cap;
+    ov.querySelector(".pv-prev").hidden = i === 0;
+    ov.querySelector(".pv-next").hidden = i === imgs.length - 1;
+    body.scrollTop = 0;
+  };
+  const close = () => {
+    ov.remove();
+    document.removeEventListener("keydown", onKey, true);
+  };
+  const go = (d) => { const n = i + d; if (n >= 0 && n < imgs.length) { i = n; show(); } };
+  const onKey = (e) => {
+    if (e.key === "Escape") { e.stopPropagation(); close(); }
+    else if (e.key === "ArrowLeft") go(-1);
+    else if (e.key === "ArrowRight") go(1);
+  };
+  ov.addEventListener("click", (e) => {
+    if (e.target.closest(".pv-prev")) go(-1);
+    else if (e.target.closest(".pv-next")) go(1);
+    else if (e.target.closest(".pv-x") || !e.target.closest(".pv-box")) close();
+  });
+  document.addEventListener("keydown", onKey, true);
+  document.body.appendChild(ov);
+  show();
+}
+
 // 탭 → 예시 HTML. 없는 탭은 예시를 붙이지 않는다.
 const HOWTO_SAMPLE = {
   analyze: () =>
@@ -12586,9 +12631,10 @@ const HOWTO_SAMPLE = {
       "문장 분석 — 1~3번 문장",
       "문장 분석 — 4~6번 문장 (출제 포인트 포함)",
       "Ⅱ. 주제 & 흐름 요약",
+      "Ⅱ. 알아 두면 쉬워지는 배경지식 (개념 · 읽으면서 붙잡을 질문)",
       "Ⅳ. 한눈에 보는 요약 (한글요약 · 영어요약)",
     ]),
-  // 상세분석과 같은 지문으로 요약분석 결과 화면을 찍은 그림(howto-brief-N.png) (3쪽은 상세분석 4쪽과 같은 그림 — 요약 이미지 한글요약·영어요약). 상세분석과 똑같이 쪽 카드로 보여 준다
+  // 상세분석과 같은 지문으로 요약분석 결과 화면을 찍은 그림(howto-brief-N.png) (3쪽은 상세분석 5쪽과 같은 그림 — 요약 이미지 한글요약·영어요약). 상세분석과 똑같이 쪽 카드로 보여 준다
   brief: () =>
     samplePagesHtml("brief", [
       "문장별 해석 — 1~3번 문장",
@@ -12699,10 +12745,14 @@ function ensureTabSample(tab) {
       if (!sec.querySelector(".howto-page, .tab-sample-body > *")) sec.remove();
     });
   });
-  // 쪽 그림을 누르면 원본 크기로 새 창에 연다 — 작게 줄여 놓아 글자가 안 읽힌다
+  // 쪽 그림을 누르면 화면 위에 크게 띄운다 — 작게 줄여 놓아 글자가 안 읽힌다.
+  // 예전엔 새 탭으로 열었는데, 탭이 쌓이고 돌아오기 번거롭다는 의견으로 바꿨다(2026-10-22)
   sec.addEventListener("click", (e) => {
     const img = e.target.closest(".howto-page img");
-    if (img) window.open(img.src, "_blank", "noopener");
+    if (!img) return;
+    // 혼합 탭처럼 묶음이 둘이어도 예시 전체를 한 줄로 넘긴다
+    const all = [...sec.querySelectorAll(".howto-page img")];
+    openPageViewer(all, all.indexOf(img));
   });
   // 결과물이 생기면 예시는 감춘다
   // 동형 모의고사는 기출을 분석한 표(examResult)가 먼저 나오므로 그 칸도 함께 본다
@@ -12781,6 +12831,13 @@ $("howtoBtn").addEventListener("click", () => {
 $("howtoClose").addEventListener("click", () => { howtoGuideEl.hidden = true; });
 howtoGuideEl.addEventListener("click", (e) => {
   if (e.target === howtoGuideEl) howtoGuideEl.hidden = true;   // 바깥을 눌러도 닫힌다
+});
+// 창 아래 예시 그림도 탭의 결과물 예시처럼 누르면 크게 띄운다
+howtoSampleEl.addEventListener("click", (e) => {
+  const img = e.target.closest(".howto-page img");
+  if (!img) return;
+  const all = [...howtoSampleEl.querySelectorAll(".howto-page img")];
+  openPageViewer(all, all.indexOf(img));
 });
 
 /* ══════════════════════════ 이용 내역 ══════════════════════════

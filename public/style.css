@@ -2639,6 +2639,24 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
 .tab-sample .howto-page{margin:0; min-width:0; max-width:560px;}
 /* 불러오기 전에도 자리를 잡아 둔다 — 안 그러면 화면이 덜컥 움직인다 */
 .tab-sample .howto-page img{cursor:zoom-in; min-height:120px;}
+.howto-sample .howto-page img{cursor:zoom-in;}
+/* 예시 쪽 그림 크게 보기(openPageViewer) */
+.page-viewer{position:fixed; inset:0; z-index:3000; background:rgba(15,23,42,.72);
+  display:flex; align-items:center; justify-content:center; padding:20px 64px;}
+.pv-box{background:#fff; border-radius:12px; box-shadow:0 18px 50px rgba(0,0,0,.35);
+  width:min(900px,100%); max-height:100%; display:flex; flex-direction:column; overflow:hidden;}
+.pv-head{display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid #e5e7eb;}
+.pv-cap{flex:1; font-size:13.5px; font-weight:700; color:#1f2937;}
+.pv-x{border:0; background:none; font-size:18px; cursor:pointer; color:#6b7280; padding:2px 6px;}
+.pv-x:hover{color:#111827;}
+.pv-body{overflow:auto; background:#f8fafc;}
+.pv-body img{display:block; width:100%; height:auto;}
+.pv-nav{position:fixed; top:50%; transform:translateY(-50%); width:44px; height:44px; border-radius:50%;
+  border:0; background:rgba(255,255,255,.92); color:#1f2937; font-size:16px; cursor:pointer;
+  box-shadow:0 4px 14px rgba(0,0,0,.25);}
+.pv-nav:hover{background:#fff;}
+.pv-prev{left:12px;} .pv-next{right:12px;}
+@media (max-width:600px){ .page-viewer{padding:10px 8px 64px;} .pv-nav{top:auto; bottom:10px; transform:none;} }
 .tab-sample .howto-pages + .howto-pages-note{margin-top:2px;}
 @media print{ .tab-sample{display:none !important;} }
 
