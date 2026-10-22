@@ -592,8 +592,8 @@ class MailNotConfigured(RuntimeError):
     """인증메일을 보낼 수단이 없다 — 가입을 진행시키면 안 된다."""
 
 
-def send_verification_email(to_email, code):
-    """인증코드를 메일로 보낸다.
+def send_verification_email(to_email, code, what="회원가입"):
+    """인증코드를 메일로 보낸다. what은 메일 본문과 오류 문구에 들어가는 용도('회원가입'·'비밀번호 재설정').
 
     예전에는 SMTP 설정이 없으면 코드를 서버 로그에 찍고 '보낸 것처럼' 넘어갔다.
     로컬에서 메일 없이 흐름을 시험하려던 배려였는데, 실제 서비스에서 그 설정이
@@ -613,7 +613,9 @@ def send_verification_email(to_email, code):
         print(f"[signup] SMTP_USER/SMTP_PASSWORD가 없어 {to_email} 에게 "
               f"인증메일을 보내지 못했습니다.", file=sys.stderr)
         raise MailNotConfigured(
-            "지금은 이메일로 가입할 수 없습니다 (인증메일 발송이 설정되지 않았습니다). "
+            ("지금은 이메일로 가입할 수 없습니다" if what == "회원가입"
+             else "지금은 비밀번호를 재설정할 수 없습니다") +
+            " (인증메일 발송이 설정되지 않았습니다). "
             "구글 계정으로 로그인해 주시거나, 잠시 후 다시 시도해 주세요."
         )
     msg = EmailMessage()
@@ -621,7 +623,7 @@ def send_verification_email(to_email, code):
     msg["From"] = SMTP_USER
     msg["To"] = to_email
     msg.set_content(
-        f"English Lab 회원가입 인증코드는 {code} 입니다.\n"
+        f"English Lab {what} 인증코드는 {code} 입니다.\n"
         f"{VERIFY_CODE_TTL // 60}분 안에 입력해 주세요.\n\n"
         "본인이 요청한 것이 아니라면 이 메일을 무시하셔도 됩니다."
     )
@@ -792,6 +794,90 @@ def login_with_password(email, password):
     if not _verify_password_hash(password, d["password_salt"], d["password_hash"]):
         raise ValueError("이메일 또는 비밀번호가 올바르지 않습니다.")
     return _user_doc_id(email), d
+
+
+def _reset_code_hash(email, code):
+    return hashlib.sha256(f"{email}\0{code}".encode("utf-8")).hexdigest()
+
+
+def start_password_reset(email):
+    """비밀번호 찾기 1단계: 가입한 이메일로 인증코드를 보낸다.
+
+    가입 여부를 밖으로 알리지 않는다 — 없는 이메일·구글 전용 계정이어도 똑같이 성공한 것처럼
+    답하고(메일만 안 나간다), 재전송 대기도 같은 문서로 똑같이 건다. 그래야 이 창으로
+    '이 이메일이 가입돼 있는지'를 알아낼 수 없다. 코드는 해시로만 둔다."""
+    _require_db()
+    email = email.strip().lower()
+    if not _EMAIL_RE.match(email):
+        raise ValueError("올바른 이메일 주소를 입력하세요.")
+    ref = DB.collection("password_resets").document(email)
+    snap = ref.get()
+    if snap.exists:
+        try:
+            created = datetime.fromisoformat(snap.to_dict().get("created_at"))
+            elapsed = (datetime.now(timezone.utc) - created).total_seconds()
+        except Exception:
+            elapsed = SIGNUP_RESEND_COOLDOWN
+        if elapsed < SIGNUP_RESEND_COOLDOWN:
+            raise ValueError(f"잠시 후 다시 시도하세요 ({int(SIGNUP_RESEND_COOLDOWN - elapsed)}초 남음).")
+    udoc = DB.collection("users").document(_user_doc_id(email)).get()
+    real = udoc.exists and bool((udoc.to_dict() or {}).get("password_hash"))
+    code = _gen_verify_code()
+    ref.set({
+        "email": email,
+        "code_hash": _reset_code_hash(email, code) if real else "",
+        "attempts": 0,
+        "created_at": _now_iso(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=VERIFY_CODE_TTL)).isoformat(),
+    })
+    if not real:
+        return
+    try:
+        send_verification_email(email, code, "비밀번호 재설정")
+    except Exception:
+        try:
+            ref.delete()   # 메일을 못 보냈으면 없던 일로 — 재전송 대기에 걸려 다시 못 누르는 것을 막는다
+        except Exception:
+            pass
+        raise
+
+
+def complete_password_reset(email, code, new_password):
+    """비밀번호 찾기 2단계: 코드를 확인하고 새 비밀번호로 바꾼다. 그 계정의 기존 로그인은 모두 끊는다.
+    성공하면 세션에 쓸 user_id를 돌려준다(이메일 소유를 방금 확인했으므로 바로 로그인시킨다)."""
+    _require_db()
+    email = email.strip().lower()
+    if len(new_password) < 8:
+        raise ValueError("비밀번호는 8자 이상이어야 합니다.")
+    ref = DB.collection("password_resets").document(email)
+    snap = ref.get()
+    if not snap.exists:
+        raise ValueError("재설정 요청을 찾을 수 없습니다. 인증코드를 다시 받아 주세요.")
+    d = snap.to_dict() or {}
+    try:
+        expires = datetime.fromisoformat(d["expires_at"])
+    except Exception:
+        expires = datetime.now(timezone.utc)
+    if datetime.now(timezone.utc) >= expires:
+        ref.delete()
+        raise ValueError("인증코드가 만료되었습니다. 다시 받아 주세요.")
+    if d.get("attempts", 0) >= VERIFY_MAX_ATTEMPTS:
+        ref.delete()
+        raise ValueError("인증 시도 횟수를 초과했습니다. 인증코드를 다시 받아 주세요.")
+    good = d.get("code_hash") or ""
+    if not good or not secrets.compare_digest(_reset_code_hash(email, code.strip()), good):
+        ref.update({"attempts": firestore.Increment(1)})
+        raise ValueError("인증코드가 올바르지 않습니다.")
+    user_id = _user_doc_id(email)
+    salt_hex, hash_hex = _hash_password(new_password)
+    DB.collection("users").document(user_id).update({
+        "password_salt": salt_hex,
+        "password_hash": hash_hex,
+    })
+    ref.delete()
+    for sess in DB.collection("sessions").where("user_id", "==", user_id).stream():
+        sess.reference.delete()
+    return user_id
 
 # === 만들어 낸 것을 잠깐 들고 있는 자리 ====================================
 # 위 RESULT_HOLD_SECONDS 주석 참고. 서버가 여러 갈래로 도니까(ThreadingHTTPServer)
@@ -16914,7 +17000,8 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/examtrend", "/api/pdfsplit", "/api/mockrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
-                        "/api/auth/login", "/api/logout", "/api/auth/delete",
+                        "/api/auth/login", "/api/auth/reset-request", "/api/auth/reset-confirm",
+                        "/api/logout", "/api/auth/delete",
                         "/api/account/recharge", "/api/account/recharge/confirm",
                         "/api/account/ack-update", "/api/portone/webhook",
                         "/api/saved", "/api/saved/delete", "/api/saved/rename",
@@ -17229,6 +17316,42 @@ class Handler(BaseHTTPRequestHandler):
                 return
             except Exception as e:
                 self._send_json({"error": f"로그인에 실패했습니다: {e}"}, 500)
+                return
+            self._send_json(
+                _account_payload(user_id),
+                cookies=[self._session_cookie(token)],
+            )
+            return
+
+        if path == "/api/auth/reset-request":
+            try:
+                start_password_reset((req.get("email") or "").strip())
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            except MailNotConfigured as e:
+                self._send_json({"error": str(e), "code": "mail_off"}, 503)
+                return
+            except Exception as e:
+                self._send_json({"error": f"인증코드를 보내지 못했습니다: {e}"}, 500)
+                return
+            self._send_json({"sent": True})
+            return
+
+        if path == "/api/auth/reset-confirm":
+            email = (req.get("email") or "").strip()
+            code = (req.get("code") or "").strip()
+            if not email or not code:
+                self._send_json({"error": "이메일과 인증코드를 입력하세요."}, 400)
+                return
+            try:
+                user_id = complete_password_reset(email, code, req.get("password") or "")
+                token = create_session(user_id)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            except Exception as e:
+                self._send_json({"error": f"비밀번호를 바꾸지 못했습니다: {e}"}, 500)
                 return
             self._send_json(
                 _account_payload(user_id),

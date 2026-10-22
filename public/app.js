@@ -676,6 +676,7 @@ function openSignupModal() {
 }
 function openLoginModal() {
   loginErrorEl.textContent = "";
+  showLoginStep("login");
   openModal(loginModalEl);
 }
 const signupEmailOpenEl = $("signupEmailOpen");
@@ -1158,6 +1159,71 @@ loginPanelEl.addEventListener("submit", async (e) => {
   } finally {
     loginBtn.disabled = false;
     loginStatusEl.textContent = "";
+  }
+});
+
+/* ── 비밀번호 찾기 — 로그인 창 안에서 로그인 칸 ↔ 이메일 칸 ↔ 코드·새 비밀번호 칸을 오간다 ── */
+const resetPanelEl = $("resetPanel");
+const resetVerifyPanelEl = $("resetVerifyPanel");
+let pendingResetEmail = "";
+function showLoginStep(step) {
+  loginPanelEl.hidden = step !== "login";
+  resetPanelEl.hidden = step !== "email";
+  resetVerifyPanelEl.hidden = step !== "code";
+  ["resetError", "resetVerifyError"].forEach((id) => { $(id).textContent = ""; });
+}
+$("loginForgotBtn").addEventListener("click", () => {
+  $("resetEmail").value = $("loginEmail").value.trim();
+  showLoginStep("email");
+});
+$("resetBackBtn").addEventListener("click", () => showLoginStep("login"));
+$("resetRetryBtn").addEventListener("click", () => showLoginStep("email"));
+resetPanelEl.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = $("resetEmail").value.trim();
+  const errEl = $("resetError");
+  const btn = $("resetSendBtn");
+  errEl.textContent = "";
+  if (!email) { errEl.textContent = "이메일을 입력하세요."; return; }
+  btn.disabled = true;
+  $("resetStatus").textContent = "인증코드 보내는 중…";
+  try {
+    await postJson("/api/auth/reset-request", { email }, "인증코드를 보내지 못했습니다.");
+    pendingResetEmail = email;
+    $("resetVerifyHint").textContent = `${email} 로 인증코드를 보냈습니다. 메일함(스팸함 포함)을 확인하세요. ` +
+      "가입되지 않은 이메일이면 메일이 오지 않습니다.";
+    $("resetCode").value = "";
+    $("resetNewPassword").value = "";
+    showLoginStep("code");
+  } catch (err) {
+    errEl.textContent = err.message || "인증코드를 보내지 못했습니다.";
+  } finally {
+    btn.disabled = false;
+    $("resetStatus").textContent = "";
+  }
+});
+resetVerifyPanelEl.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const code = $("resetCode").value.trim();
+  const password = $("resetNewPassword").value;
+  const errEl = $("resetVerifyError");
+  const btn = $("resetConfirmBtn");
+  errEl.textContent = "";
+  if (!code) { errEl.textContent = "인증코드를 입력하세요."; return; }
+  if (password.length < 8) { errEl.textContent = "비밀번호는 8자 이상이어야 합니다."; return; }
+  btn.disabled = true;
+  $("resetVerifyStatus").textContent = "확인 중…";
+  try {
+    const info = await postJson(
+      "/api/auth/reset-confirm", { email: pendingResetEmail, code, password }, "비밀번호를 바꾸지 못했습니다."
+    );
+    renderAccount(info);
+    enterWorkspace();
+  } catch (err) {
+    errEl.textContent = err.message || "비밀번호를 바꾸지 못했습니다.";
+  } finally {
+    btn.disabled = false;
+    $("resetVerifyStatus").textContent = "";
   }
 });
 

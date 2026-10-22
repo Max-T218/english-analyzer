@@ -833,6 +833,33 @@
           <span class="gate-status" id="loginStatus"></span>
         </div>
         <div class="error" id="loginError"></div>
+        <p class="auth-forgot"><button type="button" class="link-btn" id="loginForgotBtn">비밀번호를 잊으셨나요?</button></p>
+      </form>
+
+      <!-- 비밀번호 찾기 — 로그인 창 안에서 '이메일 → 인증코드 + 새 비밀번호' 두 단계 -->
+      <form class="auth-panel" id="resetPanel" hidden>
+        <p class="hint">가입한 이메일로 인증코드를 보내 드립니다. 구글로 가입한 계정은 비밀번호가 없으니 위 구글 버튼으로 로그인해 주세요.</p>
+        <label for="resetEmail">이메일</label>
+        <input type="email" id="resetEmail" autocomplete="username" placeholder="you@example.com">
+        <div class="gate-actions">
+          <button type="submit" class="btn" id="resetSendBtn">인증코드 받기</button>
+          <button type="button" class="btn ghost small" id="resetBackBtn">로그인으로</button>
+          <span class="gate-status" id="resetStatus"></span>
+        </div>
+        <div class="error" id="resetError"></div>
+      </form>
+      <form class="auth-panel" id="resetVerifyPanel" hidden>
+        <p class="hint" id="resetVerifyHint"></p>
+        <label for="resetCode">인증코드 (6자리)</label>
+        <input type="text" id="resetCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000">
+        <label for="resetNewPassword">새 비밀번호 <span class="opt-sub">(8자 이상)</span></label>
+        <input type="password" id="resetNewPassword" autocomplete="new-password" placeholder="새 비밀번호">
+        <div class="gate-actions">
+          <button type="submit" class="btn" id="resetConfirmBtn">비밀번호 바꾸고 로그인</button>
+          <button type="button" class="btn ghost small" id="resetRetryBtn">코드 다시 받기</button>
+          <span class="gate-status" id="resetVerifyStatus"></span>
+        </div>
+        <div class="error" id="resetVerifyError"></div>
       </form>
       <p class="auth-switch">처음이신가요? <button type="button" class="link-btn" id="loginToSignup">무료로 시작하기</button></p>
     </div>

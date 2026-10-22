@@ -475,6 +475,9 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .auth-switch{margin:18px 0 0; padding-top:14px; border-top:1px solid var(--line); text-align:center; font-size:13px; color:var(--ink-soft);}
 .auth-switch .link-btn{border:none; background:none; padding:0; font:inherit; font-weight:700; color:var(--accent); cursor:pointer;}
 .auth-switch .link-btn:hover{text-decoration:underline;}
+.auth-forgot{margin:10px 0 0; text-align:center; font-size:13px;}
+.auth-forgot .link-btn{border:none; background:none; padding:0; font:inherit; color:var(--ink-soft); cursor:pointer; text-decoration:underline;}
+.auth-forgot .link-btn:hover{color:var(--accent);}
 .modal-close{
   position:absolute; top:14px; right:14px; width:30px; height:30px; border-radius:8px;
   border:none; background:transparent; color:var(--ink-soft); font-size:20px; line-height:1;
