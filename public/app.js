@@ -4456,12 +4456,21 @@ function enforceImgLangRule(prefix, changed) {
   }
 }
 
-// 요약 이미지 '추가 요청'(선택). 비어 있으면 빈 글을 보내고, 서버는 기본 방식으로 만든다.
+// 요약 이미지 '추가 요청'(선택). 이미지 종류(한국어＋영어·한글요약·영어요약)마다 칸이 따로 있다 —
+// 체크한 종류의 칸만 보인다. 비어 있으면 빈 글을 보내고, 서버는 기본 방식으로 만든다.
 // 서버 INFOGRAPHIC_EXTRA_MAX와 같은 값.
 const INFOGRAPHIC_EXTRA_MAX = 200;
-function infoExtraOf(prefix) {
-  const el = $(prefix + "Extra");
+function infoExtraOf(prefix, lang) {
+  const el = $(prefix + "Extra_" + lang);
   return el ? el.value.replace(/\s+/g, " ").trim().slice(0, INFOGRAPHIC_EXTRA_MAX) : "";
+}
+function syncImgExtraBoxes(prefix) {
+  const list = $(prefix + "ExtraList");
+  if (!list) return;
+  const picked = pickedImgLangs(prefix);
+  list.querySelectorAll(".img-extra-item").forEach((it) => {
+    it.hidden = !picked.includes(it.dataset.lang);
+  });
 }
 
 function pickedImgLangs(prefix) {
@@ -4473,6 +4482,7 @@ function pickedImgLangs(prefix) {
 // 고른 말·장수·값을 그 자리에 적어 준다 — 체크를 하나 더 누를 때 값이 얼마나
 // 늘어나는지 눌러 보기 전에 보이게 한다
 function syncImgLangNote(prefix, perImage) {
+  syncImgExtraBoxes(prefix);
   const el = $(prefix + "LangNote");
   if (!el) return;
   const picked = pickedImgLangs(prefix);
@@ -4541,7 +4551,7 @@ async function makeInfographics(todo) {
       try {
         const data = await postGenerate(
           "/api/infographic",
-          { passage: job.text, lang, extra: infoExtraOf("info") },
+          { passage: job.text, lang, extra: infoExtraOf("info", lang) },
           "요약 이미지를 만들지 못했습니다.",
           (n) => {
             loadingTextEl.textContent =
@@ -5629,7 +5639,7 @@ briefBtn.addEventListener("click", async () => {
         try {
           const img = await postGenerate(
             "/api/infographic",
-            { passage: job.text, lang, extra: infoExtraOf("brief") },
+            { passage: job.text, lang, extra: infoExtraOf("brief", lang) },
             "요약 이미지를 만들지 못했습니다.",
             (n) => {
               briefLoadingTextEl.textContent =

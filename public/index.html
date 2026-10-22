@@ -1257,8 +1257,23 @@
             <input type="checkbox" class="img-lang" data-lang="en" id="infoLangEn"> 영어요약
           </label>
           <span class="chk-sub img-langs-note" id="infoLangNote"></span>
-          <input type="text" class="img-extra" id="infoExtra" maxlength="200" autocomplete="off"
-                 placeholder="추가 요청 (선택) 예: 핵심 단어를 크게, 파란 계열 색 — 비워 두면 기본 방식으로 만듭니다">
+          <div class="img-extra-list" id="infoExtraList">
+            <div class="img-extra-item" data-lang="mix" hidden>
+              <label class="img-extra-label" for="infoExtra_mix">한국어＋영어 이미지 프롬프트 작성칸 <span>(선택)</span></label>
+              <textarea class="img-extra" id="infoExtra_mix" rows="1" maxlength="200" autocomplete="off"
+                        placeholder="원하는 강조·색·분위기를 적으세요. 예: 핵심 단어를 크게, 파란 계열 색 — 비워 두면 기본 방식으로 만듭니다"></textarea>
+            </div>
+            <div class="img-extra-item" data-lang="ko" hidden>
+              <label class="img-extra-label" for="infoExtra_ko">한글요약 이미지 프롬프트 작성칸 <span>(선택)</span></label>
+              <textarea class="img-extra" id="infoExtra_ko" rows="1" maxlength="200" autocomplete="off"
+                        placeholder="원하는 강조·색·분위기를 적으세요. 예: 핵심 단어를 크게, 파란 계열 색 — 비워 두면 기본 방식으로 만듭니다"></textarea>
+            </div>
+            <div class="img-extra-item" data-lang="en" hidden>
+              <label class="img-extra-label" for="infoExtra_en">영어요약 이미지 프롬프트 작성칸 <span>(선택)</span></label>
+              <textarea class="img-extra" id="infoExtra_en" rows="1" maxlength="200" autocomplete="off"
+                        placeholder="원하는 강조·색·분위기를 적으세요. 예: 핵심 단어를 크게, 파란 계열 색 — 비워 두면 기본 방식으로 만듭니다"></textarea>
+            </div>
+          </div>
 
         </div>
       </div>
@@ -1327,8 +1342,23 @@
             <input type="checkbox" class="img-lang" data-lang="en" id="briefLangEn"> 영어요약
           </label>
           <span class="chk-sub img-langs-note" id="briefLangNote"></span>
-          <input type="text" class="img-extra" id="briefExtra" maxlength="200" autocomplete="off"
-                 placeholder="추가 요청 (선택) 예: 핵심 단어를 크게, 파란 계열 색 — 비워 두면 기본 방식으로 만듭니다">
+          <div class="img-extra-list" id="briefExtraList">
+            <div class="img-extra-item" data-lang="mix" hidden>
+              <label class="img-extra-label" for="briefExtra_mix">한국어＋영어 이미지 프롬프트 작성칸 <span>(선택)</span></label>
+              <textarea class="img-extra" id="briefExtra_mix" rows="1" maxlength="200" autocomplete="off"
+                        placeholder="원하는 강조·색·분위기를 적으세요. 예: 핵심 단어를 크게, 파란 계열 색 — 비워 두면 기본 방식으로 만듭니다"></textarea>
+            </div>
+            <div class="img-extra-item" data-lang="ko" hidden>
+              <label class="img-extra-label" for="briefExtra_ko">한글요약 이미지 프롬프트 작성칸 <span>(선택)</span></label>
+              <textarea class="img-extra" id="briefExtra_ko" rows="1" maxlength="200" autocomplete="off"
+                        placeholder="원하는 강조·색·분위기를 적으세요. 예: 핵심 단어를 크게, 파란 계열 색 — 비워 두면 기본 방식으로 만듭니다"></textarea>
+            </div>
+            <div class="img-extra-item" data-lang="en" hidden>
+              <label class="img-extra-label" for="briefExtra_en">영어요약 이미지 프롬프트 작성칸 <span>(선택)</span></label>
+              <textarea class="img-extra" id="briefExtra_en" rows="1" maxlength="200" autocomplete="off"
+                        placeholder="원하는 강조·색·분위기를 적으세요. 예: 핵심 단어를 크게, 파란 계열 색 — 비워 두면 기본 방식으로 만듭니다"></textarea>
+            </div>
+          </div>
 
         </div>
       </div>

@@ -149,7 +149,13 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .img-langs-title{font-size:12.5px; font-weight:800; color:var(--accent); margin-right:2px;}
 .img-langs .chk{font-size:13px;}
 .img-langs-note{width:100%; color:var(--ink-soft);}
-.img-extra{width:100%; font-size:13px; padding:6px 9px; border:1px solid var(--line); border-radius:7px; background:#fff; color:inherit;}
+.img-extra-list{width:100%; display:flex; flex-direction:column; gap:6px;}
+.img-extra-item[hidden]{display:none;}
+.img-extra-label{display:block; width:100%; font-size:12.5px; font-weight:800; color:var(--accent); margin-top:4px;}
+.img-extra-label span{font-weight:600; color:var(--ink-soft);}
+/* 평소엔 한 줄, 눌러서 쓰는 동안(또는 글이 있으면) 지문 입력칸처럼 넓힌다 */
+.img-extra{width:100%; box-sizing:border-box; font:inherit; font-size:13px; line-height:1.5; padding:6px 9px; border:1px solid var(--line); border-radius:7px; background:#fff; color:inherit; resize:vertical; height:34px; min-height:34px; transition:height .15s;}
+.img-extra:focus,.img-extra:not(:placeholder-shown){height:130px;}
 /* 지문 분석의 고를 것 두 상자 — 실행 단추 위에 나란히, 폭을 반씩 나눈다(좁으면 아래로) */
 .analyze-opts{display:flex; flex-wrap:wrap; gap:10px; margin-top:16px;}
 .analyze-opts .img-langs{flex:1 1 300px;}
