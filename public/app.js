@@ -1361,7 +1361,8 @@ function fadeWatermark(src, done) {
       d[i + 3] = 255;
     }
     x.putImageData(px, 0, 0);
-    wmFaded = { src, out: c.toDataURL("image/jpeg", 0.92) };
+    // PNG로 둔다 — 옅게 만든 그림은 거의 흰색이라 JPEG로 압축하면 글자 둘레에 얼룩(블록 잡음)이 번져 깨져 보였다(2026-10-22)
+    wmFaded = { src, out: c.toDataURL("image/png") };
     done(wmFaded.out);
   };
   img.src = src;
@@ -7778,7 +7779,28 @@ function setupQuizTab({ prefix, types, footer }) {
      AI를 다시 부르지 않는다 — 이미 받아 둔 문항을 재배열해 다시 그릴 뿐이라
      요금이 들지 않는다. 반마다 문항 순서가 다른 시험지를 뽑는 데 쓴다.
      저장함에서 불러온 자료에도 그대로 쓸 수 있고, 몇 번을 눌러도 그때마다 섞인다. */
-  function reshuffle() {
+  async function reshuffle() {
+    /* 지문이 여럿이면 어떻게 섞을지 묻는다 — 전체 문항을 한꺼번에 섞거나, 지문 묶음은 두고 각 지문 안에서만 섞는다.
+       지문 수는 문항을 만들 때 쓴 지문(job.text)으로 센다. 전체 섞기로 한 번 합쳐진 한 벌은 지문 구분이 사라져
+       지문이 하나로 보이므로 묻지 않는다. */
+    const passageKeys = new Set((lastEntries || [])
+      .filter((e) => e.job && e.job.text)
+      .map((e) => `${e.job.name || ""}\u0001${String(e.job.text).slice(0, 80)}`));
+    if (passageKeys.size > 1) {
+      const mode = await askShuffleMode();
+      if (!mode) return;
+      if (mode === "passage") {
+        const entries = (lastEntries || []).map((e) => ({
+          ...e,
+          set: {
+            ...e.set,
+            questions: seededShuffle((e.set && e.set.questions) || [], Math.floor(Math.random() * 1e9)),
+          },
+        }));
+        renderQuizEntries(entries);
+        return;
+      }
+    }
     /* 변형 세트끼리는 섞지 않는다 — 같은 지문의 원문판·변형판이 한 벌에 뒤섞이면
        거의 같은 지문을 두 번 풀게 되고, 애초에 A형/B형처럼 여러 벌을 뽑으려고
        고르는 기능이기 때문이다. 그 밖에는 지문 구분 없이 통째로 섞는다.
@@ -12111,6 +12133,26 @@ function splitDupPassages(have, jobs) {
   return { fresh, dup };
 }
 const dupSkipNote = (n) => (n ? ` 이미 들어 있는 지문과 같은 ${n}개는 건너뛰었습니다.` : "");
+
+// 문제 섞기 방식을 묻는다 — "all"(전체 문항) · "passage"(지문별로 묶어서) · null(취소)
+const shuffleModeDialogEl = $("shuffleModeDialog");
+let shuffleModeResolve = null;
+function askShuffleMode() {
+  shuffleModeDialogEl.hidden = false;
+  return new Promise((resolve) => { shuffleModeResolve = resolve; });
+}
+function closeShuffleMode(answer) {
+  shuffleModeDialogEl.hidden = true;
+  const r = shuffleModeResolve;
+  shuffleModeResolve = null;
+  if (r) r(answer);
+}
+$("shuffleModeAll").addEventListener("click", () => closeShuffleMode("all"));
+$("shuffleModePassage").addEventListener("click", () => closeShuffleMode("passage"));
+$("shuffleModeCancel").addEventListener("click", () => closeShuffleMode(null));
+shuffleModeDialogEl.addEventListener("click", (e) => {
+  if (e.target === shuffleModeDialogEl) closeShuffleMode(null);
+});
 
 // 같은 지문을 건너뛸지 묻는다 — "skip"(건너뛰기) · "all"(그대로 모두) · null(취소)
 const dupSkipDialogEl = $("dupSkipDialog");
