@@ -6118,6 +6118,277 @@ function chunkTypes(items, size = QUIZ_QUESTIONS_PER_CALL) {
   return out;
 }
 
+/* ── 시험지 꾸미기 (2026-10-22 사용자 — 학교마다 색·글자 크기·글꼴을 달리 뽑고 싶다) ──
+   문제 탭(객관식·주관식·혼합)과 워크북이 한 벌을 같이 쓴다. 결과 칸 하나에 인라인으로
+   얹는다 — 화면용 색(style.css의 @media screen 결과 칸 블록)과 인쇄용 색(@media print의 :root)
+   둘 다 이 칸 안에서는 인라인 값이 이기므로 화면과 인쇄가 함께 바뀐다. AI를 안 불러 요금이 없고,
+   다시 그려도 칸에 붙어 있어 그대로다. 저장본에는 sheetStyle로 함께 담는다(TAB_SAVE).
+   - 색은 아무 색이나 고른다(2026-10-22 사용자 — 색 팔레트·코드 입력, 자주 쓰는 색은 동그라미로).
+     시험지 색은 거의 모두 --accent/--accent-soft를 읽으므로 이 둘만 바꾼다. 고른 색이 연하면
+     (#ef8dbb 같은 분홍) 그 색 글자·흰 글자가 안 읽히므로, --accent는 같은 색조로 흰 종이 위
+     대비 4.5:1이 될 때까지 진하게 내리고(sheetToneColors), --accent-soft는 고른 색을 옅게 푼다.
+   - 글자 크기는 문제(발문)·지문·보기 세 묶음을 따로 px로 정한다(2026-10-22 사용자 — 숫자 입력, ▲▼로 1px씩).
+     묶음에 드는 칸은 style.css의 .fs-q/.fs-p/.fs-c 규칙에 있다. 고친 묶음만 결과 칸에 표시를 붙이고,
+     안 고친 묶음은 지금 모양(화면은 크게·인쇄는 2단용으로 작게) 그대로다. 숫자 칸의 처음 값은
+     인쇄 크기(SHEET_FS의 기본값)다 — 고치면 화면도 그 크기로 보여 인쇄와 같아진다.
+   - 글꼴은 어느 PC에서나 똑같이 나오도록 구글 무료 글꼴만 넣는다(고를 때 그때 받는다).
+     '기본'은 지금 글꼴(var(--font) — 윈도우면 맑은 고딕)이다.
+   - 워드 다운로드는 서버가 따로 그리므로 여기 설정이 들어가지 않는다. */
+// 동그라미로 늘어놓는 자주 쓰는 색. 첫째("")는 기본 남색(인쇄 색 --accent 그대로)이다.
+const SHEET_TONES = [
+  { id: "", name: "기본 (남색)", hex: "#1f4e6b" },
+  { id: "#1d4ed8", name: "파랑" },
+  { id: "#4aa3df", name: "하늘" },
+  { id: "#166534", name: "초록" },
+  { id: "#6ab04c", name: "연두" },
+  { id: "#5b21b6", name: "보라" },
+  { id: "#e3448f", name: "분홍" },
+  { id: "#9d174d", name: "자주" },
+  { id: "#c2410c", name: "주황" },
+  { id: "#92400e", name: "갈색" },
+  { id: "#262626", name: "흑백" },
+];
+const SHEET_HEX_RE = /^#[0-9a-f]{6}$/i;
+function sheetToneOf(v) {
+  if (typeof v !== "string") return "";
+  return SHEET_HEX_RE.test(v.trim()) ? v.trim().toLowerCase() : "";
+}
+/* 글자 크기 세 묶음. def = 지금 인쇄 크기(문제 탭은 2단 조판의 style.css 인쇄 값, 워크북은 화면=인쇄 값).
+   워크북은 보기 대신 우리말 해석이라 이름이 다르다. */
+const SHEET_FS = [
+  { k: "q", quiz: ["문제", 12], wb: ["안내문", 13] },
+  { k: "p", quiz: ["지문", 11.5], wb: ["영어 문장", 15] },
+  { k: "c", quiz: ["보기", 11.5], wb: ["우리말 해석", 13.5] },
+];
+const SHEET_FS_MIN = 8, SHEET_FS_MAX = 30;
+function sheetFsOf(v) {
+  const n = Math.round(Number(v) * 2) / 2;   // 0.5px까지만 받는다
+  return Number.isFinite(n) && n >= SHEET_FS_MIN && n <= SHEET_FS_MAX ? n : null;
+}
+/* 고른 색 → 시험지에 쓸 두 색. accent = 글자·번호 칸 바탕(흰 글자)이라 흰 종이와 대비 4.5:1 이상,
+   soft = 정답 상자 등 옅은 바탕. 둘 다 고른 색의 색조를 지킨다. */
+function sheetToneColors(hex) {
+  const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const lum = (c) => {
+    const [r, g, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const toHex = (c) => "#" + c.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+  // 밝기(HSL의 L)만 내려 진하게 한다 — RGB를 통째로 곱했더니 분홍이 칙칙한 팥색이 됐다
+  const [r, g, b] = rgb.map((v) => v / 255);
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  let h = 0, s = 0, l = (mx + mn) / 2;
+  if (mx !== mn) {
+    const d = mx - mn;
+    s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    h /= 6;
+  }
+  const fromHsl = (L) => {
+    if (!s) return [L * 255, L * 255, L * 255];
+    const q = L < 0.5 ? L * (1 + s) : L + s - L * s, p = 2 * L - q;
+    const f = (t) => {
+      t = (t + 1) % 1;
+      return 255 * (t < 1 / 6 ? p + (q - p) * 6 * t : t < 1 / 2 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p);
+    };
+    return [f(h + 1 / 3), f(h), f(h - 1 / 3)];
+  };
+  let dark = rgb;
+  for (let L = l; L > 0.02 && 1.05 / (lum(dark) + 0.05) < 4.5; L -= 0.02) dark = fromHsl(L);
+  const soft = rgb.map((v) => v + (255 - v) * 0.86);
+  return { accent: toHex(dark), soft: toHex(soft) };
+}
+/* 글꼴 목록 — 모두 상업적 사용·웹 사용이 되는 무료 글꼴(OFL)이다. css = 구글 글꼴의 family 값
+   (굵기는 그 글꼴에 실제 있는 것만 적는다 — 없는 굵기를 적으면 구글이 요청 전체를 거절한다),
+   href = 구글 밖 배포처. 프리텐다드는 저장소(orioncactus/pretendard)가 안내하는 jsDelivr 주소를
+   판(v1.3.9)까지 박아 쓴다 — 판을 안 박으면 저장소가 바뀔 때 시험지 글씨가 저절로 달라진다.
+   group은 고르는 칸의 묶음 이름이다. '제목용'은 굵고 둥근 글씨라 긴 영어 지문에는 권하지 않는다. */
+const SHEET_FONTS = [
+  { id: "", name: "기본 (맑은 고딕)", family: "" },
+  { id: "pretendard", group: "고딕", name: "프리텐다드", family: '"Pretendard Variable"',
+    href: "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" },
+  { id: "nanumgothic", group: "고딕", name: "나눔고딕", family: '"Nanum Gothic"', css: "Nanum+Gothic:wght@400;700;800" },
+  { id: "notosans", group: "고딕", name: "본고딕", family: '"Noto Sans KR"', css: "Noto+Sans+KR:wght@400;700;800" },
+  { id: "gothica1", group: "고딕", name: "고딕 A1", family: '"Gothic A1"', css: "Gothic+A1:wght@400;700;800" },
+  { id: "ibmplex", group: "고딕", name: "IBM Plex 한글", family: '"IBM Plex Sans KR"', css: "IBM+Plex+Sans+KR:wght@400;700" },
+  { id: "gowundodum", group: "고딕", name: "고운돋움", family: '"Gowun Dodum"', css: "Gowun+Dodum" },
+  { id: "orbit", group: "고딕", name: "오르빗", family: '"Orbit"', css: "Orbit" },
+  { id: "nanummyeongjo", group: "명조", name: "나눔명조", family: '"Nanum Myeongjo"', css: "Nanum+Myeongjo:wght@400;700;800" },
+  { id: "notoserif", group: "명조", name: "본명조", family: '"Noto Serif KR"', css: "Noto+Serif+KR:wght@400;700;800" },
+  { id: "gowunbatang", group: "명조", name: "고운바탕", family: '"Gowun Batang"', css: "Gowun+Batang:wght@400;700" },
+  { id: "hahmlet", group: "명조", name: "함렛", family: '"Hahmlet"', css: "Hahmlet:wght@400;700;800" },
+  { id: "songmyung", group: "명조", name: "송명", family: '"Song Myung"', css: "Song+Myung" },
+  { id: "jua", group: "제목용 (둥근·굵은 글씨)", name: "주아", family: '"Jua"', css: "Jua" },
+  { id: "dohyeon", group: "제목용 (둥근·굵은 글씨)", name: "도현", family: '"Do Hyeon"', css: "Do+Hyeon" },
+  { id: "sunflower", group: "제목용 (둥근·굵은 글씨)", name: "해바라기", family: '"Sunflower"', css: "Sunflower:wght@500;700" },
+];
+function sheetFontHref(font) {
+  if (font.href) return font.href;
+  return font.css ? `https://fonts.googleapis.com/css2?family=${font.css}&display=swap` : "";
+}
+// 글꼴 파일은 고른 것만 그때 받는다 — 처음 화면을 무겁게 하지 않으려고
+function loadSheetFont(font) {
+  const href = font && sheetFontHref(font);
+  if (!href) return;
+  const id = "sheetFont-" + font.id;
+  if (document.getElementById(id)) return;
+  const link = document.createElement("link");
+  link.id = id;
+  link.rel = "stylesheet";
+  link.href = href;
+  document.head.appendChild(link);
+}
+// kind: "quiz"(문제 탭) | "wb"(워크북) — 글자 크기 묶음 이름·처음 값이 다르다
+function createSheetStyle(boxId, resultEl, kind) {
+  const box = $(boxId);
+  const noFs = () => ({ q: null, p: null, c: null });
+  let cur = { tone: "", font: "", fs: noFs() };
+  const fsDef = (k) => SHEET_FS.find((x) => x.k === k)[kind][1];
+  const pick = (list, id) => list.find((x) => x.id === id) || list.find((x) => x.id === "");
+  // group이 있는 항목은 <optgroup>으로 묶는다(글꼴 — 고딕·명조·제목용)
+  const opts = (list, sel) => {
+    let html = "", group = null;
+    list.forEach((x) => {
+      if ((x.group || null) !== group) {
+        if (group) html += "</optgroup>";
+        group = x.group || null;
+        if (group) html += `<optgroup label="${esc(group)}">`;
+      }
+      html += `<option value="${x.id}"${x.id === sel ? " selected" : ""}>${esc(x.name)}</option>`;
+    });
+    return group ? html + "</optgroup>" : html;
+  };
+  function apply() {
+    const font = pick(SHEET_FONTS, cur.font);
+    const st = resultEl.style;
+    if (cur.tone) {
+      const c = sheetToneColors(cur.tone);
+      st.setProperty("--accent", c.accent);
+      st.setProperty("--accent-soft", c.soft);
+    } else {
+      st.removeProperty("--accent");
+      st.removeProperty("--accent-soft");
+    }
+    // 표지는 색을 고른 때만 칠한다(style.css .sheet-toned)
+    resultEl.classList.toggle("sheet-toned", !!cur.tone);
+    // 처음 값과 같으면 표시를 떼어 지금 모양(화면은 큰 글씨) 그대로 둔다
+    SHEET_FS.forEach(({ k }) => {
+      const v = cur.fs[k];
+      const on = v != null && v !== fsDef(k);
+      resultEl.classList.toggle("fs-" + k, on);
+      if (on) st.setProperty("--fs-" + k, v + "px");
+      else st.removeProperty("--fs-" + k);
+    });
+    loadSheetFont(font);
+    if (font.family) {
+      // 제목류는 var(--font)를, 본문은 물려받은 font-family를 읽으므로 둘 다 바꾼다
+      const fam = `${font.family},${getComputedStyle(document.documentElement).getPropertyValue("--font").trim() || "sans-serif"}`;
+      st.setProperty("--font", fam);
+      st.fontFamily = fam;
+    } else {
+      st.removeProperty("--font");
+      st.fontFamily = "";
+    }
+    syncToneUi();
+  }
+  // 색 칸 — 고른 색 동그라미 · 색 팔레트(브라우저 색 고르기 창: 색 판·색상 띠·코드) · 코드 입력 · 자주 쓰는 색
+  function syncToneUi() {
+    if (!box) return;
+    const hex = cur.tone || SHEET_TONES[0].hex;
+    const picker = box.querySelector(".sheet-tone-picker");
+    const code = box.querySelector(".sheet-tone-code");
+    if (picker) picker.value = hex;
+    if (code && document.activeElement !== code) code.value = hex;
+    box.querySelectorAll(".sheet-tone-sw").forEach((b) => {
+      b.classList.toggle("on", b.dataset.tone === cur.tone);
+    });
+    box.querySelectorAll(".sheet-fs-in").forEach((inp) => {
+      if (document.activeElement !== inp) inp.value = cur.fs[inp.dataset.fs] ?? fsDef(inp.dataset.fs);
+    });
+  }
+  function setTone(v) {
+    const t = sheetToneOf(v);
+    cur = { ...cur, tone: t === SHEET_TONES[0].hex ? "" : t };
+    apply();
+  }
+  if (box) {
+    const swatches = SHEET_TONES.map((t) =>
+      `<button type="button" class="sheet-tone-sw" data-tone="${t.id}" title="${esc(t.name)}" aria-label="${esc(t.name)}" style="background:${t.hex || t.id}"></button>`
+    ).join("");
+    box.innerHTML = `
+      <span class="sheet-style-title">🎨 시험지 꾸미기</span>
+      <div class="sheet-tone">
+        <span class="sheet-tone-label">테마 색상</span>
+        <label class="sheet-tone-pick" title="눌러서 색 판에서 고릅니다"><input type="color" class="sheet-tone-picker" value="${SHEET_TONES[0].hex}"></label>
+        <input type="text" class="sheet-tone-code" maxlength="7" spellcheck="false" value="${SHEET_TONES[0].hex}" aria-label="색 코드 (#으로 시작하는 6자리)">
+        <span class="sheet-tone-sws">${swatches}</span>
+      </div>
+      <div class="sheet-fs">
+        <span class="sheet-tone-label">글자 크기(px)</span>
+        ${SHEET_FS.map(({ k, ...names }) =>
+          `<label>${esc(names[kind][0])} <input type="number" class="sheet-fs-in" data-fs="${k}" min="${SHEET_FS_MIN}" max="${SHEET_FS_MAX}" step="1" value="${names[kind][1]}"></label>`
+        ).join("")}
+        <button type="button" class="btn ghost small sheet-fs-reset">처음 크기로</button>
+      </div>
+      <label>글꼴 <select data-k="font">${opts(SHEET_FONTS, "")}</select></label>
+      <div class="hint">색은 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 글자 크기는 숫자를 적거나 칸의 ▲▼(또는 키보드 ↑↓)로 1px씩 바꿉니다 — 처음 숫자는 인쇄되는 크기이고, 바꾸면 화면도 그 크기로 보입니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글자를 키우면 쪽 수가 늘어납니다. 워드 다운로드에는 들어가지 않습니다.</div>`;
+    const changed = () => { if (box.onSheetStyle) box.onSheetStyle(); };
+    box.addEventListener("change", (e) => {
+      const k = e.target && e.target.dataset && e.target.dataset.k;
+      if (!k) return;
+      cur = { ...cur, [k]: e.target.value };
+      apply();
+      changed();
+    });
+    // 색 판은 끄는 동안에도 바로 바뀌어 보이게 input으로 받는다
+    box.querySelector(".sheet-tone-picker").addEventListener("input", (e) => setTone(e.target.value));
+    const code = box.querySelector(".sheet-tone-code");
+    code.addEventListener("input", () => {
+      let v = code.value.trim();
+      if (v && v[0] !== "#") v = "#" + v;
+      if (SHEET_HEX_RE.test(v)) setTone(v);
+    });
+    code.addEventListener("blur", syncToneUi);
+    box.querySelector(".sheet-tone-sws").addEventListener("click", (e) => {
+      const b = e.target.closest(".sheet-tone-sw");
+      if (!b) return;
+      cur = { ...cur, tone: b.dataset.tone };
+      apply();
+    });
+    // 글자 크기 — 적는 동안(input)과 ▲▼(input·change 둘 다 온다) 모두 바로 반영하고, 칸을 떠날 때 범위 밖 값은 되돌린다
+    box.querySelectorAll(".sheet-fs-in").forEach((inp) => {
+      inp.addEventListener("input", () => {
+        const v = sheetFsOf(inp.value);
+        if (v == null) return;
+        cur = { ...cur, fs: { ...cur.fs, [inp.dataset.fs]: v } };
+        apply();
+      });
+      inp.addEventListener("change", () => { syncToneUi(); changed(); });
+      inp.addEventListener("blur", syncToneUi);
+    });
+    box.querySelector(".sheet-fs-reset").addEventListener("click", () => {
+      cur = { ...cur, fs: noFs() };
+      apply();
+      changed();
+    });
+  }
+  function set(v) {
+    const o = v && typeof v === "object" ? v : {};
+    const fs = noFs();
+    if (o.fs && typeof o.fs === "object") SHEET_FS.forEach(({ k }) => { fs[k] = sheetFsOf(o.fs[k]); });
+    cur = { tone: sheetToneOf(o.tone), font: pick(SHEET_FONTS, o.font).id, fs };
+    if (box) box.querySelectorAll("select[data-k]").forEach((s) => { s.value = cur[s.dataset.k]; });
+    apply();
+  }
+  apply();
+  return {
+    get: () => ({ ...cur, fs: { ...cur.fs } }),
+    set,
+    // 바꿀 때 다시 해야 할 일(워크북 쪽 수 다시 세기)을 걸어 둔다
+    onChange(fn) { if (box) box.onSheetStyle = fn; },
+  };
+}
+
 /* 문제 제작 탭이 자기 '시험지명' 손잡이를 걸어 두는 곳 — {get, set}.
    저장창이 탭 안쪽 변수를 직접 볼 수 없어서 이 레지스트리를 거친다(TAB_SAVE와 같은 방식). */
 const QUIZ_SHEET_TITLE = {};
@@ -6158,6 +6429,7 @@ function setupQuizTab({ prefix, types, footer }) {
   const loadingEl = $(prefix + "Loading");
   const loadingTextEl = $(prefix + "LoadingText");
   const resultEl = $(prefix + "Result");
+  const sheetStyle = createSheetStyle(prefix + "SheetStyle", resultEl, "quiz");
   const orderEl = radioGroup(prefix + "Order");
   const orderHintEl = $(prefix + "OrderHint");
   const ORDER_STORE = "gemini_" + prefix + "_order";
@@ -7252,10 +7524,13 @@ function setupQuizTab({ prefix, types, footer }) {
       passages: passageMgr.getJobs(),
       settings: getQuizSettings(),
       entries: lastEntries,
+      sheetStyle: sheetStyle.get(),
     }),
     applyPayload: (payload) => {
       passageMgr.setJobs(payload.passages || []);
       applyQuizSettings(payload.settings);
+      // 꾸미기가 생기기 전(2026-10-22) 저장본에는 값이 없다 — 그때는 지금 고른 모양을 그대로 둔다
+      if (payload.sheetStyle) sheetStyle.set(payload.sheetStyle);
       renderQuizEntries(payload.entries || []);
     },
     clearResults: () => renderQuizEntries([]),
@@ -8460,6 +8735,9 @@ if (wbPageBtn) {
 
 const wbAnswerBookChk = $("wbAnswerBookChk");
 const workbookDocEl = $("workbookDoc");
+const wbSheetStyle = createSheetStyle("wbSheetStyle", workbookDocEl, "wb");
+// 글자 크기를 바꾸면 쪽 수가 달라지므로 '약 N쪽' 안내와 쪽 구성을 다시 센다
+wbSheetStyle.onChange(() => { syncWbTight(); if (wbPaging) wbLayoutPages(); });
 const workbookPrintBtn = $("workbookPrintBtn");
 const wbAnswerPrintBtn = $("wbAnswerPrintBtn");
 const workbookSaveBtn = $("workbookSaveBtn");
@@ -8917,10 +9195,13 @@ TAB_SAVE.workbook = {
     passages: passageMgr.getJobs(),
     settings: getWorkbookSettings(),
     entries: lastWorkbookEntries,
+    sheetStyle: wbSheetStyle.get(),
   }),
   applyPayload: (payload) => {
     passageMgr.setJobs(payload.passages || []);
     applyWorkbookSettings(payload.settings);
+    // 꾸미기가 생기기 전(2026-10-22) 저장본에는 값이 없다 — 지금 고른 모양을 그대로 둔다
+    if (payload.sheetStyle) wbSheetStyle.set(payload.sheetStyle);
     renderWorkbookEntries(payload.entries || []);
   },
   clearResults: () => renderWorkbookEntries([]),
@@ -11612,7 +11893,7 @@ const HOWTO = {
       "<b>유형</b>을 체크하고 ＋ － 로 <b>문항 수</b>를 정합니다. 대화문 유형은 대화문을 넣었을 때만 만들어집니다.",
       "<b>학교급 · 난이도 · 출제 순서 · 지문 변형</b>을 고릅니다. 난이도를 둘 다 고르면 기본·고난도 두 벌이 나옵니다.",
       "<b>[문제 만들기]</b>를 누릅니다.",
-      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>[🔀 문제 섞기]</b>는 요금 없이 순서만 바꿉니다.",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>[🔀 문제 섞기]</b>는 요금 없이 순서만 바꿉니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
     tip: "고난도는 정답을 다른 말로 바꾸고 오답에 지문 낱말을 넣은 함정을 섞어, 외운 것만으로는 못 풉니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 학생에게 온라인 시험을 낼 수 있습니다." + HOWTO_PAUSE_TIP,
     sampleHead: "객관식은 이렇게 나옵니다 — 한 지문으로 23가지 유형을 한 문항씩 만든 시험지 중 세 쪽입니다",
@@ -11636,7 +11917,7 @@ const HOWTO = {
       "<b>유형</b>을 체크하고 ＋ － 로 <b>문항 수</b>를 정합니다.",
       "<b>학교급 · 난이도 · 출제 순서 · 지문 변형</b>을 고릅니다.",
       "<b>[문제 만들기]</b>를 누릅니다.",
-      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>[🔀 문제 섞기]</b>는 요금 없이 순서만 바꿉니다.",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>[🔀 문제 섞기]</b>는 요금 없이 순서만 바꿉니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
     tip: "고난도는 OX진위·질문에 답하기·표현 찾아 쓰기·영영풀이 쓰기·조건 영작에서만 됩니다. OX진위는 한 지문에 5문항까지입니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 학생에게 온라인 시험을 낼 수 있습니다." + HOWTO_PAUSE_TIP,
     sampleHead: "주관식은 이렇게 나옵니다 — 한 지문으로 18가지 유형을 한 문항씩 만든 시험지 중 네 쪽입니다",
@@ -11653,7 +11934,7 @@ const HOWTO = {
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "<b>객관식</b>과 <b>주관식</b> 칸에서 유형을 체크하고 문항 수를 정합니다.",
       "<b>학교급 · 난이도 · 출제 순서 · 지문 변형</b>을 고릅니다. 유형 순서대로면 객관식 → 주관식 순입니다.",
-      "<b>[문제 만들기]</b>를 누르고, <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
+      "<b>[문제 만들기]</b>를 누르고, <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
     sampleHead: "객관식과 주관식을 한 시험지에 섞으면 두 종류가 이렇게 이어서 나옵니다 — 두 탭 결과물의 일부입니다",
     tip: "요금은 각 탭에서 따로 만들 때와 같습니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 학생에게 온라인 시험을 낼 수 있습니다." + HOWTO_PAUSE_TIP,
@@ -11669,7 +11950,7 @@ const HOWTO = {
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "넣을 <b>단계</b>를 체크합니다. 번호는 <b>칸 차례대로</b> 붙고 그것이 인쇄 순서입니다(순서는 만든 뒤 <b>[📄 쪽 구성]</b>의 ▲▼로 바꿉니다). (선택) <b>내용 O/X</b>·<b>목표어법 배열 영작</b>·<b>단어 쓰기 세 가지</b>(단어 수는 − / +)도 고를 수 있습니다.",
       "<b>[워크북 만들기]</b>를 누릅니다. <b>정답 표시 (교사용)</b>를 켜면 선생님용으로 인쇄됩니다.",
-      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 학생이 사이트에서 풀게 할 수 있습니다.",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음). 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 학생이 사이트에서 풀게 할 수 있습니다.",
     ],
     tip: "<b>이미 만든 워크북</b>(저장함에서 불러온 것 포함)은 <b>단계 체크를 바꾸면 AI 없이 바로</b> 그 단계만 다시 늘어놓으니, 필요한 단계만 체크해 인쇄하세요(요금 없음). 단계를 <b>빼기만</b> 하면 [워크북 만들기]는 막히고, 만들지 않은 단계를 <b>더하면</b> 새로 만들 때까지 인쇄·저장·워드·시험 내기가 막힙니다. 단계 뒤가 비면 <b>[📄 쪽 구성]</b>에서 <b>[⤴ 위로 올리기]</b>로 앞 쪽에 이어 붙이세요. 같은 화면의 <b>[▲ 앞으로] · [▼ 뒤로]</b>로 단계 순서도 바꿀 수 있습니다. 값은 단계 수에 따라 오르다가 일정 단계부터 더 오르지 않습니다. 지문이 여럿이면 <b>지문별로 묶기 / 단계별로 묶기</b>를 고를 수 있습니다." + HOWTO_PAUSE_TIP,
     shots: {

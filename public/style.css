@@ -1192,6 +1192,16 @@ table.vocab-test td.v-blank .wb-ans::before{content:none;}
 .doc-cover h1{font-family:var(--font); font-size:28px; margin:0 0 10px;}
 .doc-cover-sub{font-size:14px; color:var(--ink); margin-bottom:6px;}
 .doc-cover-date{color:var(--ink-soft); font-size:13px;}
+/* 시험지 꾸미기에서 테마 색을 고른 결과 칸(.sheet-toned — app.js createSheetStyle)만 표지에 색을 입힌다.
+   색을 안 고르면, 그리고 다른 탭(분석·단어장·동형 모의고사)의 표지는 지금 모양 그대로다.
+   위 굵은 띠 + 옅은 바탕 + 제목 색·밑줄. 인쇄는 body의 print-color-adjust:exact로 배경까지 찍힌다. */
+.sheet-toned .doc-cover, .sheet-toned .wb-cover{
+  border:1px solid var(--accent); border-top:14px solid var(--accent);
+  background:linear-gradient(180deg, var(--accent-soft) 0%, var(--card) 85%);
+}
+.sheet-toned .doc-cover h1, .sheet-toned .wb-cover h1{
+  color:var(--accent); display:inline-block; padding:0 6px 8px; border-bottom:3px solid var(--accent);
+}
 
 .wb-titlebar{
   display:flex; flex-wrap:wrap; align-items:baseline; gap:10px;
@@ -1526,6 +1536,40 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 .brand-title .sub{color:var(--ink-soft); font-weight:600; font-size:11px;}
 /* 2026-10-14부터 탭마다 실행 단추 위로 옮겨 온다 */
 .brand-slot .brand-panel{margin:4px 0 12px;}
+
+/* ── 시험지 꾸미기(문제 탭·워크북, app.js의 createSheetStyle) ──
+   색 톤·글자 크기·글꼴을 결과 칸에 직접 얹으므로 화면과 인쇄가 함께 바뀐다. */
+.sheet-style{
+  display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px;
+  margin:4px 0 10px; padding:9px 14px; border:1px solid var(--line); border-radius:10px; background:var(--paper);
+}
+.sheet-style:empty{display:none;}
+.sheet-style-title{font-weight:700; font-size:13px; color:var(--ink);}
+.panel .sheet-style label{display:flex; align-items:center; gap:6px; margin:0; font-size:12.5px; letter-spacing:0;}
+.sheet-style select{width:auto; padding:5px 8px; font-size:13px;}
+.sheet-tone{display:flex; flex-wrap:wrap; align-items:center; gap:8px;}
+.sheet-tone-label{font-size:12.5px; font-weight:700; color:var(--ink-soft);}
+/* 네모 = 지금 색. 누르면 브라우저 색 판(색 판·색상 띠·코드)이 뜬다 */
+.panel .sheet-style .sheet-tone-pick{display:inline-flex; margin:0; cursor:pointer;}
+.sheet-tone-picker{width:34px; height:28px; padding:0; border:1px solid var(--line); border-radius:7px; background:none; cursor:pointer;}
+.sheet-tone-picker::-webkit-color-swatch-wrapper{padding:2px;}
+.sheet-tone-picker::-webkit-color-swatch{border:none; border-radius:5px;}
+.sheet-style input.sheet-tone-code{width:92px; padding:5px 8px; font-size:13px; font-family:Consolas,"SFMono-Regular",monospace;}
+.sheet-tone-sws{display:inline-flex; flex-wrap:wrap; gap:6px;}
+.sheet-tone-sw{width:22px; height:22px; padding:0; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 1px var(--line); cursor:pointer;}
+.sheet-tone-sw:hover{box-shadow:0 0 0 2px var(--ink-soft);}
+.sheet-tone-sw.on{box-shadow:0 0 0 2px var(--ink);}
+.sheet-style .hint{flex-basis:100%; margin:0;}
+.sheet-fs{display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px;}
+.sheet-style input.sheet-fs-in{width:64px; padding:5px 6px; font-size:13px; text-align:right;}
+.sheet-fs-reset{font-size:12px; padding:4px 9px;}
+/* 글자 크기 세부 조절 — 고친 칸만 결과 칸에 fs-q/fs-p/fs-c 표시가 붙고 그 값(px)을 쓴다.
+   화면과 인쇄 둘 다 이 값이다 — 선택자가 한 단계 깊어 인쇄용 2단 조판 규칙(.qz-passage 11.5px 등)을 이긴다.
+   묶음: 문제 = 발문·워크북 안내문 / 지문 = 지문·<보기>·<조건>·워크북 영어 문장 / 보기 = ①~⑤·워크북 해석 */
+.fs-q .qz-instruction, .fs-q .wb-guide{font-size:var(--fs-q);}
+.fs-p .qz-passage, .fs-p .qz-scramble, .fs-p .qz-conditions, .fs-p .qz-glossdef,
+.fs-p .wb-en, .fs-p .wb-lr-en, .fs-p .wb-para, .fs-p .wb-scramble, .fs-p .wb-parablock{font-size:var(--fs-p);}
+.fs-c .qz-choices li, .fs-c .wb-ko, .fs-c .wb-lr-ko{font-size:var(--fs-c);}
 .brand-body{margin-top:8px;}
 .brand-body .row{margin-top:0;}
 .brand-body label{font-size:12px; margin-bottom:4px;}
