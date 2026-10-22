@@ -149,6 +149,7 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .img-langs-title{font-size:12.5px; font-weight:800; color:var(--accent); margin-right:2px;}
 .img-langs .chk{font-size:13px;}
 .img-langs-note{width:100%; color:var(--ink-soft);}
+.img-extra{width:100%; font-size:13px; padding:6px 9px; border:1px solid var(--line); border-radius:7px; background:#fff; color:inherit;}
 /* 지문 분석의 고를 것 두 상자 — 실행 단추 위에 나란히, 폭을 반씩 나눈다(좁으면 아래로) */
 .analyze-opts{display:flex; flex-wrap:wrap; gap:10px; margin-top:16px;}
 .analyze-opts .img-langs{flex:1 1 300px;}

@@ -4456,6 +4456,14 @@ function enforceImgLangRule(prefix, changed) {
   }
 }
 
+// 요약 이미지 '추가 요청'(선택). 비어 있으면 빈 글을 보내고, 서버는 기본 방식으로 만든다.
+// 서버 INFOGRAPHIC_EXTRA_MAX와 같은 값.
+const INFOGRAPHIC_EXTRA_MAX = 200;
+function infoExtraOf(prefix) {
+  const el = $(prefix + "Extra");
+  return el ? el.value.replace(/\s+/g, " ").trim().slice(0, INFOGRAPHIC_EXTRA_MAX) : "";
+}
+
 function pickedImgLangs(prefix) {
   const box = $(prefix + "LangBox");
   if (!box) return [];
@@ -4533,7 +4541,7 @@ async function makeInfographics(todo) {
       try {
         const data = await postGenerate(
           "/api/infographic",
-          { passage: job.text, lang },
+          { passage: job.text, lang, extra: infoExtraOf("info") },
           "요약 이미지를 만들지 못했습니다.",
           (n) => {
             loadingTextEl.textContent =
@@ -5621,7 +5629,7 @@ briefBtn.addEventListener("click", async () => {
         try {
           const img = await postGenerate(
             "/api/infographic",
-            { passage: job.text, lang },
+            { passage: job.text, lang, extra: infoExtraOf("brief") },
             "요약 이미지를 만들지 못했습니다.",
             (n) => {
               briefLoadingTextEl.textContent =
@@ -11549,7 +11557,7 @@ const HOWTO = {
     lead: "지문을 의미 단위로 끊어 색·뜻을 달고, 문장마다 해설과 출제 포인트를 붙인 가장 두꺼운 자료입니다.",
     steps: [
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다. 여러 개면 <b>[＋ 지문 추가]</b>.",
-      "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 목표 어법을 적으면 그 구조가 주황색으로 표시됩니다.",
+      "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 요약 이미지는 <b>추가 요청</b> 칸에 원하는 강조·색을 적을 수 있고, 비우면 기본 방식으로 만듭니다. 목표 어법을 적으면 그 구조가 주황색으로 표시됩니다.",
       "<b>[분석하기]</b>를 누릅니다.",
       "<b>[✏️ 직접 수정]</b>으로 글자를, <b>[📄 쪽 구성]</b>으로 인쇄될 쪽 경계를 고칩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
@@ -11567,7 +11575,7 @@ const HOWTO = {
     lead: "상세분석과 같은 색·뜻에 해석을 한 줄 의역으로 담은, 학생이 들고 다니기 좋은 얇은 자료입니다.",
     steps: [
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
-      "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다.",
+      "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 요약 이미지는 <b>추가 요청</b> 칸에 원하는 강조·색을 적을 수 있고, 비우면 기본 방식으로 만듭니다.",
       "<b>[요약분석 만들기]</b>를 누릅니다.",
       "<b>[📄 쪽 구성]</b>으로 쪽 경계를 보고, <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
     ],
