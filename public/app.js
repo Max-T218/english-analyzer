@@ -11248,8 +11248,9 @@ const SAVE_TYPED_TITLE = {
 // 저장 제목 기본값 — 기존 인쇄 파일명 규칙을 재사용하고, 밑줄만 보기 좋게 공백으로 바꾼다
 const SAVE_TITLE_SUGGEST = {
   passage: () => passageBasedName("지문"),
-  analyze: () => passageBasedName("지문분석"),
-  brief: () => passageBasedName("요약분석"),
+  // 표지 제목 칸에 적은 이름이 있으면 그 이름 그대로(문제 탭의 시험지명과 같은 방식)
+  analyze: () => typedTitle("analyzeTitle") || passageBasedName("지문분석"),
+  brief: () => typedTitle("briefTitle") || passageBasedName("요약분석"),
   // 인쇄창에서 적어 둔 시험지명이 있으면 그것을 먼저 제안한다(저장함에서도 같은 이름)
   mcq: () => (QUIZ_SHEET_TITLE.mcq && QUIZ_SHEET_TITLE.mcq.get()) || passageBasedName("객관식문제"),
   saq: () => (QUIZ_SHEET_TITLE.saq && QUIZ_SHEET_TITLE.saq.get()) || passageBasedName("주관식문제"),
@@ -11263,6 +11264,8 @@ const SAVE_TITLE_SUGGEST = {
      것인지 알려 주는 것은 선생님이 직접 적은 이 이름뿐이다.
      머리글을 비워 뒀으면 지금까지처럼 '시험지_날짜'가 된다. */
   exam: () => {
+    const typed = typedTitle("examPaperTitle");
+    if (typed) return typed;
     const h = examHeadValues();
     const label = sanitizeFilename([h.school, h.title].filter(Boolean).join(" "));
     return ["시험지", label, todayStr()].filter(Boolean).join("_");
