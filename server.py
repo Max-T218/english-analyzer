@@ -6158,6 +6158,11 @@ def call_gemini_student_comment(data, api_key, model):
 GRAMMAR_MAX_QUESTIONS = 50
 GRAMMAR_MAX_ITEMS = 40
 GRAMMAR_CHUNK = 5
+# 한 묶음 호출이 이 시간(초) 안에 안 끝나면 기다리지 않는다. Gemini 호출이 가끔 응답 없이 매달려
+# GEMINI_TIMEOUT(300초)까지 가는데, 그 한 묶음을 기다리다 요청 전체가 프록시에 끊기거나 재배포에
+# 잘려 이미 만든 문항까지 통째로 잃었다(2026-10-22). 늦은 묶음은 버리고 받은 만큼으로 진행하며,
+# 빠진 자리는 아래 다시 채우기가 맡는다. 정상 묶음은 보통 10~40초다.
+GRAMMAR_ROUND_DEADLINE = _env("GRAMMAR_ROUND_DEADLINE", 80.0, float)
 GRAMMAR_PASSAGE_MAX = 8000
 # 레벨 — 화면 grammar.js의 GRAMMAR_GRADES와 같은 열쇠. 화면 이름은 초등 고학년 · 중등 Level 1~3 ·
 # 수능 Level이다(2026-10-20 — 학년 이름이 다른 사이트를 따라 한 티가 난다고 바꿨다. 열쇠는 그대로 둔다).
@@ -6591,8 +6596,13 @@ def call_gemini_grammar(plan, api_key, model=None):
         threads = [threading.Thread(target=work, args=(k, g), daemon=True) for k, g in enumerate(groups)]
         for t in threads:
             t.start()
+        end = time.monotonic() + GRAMMAR_ROUND_DEADLINE
         for t in threads:
-            t.join()
+            t.join(max(0.0, end - time.monotonic()))
+        hung = sum(1 for t in threads if t.is_alive())
+        if hung:   # 늦은 묶음의 결과가 나중에 도착해도 got.update가 덮어쓸 뿐이라 해가 없다
+            print(f"[grammar] 묶음 {hung}/{len(threads)}개가 {GRAMMAR_ROUND_DEADLINE:.0f}초 안에 끝나지 않아 "
+                  f"기다리지 않습니다", file=sys.stderr, flush=True)
 
     def drop_dups():
         """앞 문항과 같은 문장을 쓴 문항은 빼서 다시 만들게 한다."""
@@ -6612,13 +6622,17 @@ def call_gemini_grammar(plan, api_key, model=None):
     # 빠진 자리(AI가 빠뜨렸거나 기계 검사에서 걸러진 문항)를 최대 두 번 다시 채운다
     for _round in range(2):
         missing = [s for s in slots if s["slot"] not in got]
-        if not (missing and got) or _over_budget(t0):
+        if not missing or _over_budget(t0):
+            break
+        # 한 문항도 못 받았어도 한도 소진·Pro 불가가 아니면 한 번 더 부른다(일시적인 지연·과부하가 많다)
+        if not got and any(isinstance(e, (QuotaExceeded, ProUnavailable)) for e in errors):
             break
         avoid = [re.sub(r"<[^>]+>", " ", q.get("answerText") or q.get("passageHtml") or "")[:120]
                  for q in got.values()][:40]
         run([missing[i:i + GRAMMAR_CHUNK] for i in range(0, len(missing), GRAMMAR_CHUNK)], avoid)
         drop_dups()
-    questions = [got[s["slot"]] for s in slots if s["slot"] in got]
+    final = dict(got)   # 늦게 도착하는 묶음이 아래 계산 중에 값을 바꾸지 못하게 복사해 둔다
+    questions = [final[s["slot"]] for s in slots if s["slot"] in final]
     if not questions:
         first = errors[0] if errors else None
         if isinstance(first, (QuotaExceeded, ProUnavailable)):
