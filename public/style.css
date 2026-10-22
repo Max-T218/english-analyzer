@@ -1550,7 +1550,11 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
   display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px;
   margin:4px 0 10px; padding:9px 14px; border:1px solid var(--line); border-radius:10px; background:var(--paper);
 }
-.sheet-style:empty{display:none;}
+.sheet-style:empty, .sheet-style[hidden]{display:none;}
+/* 동형 모의고사는 만들기 칸(.panel) 밖, 시험지 단추 줄 아래에 둔다 — 카드 모양을 따로 준다 */
+#examSheetStyle{background:var(--card); box-shadow:var(--shadow); border:none; margin:0 0 16px;}
+#examSheetStyle label{display:flex; align-items:center; gap:6px; margin:0; font-size:12.5px; font-weight:700; color:var(--ink-soft);}
+@media print{ .sheet-style{display:none !important;} }
 .sheet-style-title{font-weight:700; font-size:13px; color:var(--ink);}
 .panel .sheet-style label{display:flex; align-items:center; gap:6px; margin:0; font-size:12.5px; letter-spacing:0;}
 .sheet-style select{width:auto; padding:5px 8px; font-size:13px;}
@@ -1570,13 +1574,25 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 .sheet-fs{display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px;}
 .sheet-style input.sheet-fs-in{width:64px; padding:5px 6px; font-size:13px; text-align:right;}
 .sheet-fs-reset{font-size:12px; padding:4px 9px;}
-/* 글자 크기 세부 조절 — 고친 칸만 결과 칸에 fs-q/fs-p/fs-c 표시가 붙고 그 값(px)을 쓴다.
+/* 글자 크기 세부 조절 — 고친 칸만 결과 칸에 fs-<k> 표시가 붙고 그 값(px)을 쓴다(app.js SHEET_FS).
    화면과 인쇄 둘 다 이 값이다 — 선택자가 한 단계 깊어 인쇄용 2단 조판 규칙(.qz-passage 11.5px 등)을 이긴다.
-   묶음: 문제 = 발문·워크북 안내문 / 지문 = 지문·<보기>·<조건>·워크북 영어 문장 / 보기 = ①~⑤·워크북 해석 */
-.fs-q .qz-instruction, .fs-q .wb-guide{font-size:var(--fs-q);}
-.fs-p .qz-passage, .fs-p .qz-scramble, .fs-p .qz-conditions, .fs-p .qz-glossdef,
-.fs-p .wb-en, .fs-p .wb-lr-en, .fs-p .wb-para, .fs-p .wb-scramble, .fs-p .wb-parablock{font-size:var(--fs-p);}
-.fs-c .qz-choices li, .fs-c .wb-ko, .fs-c .wb-lr-ko{font-size:var(--fs-c);}
+   문제 탭·문법문제·동형 모의고사 / 워크북 묶음:
+     q 문제 = 발문 · 워크북 안내문·소제목
+     p 지문 = 지문·<보기>·<조건>·고쳐 쓰기 줄 · 워크북 영어 문장·단어 쓰기 단서·순서 줄·키워드·내용 O/X 문장
+     c 보기 = ①~⑤·표현 찾아 쓰기 우리말 목록 · 워크북 우리말 해석
+     a 정답지 = 뒤쪽 정답표 · 워크북 정답 모음
+   단어장: w 단어 / m 뜻(단어 칸·번호 칸을 뺀 나머지 — 품사·유의어·답 칸) */
+.fs-q .qz-instruction, .fs-q .wb-guide, .fs-q .wb-heading{font-size:var(--fs-q);}
+.fs-p .qz-passage, .fs-p .qz-scramble, .fs-p .qz-conditions, .fs-p .qz-glossdef, .fs-p .qz-fixline,
+.fs-p .wb-en, .fs-p .wb-lr-en, .fs-p .wb-para, .fs-p .wb-scramble, .fs-p .wb-parablock,
+.fs-p .wb-wq-cue, .fs-p .wb-orderline, .fs-p .wb-keys, .fs-p .wb-fixline,
+#workbookDoc.fs-p .qz-choices li{font-size:var(--fs-p);}
+/* 워크북의 내용 O/X 칸은 문제 탭 모양(.qz-choices)을 빌려 쓰지만 영어 문장이라 '보기'가 아니라 위 p를 따른다 */
+.fs-c:not(#workbookDoc) .qz-choices li, .fs-c .qz-findline, .fs-c .wb-ko, .fs-c .wb-lr-ko{font-size:var(--fs-c);}
+.fs-a table.answerkey, .fs-a .wb-ab-stage li, .fs-a .wb-ab-stage h3{font-size:var(--fs-a);}
+.fs-a .exam-plan table.answerkey{font-size:13px;}   /* 동형 모의고사 배분표(화면 전용)는 정답표와 class만 같다 */
+.fs-w table.vocab td.v-word{font-size:var(--fs-w);}
+.fs-m table.vocab td:not(.v-no):not(.v-word){font-size:var(--fs-m);}
 .brand-body{margin-top:8px;}
 .brand-body .row{margin-top:0;}
 .brand-body label{font-size:12px; margin-bottom:4px;}
@@ -2511,6 +2527,17 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   .exam-sheet-subject { border-left-color: #000; }
   .exam-sheet-fill u { border-bottom-color: #000; }
 }
+
+/* 시험지 꾸미기에서 테마 색을 고른 때만(.sheet-toned) 머리글에도 색을 입힌다 — 위 '색을 쓰지 않는' 까닭은
+   기본값의 이야기이고, 선생님이 색을 직접 골랐으면 그 뜻을 따른다(2026-10-22 사용자: "위에가 안 바뀜").
+   테두리·가름줄·기입란 밑줄 = 테마 색, 위쪽 칸 = 표지와 같은 그라데이션, 과목 상자 = 옅은 테마 색 바탕. */
+.sheet-toned .exam-sheet-head { border-color: var(--accent); }
+.sheet-toned .exam-sheet-top { background: linear-gradient(180deg, var(--accent-soft) 0%, var(--card) 100%); }
+.sheet-toned .exam-sheet-school, .sheet-toned .exam-sheet-subject-name { color: var(--accent); }
+.sheet-toned .exam-sheet-subject { border-left-color: var(--accent); background: var(--accent-soft); }
+.sheet-toned .exam-sheet-bar { border-top-color: var(--accent); }
+.sheet-toned .exam-sheet-fill u { border-bottom-color: var(--accent); }
+@media (max-width: 620px) { .sheet-toned .exam-sheet-subject { border-top-color: var(--accent); } }
 
 .exam-engine { white-space: nowrap; font-weight: 600; }
 

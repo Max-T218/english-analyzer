@@ -703,6 +703,8 @@ TAB_LIBRARY_WORDS.grammar = {
   lead: "저장해 둔 문법 문제입니다. [불러오기]를 누르면 AI를 다시 부르지 않고 그 시험지를 그대로 엽니다.",
   empty: "아직 저장한 문법 문제가 없습니다. 문제를 만든 뒤 “💾 사이트 저장”을 눌러 보세요.",
 };
+// 시험지 꾸미기(색·글자 크기·글꼴) — 문제 탭과 같은 한 벌(app.js createSheetStyle). 문항 모양이 같아 "quiz" 묶음을 쓴다
+const grSheetStyle = createSheetStyle("grSheetStyle", grEl("grResult"), "quiz");
 SAVE_TITLE_SUGGEST.grammar = () => ["문법문제", sanitizeFilename(grSheetName()), todayStr()].filter(Boolean).join("_");
 TAB_SAVE.grammar = {
   // saveBtn을 등록하지 않는다 — app.js가 단추를 연결한 뒤에 이 파일이 로드된다(trend.js와 같다)
@@ -717,6 +719,7 @@ TAB_SAVE.grammar = {
     },
     title: grState.title,
     questions: grState.questions,
+    sheetStyle: grSheetStyle.get(),
   }),
   applyPayload: (payload) => {
     const s = payload.settings || {};
@@ -735,6 +738,8 @@ TAB_SAVE.grammar = {
     grState.title = String(payload.title || "");
     grEl("grTitle").value = grState.title;
     grState.questions = Array.isArray(payload.questions) ? payload.questions : [];
+    // 꾸미기가 생기기 전 저장본에는 값이 없다 — 지금 고른 모양을 그대로 둔다
+    if (payload.sheetStyle) grSheetStyle.set(payload.sheetStyle);
     grState.topic = null;
     grRenderShapes();
     grRenderAll();
@@ -753,7 +758,7 @@ if (typeof HOWTO !== "undefined") {
       "<b>② 문법 항목</b>을 누르고 <b>③ 세부 항목</b>을 체크합니다. 체크한 것은 <b>④ 고른 항목</b>에 모입니다.",
       "<b>⑤ 문항 수 · 모양</b>에서 객관식·주관식 문항 수, 문제 모양, 1단/2단을 정합니다. <b>항목마다 직접 정하기</b>를 고르면 ④에서 항목별 개수를 적습니다.",
       "<b>[문제 만들기]</b>를 누릅니다. 마음에 안 드는 문항은 <b>[✏️ 고치기]</b>로 직접 고칩니다.",
-      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
     tip: "한 번에 50문항까지 만들 수 있습니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 학생에게 온라인 시험을 낼 수 있습니다.",
   };

@@ -6173,7 +6173,8 @@ function chunkTypes(items, size = QUIZ_QUESTIONS_PER_CALL) {
      시험지 색은 거의 모두 --accent/--accent-soft를 읽으므로 이 둘만 바꾼다. 고른 색이 연하면
      (#ef8dbb 같은 분홍) 그 색 글자·흰 글자가 안 읽히므로, --accent는 같은 색조로 흰 종이 위
      대비 4.5:1이 될 때까지 진하게 내리고(sheetToneColors), --accent-soft는 고른 색을 옅게 푼다.
-   - 글자 크기는 문제(발문)·지문·보기 세 묶음을 따로 px로 정한다(2026-10-22 사용자 — 숫자 입력, ▲▼로 1px씩).
+   - 글자 크기는 문제(발문)·지문·보기·정답지 묶음을 따로 px로 정한다(2026-10-22 사용자 — 숫자 입력, ▲▼로 1px씩).
+     워크북·단어장은 묶음 이름이 다르다(SHEET_FS).
      묶음에 드는 칸은 style.css의 .fs-q/.fs-p/.fs-c 규칙에 있다. 고친 묶음만 결과 칸에 표시를 붙이고,
      안 고친 묶음은 지금 모양(화면은 크게·인쇄는 2단용으로 작게) 그대로다. 숫자 칸의 처음 값은
      인쇄 크기(SHEET_FS의 기본값)다 — 고치면 화면도 그 크기로 보여 인쇄와 같아진다.
@@ -6201,11 +6202,27 @@ function sheetToneOf(v) {
 }
 /* 글자 크기 세 묶음. def = 지금 인쇄 크기(문제 탭은 2단 조판의 style.css 인쇄 값, 워크북은 화면=인쇄 값).
    워크북은 보기 대신 우리말 해석이라 이름이 다르다. */
-const SHEET_FS = [
-  { k: "q", quiz: ["문제", 12], wb: ["안내문", 13] },
-  { k: "p", quiz: ["지문", 11.5], wb: ["영어 문장", 15] },
-  { k: "c", quiz: ["보기", 11.5], wb: ["우리말 해석", 13.5] },
-];
+// 탭 종류마다 묶음이 다르다 — quiz: 문제 탭·문법문제·동형 모의고사 / wb: 워크북 / vocab: 단어장·단어 시험지.
+// k는 style.css의 .fs-<k> 규칙과 짝이다. 정답지(a)는 뒤쪽 '정답 및 해설'·'정답 모음'이다.
+// 단어장의 13은 단어장(목록) 인쇄 크기다 — 단어 시험지는 2단 인쇄라 12px로 찍히다가 숫자를 고치면 그 값이 된다.
+const SHEET_FS = {
+  quiz: [
+    { k: "q", name: "문제", def: 12 },
+    { k: "p", name: "지문", def: 11.5 },
+    { k: "c", name: "보기", def: 11.5 },
+    { k: "a", name: "정답지", def: 13 },
+  ],
+  wb: [
+    { k: "q", name: "안내문", def: 13 },
+    { k: "p", name: "영어 문장", def: 15 },
+    { k: "c", name: "우리말 해석", def: 13.5 },
+    { k: "a", name: "정답 모음", def: 12 },
+  ],
+  vocab: [
+    { k: "w", name: "단어", def: 13 },
+    { k: "m", name: "뜻", def: 13 },
+  ],
+};
 const SHEET_FS_MIN = 8, SHEET_FS_MAX = 30;
 function sheetFsOf(v) {
   const n = Math.round(Number(v) * 2) / 2;   // 0.5px까지만 받는다
@@ -6284,12 +6301,13 @@ function loadSheetFont(font) {
   link.href = href;
   document.head.appendChild(link);
 }
-// kind: "quiz"(문제 탭) | "wb"(워크북) — 글자 크기 묶음 이름·처음 값이 다르다
+// kind: "quiz"(문제 탭·문법문제·동형 모의고사) | "wb"(워크북) | "vocab"(단어장) — 글자 크기 묶음이 다르다(SHEET_FS)
 function createSheetStyle(boxId, resultEl, kind) {
   const box = $(boxId);
-  const noFs = () => ({ q: null, p: null, c: null });
+  const fsList = SHEET_FS[kind];
+  const noFs = () => Object.fromEntries(fsList.map(({ k }) => [k, null]));
   let cur = { tone: "", font: "", fs: noFs() };
-  const fsDef = (k) => SHEET_FS.find((x) => x.k === k)[kind][1];
+  const fsDef = (k) => fsList.find((x) => x.k === k).def;
   const pick = (list, id) => list.find((x) => x.id === id) || list.find((x) => x.id === "");
   // group이 있는 항목은 <optgroup>으로 묶는다(글꼴 — 고딕·명조·제목용)
   const opts = (list, sel) => {
@@ -6318,7 +6336,7 @@ function createSheetStyle(boxId, resultEl, kind) {
     // 표지는 색을 고른 때만 칠한다(style.css .sheet-toned)
     resultEl.classList.toggle("sheet-toned", !!cur.tone);
     // 처음 값과 같으면 표시를 떼어 지금 모양(화면은 큰 글씨) 그대로 둔다
-    SHEET_FS.forEach(({ k }) => {
+    fsList.forEach(({ k }) => {
       const v = cur.fs[k];
       const on = v != null && v !== fsDef(k);
       resultEl.classList.toggle("fs-" + k, on);
@@ -6371,8 +6389,8 @@ function createSheetStyle(boxId, resultEl, kind) {
       </div>
       <div class="sheet-fs">
         <span class="sheet-tone-label">글자 크기(px)</span>
-        ${SHEET_FS.map(({ k, ...names }) =>
-          `<label>${esc(names[kind][0])} <input type="number" class="sheet-fs-in" data-fs="${k}" min="${SHEET_FS_MIN}" max="${SHEET_FS_MAX}" step="1" value="${names[kind][1]}"></label>`
+        ${fsList.map(({ k, name, def }) =>
+          `<label>${esc(name)} <input type="number" class="sheet-fs-in" data-fs="${k}" min="${SHEET_FS_MIN}" max="${SHEET_FS_MAX}" step="1" value="${def}"></label>`
         ).join("")}
         <button type="button" class="btn ghost small sheet-fs-reset">처음 크기로</button>
       </div>
@@ -6421,7 +6439,7 @@ function createSheetStyle(boxId, resultEl, kind) {
   function set(v) {
     const o = v && typeof v === "object" ? v : {};
     const fs = noFs();
-    if (o.fs && typeof o.fs === "object") SHEET_FS.forEach(({ k }) => { fs[k] = sheetFsOf(o.fs[k]); });
+    if (o.fs && typeof o.fs === "object") fsList.forEach(({ k }) => { fs[k] = sheetFsOf(o.fs[k]); });
     cur = { tone: sheetToneOf(o.tone), font: pick(SHEET_FONTS, o.font).id, fs };
     if (box) box.querySelectorAll("select[data-k]").forEach((s) => { s.value = cur[s.dataset.k]; });
     apply();
@@ -10155,6 +10173,8 @@ const vocabDocxBtn = $("vocabDocxBtn");
 const vocabAssignBtn = $("vocabAssignBtn");
 const vocabErrorEl = $("vocabError");
 const vocabDocEl = $("vocabDoc");
+// 시험지 꾸미기 — 단어장은 표라 글자 크기 묶음이 '단어 / 뜻'이다(SHEET_FS.vocab)
+const vocabSheetStyle = createSheetStyle("vocabSheetStyle", vocabDocEl, "vocab");
 // "반에 시험 내기"가 지금 화면에 그려진 것과 똑같은 목록(중복 합치기·정렬 반영)을
 // 그대로 시험 문제로 쓰게, buildVocab이 마지막으로 계산한 줄을 들고 있는다.
 let lastVocabRows = [];
@@ -10908,9 +10928,12 @@ TAB_SAVE.vocab = {
       mixKo: vocabMixKoEl.value,
       mixEn: vocabMixEnEl.value,
     },
+    sheetStyle: vocabSheetStyle.get(),
   }),
   applyPayload: (payload) => {
     saveVocabSets(payload.vocabSets || []);
+    // 꾸미기가 생기기 전 저장본에는 값이 없다 — 지금 고른 모양을 그대로 둔다
+    if (payload.sheetStyle) vocabSheetStyle.set(payload.sheetStyle);
     const s = payload.settings || {};
     if (s.format) {
       vocabFormatEl.value = s.format;
@@ -12015,7 +12038,7 @@ const HOWTO = {
     steps: [
       "<b>지문 상세분석</b>을 돌리면 핵심 어휘가 저절로 모입니다. <b>[✏️ 직접 입력]</b>이나 사진·PDF를 끌어다 놓아도 됩니다.",
       "<b>형식</b>을 고릅니다 — 단어장, 또는 시험지(뜻 쓰기 · 영어 쓰기 · 섞어서).",
-      "<b>[단어장 만들기]</b>를 누르고 <b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑습니다.",
+      "<b>[단어장 만들기]</b>를 누르고 <b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑습니다. <b>🎨 시험지 꾸미기</b>로 색·단어/뜻 글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
     tip: "사진·PDF로 읽은 단어는 편집 표에서 확인한 뒤 [이 단어장에 추가]를 눌러야 들어갑니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 온라인 단어시험을 낼 수 있습니다(요금 없음). 저장한 단어장을 여러 개 체크하면 한 시험으로 합치거나 단어장마다 따로 낼 수 있습니다. 단어장 책 PDF를 단원별로 나눠 읽었으면 '📚 쓸 단어장 고르기'의 <b>[💾 고른 단원 따로 저장]</b>으로 단원마다 저장해 두세요 — 다음엔 PDF를 다시 올리지 않아도 됩니다.",
     shots: {
@@ -12032,7 +12055,7 @@ const HOWTO = {
       "기출 시험지 <b>PDF·사진</b>을 끌어다 놓으면 유형 분석을 시작합니다. 여러 부를 올리면 한 구성으로 합칩니다.",
       "구성표에서 <b>총 문항 수</b>와 유형별 개수를 고칩니다. 다음에 또 쓰려면 <b>[💾 이 기출 구성 저장]</b>.",
       "<b>시험 범위 지문</b>을 넣습니다 — 이 탭은 지문 칸이 따로 있습니다. <b>[📄 저장함에서 가져오기]</b>로 채워도 됩니다.",
-      "<b>[📝 문제 제작]</b>을 누르고, <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
+      "<b>[📝 문제 제작]</b>을 누르고, <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. 만든 시험지 위의 <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
     tip: "저장해 둔 구성은 <b>[📂 저장한 구성 불러오기]</b>, 시험지 분석 리포트에서 분석한 기출은 <b>[📂 분석 리포트에서 불러오기]</b>로 바로 씁니다. 다른 시험지를 만들려면 <b>[🔄 새로 시작하기]</b>.",
     shots: {
@@ -14091,6 +14114,8 @@ const examPlanBtn = $("examPlanBtn");
 const examPaperLoadingEl = $("examPaperLoading");
 const examPaperLoadingTextEl = $("examPaperLoadingText");
 const examPaperResultEl = $("examPaperResult");
+// 시험지 꾸미기 — 문제 탭과 같은 문항 모양이라 "quiz" 묶음을 쓴다. 저장본에는 TAB_SAVE.exam이 담는다
+const examSheetStyle = createSheetStyle("examSheetStyle", examPaperResultEl, "quiz");
 
 /* ── 표지 ──
    워크북에만 있던 표지(.wb-cover)를 모든 탭이 나눠 쓴다. 새로 디자인하지 않고 그 모양을
@@ -15414,6 +15439,9 @@ function renderExamPaperSets() {
     $("examPaperSaveBtn").style.display = on ? "inline-flex" : "none";
     $("examPaperDocxBtn").style.display = on ? "inline-flex" : "none";
     $("examPaperClearBtn").style.display = on ? "inline-flex" : "none";
+    // 시험지 꾸미기 칸은 시험지가 있을 때만 보인다(만들기 칸은 기출 분석 전엔 숨어 있어 그 밖에 둔다)
+    const ss = $("examSheetStyle");
+    if (ss) ss.hidden = !on;
   };
   if (!examPaperSets.length) {
     examPaperResultEl.innerHTML = "";
@@ -15634,9 +15662,12 @@ TAB_SAVE.exam = {
     sheetHead: examHeadValues(),
     // 기출 구성표 — 발문·번호·고사 이름은 빼고 '무슨 유형 몇 개'만
     examSpec: examScanNow ? examSpecFromScan(examScanNow) : null,
+    sheetStyle: examSheetStyle.get(),
   }),
   applyPayload: (payload) => {
     examPaperMgr.setJobs(payload.passages || []);
+    // 꾸미기가 생기기 전 저장본에는 값이 없다 — 지금 고른 모양을 그대로 둔다
+    if (payload.sheetStyle) examSheetStyle.set(payload.sheetStyle);
     examGrammarEl.value = payload.targetGrammar || "";
     examVocab.value = payload.targetVocab || "";
     examVocab.swapSet(payload.vocabSwap);
