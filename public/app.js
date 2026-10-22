@@ -6383,7 +6383,7 @@ const SHEET_FS = {
     { k: "w", name: "단어", def: 13 },
     { k: "m", name: "뜻", def: 13 },
   ],
-  font: [],   // 지문 분석·요약분석 — 글꼴만 고른다(createSheetStyle의 "font")
+  doc: [],   // 지문 분석·요약분석 — 테마 색·글꼴만 고른다(createSheetStyle의 "doc")
 };
 const SHEET_FS_MIN = 8, SHEET_FS_MAX = 30;
 function sheetFsOf(v) {
@@ -6489,7 +6489,7 @@ function loadSheetFont(font) {
   document.head.appendChild(link);
 }
 // kind: "quiz"(문제 탭·문법문제·동형 모의고사) | "wb"(워크북) | "vocab"(단어장) — 글자 크기 묶음이 다르다(SHEET_FS)
-//       | "font"(지문 분석·요약분석 — 글꼴 칸 하나만 그린다)
+//       | "doc"(지문 분석·요약분석 — 테마 색·글꼴만, 글자 크기 칸 없음)
 function createSheetStyle(boxId, resultEl, kind) {
   const box = $(boxId);
   const fsList = SHEET_FS[kind];
@@ -6580,22 +6580,14 @@ function createSheetStyle(boxId, resultEl, kind) {
     },
     add: (hx) => sheetPaletteSet(sheetPaletteNow().concat(hx), true),
   };
-  if (box && kind === "font") {
-    // 지문 분석·요약분석 — 글꼴만 고른다. 색은 어법·어휘 표시가 뜻을 담고 있어 바꾸지 않고, 글자 크기는 분석본이
-    // 덩어리 높이로 쪽을 나누고 짧은 문장을 한 줄 폭으로 묶어 이 칸에 넣지 않았다(2026-10-22 사용자: 글씨체만)
+  // 지문 분석·요약분석("doc")은 테마 색과 글꼴만 고른다. 테마 색은 --accent(표지·지문 머리·문장 번호·소제목·
+  // 흐름도·배경지식 카드 같은 꾸밈 자리)만 바꾸고, 어법(빨강)·어휘(파랑)·병렬 묶음 색은 뜻을 담고 있어 그대로다
+  // (2026-10-22 사용자: 체크한 자리는 색을 바꿔도 된다). 글자 크기는 분석본이 덩어리 높이로 쪽을 나누고 짧은 문장을
+  // 한 줄 폭으로 묶어 이 칸에 넣지 않았다.
+  const isDoc = kind === "doc";
+  if (box) {
     box.innerHTML = `
-      <span class="sheet-style-title">🔤 분석본 글꼴</span>
-      <label>글꼴 <select data-k="font">${opts(SHEET_FONTS, "")}</select></label>
-      <div class="hint">만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글꼴마다 글자 폭이 달라 쪽 수가 조금 달라질 수 있으니 인쇄 전에 <b>[📄 쪽 구성]</b>으로 확인하세요. 워드 다운로드에는 들어가지 않습니다.</div>`;
-    box.addEventListener("change", (e) => {
-      if (!(e.target && e.target.dataset && e.target.dataset.k === "font")) return;
-      cur = { ...cur, font: e.target.value };
-      apply();
-      if (box.onSheetStyle) box.onSheetStyle();
-    });
-  } else if (box) {
-    box.innerHTML = `
-      <span class="sheet-style-title">🎨 시험지 꾸미기</span>
+      <span class="sheet-style-title">${isDoc ? "🎨 분석본 꾸미기" : "🎨 시험지 꾸미기"}</span>
       <div class="sheet-tone">
         <span class="sheet-tone-label">테마 색상</span>
         <button type="button" class="sheet-tone-pick" title="눌러서 색 판을 엽니다 — 색 판 안의 [＋ 색 추가]로 자주 쓰는 색에 더할 수 있습니다" aria-label="색 판 열기" style="background:${SHEET_TONES[0].hex}"></button>
@@ -6606,15 +6598,15 @@ function createSheetStyle(boxId, resultEl, kind) {
           <button type="button" class="sheet-pal-btn sheet-pal-reset" title="자주 쓰는 색을 처음 상태로 되돌립니다" hidden>↺ 처음 팔레트</button>
         </span>
       </div>
-      <div class="sheet-fs">
+      ${fsList.length ? `<div class="sheet-fs">
         <span class="sheet-tone-label">글자 크기(px)</span>
         ${fsList.map(({ k, name, def }) =>
           `<label>${esc(name)} <input type="number" class="sheet-fs-in" data-fs="${k}" min="${SHEET_FS_MIN}" max="${SHEET_FS_MAX}" step="1" value="${def}"></label>`
         ).join("")}
         <button type="button" class="btn ghost small sheet-fs-reset">처음 크기로</button>
-      </div>
+      </div>` : ""}
       <label>글꼴 <select data-k="font">${opts(SHEET_FONTS, "")}</select></label>
-      <div class="hint">색은 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다. 자주 쓰는 색은 네모를 눌러 연 색 판의 <b>＋ 색 추가</b>로 동그라미에 더하고 <b>－ 빼기</b>로 뺍니다 — 계정에 저장되어 모든 탭과 다음 로그인에도 남습니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 글자 크기는 숫자를 적거나 칸의 ▲▼(또는 키보드 ↑↓)로 1px씩 바꿉니다 — 처음 숫자는 인쇄되는 크기이고, 바꾸면 화면도 그 크기로 보입니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글자를 키우면 쪽 수가 늘어납니다. 워드 다운로드에는 들어가지 않습니다.</div>`;
+      ${isDoc ? `<div class="hint">테마 색은 표지·지문 머리·문장 번호·소제목·흐름도·배경지식 카드 같은 꾸밈 자리에만 들어가고, 어법(빨강)·어휘(파랑)·병렬구조 표시 색은 뜻을 담고 있어 그대로입니다. 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다 — 자주 쓰는 색 동그라미는 문제 탭의 시험지 꾸미기와 같이 씁니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글꼴마다 글자 폭이 달라 쪽 수가 조금 달라질 수 있으니 인쇄 전에 <b>[📄 쪽 구성]</b>으로 확인하세요. 워드 다운로드에는 들어가지 않습니다.</div>` : `<div class="hint">색은 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다. 자주 쓰는 색은 네모를 눌러 연 색 판의 <b>＋ 색 추가</b>로 동그라미에 더하고 <b>－ 빼기</b>로 뺍니다 — 계정에 저장되어 모든 탭과 다음 로그인에도 남습니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 글자 크기는 숫자를 적거나 칸의 ▲▼(또는 키보드 ↑↓)로 1px씩 바꿉니다 — 처음 숫자는 인쇄되는 크기이고, 바꾸면 화면도 그 크기로 보입니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글자를 키우면 쪽 수가 늘어납니다. 워드 다운로드에는 들어가지 않습니다.</div>`}`;
     const changed = () => { if (box.onSheetStyle) box.onSheetStyle(); };
     box.addEventListener("change", (e) => {
       const k = e.target && e.target.dataset && e.target.dataset.k;
@@ -6669,7 +6661,7 @@ function createSheetStyle(boxId, resultEl, kind) {
       inp.addEventListener("change", () => { syncToneUi(); changed(); });
       inp.addEventListener("blur", syncToneUi);
     });
-    box.querySelector(".sheet-fs-reset").addEventListener("click", () => {
+    box.querySelector(".sheet-fs-reset")?.addEventListener("click", () => {
       cur = { ...cur, fs: noFs() };
       apply();
       changed();
@@ -6692,11 +6684,11 @@ function createSheetStyle(boxId, resultEl, kind) {
   };
 }
 
-// 지문 분석·요약분석의 글꼴 칸 — 이 함수와 그 표(SHEET_*)가 정해진 뒤에 만들어야 해서 여기 둔다.
+// 지문 분석·요약분석의 꾸미기 칸(테마 색·글꼴) — 이 함수와 그 표(SHEET_*)가 정해진 뒤에 만들어야 해서 여기 둔다.
 // 글꼴을 바꾸면 덩어리 높이가 달라지므로, 쪽 구성 화면이 열려 있으면 쪽 경계를 다시 센다.
 // 이미 만든 요약분석의 '짧은 문장 묶기'는 다시 하지 않는다 — 다시 그리면 손으로 고친 글이 사라진다.
-const analyzeSheetStyle = createSheetStyle("analyzeSheetStyle", resultEl, "font");
-const briefSheetStyle = createSheetStyle("briefSheetStyle", briefDocEl, "font");
+const analyzeSheetStyle = createSheetStyle("analyzeSheetStyle", resultEl, "doc");
+const briefSheetStyle = createSheetStyle("briefSheetStyle", briefDocEl, "doc");
 [[analyzeSheetStyle, resultEl], [briefSheetStyle, briefDocEl]].forEach(([ss, host]) =>
   ss.onChange(() => { if (pagingOn() && pgHost === host) layoutPages(); })
 );
@@ -12173,7 +12165,7 @@ const HOWTO = {
       "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 요약 이미지는 <b>추가 요청</b> 칸에 원하는 강조·색을 적을 수 있고, 비우면 기본 방식으로 만듭니다. 목표 어법을 적으면 그 구조가 주황색으로 표시됩니다.",
       "<b>[분석하기]</b>를 누릅니다.",
       "<b>[✏️ 직접 수정]</b>으로 글자를, <b>[📄 쪽 구성]</b>으로 인쇄될 쪽 경계를 고칩니다.",
-      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🔤 분석본 글꼴</b>로 글씨체를 바꿀 수 있습니다(요금 없음).",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 분석본 꾸미기</b>로 테마 색·글씨체를 바꿀 수 있습니다(요금 없음).",
     ],
     tip: "요약 이미지는 사이트에 저장해야 다음에 불러올 때 남습니다. 학생용 모의고사 문제지를 <b>[📄 PDF에서 가져오기]</b>로 올리면 빈칸·순서·문장 삽입 문항을 AI가 풀어 채울지 묻습니다(채우면 지문당 포인트). 그 창에 정답표를 붙여 넣거나 올리면 정답표의 답대로 채웁니다. 순서·삽입·무관한 문장·빈칸 <b>문제를 캡처해 넣으면</b> 답을 정하는 창이 떠, 답을 고르거나 정답표를 넣거나 AI에게 풀게 하면(문제당 포인트) 원래 지문으로 바꿔 넣습니다. 문제 모양 그대로 쓰려면 <b>[📷 캡처본 그대로 두기]</b>를 누르세요." + HOWTO_PAUSE_TIP,
     shots: {
@@ -12190,7 +12182,7 @@ const HOWTO = {
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 요약 이미지는 <b>추가 요청</b> 칸에 원하는 강조·색을 적을 수 있고, 비우면 기본 방식으로 만듭니다.",
       "<b>[요약분석 만들기]</b>를 누릅니다.",
-      "<b>[📄 쪽 구성]</b>으로 쪽 경계를 보고, <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🔤 분석본 글꼴</b>로 글씨체를 바꿀 수 있습니다(요금 없음 — 짧은 문장 묶기까지 맞추려면 글꼴을 먼저 고르고 만드세요).",
+      "<b>[📄 쪽 구성]</b>으로 쪽 경계를 보고, <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 분석본 꾸미기</b>로 테마 색·글씨체를 바꿀 수 있습니다(요금 없음 — 짧은 문장 묶기까지 맞추려면 글꼴을 먼저 고르고 만드세요).",
     ],
     tip: "상세분석과 달리 오른쪽 해설 칸과 핵심 어휘표가 없습니다." + HOWTO_PAUSE_TIP,
     shots: {
