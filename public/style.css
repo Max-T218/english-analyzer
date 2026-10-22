@@ -1592,13 +1592,17 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
 .brand-preview img, .brand-mark img{max-height:36px; max-width:140px; object-fit:contain;}
 #brandWmPreview{display:flex; align-items:center; gap:8px;}
 /* 워터마크 — 화면에는 안 보이고, 인쇄에서 쪽 전체(여백 안쪽)에 비율을 지켜 가득 깐다.
-   fixed라 크롬이 쪽마다 같은 자리에 되풀이해 그린다. 글 위에 아주 옅게 얹는다 — 아래에 깔면
-   흰 칸·표 배경에 가려 안 보인다. multiply로 섞어 흰 바탕 그림의 흰 부분은 사라지게 한다. */
+   fixed라 크롬이 쪽마다 같은 자리에 되풀이해 그린다.
+   ⚠️ 반드시 글 '뒤'(z-index:-1)에 두고 opacity·mix-blend-mode를 쓰지 않는다. 그림은 app.js
+   fadeWatermark가 미리 옅게 바꿔 둔 것이다. 예전엔 글 위에 얹고 투명 효과로 비치게 했는데,
+   프린터가 그 투명 처리를 한 띠에서 빠뜨려 그림의 흰 바탕이 지문을 덮었다(2026-10-22).
+   뒤에 깔면 흰 칸에 가려지므로 인쇄에서는 --paper·--card(칸 바탕)와 body 바탕을 투명하게 둔다
+   (아래 @media print의 :root·body). 종이 흰색은 html 바탕이 맡는다. */
 .print-wm{display:none;}
 @media print{
   .print-wm:not([hidden]){
     display:block; position:fixed; top:0; left:0; width:100%; height:100%;
-    object-fit:contain; opacity:.07; mix-blend-mode:multiply; pointer-events:none; z-index:5;
+    object-fit:contain; pointer-events:none; z-index:-1;
   }
 }
 .brand-name{font-weight:700; color:var(--ink); font-size:13.5px;}
@@ -2185,7 +2189,8 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   /* OS가 다크모드여도 인쇄는 항상 라이트 색상으로 고정 (색 빠짐 방지) */
   :root{
     color-scheme:light !important;
-    --paper:#ffffff; --card:#ffffff; --ink:#1b2430; --ink-soft:#42505f;
+    /* 칸 바탕은 투명 — 글 뒤에 깐 워터마크(.print-wm)가 칸에 가려지지 않게. 종이 흰색은 html이 맡는다 */
+    --paper:transparent; --card:transparent; --ink:#1b2430; --ink-soft:#42505f;
     --line:#c9d0d8; --line-soft:#eef1f4; --accent:#1f4e6b; --accent-soft:#eaf0f5;
     --g:#c62828; --v:#1565a8; --gv:#6d329a; --conj:#12692f; --hl:#ffec99; --conj-bg:#a9e3bb;
     --ref:#7a4d22;
@@ -2200,7 +2205,8 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
   /* 내용이 페이지 하단까지 못 채우면 남는 여백이 채색 안 돼 검게 보일 수 있어
      html·body 배경을 !important로 강제하고 최소 높이를 페이지 전체로 확보 */
   html{background:#fff !important; min-height:100%;}
-  body{background:#fff !important; min-height:100%;}
+  /* body는 투명 — body 바탕은 z-index:-1 워터마크보다 위에 칠해져 그것을 덮는다. 흰색은 html이 맡는다 */
+  body{background:transparent !important; min-height:100%;}
   .app-head,.panel,.loading,.result-tools,footer{display:none !important;}
   .sent,.cover,.table-wrap,.legend{box-shadow:none; break-inside:avoid;}
   .wrap{max-width:none; padding:0;}

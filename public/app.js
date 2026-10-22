@@ -1259,16 +1259,62 @@ const brandMarkEl = $("brandMark");
 const brandNameOutEl = $("printBrandName");
 const printWatermarkEl = $("printWatermark");
 
+/* 인쇄용 워터마크는 그림 자체를 옅게 바꿔 둔 것을 쓴다 — 흰 종이 위에 7%로 얹은 색을 픽셀에 미리
+   구워 넣는다(투명한 곳은 흰색). 예전엔 원본을 글 '위'에 두고 CSS opacity·mix-blend-mode로 비치게
+   했는데, 프린터가 그 투명 처리를 한 띠에서 빠뜨리자 그림의 흰 바탕이 지문을 덮었다(2026-10-22).
+   지금은 글 '뒤'에 깔고(style.css .print-wm z-index:-1) 투명 효과를 하나도 쓰지 않아,
+   무엇이 빠지든 글자를 가릴 수 없다. 시험지 분석 리포트 인쇄 창(trend.js)도 이 그림을 쓴다. */
+const WM_PRINT_STRENGTH = 0.07;
+let wmFaded = { src: "", out: "" };
+function brandWmPrintSrc() {
+  let wm = "";
+  try { wm = localStorage.getItem(BRAND_WM_STORE) || ""; } catch (_) { /* 저장소가 막힌 브라우저 */ }
+  return wm && wmFaded.src === wm ? wmFaded.out : "";
+}
+function fadeWatermark(src, done) {
+  if (wmFaded.src === src) return done(wmFaded.out);
+  const img = new Image();
+  img.onload = () => {
+    const w0 = img.naturalWidth || img.width;
+    const h0 = img.naturalHeight || img.height;
+    if (!w0 || !h0) return;
+    const scale = Math.min(1, BRAND_WM_SIDE / Math.max(w0, h0));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(w0 * scale));
+    c.height = Math.max(1, Math.round(h0 * scale));
+    const x = c.getContext("2d");
+    x.fillStyle = "#fff";
+    x.fillRect(0, 0, c.width, c.height);
+    x.drawImage(img, 0, 0, c.width, c.height);
+    const px = x.getImageData(0, 0, c.width, c.height);
+    const d = px.data;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = 255 - (255 - d[i]) * WM_PRINT_STRENGTH;
+      d[i + 1] = 255 - (255 - d[i + 1]) * WM_PRINT_STRENGTH;
+      d[i + 2] = 255 - (255 - d[i + 2]) * WM_PRINT_STRENGTH;
+      d[i + 3] = 255;
+    }
+    x.putImageData(px, 0, 0);
+    wmFaded = { src, out: c.toDataURL("image/jpeg", 0.92) };
+    done(wmFaded.out);
+  };
+  img.src = src;
+}
+
 function renderBrand() {
   const img = localStorage.getItem(BRAND_IMG_STORE) || "";
   const name = (localStorage.getItem(BRAND_NAME_STORE) || "").trim();
   const wm = localStorage.getItem(BRAND_WM_STORE) || "";
 
-  // 워터마크 — 모든 인쇄 페이지 뒷배경(화면에는 안 보인다)
+  // 워터마크 — 모든 인쇄 페이지 뒷배경(화면에는 안 보인다). 옅게 바꾼 그림이 준비되면 넣는다.
   if (printWatermarkEl) {
-    if (wm) printWatermarkEl.src = wm;
-    else printWatermarkEl.removeAttribute("src");
-    printWatermarkEl.hidden = !wm;
+    printWatermarkEl.removeAttribute("src");
+    printWatermarkEl.hidden = true;
+    if (wm) fadeWatermark(wm, (out) => {
+      if ((localStorage.getItem(BRAND_WM_STORE) || "") !== wm) return;
+      printWatermarkEl.src = out;
+      printWatermarkEl.hidden = false;
+    });
   }
   if (brandWmPreviewEl) {
     brandWmPreviewEl.innerHTML = wm

@@ -1521,13 +1521,13 @@ function trendHtml(st, ai) {
    따로 그린다. 켜고 끄는 칸은 없다 — 넣은 것만 찍힌다(2026-09-29 사용자): 학원명·로고가 있으면
    아래쪽(학원명 왼쪽·로고 오른쪽), 워터마크 이미지가 있으면 뒷배경. 화면 보고서에는 그리지 않는다. */
 function trendBrand() {
-  let img = "", name = "", wm = "";
+  let img = "", name = "";
   try {
     img = localStorage.getItem(BRAND_IMG_STORE) || "";
     name = (localStorage.getItem(BRAND_NAME_STORE) || "").trim();
-    wm = localStorage.getItem(BRAND_WM_STORE) || "";
   } catch (_) { /* 저장소가 막힌 브라우저 — 마크 없이 인쇄한다 */ }
-  return { img, name, wm };
+  // 워터마크는 옅게 바꿔 둔 그림(app.js brandWmPrintSrc) — 원본을 그대로 깔면 글 뒤에서 너무 진하다
+  return { img, name, wm: brandWmPrintSrc() };
 }
 /* 학원 마크 칸(app.js의 .brand-panel)은 한 벌뿐이라 syncTabChrome이 아래
    #trendBrandSlot으로 옮겨 온다. 보고서를 다시 그리면(innerHTML) 그 안의 칸이 함께 지워지므로
@@ -1909,7 +1909,7 @@ function trendBrandPrintCss(foot) {
     .rp-frame{width:100%;border-collapse:collapse}.rp-frame td{padding:0}
     .rp-foot-space{height:9mm}
     .rp-wm{position:fixed;top:0;left:0;width:100%;height:100%;
-      object-fit:contain;opacity:.07;mix-blend-mode:multiply;pointer-events:none;z-index:5}
+      object-fit:contain;pointer-events:none;z-index:-1}
     ${foot ? ".rp-frame .trend-report{zoom:.95}" : ""}`;
 }
 function trendBrandPrintBody(report, foot, wm) {
