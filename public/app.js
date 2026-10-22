@@ -4376,6 +4376,7 @@ async function analyze() {
   editBtn.style.display = "none";
   pageBtn.style.display = "none";
   saveBtn.style.display = "none";
+  infoMakeBtn.style.display = "none";
   resetUndo();
   syncFloatPrint();
 
@@ -4445,6 +4446,7 @@ async function analyze() {
     editBtn.style.display = "inline-flex";
     pageBtn.style.display = "inline-flex";
     saveBtn.style.display = "inline-flex";
+    infoMakeBtn.style.display = "inline-flex";
   }
   resetUndo(); // 새 분석본이 되돌리기의 출발점 — 이전 분석본으로는 돌아가지 않는다
   syncFloatPrint();
@@ -4635,20 +4637,58 @@ if (infoLangBox) {
 }
 passageListEl.addEventListener("input", syncInfoLangNote);
 
+// 그 지문에 그 종류의 요약 이미지가 이미 붙어 있는가
+function infoHas(idx, lang) {
+  const sec = resultEl.querySelector(`section.passage-block[data-entry="${idx}"]`);
+  return !!(sec && sec.querySelector(`.info-shot[data-lang="${lang}"] img.infographic`));
+}
+
+/* [🖼 요약 이미지만 만들기] — 분석본을 만들 때 그림이 실패했거나 처음에 안 골랐을 때, 분석은 다시 하지
+   않고(그러면 분석 값이 또 나간다) 위 '요약 이미지'에서 고른 종류 중 없는 것만 만들어 붙인다.
+   저장함에서 불러온 분석본에도 쓴다. */
+const infoMakeBtn = $("infoMakeBtn");
+infoMakeBtn.addEventListener("click", async () => {
+  errorEl.textContent = "";
+  const langs = pickedImgLangs("info");
+  if (!lastAnalyzeEntries.length) return;
+  if (!langs.length) {
+    errorEl.textContent = "위의 '요약 이미지'에서 만들 종류를 먼저 고르세요.";
+    return;
+  }
+  const todo = lastAnalyzeEntries.map((_e, i) => i).filter((i) => langs.some((l) => !infoHas(i, l)));
+  if (!todo.length) {
+    errorEl.textContent = "고른 종류의 요약 이미지가 모든 지문에 이미 있습니다.";
+    return;
+  }
+  const pairs = todo.reduce((s, i) => s + langs.filter((l) => !infoHas(i, l)).length, 0);
+  if (!(await costConfirmed(
+        PRICING ? PRICING.infographic * pairs : 0,
+        `분석본은 그대로 두고 요약 이미지 ${pairs}장만 새로 만듭니다.\n` +
+        `(${langs.map((l) => IMG_LANG_NAME[l]).join(" · ")} 중 아직 없는 것 · 한 장에 8~12초)`,
+        todo.length))) {
+    return;
+  }
+  await makeInfographics(todo);
+});
+
 /* 분석이 끝난 뒤 이어서 그림을 만든다. 부르는 곳은 analyze() 하나뿐이고, 금액은
    거기 확인 창에서 이미 합쳐 물었으므로 여기서 다시 묻지 않는다.
    todo: 그림을 넣을 지문의 번호 목록 (lastAnalyzeEntries의 자리번호) */
 async function makeInfographics(todo) {
   const entries = lastAnalyzeEntries;
   if (!todo || !todo.length) return;
+  const langs = pickedImgLangs("info");
+  // 이미 붙어 있는 그림은 건너뛴다 — [🖼 요약 이미지만 만들기]가 모자란 것만 채우는 길이다
+  // (분석 직후에는 아무것도 없으므로 전부 만든다)
+  const total = todo.reduce((s, idx) => s + langs.filter((l) => !infoHas(idx, l)).length, 0);
+  if (!total) return;
 
   analyzeBtn.disabled = true;
+  infoMakeBtn.disabled = true;
   setEditMode(false);   // 그림이 끼어들면 수정 중이던 자리가 어긋난다
   setPagingMode(false); // 쪽 경계도 다시 잡아야 한다
   loadingEl.classList.add("on");
 
-  const langs = pickedImgLangs("info");
-  const total = todo.length * langs.length;
   let okCount = 0;
   let done = 0;
   let stop = false;
@@ -4658,6 +4698,7 @@ async function makeInfographics(todo) {
     const idx = todo[n];
     const job = entries[idx].job;
     for (const lang of langs) {
+      if (infoHas(idx, lang)) continue;
       if (done > 0 && await gate.check(`요약 이미지 ${total}장 중 ${done}장까지 만들었습니다.`)) {
         errorEl.textContent = runEndedNote(total - done, "요약 이미지");
         stop = true;
@@ -4692,6 +4733,7 @@ async function makeInfographics(todo) {
 
   loadingEl.classList.remove("on");
   analyzeBtn.disabled = false;
+  infoMakeBtn.disabled = false;
   resetUndo();            // 그림이 붙은 상태가 새 출발점이다
   syncFloatPrint();
   refreshTokenDisplay();  // 성공한 장수만큼 차감됐을 잔액 갱신
@@ -4716,6 +4758,7 @@ function renderAnalyzeEntries(entries) {
   editBtn.style.display = total ? "inline-flex" : "none";
   pageBtn.style.display = total ? "inline-flex" : "none";
   saveBtn.style.display = total ? "inline-flex" : "none";
+  infoMakeBtn.style.display = total ? "inline-flex" : "none";
   // 그림은 여기서 그리지 않는다 — 저장본에 딸린 그림은 loadSavedItem이 afterLoad로 뒤따라 붙인다.
   // (옛 저장본은 그림 목록이 없어 그림 없이 나온다.)
   resetUndo();
@@ -12232,7 +12275,7 @@ const HOWTO = {
     steps: [
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다. 여러 개면 <b>[＋ 지문 추가]</b>.",
       "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 요약 이미지는 <b>추가 요청</b> 칸에 원하는 강조·색을 적을 수 있고, 비우면 기본 방식으로 만듭니다. 목표 어법을 적으면 그 구조가 주황색으로 표시됩니다.",
-      "<b>[분석하기]</b>를 누릅니다.",
+      "<b>[분석하기]</b>를 누릅니다. 요약 이미지가 안 만들어졌거나 나중에 필요하면 분석은 그대로 두고 <b>[🖼 요약 이미지만 만들기]</b>로 없는 그림만 따로 만듭니다.",
       "<b>[✏️ 직접 수정]</b>으로 글자를, <b>[📄 쪽 구성]</b>으로 인쇄될 쪽 경계를 고칩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 분석본 꾸미기</b>로 테마 색·글씨체를 바꿀 수 있습니다(요금 없음).",
     ],
