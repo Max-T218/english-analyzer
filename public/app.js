@@ -1429,6 +1429,8 @@ async function brandPull() {
   }
   if (!brandTouched.has("logo")) brandSetLocal(BRAND_IMG_STORE, d.logo || "");
   if (!brandTouched.has("wm")) brandSetLocal(BRAND_WM_STORE, d.wm || "");
+  // 시험지 꾸미기의 자주 쓰는 색(없으면 기본 팔레트)
+  if (!sheetPaletteTouched) sheetPaletteSet(Array.isArray(d.palette) ? d.palette : null, false);
   renderBrand();
   syncBrandSaveBtn();
 }
@@ -1441,6 +1443,8 @@ function brandClearLocal() {
   if (brandNameEl) brandNameEl.value = "";
   if (brandFileEl) brandFileEl.value = "";
   if (brandWmFileEl) brandWmFileEl.value = "";
+  sheetPaletteTouched = false;
+  sheetPaletteSet(null, false);
   renderBrand();
   syncBrandSaveBtn();
 }
@@ -6200,6 +6204,28 @@ function sheetToneOf(v) {
   if (typeof v !== "string") return "";
   return SHEET_HEX_RE.test(v.trim()) ? v.trim().toLowerCase() : "";
 }
+/* 자주 쓰는 색 팔레트 — 선생님이 더하고 뺄 수 있다(2026-10-22 사용자: 정해진 팔레트를 바꾸고 싶다).
+   null이면 기본(SHEET_TONES)이다. 맨 앞 '기본 (남색)'은 늘 있고 뺄 수 없다. 화면은 창을 열 때마다
+   localStorage를 비우므로 학원 마크와 같은 곳(/api/brand의 palette — 서버 brand_marks/{uid}__palette)에
+   두고, 바꿀 때마다 바로 올린다(학원 마크처럼 [계정에 저장]을 따로 누르게 하지 않는다 — 동그라미를
+   더하고 빼는 것 자체가 '저장해 달라'는 뜻이다). 로그인하면 brandPull이 받아 오고 로그아웃하면 기본으로 돌린다.
+   모든 탭의 꾸미기 칸이 같은 팔레트를 쓴다(sheetPaletteViews로 함께 다시 그린다). */
+const SHEET_PALETTE_MAX = 24;   // server.py BRAND_PALETTE_MAX와 같은 값
+let sheetPalette = null;
+let sheetPaletteTouched = false;   // 계정 것을 받아 오기 전에 손댔으면 받아 온 값으로 덮지 않는다
+const sheetPaletteViews = [];
+function sheetPaletteNow() {
+  return sheetPalette || SHEET_TONES.slice(1).map((t) => t.id);
+}
+function sheetPaletteSet(list, save) {
+  if (list == null) sheetPalette = null;
+  else sheetPalette = [...new Set(list.map(sheetToneOf).filter((h) => h && h !== SHEET_TONES[0].hex))].slice(0, SHEET_PALETTE_MAX);
+  sheetPaletteViews.forEach((f) => f());
+  if (save) {
+    sheetPaletteTouched = true;
+    if (isLoggedIn) brandPush({ palette: sheetPalette }).catch(() => {});
+  }
+}
 /* 글자 크기 세 묶음. def = 지금 인쇄 크기(문제 탭은 2단 조판의 style.css 인쇄 값, 워크북은 화면=인쇄 값).
    워크북은 보기 대신 우리말 해석이라 이름이 다르다. */
 // 탭 종류마다 묶음이 다르다 — quiz: 문제 탭·문법문제·동형 모의고사 / wb: 워크북 / vocab: 단어장·단어 시험지.
@@ -6366,6 +6392,14 @@ function createSheetStyle(boxId, resultEl, kind) {
     box.querySelectorAll(".sheet-tone-sw").forEach((b) => {
       b.classList.toggle("on", b.dataset.tone === cur.tone);
     });
+    // ＋ = 지금 색이 팔레트에 없고 자리가 남을 때 / － = 고른 색이 팔레트에 있을 때(기본 남색은 못 뺀다)
+    const pal = sheetPaletteNow();
+    const add = box.querySelector(".sheet-pal-add");
+    const del = box.querySelector(".sheet-pal-del");
+    const reset = box.querySelector(".sheet-pal-reset");
+    if (add) add.disabled = !cur.tone || pal.includes(cur.tone) || pal.length >= SHEET_PALETTE_MAX;
+    if (del) del.disabled = !cur.tone || !pal.includes(cur.tone);
+    if (reset) reset.hidden = sheetPalette == null;
     box.querySelectorAll(".sheet-fs-in").forEach((inp) => {
       if (document.activeElement !== inp) inp.value = cur.fs[inp.dataset.fs] ?? fsDef(inp.dataset.fs);
     });
@@ -6376,16 +6410,18 @@ function createSheetStyle(boxId, resultEl, kind) {
     apply();
   }
   if (box) {
-    const swatches = SHEET_TONES.map((t) =>
-      `<button type="button" class="sheet-tone-sw" data-tone="${t.id}" title="${esc(t.name)}" aria-label="${esc(t.name)}" style="background:${t.hex || t.id}"></button>`
-    ).join("");
     box.innerHTML = `
       <span class="sheet-style-title">🎨 시험지 꾸미기</span>
       <div class="sheet-tone">
         <span class="sheet-tone-label">테마 색상</span>
         <label class="sheet-tone-pick" title="눌러서 색 판에서 고릅니다"><input type="color" class="sheet-tone-picker" value="${SHEET_TONES[0].hex}"></label>
         <input type="text" class="sheet-tone-code" maxlength="7" spellcheck="false" value="${SHEET_TONES[0].hex}" aria-label="색 코드 (#으로 시작하는 6자리)">
-        <span class="sheet-tone-sws">${swatches}</span>
+        <span class="sheet-tone-sws"></span>
+        <span class="sheet-pal-btns">
+          <button type="button" class="sheet-pal-btn sheet-pal-add" title="지금 고른 색을 자주 쓰는 색에 더합니다(계정에 저장되어 다음 로그인에도 남습니다)">＋ 색 추가</button>
+          <button type="button" class="sheet-pal-btn sheet-pal-del" title="지금 고른 동그라미를 자주 쓰는 색에서 뺍니다">－ 빼기</button>
+          <button type="button" class="sheet-pal-btn sheet-pal-reset" title="자주 쓰는 색을 처음 상태로 되돌립니다" hidden>↺ 처음 팔레트</button>
+        </span>
       </div>
       <div class="sheet-fs">
         <span class="sheet-tone-label">글자 크기(px)</span>
@@ -6395,7 +6431,7 @@ function createSheetStyle(boxId, resultEl, kind) {
         <button type="button" class="btn ghost small sheet-fs-reset">처음 크기로</button>
       </div>
       <label>글꼴 <select data-k="font">${opts(SHEET_FONTS, "")}</select></label>
-      <div class="hint">색은 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 글자 크기는 숫자를 적거나 칸의 ▲▼(또는 키보드 ↑↓)로 1px씩 바꿉니다 — 처음 숫자는 인쇄되는 크기이고, 바꾸면 화면도 그 크기로 보입니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글자를 키우면 쪽 수가 늘어납니다. 워드 다운로드에는 들어가지 않습니다.</div>`;
+      <div class="hint">색은 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다. 자주 쓰는 색은 <b>＋ 색 추가</b>로 동그라미에 더하고 <b>－ 빼기</b>로 뺍니다 — 계정에 저장되어 모든 탭과 다음 로그인에도 남습니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 글자 크기는 숫자를 적거나 칸의 ▲▼(또는 키보드 ↑↓)로 1px씩 바꿉니다 — 처음 숫자는 인쇄되는 크기이고, 바꾸면 화면도 그 크기로 보입니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글자를 키우면 쪽 수가 늘어납니다. 워드 다운로드에는 들어가지 않습니다.</div>`;
     const changed = () => { if (box.onSheetStyle) box.onSheetStyle(); };
     box.addEventListener("change", (e) => {
       const k = e.target && e.target.dataset && e.target.dataset.k;
@@ -6413,12 +6449,31 @@ function createSheetStyle(boxId, resultEl, kind) {
       if (SHEET_HEX_RE.test(v)) setTone(v);
     });
     code.addEventListener("blur", syncToneUi);
-    box.querySelector(".sheet-tone-sws").addEventListener("click", (e) => {
+    // 동그라미 줄 — 팔레트가 바뀌면(이 칸이든 다른 탭이든, 계정에서 받아 왔든) 다시 그린다
+    const swsEl = box.querySelector(".sheet-tone-sws");
+    const drawSws = () => {
+      const named = Object.fromEntries(SHEET_TONES.map((t) => [t.id, t.name]));
+      swsEl.innerHTML = [{ id: "", name: SHEET_TONES[0].name, hex: SHEET_TONES[0].hex }]
+        .concat(sheetPaletteNow().map((h) => ({ id: h, name: named[h] || h, hex: h })))
+        .map((t) => `<button type="button" class="sheet-tone-sw" data-tone="${t.id}" title="${esc(t.name)}" aria-label="${esc(t.name)}" style="background:${t.hex}"></button>`)
+        .join("");
+      syncToneUi();
+    };
+    sheetPaletteViews.push(drawSws);
+    drawSws();
+    swsEl.addEventListener("click", (e) => {
       const b = e.target.closest(".sheet-tone-sw");
       if (!b) return;
       cur = { ...cur, tone: b.dataset.tone };
       apply();
     });
+    box.querySelector(".sheet-pal-add").addEventListener("click", () => {
+      if (cur.tone) sheetPaletteSet(sheetPaletteNow().concat(cur.tone), true);
+    });
+    box.querySelector(".sheet-pal-del").addEventListener("click", () => {
+      if (cur.tone) sheetPaletteSet(sheetPaletteNow().filter((h) => h !== cur.tone), true);
+    });
+    box.querySelector(".sheet-pal-reset").addEventListener("click", () => sheetPaletteSet(null, true));
     // 글자 크기 — 적는 동안(input)과 ▲▼(input·change 둘 다 온다) 모두 바로 반영하고, 칸을 떠날 때 범위 밖 값은 되돌린다
     box.querySelectorAll(".sheet-fs-in").forEach((inp) => {
       inp.addEventListener("input", () => {

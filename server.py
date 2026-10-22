@@ -13513,15 +13513,25 @@ BRAND_MARKS = "brand_marks"
 BRAND_NAME_MAX = 40
 BRAND_IMAGE_KINDS = ("logo", "wm")
 _BRAND_DATA_URL_RE = re.compile(r"^data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$")
+# 시험지 꾸미기의 '자주 쓰는 색' 동그라미 줄(2026-10-22 사용자 — 정해진 팔레트를 바꾸고 싶다).
+# {uid}__palette 문서 하나에 둔다 — 학원명 문서({uid})는 저장할 때 통째로 덮어쓰므로 같이 두면 지워진다.
+# 문서가 없으면(None) 화면이 기본 팔레트를 쓴다. 탈퇴 때는 user_id로 모아 함께 지운다.
+BRAND_PALETTE_MAX = 24
+_BRAND_HEX_RE = re.compile(r"^#[0-9a-f]{6}$")
 
 
 def get_brand_mark(user_id):
     _require_db()
     col = DB.collection(BRAND_MARKS)
-    out = {"name": "", "logo": "", "wm": ""}
+    out = {"name": "", "logo": "", "wm": "", "palette": None}
     snap = col.document(user_id).get()
     if snap.exists:
         out["name"] = str((snap.to_dict() or {}).get("name") or "")
+    ps = col.document(f"{user_id}__palette").get()
+    if ps.exists:
+        d = ps.to_dict() or {}
+        if d.get("user_id") == user_id and isinstance(d.get("colors"), list):
+            out["palette"] = [c for c in d["colors"] if isinstance(c, str) and _BRAND_HEX_RE.match(c)]
     for kind in BRAND_IMAGE_KINDS:
         s = col.document(f"{user_id}__{kind}").get()
         if s.exists:
@@ -13532,10 +13542,24 @@ def get_brand_mark(user_id):
 
 
 def save_brand_mark(user_id, req):
-    """요청에 실린 칸만 바꾼다 — name(글자), logo·wm(data URL, 빈 글자면 지운다).
-    반환: 오류 문구 또는 None."""
+    """요청에 실린 칸만 바꾼다 — name(글자), logo·wm(data URL, 빈 글자면 지운다),
+    palette(#rrggbb 목록, null이면 지워 기본 팔레트로). 반환: 오류 문구 또는 None."""
     _require_db()
     col = DB.collection(BRAND_MARKS)
+    palette = "keep"
+    if "palette" in req:
+        raw = req.get("palette")
+        if raw is None:
+            palette = None
+        elif isinstance(raw, list):
+            palette = []
+            for c in raw:
+                c = str(c or "").strip().lower()
+                if _BRAND_HEX_RE.match(c) and c not in palette:
+                    palette.append(c)
+            palette = palette[:BRAND_PALETTE_MAX]
+        else:
+            return "잘못된 요청입니다."
     imgs = {}
     for kind in BRAND_IMAGE_KINDS:
         if kind not in req:
@@ -13569,6 +13593,12 @@ def save_brand_mark(user_id, req):
         else:
             ref.set({"user_id": user_id, "kind": kind, "mime": v[0], "data": v[1],
                      "updated_at": _now_iso()})
+    if palette != "keep":
+        ref = col.document(f"{user_id}__palette")
+        if palette is None:
+            ref.delete()
+        else:
+            ref.set({"user_id": user_id, "colors": palette, "updated_at": _now_iso()})
     return None
 
 

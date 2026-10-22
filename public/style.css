@@ -1570,6 +1570,15 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 .sheet-tone-sw{width:22px; height:22px; padding:0; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 1px var(--line); cursor:pointer;}
 .sheet-tone-sw:hover{box-shadow:0 0 0 2px var(--ink-soft);}
 .sheet-tone-sw.on{box-shadow:0 0 0 2px var(--ink);}
+/* 자주 쓰는 색 더하기·빼기·처음으로 — 작은 윤곽 단추 */
+.sheet-pal-btns{display:inline-flex; flex-wrap:wrap; gap:4px;}
+.sheet-pal-btn{
+  font:inherit; font-size:12px; font-weight:600; color:var(--ink-soft); background:var(--card);
+  border:1px solid var(--line); border-radius:999px; padding:3px 10px; cursor:pointer;
+}
+.sheet-pal-btn:hover:not(:disabled){border-color:var(--accent); color:var(--accent);}
+.sheet-pal-btn:disabled{opacity:.45; cursor:default;}
+.sheet-pal-btn[hidden]{display:none;}
 .sheet-style .hint{flex-basis:100%; margin:0;}
 .sheet-fs{display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px;}
 .sheet-style input.sheet-fs-in{width:64px; padding:5px 6px; font-size:13px; text-align:right;}
