@@ -945,8 +945,10 @@
 
       <div class="field" id="rechargeMethodField" hidden>
         <label>결제 수단</label>
-        <label style="display:inline-block; margin-right:14px; font-weight:normal;"><input type="radio" name="rechargeMethod" value="card" checked> 카드</label>
-        <label style="display:inline-block; font-weight:normal;"><input type="radio" name="rechargeMethod" value="kakaopay"> 카카오페이</label>
+        <div class="recharge-methods">
+          <label class="recharge-method"><input type="radio" name="rechargeMethod" value="card" checked><span>💳 카드</span></label>
+          <label class="recharge-method"><input type="radio" name="rechargeMethod" value="kakaopay"><span>카카오페이</span></label>
+        </div>
       </div>
 
       <div class="recharge-presets" id="rechargePresets">
