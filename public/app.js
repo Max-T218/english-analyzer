@@ -4853,12 +4853,16 @@ TAB_SAVE.analyze = {
     entries: collectAnalysisEdits(),
     pageBreaks: collectPageBreaks(),
     images: collectInfographicMeta(),
+    sheetStyle: analyzeSheetStyle.get(),
   }),
   afterSave: (itemId, payload, onProgress) => uploadInfographics(itemId, payload.images || [], onProgress),
   afterLoad: (itemId, payload) => loadInfographics(itemId, payload),
   applyPayload: (payload) => {
     passageMgr.setJobs(payload.passages || []);
     grammarEl.value = (payload.settings && payload.settings.targetGrammar) || "";
+    // 글꼴이 생기기 전(2026-10-22) 저장본에는 값이 없다 — 지금 고른 글꼴을 그대로 둔다.
+    // 쪽 구성(applyPageBreaks)보다 먼저 맞춘다 — 글꼴에 따라 덩어리 높이가 달라진다
+    if (payload.sheetStyle) analyzeSheetStyle.set(payload.sheetStyle);
     renderAnalyzeEntries(payload.entries || []);
     applyPageBreaks(payload.pageBreaks); // 손봐 둔 쪽 구성까지 그대로 되살린다
     resetUndo(); // 불러온 그 상태가 출발점 (되돌리기로 저장본 이전으로 가지 않게)
@@ -5290,6 +5294,8 @@ function briefMeasure(html, widthCss) {
     document.body.appendChild(briefMeasureBox);
   }
   briefMeasureBox.style.width = widthCss;
+  // 분석본 글꼴(꾸미기 칸)을 고른 경우 그 글꼴로 잰다 — 글꼴마다 글자 폭이 달라 한 줄에 드는지가 바뀐다
+  briefMeasureBox.style.fontFamily = getComputedStyle(briefDocEl).fontFamily;
   const el = briefMeasureBox.querySelector(".c-eng");
   el.innerHTML = html;
   return el.getBoundingClientRect().height;
@@ -5745,10 +5751,13 @@ TAB_SAVE.brief = {
     passages: passageMgr.getJobs(),
     entries: lastBriefEntries,
     settings: { targetGrammar: grammarEl.value },
+    sheetStyle: briefSheetStyle.get(),
   }),
   applyPayload: (payload) => {
     passageMgr.setJobs(payload.passages || []);
     grammarEl.value = (payload.settings && payload.settings.targetGrammar) || "";
+    // 그리기 전에 글꼴을 맞춘다 — 짧은 문장 묶기(briefFitsOneLine)가 그 글꼴로 잰다
+    if (payload.sheetStyle) briefSheetStyle.set(payload.sheetStyle);
     renderBriefEntries(payload.entries || []);
   },
   clearResults: () => renderBriefEntries([]),
@@ -6374,6 +6383,7 @@ const SHEET_FS = {
     { k: "w", name: "단어", def: 13 },
     { k: "m", name: "뜻", def: 13 },
   ],
+  font: [],   // 지문 분석·요약분석 — 글꼴만 고른다(createSheetStyle의 "font")
 };
 const SHEET_FS_MIN = 8, SHEET_FS_MAX = 30;
 function sheetFsOf(v) {
@@ -6479,6 +6489,7 @@ function loadSheetFont(font) {
   document.head.appendChild(link);
 }
 // kind: "quiz"(문제 탭·문법문제·동형 모의고사) | "wb"(워크북) | "vocab"(단어장) — 글자 크기 묶음이 다르다(SHEET_FS)
+//       | "font"(지문 분석·요약분석 — 글꼴 칸 하나만 그린다)
 function createSheetStyle(boxId, resultEl, kind) {
   const box = $(boxId);
   const fsList = SHEET_FS[kind];
@@ -6569,7 +6580,20 @@ function createSheetStyle(boxId, resultEl, kind) {
     },
     add: (hx) => sheetPaletteSet(sheetPaletteNow().concat(hx), true),
   };
-  if (box) {
+  if (box && kind === "font") {
+    // 지문 분석·요약분석 — 글꼴만 고른다. 색은 어법·어휘 표시가 뜻을 담고 있어 바꾸지 않고, 글자 크기는 분석본이
+    // 덩어리 높이로 쪽을 나누고 짧은 문장을 한 줄 폭으로 묶어 이 칸에 넣지 않았다(2026-10-22 사용자: 글씨체만)
+    box.innerHTML = `
+      <span class="sheet-style-title">🔤 분석본 글꼴</span>
+      <label>글꼴 <select data-k="font">${opts(SHEET_FONTS, "")}</select></label>
+      <div class="hint">만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글꼴마다 글자 폭이 달라 쪽 수가 조금 달라질 수 있으니 인쇄 전에 <b>[📄 쪽 구성]</b>으로 확인하세요. 워드 다운로드에는 들어가지 않습니다.</div>`;
+    box.addEventListener("change", (e) => {
+      if (!(e.target && e.target.dataset && e.target.dataset.k === "font")) return;
+      cur = { ...cur, font: e.target.value };
+      apply();
+      if (box.onSheetStyle) box.onSheetStyle();
+    });
+  } else if (box) {
     box.innerHTML = `
       <span class="sheet-style-title">🎨 시험지 꾸미기</span>
       <div class="sheet-tone">
@@ -6667,6 +6691,15 @@ function createSheetStyle(boxId, resultEl, kind) {
     onChange(fn) { if (box) box.onSheetStyle = fn; },
   };
 }
+
+// 지문 분석·요약분석의 글꼴 칸 — 이 함수와 그 표(SHEET_*)가 정해진 뒤에 만들어야 해서 여기 둔다.
+// 글꼴을 바꾸면 덩어리 높이가 달라지므로, 쪽 구성 화면이 열려 있으면 쪽 경계를 다시 센다.
+// 이미 만든 요약분석의 '짧은 문장 묶기'는 다시 하지 않는다 — 다시 그리면 손으로 고친 글이 사라진다.
+const analyzeSheetStyle = createSheetStyle("analyzeSheetStyle", resultEl, "font");
+const briefSheetStyle = createSheetStyle("briefSheetStyle", briefDocEl, "font");
+[[analyzeSheetStyle, resultEl], [briefSheetStyle, briefDocEl]].forEach(([ss, host]) =>
+  ss.onChange(() => { if (pagingOn() && pgHost === host) layoutPages(); })
+);
 
 /* 문제 제작 탭이 자기 '시험지명' 손잡이를 걸어 두는 곳 — {get, set}.
    저장창이 탭 안쪽 변수를 직접 볼 수 없어서 이 레지스트리를 거친다(TAB_SAVE와 같은 방식). */
@@ -12140,7 +12173,7 @@ const HOWTO = {
       "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 요약 이미지는 <b>추가 요청</b> 칸에 원하는 강조·색을 적을 수 있고, 비우면 기본 방식으로 만듭니다. 목표 어법을 적으면 그 구조가 주황색으로 표시됩니다.",
       "<b>[분석하기]</b>를 누릅니다.",
       "<b>[✏️ 직접 수정]</b>으로 글자를, <b>[📄 쪽 구성]</b>으로 인쇄될 쪽 경계를 고칩니다.",
-      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🔤 분석본 글꼴</b>로 글씨체를 바꿀 수 있습니다(요금 없음).",
     ],
     tip: "요약 이미지는 사이트에 저장해야 다음에 불러올 때 남습니다. 학생용 모의고사 문제지를 <b>[📄 PDF에서 가져오기]</b>로 올리면 빈칸·순서·문장 삽입 문항을 AI가 풀어 채울지 묻습니다(채우면 지문당 포인트). 그 창에 정답표를 붙여 넣거나 올리면 정답표의 답대로 채웁니다. 순서·삽입·무관한 문장·빈칸 <b>문제를 캡처해 넣으면</b> 답을 정하는 창이 떠, 답을 고르거나 정답표를 넣거나 AI에게 풀게 하면(문제당 포인트) 원래 지문으로 바꿔 넣습니다. 문제 모양 그대로 쓰려면 <b>[📷 캡처본 그대로 두기]</b>를 누르세요." + HOWTO_PAUSE_TIP,
     shots: {
@@ -12157,7 +12190,7 @@ const HOWTO = {
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 요약 이미지는 <b>추가 요청</b> 칸에 원하는 강조·색을 적을 수 있고, 비우면 기본 방식으로 만듭니다.",
       "<b>[요약분석 만들기]</b>를 누릅니다.",
-      "<b>[📄 쪽 구성]</b>으로 쪽 경계를 보고, <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다.",
+      "<b>[📄 쪽 구성]</b>으로 쪽 경계를 보고, <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🔤 분석본 글꼴</b>로 글씨체를 바꿀 수 있습니다(요금 없음 — 짧은 문장 묶기까지 맞추려면 글꼴을 먼저 고르고 만드세요).",
     ],
     tip: "상세분석과 달리 오른쪽 해설 칸과 핵심 어휘표가 없습니다." + HOWTO_PAUSE_TIP,
     shots: {
