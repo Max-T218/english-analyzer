@@ -502,8 +502,32 @@ function saveQuizDraft() {
 function updateQuizProgress(answers) {
   const total = quizQuestions.reduce((n, q) => n + QT.unitCount(q), 0);
   const blank = QT.blankCount(answers || QT.collect($("quizBody"), quizQuestions));
-  $("quizProgress").textContent = `${total - blank} / ${total}칸 답함`;
+  $("quizProgress").textContent = `${quizIndex + 1} / ${quizQuestions.length}번 · ${total - blank}/${total}칸 답함`;
 }
+
+// 한 번에 한 문항만 보인다(단어시험처럼). 모든 문항은 이미 그려져 있고 현재 것만 펼친다.
+let quizIndex = 0;
+let quizAutoTimer = null;
+function showQuizStep(i) {
+  quizIndex = Math.max(0, Math.min(quizQuestions.length - 1, i));
+  $("quizBody").querySelectorAll(".qt-card").forEach((c) => { c.hidden = Number(c.dataset.q) !== quizIndex; });
+  const last = quizIndex === quizQuestions.length - 1;
+  $("quizPrevBtn").hidden = quizIndex === 0;
+  $("quizNextBtn").hidden = last;
+  $("quizSubmitBtn").hidden = !last;
+  updateQuizProgress();
+  window.scrollTo(0, 0);
+}
+$("quizPrevBtn").addEventListener("click", () => { clearTimeout(quizAutoTimer); showQuizStep(quizIndex - 1); });
+$("quizNextBtn").addEventListener("click", () => { clearTimeout(quizAutoTimer); showQuizStep(quizIndex + 1); });
+// 고르기 한 칸짜리 문항(객관식)은 보기를 누르면 바로 다음 문항으로
+$("quizBody").addEventListener("click", (e) => {
+  const b = e.target.closest(".qt-opt");
+  if (!b || b.disabled || quizAutoTimer) return;
+  const q = quizQuestions[quizIndex];
+  if (!q || q.format !== "mc" || QT.unitCount(q) !== 1 || quizIndex >= quizQuestions.length - 1) return;
+  quizAutoTimer = setTimeout(() => { quizAutoTimer = null; showQuizStep(quizIndex + 1); }, 250);
+});
 
 function openQuiz(assignmentId, data) {
   currentAssignmentId = assignmentId;
@@ -514,7 +538,8 @@ function openQuiz(assignmentId, data) {
   let draft = null;
   try { draft = JSON.parse(localStorage.getItem(quizDraftKey()) || "null"); } catch (_) {}
   if (draft) QT.restore($("quizBody"), quizQuestions, draft);
-  updateQuizProgress();
+  clearTimeout(quizAutoTimer); quizAutoTimer = null;
+  showQuizStep(0);
   showOnly(quizWorkspaceEl);
 }
 

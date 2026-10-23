@@ -112,13 +112,15 @@
     <div class="panel">
       <button type="button" class="btn ghost small" id="quizBackBtn">← 목록으로</button>
       <h3 id="quizTitle" style="margin:12px 0 4px;"></h3>
-      <p class="hint" id="quizHint">문항을 모두 풀고 맨 아래 [제출하기]를 누르세요. 제출은 한 번만 할 수 있어요.</p>
+      <p class="hint" id="quizHint">문제를 하나씩 풀고 [다음]을 누르세요. 마지막 문제에서 [제출하기]를 누르면 끝나요. 제출은 한 번만 할 수 있어요.</p>
       <div class="error" id="quizError"></div>
     </div>
     <div id="quizBody"></div>
     <div class="panel qt-submit-bar">
       <span class="hint" id="quizProgress"></span>
-      <button type="button" class="btn" id="quizSubmitBtn">제출하기</button>
+      <button type="button" class="btn ghost" id="quizPrevBtn">← 이전</button>
+      <button type="button" class="btn" id="quizNextBtn">다음 →</button>
+      <button type="button" class="btn" id="quizSubmitBtn" hidden>제출하기</button>
       <span class="gate-status" id="quizSubmitStatus"></span>
     </div>
   </section>
