@@ -6464,6 +6464,15 @@ const SHEET_TONES = [
   { id: "#92400e", name: "갈색" },
   { id: "#262626", name: "흑백" },
 ];
+// 표지 디자인 — id는 style.css의 .cv-<id> 규칙과 짝이다(""는 지금 모양 그대로)
+const SHEET_COVERS = [
+  { id: "", name: "기본" },
+  { id: "classic", name: "클래식 (이중 테두리)" },
+  { id: "band", name: "왼쪽 띠" },
+  { id: "block", name: "색 면 (전체 색칠)" },
+  { id: "minimal", name: "미니멀" },
+  { id: "stripe", name: "위아래 띠" },
+];
 const SHEET_HEX_RE = /^#[0-9a-f]{6}$/i;
 function sheetToneOf(v) {
   if (typeof v !== "string") return "";
@@ -6750,7 +6759,7 @@ function createSheetStyle(boxId, resultEl, kind) {
   const box = $(boxId);
   const fsList = SHEET_FS[kind];
   const noFs = () => Object.fromEntries(fsList.map(({ k }) => [k, null]));
-  let cur = { tone: "", font: "", fs: noFs() };
+  let cur = { tone: "", font: "", cover: "", fs: noFs() };
   const fsDef = (k) => fsList.find((x) => x.k === k).def;
   const pick = (list, id) => list.find((x) => x.id === id) || list.find((x) => x.id === "");
   // group이 있는 항목은 <optgroup>으로 묶는다(글꼴 — 고딕·명조·제목용)
@@ -6779,6 +6788,7 @@ function createSheetStyle(boxId, resultEl, kind) {
     }
     // 표지는 색을 고른 때만 칠한다(style.css .sheet-toned)
     resultEl.classList.toggle("sheet-toned", !!cur.tone);
+    SHEET_COVERS.forEach((c) => c.id && resultEl.classList.toggle("cv-" + c.id, c.id === cur.cover));
     // 처음 값과 같으면 표시를 떼어 지금 모양(화면은 큰 글씨) 그대로 둔다
     fsList.forEach(({ k }) => {
       const v = cur.fs[k];
@@ -6862,6 +6872,7 @@ function createSheetStyle(boxId, resultEl, kind) {
         <button type="button" class="btn ghost small sheet-fs-reset">처음 크기로</button>
       </div>` : ""}
       <label>글꼴 <select data-k="font">${opts(SHEET_FONTS, "")}</select></label>
+      <label>표지 디자인 <select data-k="cover">${opts(SHEET_COVERS, "")}</select></label>
       ${isDoc ? `<div class="hint">테마 색은 표지·지문 머리·문장 번호·소제목·흐름도·배경지식 카드 같은 꾸밈 자리에만 들어가고, 어법(빨강)·어휘(파랑)·병렬구조 표시 색은 뜻을 담고 있어 그대로입니다. 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다 — 자주 쓰는 색 동그라미는 문제 탭의 시험지 꾸미기와 같이 씁니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글꼴마다 글자 폭이 달라 쪽 수가 조금 달라질 수 있으니 인쇄 전에 <b>[📄 쪽 구성]</b>으로 확인하세요. 워드 다운로드에는 들어가지 않습니다.</div>` : `<div class="hint">색은 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다. 자주 쓰는 색은 네모를 눌러 연 색 판의 <b>＋ 색 추가</b>로 동그라미에 더하고 <b>－ 빼기</b>로 뺍니다 — 계정에 저장되어 모든 탭과 다음 로그인에도 남습니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 글자 크기는 숫자를 적거나 칸의 ▲▼(또는 키보드 ↑↓)로 1px씩 바꿉니다 — 처음 숫자는 인쇄되는 크기이고, 바꾸면 화면도 그 크기로 보입니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글자를 키우면 쪽 수가 늘어납니다. 워드 다운로드에는 들어가지 않습니다.</div>`}`;
     const changed = () => { if (box.onSheetStyle) box.onSheetStyle(); };
     box.addEventListener("change", (e) => {
@@ -6927,7 +6938,7 @@ function createSheetStyle(boxId, resultEl, kind) {
     const o = v && typeof v === "object" ? v : {};
     const fs = noFs();
     if (o.fs && typeof o.fs === "object") fsList.forEach(({ k }) => { fs[k] = sheetFsOf(o.fs[k]); });
-    cur = { tone: sheetToneOf(o.tone), font: pick(SHEET_FONTS, o.font).id, fs };
+    cur = { tone: sheetToneOf(o.tone), font: pick(SHEET_FONTS, o.font).id, cover: pick(SHEET_COVERS, o.cover).id, fs };
     if (box) box.querySelectorAll("select[data-k]").forEach((s) => { s.value = cur[s.dataset.k]; });
     apply();
   }
@@ -8625,7 +8636,7 @@ function quizBodyHtml(q) {
     // 곧 정답을 알려 주는 셈이었다 — 학생은 찾지 않고 고치기만 하면 됐다(2026-09-27 뺌).
     // 몇 개인지는 답란 줄 수로 알 수 있게 남겨 둔다.
     const fixes = (q.fixes || []).filter((f) => f && f.wrong);
-    const text = esc(q.passageHtml || "");
+    const text = safeHTML(q.passageHtml || "");   // 문법 마법사의 ⓐ~ⓓ 문제는 줄바꿈(<br>)이 든다
     const lines = fixes
       .map((_, i) => `<div class="qz-fixline">(${i + 1}) ${wbBlank(150)} → ${wbBlank(150)}</div>`)
       .join("");

@@ -30,6 +30,7 @@ const GRAMMAR_MC_SHAPES = [
   { id: "mc_same", label: "쓰임이 다른 것" },
   { id: "mc_fixed", label: "바르게 고친 것" },
   { id: "mc_korean", label: "우리말 맞는 영문" },
+  { id: "mc_common", label: "공통 빈칸" },
 ];
 const GRAMMAR_SA_SHAPES = [
   { id: "sa_verb", label: "동사 형태 바꾸기" },
@@ -40,6 +41,10 @@ const GRAMMAR_SA_SHAPES = [
   { id: "sa_compose", label: "조건 영작" },
   { id: "sa_combine", label: "두 문장 합치기" },
   { id: "sa_same", label: "같은 뜻 빈칸" },
+  { id: "sa_judge", label: "ⓐ~ⓓ 틀린 문장 고치기" },
+  { id: "sa_passage", label: "글 속 틀린 곳 고치기" },
+  { id: "sa_bank", label: "보기에서 골라 쓰기" },
+  { id: "sa_dialog", label: "대화 완성" },
 ];
 const GRAMMAR_MAX_Q = 50;   // server.py GRAMMAR_MAX_QUESTIONS
 
@@ -51,6 +56,7 @@ const GRAMMAR_CATALOG = [
     { name: "일반동사의 부정문·의문문(do/does)", g: 1, re: /\b(don't|doesn't|didn't|do not|does not|did not)\b/i },
     { name: "be동사·일반동사의 과거형", g: 1, re: /\b(was|were)\b/i },
     { name: "There is / There are (존재 표현)", g: 2, re: /\bthere\s+(is|are|was|were)\b/i },
+    { name: "동사의 어미·활용 변화(-s/-es/-ies, -ing, 불규칙 과거·과거분사)", g: 1 },
   ] },
   { topic: "문장의 종류", subs: [
     { name: "명령문(Let's / Don't)", g: 0, re: /\b(let's|don't)\b/i },
@@ -652,9 +658,8 @@ function grEdit(i) {
     body += `<label class="gr-ed-l">정답 번호</label><input type="number" min="1" max="5" data-k="answer" value="${q.answer || 1}">`;
   }
   if (fmt === "fix") {
-    const f = (q.fixes || [])[0] || {};
-    body += field("fixWrong", "틀린 부분 (문장에 그대로 있는 글자)", f.wrong, 1);
-    body += field("fixRight", "고친 말", f.right, 1);
+    const fl = (q.fixes || []).map((f) => `${f.wrong} → ${f.right}`).join("\n");
+    body += field("fixLines", "틀린 부분 → 고친 말 (한 줄에 하나, 틀린 부분은 문장에 그대로 있는 글자)", fl, Math.max(2, (q.fixes || []).length + 1));
   }
   if (fmt === "compose") body += field("wordBank", "<보기> 낱말 (한 줄에 하나)", (q.wordBank || []).join("\n"), 3);
   if (fmt === "compose" || fmt === "convert") body += field("conditions", "<조건> (한 줄에 하나)", (q.conditions || []).join("\n"), 3);
@@ -688,11 +693,14 @@ grEl("grEditSave").addEventListener("click", () => {
     q.choices = c.slice(0, 5);
     q.answer = Math.max(1, Math.min(q.choices.length, parseInt(val("answer"), 10) || 1));
   }
-  if (val("fixWrong") !== null) {
-    if (val("fixWrong").trim() && !q.passageHtml.includes(val("fixWrong").trim())) {
+  if (val("fixLines") !== null) {
+    const fx = lines("fixLines").map((l) => { const k = l.indexOf("→"); return { wrong: (k < 0 ? l : l.slice(0, k)).trim(), right: k < 0 ? "" : l.slice(k + 1).trim() }; })
+      .filter((f) => f.wrong);
+    if (!fx.length) { alert("틀린 부분을 ‘틀린 말 → 고친 말’ 모양으로 한 줄 이상 적어 주세요."); return; }
+    if (fx.some((f) => !q.passageHtml.includes(f.wrong))) {
       alert("‘틀린 부분’은 문장에 글자 그대로 있어야 합니다."); return;
     }
-    q.fixes = [{ wrong: val("fixWrong").trim(), right: val("fixRight").trim() }];
+    q.fixes = fx;
   }
   if (val("wordBank") !== null) q.wordBank = lines("wordBank");
   if (val("conditions") !== null) q.conditions = lines("conditions");

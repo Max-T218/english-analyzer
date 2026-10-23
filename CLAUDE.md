@@ -390,7 +390,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 |---|---|
 | `QUIZ_TYPE_LABELS` / `MCQ_ONLY_TYPES` | `public/quiz.html`의 유형 목록(객관식 23 · 중학교 내신 13 · 주관식 18) |
 | `WORKBOOK_STAGE_IDS` / `WB_STAGES` | `public/workbook.html`의 14단계(O/X 포함) — 다른 소개 쪽·`index.html`의 "14단계" 문구도 같이 |
-| `GRAMMAR_GRADES` / `GRAMMAR_MC_SHAPES` / `GRAMMAR_SA_SHAPES` | `public/grammar.html`의 레벨·객관식 10·주관식 8 |
+| `GRAMMAR_GRADES` / `GRAMMAR_MC_SHAPES` / `GRAMMAR_SA_SHAPES` | `public/grammar.html`의 레벨·객관식 11·주관식 12 |
 
 **화면을 바꾸면 '만드는 법'도 같은 커밋에서 고치세요.** 탭마다 뜨는 [❓ 만드는 법] 창의
 글은 `public/app.js`의 `HOWTO`에 손으로 적혀 있어, 화면과 자동으로 맞춰지지 않습니다.

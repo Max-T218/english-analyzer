@@ -6190,6 +6190,7 @@ GRAMMAR_MC_SHAPES = {
     "mc_same": "밑줄 친 부분의 쓰임이 같은/다른 것 고르기",
     "mc_fixed": "밑줄 친 부분을 바르게 고친 것 고르기",
     "mc_korean": "우리말과 뜻이 같은 영어 문장 고르기",
+    "mc_common": "빈칸에 공통으로 들어갈 말 고르기",
 }
 GRAMMAR_SA_SHAPES = {
     "sa_verb": "괄호 안 동사 알맞은 형태로 쓰기",
@@ -6200,12 +6201,17 @@ GRAMMAR_SA_SHAPES = {
     "sa_compose": "조건 영작",
     "sa_combine": "두 문장을 한 문장으로 합치기",
     "sa_same": "같은 뜻이 되도록 빈칸 완성",
+    "sa_judge": "문장 ⓐ~ⓓ 중 틀린 문장 찾아 고쳐 쓰기",
+    "sa_passage": "글 속 틀린 곳 찾아 고쳐 쓰기",
+    "sa_bank": "보기에서 골라 알맞은 형태로 쓰기",
+    "sa_dialog": "대화 완성",
 }
 _GRAMMAR_SHAPE_FORMAT = {
     "mc_right": "mc", "mc_wrong": "mc", "mc_blank": "mc", "mc_underline": "mc",
     "mc_box": "mc", "mc_count": "mc", "mc_combo": "mc", "mc_same": "mc", "mc_fixed": "mc", "mc_korean": "mc",
     "sa_verb": "verb", "sa_fill": "fill", "sa_fix": "fix", "sa_convert": "convert",
     "sa_order": "write", "sa_compose": "compose", "sa_combine": "convert", "sa_same": "fill",
+    "mc_common": "mc", "sa_judge": "fix", "sa_passage": "fix", "sa_bank": "fill", "sa_dialog": "fill",
 }
 # 모양마다 무엇을 어떤 칸에 담는지 — 프롬프트에 그대로 싣는다. 칸 이름은 문제 탭과 같다.
 _GRAMMAR_SHAPE_RULES = {
@@ -6213,12 +6219,17 @@ _GRAMMAR_SHAPE_RULES = {
     "mc_wrong": 'format "mc". instruction "다음 중 어법상 틀린 문장은?". passageHtml은 빈 글자. choices는 영어 문장 5개 — 정확히 하나만 그 문법 항목에서 틀리고 넷은 완벽히 옳다. answer는 틀린 문장의 번호.',
     "mc_blank": 'format "mc". instruction "다음 빈칸에 들어갈 말로 알맞은 것은?". passageHtml은 영어 문장 하나(대화 두 줄도 됨, 줄은 <br>)에 빈칸을 "_____"(밑줄 다섯 개)로 한 곳만. choices는 낱말·짧은 구 5개, 정답은 하나뿐. answer는 그 번호. 만든 뒤 오답 보기 넷을 하나씩 빈칸에 넣어 읽어 보고, 문법·뜻 모두 성립하는 보기가 정답 말고 하나라도 있으면 보기나 문장을 바꾼다 — 특히 뜻이 겹치는 낱말을 보기로 둘 때(접속사 as·since·because·when·while, 전치사 through·across·along·over, 관계사 that·which·who)는 문맥으로 정답 하나만 남게 못 박는다(예: "The boy ran _____ the forest"는 through·across 둘 다 된다). between은 셋 이상이라도 하나하나를 짚을 때 쓰이므로(divide between the four members) among을 정답으로 할 때는 무리·덩어리 속(among the crowd / trees)으로 낸다.',
     "mc_underline": 'format "mc". instruction "다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?". passageHtml은 영어 2~4문장짜리 짧은 글에 밑줄 다섯 곳을 "①<u>낱말</u>"처럼 원문자를 밑줄 바로 앞에 붙여 ①~⑤ 차례로 표시. 틀린 곳은 정확히 하나이고 그 문법 항목에서 나온다. choices는 ["①","②","③","④","⑤"] 그대로. answer는 틀린 곳의 번호.',
-    "mc_box": 'format "mc". instruction "(A), (B), (C)의 각 네모 안에서 어법에 맞는 표현으로 가장 적절한 것은?". passageHtml은 영어 1~3문장에 네모 세 곳을 "(A) <b>[was / were]</b>"처럼 적는다(둘 중 하나만 옳다). choices는 5개 조합을 "were – who – to go"처럼 (A)–(B)–(C) 차례로. 정답 조합은 하나. answer는 그 번호. 세 네모는 난이도가 비슷해야 하고, 각 네모의 두 후보는 둘 다 그 자리에 문법적으로 성립할 수 있는 형태여야 한다 — 한 후보가 어떤 문법으로도 불가능하면(예: 조동사 cannot 뒤의 handled, 수식어 없이 명백히 안 맞는 시제) 그 네모는 공짜 점수가 되므로 쓰지 않는다. 시간 부사(last week 등)나 앞뒤 단어 하나만 보고 바로 풀리는 네모도 피하고, 문맥 전체를 따져야 갈리는 함정(주장·요구 동사 뒤 가정법 현재 vs 사실 전달, 시제 일치, 수일치 등)을 쓴다. 세 네모가 서로 다른 함정이어야 하고, 오답 조합 넷은 정답과 한두 네모만 달라 한 네모만 알아서는 못 고르게 한다.',
+    "mc_box": 'format "mc". instruction "(A), (B), (C)의 각 네모 안에서 어법에 맞는 표현으로 가장 적절한 것은?". passageHtml은 영어 1~3문장에 네모 세 곳을 "(A) <b>[was / were]</b>"처럼 적는다(둘 중 하나만 옳다). choices는 5개 조합을 "were – who – to go"처럼 (A)–(B)–(C) 차례로. (A)(B) 둘만 묻는 짧은 꼴도 된다 — passageHtml을 "· 문장1 (A)…<br>· 문장2 (B)…"처럼 서로 다른 두 문장(같은 항목의 다른 함정)에 칸을 하나씩 두고 choices는 "where – how"처럼 두 칸 조합 5개. 정답 조합은 하나. answer는 그 번호. 세 네모는 난이도가 비슷해야 하고, 각 네모의 두 후보는 둘 다 그 자리에 문법적으로 성립할 수 있는 형태여야 한다 — 한 후보가 어떤 문법으로도 불가능하면(예: 조동사 cannot 뒤의 handled, 수식어 없이 명백히 안 맞는 시제) 그 네모는 공짜 점수가 되므로 쓰지 않는다. 시간 부사(last week 등)나 앞뒤 단어 하나만 보고 바로 풀리는 네모도 피하고, 문맥 전체를 따져야 갈리는 함정(주장·요구 동사 뒤 가정법 현재 vs 사실 전달, 시제 일치, 수일치 등)을 쓴다. 세 네모가 서로 다른 함정이어야 하고, 오답 조합 넷은 정답과 한두 네모만 달라 한 네모만 알아서는 못 고르게 한다.',
     "mc_count": 'format "mc". instruction "다음 중 어법상 옳은 문장의 개수는?". countItems에 영어 문장 정확히 5개를 {"text": 문장, "isTrue": 어법상 옳으면 true, "why": 그렇게 판정한 근거 한국어 한 문장}으로 적는다. 이 slot의 정답 번호 N은 옳은 문장(isTrue)이 N개라는 뜻이다. 문장마다 판정을 먼저 정하고 근거를 쓴 뒤, 다시 한번 판정이 맞는지 따진다(서버가 isTrue를 세어 정답을 정하고 why로 해설을 만든다). passageHtml·choices·answer는 빈 값으로 둔다.',
     "mc_combo": 'format "mc". instruction "다음 (a)~(e) 중 어법상 옳은 것끼리 짝지어진 것은?". passageHtml은 "(a) 문장<br>(b) 문장<br>…(e) 문장" 영어 문장 정확히 5개 — 옳은 것은 정확히 2개(또는 3개)이고 나머지는 그 문법 항목에서 하나씩 틀린다. choices는 "(a), (c)"처럼 짝 5개로, 정답 짝은 하나뿐이고 오답 짝은 옳은 문장 하나만 맞게 섞는다. answer는 그 번호.',
-    "mc_same": 'format "mc". instruction "다음 중 밑줄 친 부분의 쓰임이 나머지와 <u>다른</u> 것은?". passageHtml은 빈 글자. choices는 영어 문장 5개로 같은 낱말·형태(예: to부정사, that, -ing, as)에 <u>밑줄</u>을 긋되 넷은 같은 쓰임, 하나만 다른 쓰임(예: 명사적 용법 vs 부사적 용법). answer는 다른 쓰임인 문장의 번호. 해설에 각 쓰임을 한 줄씩 밝힌다. 쓰임은 문법으로 갈래가 분명히 나뉘는 것만 견준다(명사적/부사적 용법, 동명사/현재분사, 재귀/강조 용법 등) — 분사구문·부사절의 뜻(시간·이유·조건·동시동작)처럼 한 문장이 두 갈래로 읽힐 수 있는 것은 이 모양으로 내지 않는다.',
+    "mc_same": 'format "mc". instruction "다음 중 밑줄 친 부분의 쓰임이 나머지와 <u>다른</u> 것은?". passageHtml은 빈 글자. choices는 영어 문장 5개로 같은 낱말·형태(예: to부정사, that, -ing, as)에 <u>밑줄</u>을 긋되 넷은 같은 쓰임, 하나만 다른 쓰임(예: 명사적 용법 vs 부사적 용법). answer는 다른 쓰임인 문장의 번호. 해설에 각 쓰임을 한 줄씩 밝힌다. 변형: 밑줄 대신 빈칸("_____")을 두고 "빈칸에 들어갈 말이 나머지와 다른 것은?"(instruction을 그렇게 적는다)으로 낼 수도 있다 — 예: 가주어 구문에서 사람의 성품 형용사 뒤는 of, 난이도 형용사 뒤는 for. 쓰임은 문법으로 갈래가 분명히 나뉘는 것만 견준다(명사적/부사적 용법, 동명사/현재분사, 재귀/강조 용법 등) — 분사구문·부사절의 뜻(시간·이유·조건·동시동작)처럼 한 문장이 두 갈래로 읽힐 수 있는 것은 이 모양으로 내지 않는다.',
     "mc_fixed": 'format "mc". instruction "다음 문장의 밑줄 친 부분을 바르게 고친 것은?". passageHtml은 틀린 곳 하나에 <u>밑줄</u>을 그은 영어 문장 하나. choices는 밑줄 부분을 대신할 영어 표현 5개 — 정답 하나만 고치면 문장이 완벽해지고, 오답 넷은 서로 다른 그럴듯한 오류(시제·수일치·형태·품사)를 만든다. answer는 그 번호.',
     "mc_korean": 'format "mc". instruction "다음 우리말과 뜻이 같은 영어 문장으로 알맞은 것은?". passageHtml은 우리말 문장 하나. choices는 영어 문장 5개 — 정답 하나만 그 문법 항목까지 옳고 넷은 어법이나 낱말 선택에서 하나씩 틀리거나 뜻이 달라진다. answer는 그 번호.',
+    "mc_common": 'format "mc". instruction "다음 빈칸에 공통으로 들어갈 말로 알맞은 것은?". passageHtml은 영어 문장 둘 또는 셋을 "· 문장1<br>· 문장2"로 싣고 문장마다 빈칸을 "_____"로 한 곳씩 둔다. choices는 낱말 5개 — 모든 빈칸에 들어가는 것은 정답 하나뿐이고, 오답은 일부 빈칸에만 들어간다(일부러 한 문장에서는 성립하게 만든다). 같은 낱말이 문장마다 다른 쓰임·뜻이어도 되지만 문법 항목에 맞는 쓰임이어야 한다. 만든 뒤 오답을 모든 빈칸에 넣어 보고 하나라도 어색한지, 정답 말고 모든 빈칸에 성립하는 보기가 없는지 확인한다(as/since처럼 뜻이 겹치는 낱말 주의). answer는 정답 번호.',
+    "sa_judge": 'format "fix". instruction "다음 문장 ⓐ~ⓓ 중 어법상 틀린 문장을 모두 찾아 틀린 부분을 바르게 고쳐 쓰시오.". passageHtml은 "ⓐ 문장<br>ⓑ 문장<br>ⓒ 문장<br>ⓓ 문장" 영어 문장 정확히 4개 — 틀린 문장은 둘이고 나머지 둘은 완벽히 옳다(태그는 <br>만). fixes는 [{"wrong": 틀린 낱말(들), "right": 고친 말}] 정확히 2개 — wrong은 passageHtml에 글자 그대로 있어야 하고, 한 문장에 오류는 하나뿐이다. 고친 말이 둘 이상 가능하면 right에 "/"로 이어 적는다. 두 오류는 서로 다른 함정이어야 한다.',
+    "sa_passage": 'format "fix". instruction "다음 글에서 어법상 알맞지 않은 부분을 찾아 바르게 고쳐 쓰시오.". passageHtml은 이어지는 영어 글 3~4문장(태그 없이 평문, 한 문단). 틀린 곳은 정확히 하나 또는 둘이고 서로 다른 문장에 있으며, 나머지는 문맥·어법 모두 완벽하다. fixes는 틀린 곳마다 {"wrong": 틀린 낱말(들), "right": 고친 말} — wrong은 글에 글자 그대로 한 번만 나와야 한다(같은 낱말이 여러 번 나오면 앞뒤 낱말까지 넣어 하나로 정해지게 한다). 고친 말이 둘 이상 가능하면 right에 "/"로 이어 적는다.',
+    "sa_bank": 'format "fill". instruction "<보기>에서 알맞은 말을 골라 빈칸에 알맞은 형태로 쓰시오. (단, 한 번씩만 쓸 것)". passageHtml은 첫 줄에 "<보기> 낱말1 낱말2 낱말3 낱말4"(원형, 정답보다 하나 많게)를 두고, 이어 "<br>1. 영어 문장 … (|정답) …<br>2. …"처럼 문장 3개에 빈칸 "(|정답)"을 한 곳씩 심는다. 정답은 보기 낱말을 그 문법 항목에 맞게 바꾼 형태이고(분사·동명사·수동·비교급 등), 보기 낱말은 문장마다 한 번씩만 쓰인다. 문맥으로 낱말이 하나로 정해져야 한다.',
+    "sa_dialog": 'format "fill". instruction "다음 대화의 빈칸에 알맞은 말을 쓰시오.". passageHtml은 "A: … <br>B: …" 두 사람의 짧은 대화(2~4줄)에 빈칸 "(|정답)"을 한두 곳 심는다. 상대방의 말이 정답을 가르는 단서여야 한다(예: B의 대답이 "No, I will not."이면 A의 질문은 will 의문문). 문법 항목이 정답으로 정해지게 하고, 정답이 둘 이상이면 "/"로 잇는다.',
     "sa_combine": 'format "convert". instruction "다음 두 문장을 <조건>에 맞게 한 문장으로 합쳐 쓰시오.". passageHtml은 영어 문장 둘("문장1<br>문장2"). conditions는 쓸 문법 장치 한두 줄(예: "관계대명사를 사용할 것", "분사구문으로 쓸 것"). answerText는 합친 문장 하나(대표 답). 다른 정당한 답이 있으면 alts에 한 문장씩.',
     "sa_same": 'format "fill". instruction "두 문장이 같은 뜻이 되도록 빈칸에 알맞은 말을 쓰시오.". passageHtml은 "영어 문장1<br>영어 문장2"로, 둘째 문장의 빈칸 자리를 "(|정답)"으로 1~2곳 심는다 — 첫 문장을 그 문법 항목으로 바꿔 쓰는 문제(예: 수동태·부정사·가정법·비교급). 낱말을 고르는 빈칸은 괄호 앞에 정답 첫 글자를 적는다. 정당한 답이 둘 이상이면 "/"로 잇는다.',
     "sa_verb": 'format "verb". instruction "괄호 안의 동사를 알맞은 형태로 바꿔 쓰시오.". passageHtml은 영어 문장 하나(또는 두 문장)에 바꿀 자리를 "(원형|정답)"으로 1~2곳 심는다 — 예: "She (live|has lived) here since 2020." 괄호 앞은 동사 원형, 뒤는 정답 형태. 정당한 답이 둘 이상이면 "/"로 이어 적는다 — 예: "(be|is / was)" 처럼 시제가 열려 있을 때.',
@@ -6296,6 +6307,7 @@ GRAMMAR_SYSTEM_PROMPT = """당신은 한국 중·고등학교와 초등학교 �
 - 주어진 단어를 모두 쓰는 배열 영작(sa_order)은 문장 끝의 전치사구·부사가 문두로 옮겨도 성립하는 문장을 쓰지 않습니다. 쓰더라도 정당한 어순을 alts에 모두 적습니다.
 - 학생이 직접 쓰는 문항(sa_*)은 정당한 답이 둘 이상이면 모두 적습니다. verb·fill은 괄호 안에 "/"로 잇고, fix는 right에 "/"로 잇고, 문장 답은 answerText에 대표 하나만 두고 나머지는 alts에 한 문장씩 적습니다. 틀린 답을 alts에 넣지 않습니다. 정답이 하나뿐이면 alts는 빈 배열입니다.
 - explanation은 한국어 1~3문장: 정답의 근거가 되는 문법 규칙을 짚고, 틀린 보기가 왜 틀렸는지 핵심만 씁니다. 용어를 정확히 씁니다 — 선행사가 명사(구)인지 앞 절 전체인지, 절의 종류(명사절·형용사절·부사절)를 틀리게 부르지 않습니다. 보기를 가리킬 때는 실제 번호(①~⑤)와 일치하게 씁니다. 마크다운 금지.
+- 시판 교재의 출제 관례를 따릅니다. ① 영작·배열은 우리말 뜻이 영어 문장과 정확히 같아야 하고, 우리말에 없는 정보를 정답에 넣지 않습니다. ② 대화(A/B 두 줄)를 쓸 때는 한쪽 말이 다른 쪽의 문법 선택(의문문 형태·시제·의문사)을 가를 단서가 되게 합니다(예: 대답이 "No, I won't."이면 will 의문문). ③ 같은 보기 자리에 문법 기능이 다른 쓰임을 섞는 '나머지와 다른 하나' 문항(빈칸 낱말이 다른 것, 밑줄 쓰임이 다른 것)은 넷이 같은 규칙, 하나만 다른 규칙이어야 하고 해설에 각 규칙을 한 줄씩 밝힙니다. ④ 교재는 쉬운 형태 고르기에서 시작해 우리말 영작·고쳐 쓰기로 올라갑니다 — 같은 항목이 여러 문항이면 난이도가 한 가지로 쏠리지 않게 합니다. ⑤ 해설은 규칙의 구조식을 꺾쇠로 먼저 보이고(예: 「have[has] been+-ing」, 「배수사+as+원급+as」) 그다음 문장 속 단서(주어의 수, 시간 부사, 상대방의 말)를 짚어 "~이므로 …로 써야 한다."로 맺습니다. ⑥ '교재식 출제 패턴'이 주어진 항목은 그 패턴 중에서 오답과 함정을 고릅니다. ⑦ 조건 영작·전환 문항의 조건에는 쓸 문법 장치와 단어 수("N 단어로 쓸 것")를 구체적으로 밝히고, 영작할 우리말 앞에 두 문장짜리 상황이나 A/B 대화를 한두 줄 줘서 그 문맥 속 한 문장을 영작하게 하는 꼴도 씁니다(문법 항목이 문맥으로 정해지게). ⑧ 과거 추측·시제 선택처럼 문맥이 답을 가르는 문항은 근거 문장("The floor is wet.")을 문항 안에 함께 줍니다. ⑨ 표·그림·도표는 화면에 그릴 수 없으니 쓰지 않고, 표 내용이 필요하면 수치를 문장으로 풀어 줍니다. ⑩ 초급 레벨은 5~9단어의 짧은 문장과 Yes/No 대답 짝(Are you ~? → No, I'm not.)·시간 단서(last night, every day)로 시제를 가리는 문항을 많이 씁니다.
 - HTML은 <br>, <u>, <b>만 씁니다.
 - 실존 인물의 사생활, 폭력·선정적인 내용, 특정 상표 광고는 쓰지 않습니다."""
 
@@ -6384,6 +6396,49 @@ def _grammar_qkey(q):
     return re.sub(r"[^a-z]+", " ", text.lower()).strip()
 
 
+# 시판 중등 문법 교재(천일문 중등 GRAMMAR·잘 풀리는 영문법 등)의 추가 문제·해설을 읽고 항목별로 자주 나오는 출제 방식과
+# 함정을 정리한 것(2026-10-23, GRAMMAR_REFERENCE.md). 교재 문장은 옮기지 않았다. 항목 이름에 열쇠말이 들어 있으면
+# 그 줄을 프롬프트에 싣는다 — 이름은 '항목 › 세부'라서 느슨하게 맞춘다.
+_GRAMMAR_PATTERNS = [
+    (r"be동사", "주어-be동사 일치(복수 주어 A and B → are), 현재 vs 과거(last night·yesterday 단서), be동사 줄임말(She's), 부정문은 be동사 뒤 not(He not small ✕), 의문문은 be동사를 앞으로, 질문 주어에 맞춘 대답(Are Nancy and Emily ~? → No, they aren't), 'be동사의 뜻 구분(~이다/~하다/~에 있다)'을 <보기>와 같은 뜻 고르기로."),
+    (r"일반동사", "3인칭 단수 -s/-es/-ies 철자(studys ✕), 주어 A and B는 복수, 과거 시간 부사(ago·last)가 있으면 과거형, 불규칙 과거형(read-read, cut-cut, find-found), 부정문 don't·doesn't·didn't + 동사원형(didn't bought ✕), 의문문 Do[Does/Did] + 주어 + 동사원형(Does she likes ✕), Yes/No 대답의 조동사 일치(Did ~? → Yes, they did)."),
+    (r"진행|미래", "현재진행 -ing 철자(tie-tying, run-running, begin-beginning, visit-visiting), 진행형 부정문 be + not + -ing, 의문문 어순(Is he talking ✕), will/be going to 뒤 동사원형(will goes ✕, going to meeting ✕), 부정은 will not·won't / be not going to(is going not to ✕), 질문과 같은 조동사로 대답(Will you ~? → Yes, I will), 진행형 불가 동사(know·like)."),
+    (r"조동사 ?\+ ?have|have p\.p", "과거 추측·후회: must have p.p.(~했음이 틀림없다) / can't have p.p.(~했을 리 없다) / may·might have p.p.(~했을지도 모른다) / should have p.p.(~했어야 했는데) / shouldn't have p.p. — 문장 앞뒤에 근거 문장을 같이 준다(바닥이 젖었다 → 누군가 주스를 쏟았을지도 모른다). should have woke ✕·must have be ✕ 같은 형태 오류, 현재 추측(must be)과 구별."),
+    (r"조동사", "조동사는 3단현 -s가 없다(cans ✕), 조동사 바로 뒤 not·동사원형(may is ✕, can dances ✕), 두 조동사 겹침 ✕(will must), must(의무) vs 추측('틀림없다') 쓰임 구분을 <보기> 같은/다른 것으로, may(허가) vs may(추측), can(능력·허가) 구분, don't have to(불필요) vs must not(금지), had better + 동사원형·부정은 had better not(had not better ✕), would like to / used to + 동사원형 / be used to + -ing 구별, Would you ~?는 정중한 요청·제안(문맥 의도 고르기), 능력의 과거 could·was able to, 같은 뜻 바꿔 쓰기(must = have to, can = be able to)."),
+    (r"(?<![대동])명사|관사|수량", "셀 수 있는 명사 복수형(-ies·-ves·불규칙 mice·teeth·deer), 불가산명사 단위(a loaf of → loaves, a cup of tea), many/much, a few/few·a little/little 의미 차이(거의 없다 vs 조금 있다), some은 긍정·권유, any는 부정·의문(not ~ some ✕), a/an/the 선택(처음 언급 vs 다시 언급, 악기·유일한 것), every·each 단수 취급, 복수 명사 뒤 단수 동사 ✕."),
+    (r"(?<!관계)대명사", "재귀대명사: 목적어가 주어와 같을 때 -self(I itself ✕), 강조 용법은 생략 가능, 관용 표현(enjoy oneself·by oneself·help yourself), 재귀 vs 강조를 <보기> 같은 쓰임 고르기로; 부정대명사: one(앞 명사 반복) vs it, some/any, one-another-the other(둘/셋)·some-others, each/every + 단수 명사·동사, all/both + 복수, each of the + 복수명사 + 단수 동사, 인칭대명사 격(소유격·목적격·소유대명사), this/that·these/those, 비인칭 주어 it(날씨·시간·거리)."),
+    (r"형용사|부사|비교급|최상급|원급|비교", "-thing/-one 뒤 형용사 후치(something exciting), 2형식·5형식 뒤 형용사 vs 일반동사 뒤 부사(looks like nice ✕, sounds greatly ✕), 부사 -ly(quietly)·fast/hard/late/high와 hardly/lately/highly 의미 차이, enough 위치(형용사 뒤, 명사 앞), friendly·lovely·lively 같은 -ly 형용사, 빈도부사 위치(조동사·be 뒤/일반동사 앞: usually don't go ✕ → don't usually go), 비교급·최상급 철자(bigger, easiest, thiner ✕, famousest ✕), 3음절 more/most, the+최상급+in/of, one of the + 최상급 + 복수명사, 배수사 + as ~ as, 비교급 강조 much·far·a lot·even·still(very ✕), 비교급 and 비교급, the + 비교급 ~, the + 비교급 …, not as ~ as ↔ 비교급 전환, 표를 보고 쓰는 문제는 표를 못 그리니 수치를 문장으로 준다."),
+    (r"문장 종류|의문문|감탄|부가|명령|제안|의문사", "부가의문문(긍정↔부정, 동사 종류·시제·주어 대명사 맞추기: draws → doesn't she), How/What 감탄문 어순(How + 형용사 + 주어 + 동사 / What a + 형용사 + 명사), 의문사 선택(이유 Why, 방법 How, 어느 쪽 Which, 소유 Whose), 명령문 + and/or 전환, 간접의문문 어순(how he knows ✕, where bought you ✕)과 if/whether, think·believe 류는 의문사를 문두로(Why do you think ~), Let's / Shall we / How about -ing 대답, 대화 속 대답으로 의문문 형태 가리기."),
+    (r"문장.*형식|SVC|SVOO|SVOC|5형식|4형식|3형식|2형식|수여|사역|지각|보어", "수여동사 3형식 전환 전치사(give·send·show·lend·teach → to / buy·make·get·cook → for / ask → of), 4형식에서 전치사 없이 목적어 두 개(pass to me a slice ✕), 감각동사 + 형용사(taste too salt ✕), call·name·elect·make·keep + 목적어 + 보어(형용사/명사), want·ask·tell·advise·allow·expect·order·get + O + to부정사(부정은 not to), make·have·let + O + 원형(let to drink ✕), help + O + (to) 원형, 지각동사 + O + 원형/-ing(see him play/playing), 'to를 쓸 수 있는 것' 문항, 형식이 같은 문장 고르기."),
+    (r"시제|현재완료|과거완료|완료", "현재완료 형태(have + p.p., 불규칙 p.p.: broke → broken, been/gone), 부정·의문(Have you ever ~?, 대답 Yes, I have), 현재완료 + 과거 부사 ✕(yesterday·ago·last·when), 의미 4가지(계속·경험·완료·결과)를 [계속/경험/완료/결과]로 분류, for(기간) / since(시점), have gone vs have been, 진행 불가 동사(know)는 완료진행 ✕, 과거완료는 두 과거 중 먼저 일어난 일(순서를 문장으로 제시), 현재완료진행 'for/since + 계속 진행 중'(두 문장을 한 문장으로), 시제 일치."),
+    (r"수동태", "능동 → 수동 전환(행위자 by, 시제·조동사 유지: should not be watched), 불규칙 p.p.(hid → hidden, stole → stolen, broke → broken), 자동사는 수동태 불가(was happened ✕), 의문문·의문사 수동태 어순, 4형식 수동태에서 남는 전치사(be taught to), 5형식 수동태(was called the king), 구동사 수동태(be taken care of — of를 빠뜨림), by 이외의 전치사(be covered with·filled with·made of/from·worried about·interested in·known as/to/for·satisfied with·surprised at), that절 수동태(It is said that ~), 행위자를 생략하는 경우."),
+    (r"to부정사|부정사", "용법 구분(명사·형용사·부사)을 <보기>와 쓰임이 같은/다른 것으로, 가주어 it ~ to부정사(진주어 앞 to), 의미상 주어 for vs of(성품 kind·wise·rude·careless는 of / 난이 hard·easy·difficult는 for — 빈칸이 나머지와 다른 하나), 의문사 + to부정사(what·where·when·how to), 형용사적 용법에서 전치사 남기기(a chair to sit on, a pen to write with, someone to talk to), -thing + 형용사 + to부정사, 목적/감정의 원인/결과 부사적 용법, in order to로 바꿀 수 있는 것 고르기, too ~ to / so ~ that ~ can't / enough to 전환(주어·시제 일치), seem to ↔ It seems that, 가목적어 it(find it easy to), 목적격보어 to(not to), to 뒤 동사원형(to rode ✕), how making ✕, 독립부정사, be to 용법."),
+    (r"동명사", "주어 자리 동명사(Keep ✕ → Keeping)는 단수 취급, 동명사만 목적어로 취하는 동사(enjoy·finish·avoid·keep·give up·mind·practice·suggest·deny), to부정사만 취하는 동사(want·decide·hope·expect·promise·plan·choose·agree), 둘 다 취하는 동사(love·like·start·begin·continue — 뜻이 같음), 뜻이 달라지는 동사(remember·forget·try·stop + -ing/to), 전치사 뒤 -ing(be good at·be interested in·without·by·for), be used to -ing vs used to 원형, look forward to -ing, spend 시간 -ing, have trouble -ing, be busy -ing, feel like -ing, go -ing(go to shopping ✕), 동명사의 부정(not -ing), 동명사 vs 현재분사를 <보기> 쓰임 고르기로."),
+    (r"분사", "명사 앞 수식 현재분사(능동·진행: sleeping baby) vs 과거분사(수동·완료: fallen tree, burned steak), 명사 뒤 후치 수식(the girl wearing glasses / a photo taken last year), 두 문장을 분사로 한 문장에(관계사절 줄이기), 감정 분사(사물·원인은 -ing, 사람의 감정은 -ed: The movie was boring / I was bored), 분사 보어(keep·find·see + O + 분사), 자동사의 과거분사(fallen)와 불규칙 p.p., 분사구문 기본형(접속사·주어 생략, 동사 -ing), 부정은 Not -ing, 수동(being p.p.의 being 생략), 의미 판별(시간·이유·조건·양보·동시동작 — 한 가지로만 읽히는 문장), 동명사 vs 현재분사 구분."),
+    (r"접속사", "명령문 + and(그러면)/or(그렇지 않으면) — 문맥 반대로 쓴 함정(Wear a jacket, and you will get a cold), 상관접속사 A and B / not A but B / either A or B / neither A nor B / not only A but also B(= B as well as A), 주어 수일치는 B에 맞춤(Neither Will or me ✕: nor), 시간 접속사 when/while/before/after/until/as soon as — 시간·조건 부사절에서 미래 대신 현재(If you will ✕), 이유 because/since/as, 대조 while/whereas, 양보 though/although/even if(+ but 중복 ✕), 조건 if/unless(unless + not ✕), so ~ that / such ~ that / so that, 접속사 that 명사절(주어·목적어·보어, 목적어 that 생략 가능), 간접의문문 어순과 if/whether, 접속사 vs 전치사(because of / during)."),
+    (r"관계대명사|관계사|관계부사", "격에 맞는 관계대명사(주격 who·which·that / 목적격 whom·which·that / 소유격 whose), 선행사가 사람이면 which ✕·사물이면 who ✕, 목적격 관계대명사 뒤 목적어 중복 ✕(which he gave it), 목적격 관계대명사 생략 가능/불가능 구별(주격은 생략 불가), 관계대명사절 동사의 수일치(the cake that are ✕), that만 쓰는 경우(최상급·서수·the only·all 선행사)와 that 쓸 수 없는 경우(콤마 뒤·전치사 바로 뒤), what(~하는 것: 선행사 포함) vs that/which 구별, 접속사 that·지시 that과 쓰임 비교 문항, 전치사 + 관계대명사(in which), 관계부사 where·when·why·how(the way how ✕), 두 문장을 한 문장으로(that 제외 조건), 우리말 영작·배열에서 what 활용."),
+    (r"가정법", "가정법 과거(If + 과거, would + 원형 / If I were), 가정법 과거완료(If + had p.p., would have p.p.), I wish + 가정법 과거(과거완료), as if + 가정법, 직설법 ↔ 가정법 전환(긍정·부정이 뒤바뀜), 혼합 가정법, without = if it were not for, if 생략 도치(Were I ~, Had I ~), 단순 조건문(if + 현재, will)과의 구별."),
+    (r"일치|화법", "수일치(each·every·everyone 단수, A number of + 복수 / The number of + 단수, 학문명 mathematics·economics·거리·금액·시간 단수, the + 형용사 복수 취급, both A and B 복수, most of + 명사에 따라, 동명사 주어 단수), 시제 일치(주절 과거 → 종속절 과거/과거완료)와 예외(불변의 진리 현재, 역사적 사실 과거), 직접 ↔ 간접화법(say to → tell/ask, 대명사·시제·now→then·today→that day·yesterday→the day before·tomorrow→the next day·this→that), 의문문은 if/whether 또는 의문사 + 평서문 어순(+ ask), 명령문은 tell/ask/order + O + (not) to부정사, 화법 전환이 바른/바르지 않은 것 고르기(보기 5개 중 대명사·시제 하나만 틀리게)."),
+    (r"특수|강조|도치|생략|동격|부정", "It is[was] ~ that 강조(강조 대상에 따라 who·that·which 혼동 ✕: It was the church what ✕), 동사 강조 do/does/did + 원형(did kept ✕, '강조의 did vs 일반동사 did' 구분), 부정어(never·hardly·scarcely·little·not only) 도치와 do 조동사, 장소 부사구 도치(In the box lay a puppy), So do I / Neither do I / So did Maria 동의 표현(앞 문장의 동사 종류에 맞춤), 생략 가능한 부사절 '주어 + be'(While (I was) playing), 반복 어구 생략과 대동사, 부분 부정(not every ≠ every ~ not), 전체 부정(no·none·nobody), 동격 콤마(New York, the largest city, ~)."),
+    (r"전치사", "시간 전치사(at 시각·on 날짜·요일·in 월·연·계절·아침 오후, for 숫자 기간 / during 특정 기간, by 기한 / until 계속), 장소·방향 전치사(in·on·at, between 둘/among 셋 이상, across·through·along·over), 교통수단 by, 도구 with, 전치사 뒤 명사·동명사(to부정사 ✕), 형용사 + 전치사 숙어(be afraid of·be good at·be interested in), 전치사 vs 접속사(during/while, because of/because, despite/although), 전치사 선택 빈칸(문맥으로 하나로 정해지게)."),
+]
+
+
+def _grammar_patterns_for(items):
+    """고른 항목 이름에 맞는 교재식 출제 패턴 줄들 — 같은 줄은 한 번만."""
+    out, seen = [], set()
+    for name in items:
+        hits = 0
+        for pat, text in _GRAMMAR_PATTERNS:
+            if re.search(pat, name) and text not in seen:
+                seen.add(text)
+                out.append(f"- [{name}] {text}")
+                hits += 1
+                if hits >= 2:   # 이름이 두 영역에 걸치면(동명사 vs 현재분사) 두 줄까지
+                    break
+    return out
+
+
 def _grammar_user_prompt(plan, slots, theme=None, avoid=None):
     grade_name, grade_rule = GRAMMAR_GRADES[plan["grade"]]
     used = []
@@ -6402,6 +6457,11 @@ def _grammar_user_prompt(plan, slots, theme=None, avoid=None):
     text = (f"학년: {grade_name} — {grade_rule}\n\n"
             f"문항 목록 ({len(slots)}문항):\n" + "\n".join(lines) +
             f"\n\n모양별 작성 규칙:\n{rules}\n")
+    pats = _grammar_patterns_for(list(dict.fromkeys(s["item"] for s in slots)))
+    if pats:
+        text += ("\n교재식 출제 패턴 — 시판 중등 문법 교재가 항목마다 즐겨 내는 방식과 학생이 실제로 틀리는 함정입니다. "
+                 "문항의 오답·틀린 곳·조건을 여기서 골라 쓰되, 한 문항에 하나씩만 쓰고 문항끼리 겹치지 않게 합니다:\n"
+                 + "\n".join(pats) + "\n")
     if theme and not plan["passage"]:
         text += f"\n문장 소재는 주로 '{theme}' 쪽에서 고르되, 문항마다 상황을 바꿉니다.\n"
     if avoid:
@@ -6416,7 +6476,7 @@ def _grammar_user_prompt(plan, slots, theme=None, avoid=None):
 
 
 _CIRCLED_NO = "①②③④⑤"
-_GRAMMAR_SWAPPABLE = ("mc_right", "mc_wrong", "mc_blank", "mc_box", "mc_combo", "mc_same", "mc_fixed", "mc_korean")
+_GRAMMAR_SWAPPABLE = ("mc_common", "mc_right", "mc_wrong", "mc_blank", "mc_box", "mc_combo", "mc_same", "mc_fixed", "mc_korean")
 # 해설에 AI가 스스로 고쳐 말한 흔적("다시 점검…")이 남은 문항 — 정답이 흔들렸다는 신호라 버린다
 # '부자연스럽'·'(여기서는'은 혼잣말이라기보다 틀린 보기가 사실 틀리지 않았다는 표시다 — 2026-10-20 시험에서
 # so/such 문항의 해설이 "such hot sun은 부자연스럽습니다(여기서는 …)"로 흐렸고, 그 보기는 옳게도 읽혔다.
@@ -6585,14 +6645,27 @@ def _grammar_finish(raw, slot):
     if q["format"] == "mc" and len(q.get("choices") or []) != 5:
         return None
     _grammar_place_answer(q, shape, slot.get("target"))
-    _grammar_hint_fill(q)
+    if shape not in ("sa_bank", "sa_dialog"):   # 보기·대화 단서가 있어 첫 글자 힌트를 더 주지 않는다
+        _grammar_hint_fill(q)
     if q["format"] == "fix":
-        q["passageHtml"] = re.sub(r"<[^>]+>", "", str(q.get("passageHtml") or ""))
+        raw_html = str(q.get("passageHtml") or "")
+        if shape == "sa_judge":   # 문장 ⓐ~ⓓ가 한 줄씩 보이게 <br>만 남긴다
+            raw_html = re.sub(r"<(?!br\s*/?>)[^>]+>", "", raw_html)
+            if len(re.findall(r"[ⓐⓑⓒⓓ]", raw_html)) != 4:
+                return None
+        q["passageHtml"] = raw_html if shape == "sa_judge" else re.sub(r"<[^>]+>", "", raw_html)
         fixes = [f for f in (q.get("fixes") or []) if isinstance(f, dict) and f.get("wrong")
                  and str(f["wrong"]) in q["passageHtml"]]
         if not fixes:
             return None
-        q["fixes"] = fixes[:1]
+        if shape in ("sa_judge", "sa_passage"):
+            fixes = fixes[:2]
+            # 같은 틀린 부분이 글에 두 번 나오면 어디를 고치라는 건지 정해지지 않는다
+            if any(q["passageHtml"].count(str(f["wrong"])) != 1 for f in fixes):
+                return None
+        else:
+            fixes = fixes[:1]
+        q["fixes"] = fixes
     clean = _qt_clean_question(q)
     if not clean:
         return None
@@ -12535,6 +12608,14 @@ CHANGELOG = [
         "items": [
             "지문 상세분석·요약분석 — '🎨 분석본 꾸미기' 칸에서 테마 색상도 고를 수 있습니다. 표지·지문 머리·문장 번호·소제목·흐름도·"
             "배경지식 카드 같은 꾸밈 자리의 남색이 고른 색으로 바뀌고, 어법(빨강)·어휘(파랑)·병렬구조 표시 색은 그대로입니다. 요금은 없습니다.",
+        ],
+    },
+    {
+        "version": 95,
+        "date": "2026-10-23",
+        "items": [
+            "문법문제 마법사 — 시판 중등 문법 교재의 출제 방식을 반영했습니다. 항목마다 교재가 즐겨 내는 함정(관계대명사 목적어 중복, 수동태 불규칙 과거분사, 의미상 주어 for/of 등)을 골라 쓰고, 해설은 구조식과 문장 속 단서를 짚는 어투로 나옵니다. "
+            "새 문제 모양 5가지(공통 빈칸, ⓐ~ⓓ 틀린 문장 고치기, 글 속 틀린 곳 고치기, 보기에서 골라 형태 바꿔 쓰기, 대화 완성)도 더했습니다. 요금은 그대로입니다.",
         ],
     },
 ]
