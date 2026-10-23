@@ -593,6 +593,8 @@ function grRequest() {
   };
 }
 
+const grNorm = (s) => String(s || "").replace(/\s+/g, " ").trim().slice(0, 80);   // 서버 parse_grammar_request가 이름을 다듬는 것과 같게
+
 async function grMake() {
   const errEl = grEl("grError");
   errEl.textContent = "";
@@ -612,9 +614,34 @@ async function grMake() {
     const data = await postGenerate("/api/grammar", grRequest(), "문법 문제를 만들지 못했습니다.",
       (n) => { grEl("grLoadingText").textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; });
     grState.questions = data.questions || [];
+    // 서버가 두 번 채워 보고도 빠진 문항은 바로 이어서 만든다(최대 두 번) — 빠진 항목·종류 그대로.
+    // 서버는 이어 채우기에 문항당 값만 받는다(기본값은 처음에 냈다).
+    let missing = data.missing || 0;
+    const want = JSON.parse(JSON.stringify(grRequest().items));
+    for (let round = 0; missing > 0 && round < 2; round++) {
+      const have = {};
+      grState.questions.forEach((q) => { const k = `${grNorm(q.gitem)}|${q.gkind}`; have[k] = (have[k] || 0) + 1; });
+      const lack = want.map((it) => ({
+        name: it.name,
+        mc: Math.max(0, it.mc - (have[`${grNorm(it.name)}|mc`] || 0)),
+        sa: Math.max(0, it.sa - (have[`${grNorm(it.name)}|sa`] || 0)),
+      })).filter((it) => it.mc + it.sa > 0);
+      const n = lack.reduce((a, it) => a + it.mc + it.sa, 0);
+      if (!n) break;
+      grEl("grLoadingText").textContent = `빠진 ${n}문항을 이어서 만들고 있습니다…`;
+      try {
+        const more = await postGenerate("/api/grammar", Object.assign(grRequest(), { items: lack, topup: true }),
+          "빠진 문항을 만들지 못했습니다.");
+        const mq = more.questions || [];
+        const mcs = grState.questions.filter((q) => q.format === "mc");
+        const sas = grState.questions.filter((q) => q.format !== "mc");
+        grState.questions = mcs.concat(mq.filter((q) => q.format === "mc"), sas, mq.filter((q) => q.format !== "mc"));
+        missing = n - mq.length;
+      } catch (_) { missing = n; break; }
+    }
     if (typeof LOADED_SAVED !== "undefined") delete LOADED_SAVED.grammar;   // 새로 만든 것은 어느 저장본도 아니다
     grRender();
-    if (data.missing) errEl.textContent = `${data.missing}문항은 만들지 못해 빠졌습니다(값은 받은 문항만큼만 나갔습니다).`;
+    if (missing > 0) errEl.textContent = `${missing}문항은 만들지 못해 빠졌습니다(값은 받은 문항만큼만 나갔습니다). 문제 만들기를 다시 누르면 새로 만듭니다.`;
   } catch (err) {
     errEl.textContent = err.message || "문법 문제를 만들지 못했습니다.";
   } finally {

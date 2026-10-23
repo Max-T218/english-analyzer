@@ -6355,6 +6355,31 @@ def _grammar_cost(mc, sa):
     return PRICE_GRAMMAR_BASE_KRW + PRICE_GRAMMAR_PER_Q_KRW * n if n else 0
 
 
+GRAMMAR_TOPUP_MAX_AGE = 1800   # 초 — 빠진 문항을 이어 채울 수 있는 시간
+
+
+def _grammar_topup_left(user_id):
+    """못 만들어 빠진 문항 중 아직 이어서 채울 수 있는 수. 기본값(시험지 한 장 값)은 처음 만들 때 이미 냈으므로
+    이어 채우기는 문항당 값만 받는다 — 화면이 지어낸 요청으로 기본값을 피하지 못하게 서버가 빠진 수를 기억한다."""
+    try:
+        snap = DB.collection("users").document(user_id).get()
+        t = ((snap.to_dict() or {}) if snap.exists else {}).get("grammar_topup") or {}
+        started = datetime.fromisoformat(t.get("started", ""))
+        if (datetime.now(timezone.utc) - started).total_seconds() > GRAMMAR_TOPUP_MAX_AGE:
+            return 0
+        return max(0, int(t.get("n") or 0))
+    except Exception:
+        return 0
+
+
+def _grammar_topup_set(user_id, n):
+    try:
+        DB.collection("users").document(user_id).update({"grammar_topup": {
+            "n": max(0, int(n)), "started": datetime.now(timezone.utc).isoformat()}})
+    except Exception as e:   # 기록이 실패해도 만든 문항은 돌려준다 — 이어 채우기만 기본값이 다시 붙는다
+        print(f"[grammar] 이어 채우기 기록 실패: {e}", flush=True)
+
+
 def _grammar_slots(plan):
     """문항 하나하나의 자리 — [{slot, item, kind, shapes}]. 객관식을 모두 먼저, 주관식을 뒤에 둔다
     (실제 시험지 차례). 모양을 AI에 맡기지 않으면 항목마다 고른 모양을 돌려 가며 정해 준다."""
@@ -6670,6 +6695,7 @@ def _grammar_finish(raw, slot):
     if not clean:
         return None
     clean["gkind"] = slot["kind"]   # 객관식·주관식 — 받아 낸 문항 수로 값을 셀 때 쓴다
+    clean["gitem"] = slot["item"]   # 어느 항목의 문항인지 — 빠진 문항을 항목별로 이어서 채울 때 쓴다
     return clean
 
 
@@ -17519,8 +17545,9 @@ class Handler(BaseHTTPRequestHandler):
                         g_sa = sum(it["sa"] for it in g_plan["items"])
                     except ValueError:
                         g_mc = g_sa = 0
-                    cost = _grammar_cost(g_mc, g_sa)
-                    self._pending_label = f"문법 문제 · {g_mc + g_sa}문항"
+                    self._grammar_topup = bool(req.get("topup")) and 0 < g_mc + g_sa <= _grammar_topup_left(self._auth_user_id)
+                    cost = (PRICE_GRAMMAR_PER_Q_KRW * (g_mc + g_sa)) if self._grammar_topup else _grammar_cost(g_mc, g_sa)
+                    self._pending_label = f"문법 문제 · {g_mc + g_sa}문항" + (" (이어 채우기)" if self._grammar_topup else "")
                 elif path == "/api/examscan":
                     # 기본 0원 — 값을 매기지 않는 이유는 PRICE_EXAMSCAN_KRW 주석 참고.
                     # 관리자가 환경변수로 값을 매기면 그때부터 쪽 수와 무관하게 1벌당 이 값이다.
@@ -19018,8 +19045,10 @@ class Handler(BaseHTTPRequestHandler):
                 got_mc = sum(1 for q in result["questions"] if q.get("gkind") == "mc")
                 got_sa = len(result["questions"]) - got_mc
                 # 받아 낸 만큼만 받는다 — 못 만든 문항에 값이 나가면 안 된다
-                self._pending_charge = _grammar_cost(got_mc, got_sa)
-                self._pending_label = f"문법 문제 · {got_mc + got_sa}문항"
+                topup = getattr(self, "_grammar_topup", False)
+                self._pending_charge = (PRICE_GRAMMAR_PER_Q_KRW * (got_mc + got_sa)) if topup else _grammar_cost(got_mc, got_sa)
+                self._pending_label = f"문법 문제 · {got_mc + got_sa}문항" + (" (이어 채우기)" if topup else "")
+                _grammar_topup_set(self._auth_user_id, result.get("missing") or 0)
                 self._charge_and_send(path, req, result)
             except QuotaExceeded as e:
                 self._send_json({"error": str(e), "code": "quota"}, 429)
