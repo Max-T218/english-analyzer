@@ -6211,12 +6211,12 @@ _GRAMMAR_SHAPE_FORMAT = {
 _GRAMMAR_SHAPE_RULES = {
     "mc_right": 'format "mc". instruction "다음 중 어법상 옳은 문장은?". passageHtml은 빈 글자. choices는 영어 문장 5개 — 그중 정확히 하나만 어법상 옳고 넷은 그 문법 항목에서 흔히 틀리는 자리를 하나씩 틀린다. answer는 옳은 문장의 번호(1~5).',
     "mc_wrong": 'format "mc". instruction "다음 중 어법상 틀린 문장은?". passageHtml은 빈 글자. choices는 영어 문장 5개 — 정확히 하나만 그 문법 항목에서 틀리고 넷은 완벽히 옳다. answer는 틀린 문장의 번호.',
-    "mc_blank": 'format "mc". instruction "다음 빈칸에 들어갈 말로 알맞은 것은?". passageHtml은 영어 문장 하나(대화 두 줄도 됨, 줄은 <br>)에 빈칸을 "_____"(밑줄 다섯 개)로 한 곳만. choices는 낱말·짧은 구 5개, 정답은 하나뿐. answer는 그 번호.',
+    "mc_blank": 'format "mc". instruction "다음 빈칸에 들어갈 말로 알맞은 것은?". passageHtml은 영어 문장 하나(대화 두 줄도 됨, 줄은 <br>)에 빈칸을 "_____"(밑줄 다섯 개)로 한 곳만. choices는 낱말·짧은 구 5개, 정답은 하나뿐. answer는 그 번호. 만든 뒤 오답 보기 넷을 하나씩 빈칸에 넣어 읽어 보고, 문법·뜻 모두 성립하는 보기가 정답 말고 하나라도 있으면 보기나 문장을 바꾼다 — 특히 뜻이 겹치는 낱말을 보기로 둘 때(접속사 as·since·because·when·while, 전치사 through·across·along·over, 관계사 that·which·who)는 문맥으로 정답 하나만 남게 못 박는다(예: "The boy ran _____ the forest"는 through·across 둘 다 된다). between은 셋 이상이라도 하나하나를 짚을 때 쓰이므로(divide between the four members) among을 정답으로 할 때는 무리·덩어리 속(among the crowd / trees)으로 낸다.',
     "mc_underline": 'format "mc". instruction "다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?". passageHtml은 영어 2~4문장짜리 짧은 글에 밑줄 다섯 곳을 "①<u>낱말</u>"처럼 원문자를 밑줄 바로 앞에 붙여 ①~⑤ 차례로 표시. 틀린 곳은 정확히 하나이고 그 문법 항목에서 나온다. choices는 ["①","②","③","④","⑤"] 그대로. answer는 틀린 곳의 번호.',
     "mc_box": 'format "mc". instruction "(A), (B), (C)의 각 네모 안에서 어법에 맞는 표현으로 가장 적절한 것은?". passageHtml은 영어 1~3문장에 네모 세 곳을 "(A) <b>[was / were]</b>"처럼 적는다(둘 중 하나만 옳다). choices는 5개 조합을 "were – who – to go"처럼 (A)–(B)–(C) 차례로. 정답 조합은 하나. answer는 그 번호. 세 네모는 난이도가 비슷해야 하고, 각 네모의 두 후보는 둘 다 그 자리에 문법적으로 성립할 수 있는 형태여야 한다 — 한 후보가 어떤 문법으로도 불가능하면(예: 조동사 cannot 뒤의 handled, 수식어 없이 명백히 안 맞는 시제) 그 네모는 공짜 점수가 되므로 쓰지 않는다. 시간 부사(last week 등)나 앞뒤 단어 하나만 보고 바로 풀리는 네모도 피하고, 문맥 전체를 따져야 갈리는 함정(주장·요구 동사 뒤 가정법 현재 vs 사실 전달, 시제 일치, 수일치 등)을 쓴다. 세 네모가 서로 다른 함정이어야 하고, 오답 조합 넷은 정답과 한두 네모만 달라 한 네모만 알아서는 못 고르게 한다.',
     "mc_count": 'format "mc". instruction "다음 중 어법상 옳은 문장의 개수는?". countItems에 영어 문장 정확히 5개를 {"text": 문장, "isTrue": 어법상 옳으면 true, "why": 그렇게 판정한 근거 한국어 한 문장}으로 적는다. 이 slot의 정답 번호 N은 옳은 문장(isTrue)이 N개라는 뜻이다. 문장마다 판정을 먼저 정하고 근거를 쓴 뒤, 다시 한번 판정이 맞는지 따진다(서버가 isTrue를 세어 정답을 정하고 why로 해설을 만든다). passageHtml·choices·answer는 빈 값으로 둔다.',
     "mc_combo": 'format "mc". instruction "다음 (a)~(e) 중 어법상 옳은 것끼리 짝지어진 것은?". passageHtml은 "(a) 문장<br>(b) 문장<br>…(e) 문장" 영어 문장 정확히 5개 — 옳은 것은 정확히 2개(또는 3개)이고 나머지는 그 문법 항목에서 하나씩 틀린다. choices는 "(a), (c)"처럼 짝 5개로, 정답 짝은 하나뿐이고 오답 짝은 옳은 문장 하나만 맞게 섞는다. answer는 그 번호.',
-    "mc_same": 'format "mc". instruction "다음 중 밑줄 친 부분의 쓰임이 나머지와 <u>다른</u> 것은?". passageHtml은 빈 글자. choices는 영어 문장 5개로 같은 낱말·형태(예: to부정사, that, -ing, as)에 <u>밑줄</u>을 긋되 넷은 같은 쓰임, 하나만 다른 쓰임(예: 명사적 용법 vs 부사적 용법). answer는 다른 쓰임인 문장의 번호. 해설에 각 쓰임을 한 줄씩 밝힌다.',
+    "mc_same": 'format "mc". instruction "다음 중 밑줄 친 부분의 쓰임이 나머지와 <u>다른</u> 것은?". passageHtml은 빈 글자. choices는 영어 문장 5개로 같은 낱말·형태(예: to부정사, that, -ing, as)에 <u>밑줄</u>을 긋되 넷은 같은 쓰임, 하나만 다른 쓰임(예: 명사적 용법 vs 부사적 용법). answer는 다른 쓰임인 문장의 번호. 해설에 각 쓰임을 한 줄씩 밝힌다. 쓰임은 문법으로 갈래가 분명히 나뉘는 것만 견준다(명사적/부사적 용법, 동명사/현재분사, 재귀/강조 용법 등) — 분사구문·부사절의 뜻(시간·이유·조건·동시동작)처럼 한 문장이 두 갈래로 읽힐 수 있는 것은 이 모양으로 내지 않는다.',
     "mc_fixed": 'format "mc". instruction "다음 문장의 밑줄 친 부분을 바르게 고친 것은?". passageHtml은 틀린 곳 하나에 <u>밑줄</u>을 그은 영어 문장 하나. choices는 밑줄 부분을 대신할 영어 표현 5개 — 정답 하나만 고치면 문장이 완벽해지고, 오답 넷은 서로 다른 그럴듯한 오류(시제·수일치·형태·품사)를 만든다. answer는 그 번호.',
     "mc_korean": 'format "mc". instruction "다음 우리말과 뜻이 같은 영어 문장으로 알맞은 것은?". passageHtml은 우리말 문장 하나. choices는 영어 문장 5개 — 정답 하나만 그 문법 항목까지 옳고 넷은 어법이나 낱말 선택에서 하나씩 틀리거나 뜻이 달라진다. answer는 그 번호.',
     "sa_combine": 'format "convert". instruction "다음 두 문장을 <조건>에 맞게 한 문장으로 합쳐 쓰시오.". passageHtml은 영어 문장 둘("문장1<br>문장2"). conditions는 쓸 문법 장치 한두 줄(예: "관계대명사를 사용할 것", "분사구문으로 쓸 것"). answerText는 합친 문장 하나(대표 답). 다른 정당한 답이 있으면 alts에 한 문장씩.',
@@ -6291,7 +6291,7 @@ GRAMMAR_SYSTEM_PROMPT = """당신은 한국 중·고등학교와 초등학교 �
 - 학년 수준(낱말 난이도·문장 길이)을 지킵니다.
 - 문항 목록에 '정답은 N번'이 적힌 객관식 slot은 정답(틀린 문장·틀린 밑줄 포함)을 반드시 그 번호에 둡니다. mc_count는 옳은 문장 수가 N개가 되게 합니다. 번호가 한쪽으로 쏠리지 않게 하려는 것이니 마음대로 바꾸지 않습니다.
 - 같은 세부 항목의 문항끼리는 오류 유형·함정이 겹치지 않게 합니다. 목록의 '이 항목의 n번째'를 보고, n번째 문항은 그 문법에서 n번째로 흔한 오류(예: 수일치, 품사 혼동, 대명사·목적어 중복, 어순, 시제 호응, 형태 변화 …)를 소재로 삼습니다. 같은 수법을 두 문항 이상 되풀이하지 않습니다.
-- 논란의 여지가 있는 문장은 쓰지 않습니다. '틀린 것 하나'를 찾는 문항(mc_wrong·mc_underline·sa_fix)은 나머지 곳이 어법·문맥·관용상 모두 자연스러워야 합니다. 원어민 사이에서도 의견이 갈리는 표현은 정답이나 오답의 근거로 쓰지 않습니다. 특히 금지: ① "that which"·"those who" 같은 문어체 관용(= what, 사람들)을 틀린 것으로 내는 일 — 이 표현은 옳습니다. ② 앞 절 전체를 받는 which의 동사 단·복수를 묻는 일(선행사가 명사로도 읽혀 답이 갈립니다). ③ "what + 명사"(what ingredients, what dishes …)처럼 what이 명사를 꾸미는 용법 — 옳다고도 틀렸다고도 읽힙니다. ④ 문어체·구어체 차이로만 갈리는 것. ⑤ 빈도부사·부정부사(rarely, usually not …)의 선택적 위치 — 동사 앞이 가장 자연스러울 뿐 뒤도 틀리지 않으니, 빈도부사 문항은 'forgot never'·'can feel often'처럼 누구에게나 틀린 어순만 오답으로 씁니다. ⑥ 성별을 모르는 단수 사람 명사(a student, an athlete, everyone …)를 they/their로 받는 것 — 지금 영어에서 옳습니다. 대명사 수 일치는 사물·동물 명사(it/they, its/their)로 묻습니다. ⑦ neither of·either of·none of + 복수 명사 뒤의 복수 동사 — 실제로 널리 쓰여 틀렸다고 할 수 없습니다. 수 일치는 each·every·each of·one of·the number of처럼 갈리지 않는 것으로 묻습니다. ⑧ 다른 문법으로 성립하는 문장 — 예: be to 용법 문항의 'was never returning'(과거에서 본 미래 진행형으로 옳다), 분사·동명사 둘 다 되는 자리. ⑨ 관계사절의 선행사가 'A of B'처럼 둘로 읽히고 어느 쪽에 맞춰도 말이 되는 문장(the recipe of sauces which requires …). ⑩ to와 동사 사이에 부사를 넣은 것(to not leave, to really understand) — 쓰이는 표현이라 틀린 것으로 내지 않습니다. 해설에서 틀린 보기를 '부자연스럽다'고밖에 말할 수 없으면 그 보기는 틀린 것이 아니니 다른 보기로 바꿉니다.
+- 논란의 여지가 있는 문장은 쓰지 않습니다. '틀린 것 하나'를 찾는 문항(mc_wrong·mc_underline·sa_fix)은 나머지 곳이 어법·문맥·관용상 모두 자연스러워야 합니다. 원어민 사이에서도 의견이 갈리는 표현은 정답이나 오답의 근거로 쓰지 않습니다. 특히 금지: ① "that which"·"those who" 같은 문어체 관용(= what, 사람들)을 틀린 것으로 내는 일 — 이 표현은 옳습니다. ② 앞 절 전체를 받는 which의 동사 단·복수를 묻는 일(선행사가 명사로도 읽혀 답이 갈립니다). ③ "what + 명사"(what ingredients, what dishes …)처럼 what이 명사를 꾸미는 용법 — 옳다고도 틀렸다고도 읽힙니다. ④ 문어체·구어체 차이로만 갈리는 것. ⑤ 빈도부사·부정부사(rarely, usually not …)의 선택적 위치 — 동사 앞이 가장 자연스러울 뿐 뒤도 틀리지 않으니, 빈도부사 문항은 'forgot never'·'can feel often'처럼 누구에게나 틀린 어순만 오답으로 씁니다. ⑥ 성별을 모르는 단수 사람 명사(a student, an athlete, everyone …)를 they/their로 받는 것 — 지금 영어에서 옳습니다. 대명사 수 일치는 사물·동물 명사(it/they, its/their)로 묻습니다. ⑦ neither of·either of·none of + 복수 명사 뒤의 복수 동사 — 실제로 널리 쓰여 틀렸다고 할 수 없습니다. 수 일치는 each·every·each of·one of·the number of처럼 갈리지 않는 것으로 묻습니다. ⑧ 다른 문법으로 성립하는 문장 — 예: be to 용법 문항의 'was never returning'(과거에서 본 미래 진행형으로 옳다), 분사·동명사 둘 다 되는 자리. ⑨ 관계사절의 선행사가 'A of B'처럼 둘로 읽히고 어느 쪽에 맞춰도 말이 되는 문장(the recipe of sauces which requires …). ⑩ to와 동사 사이에 부사를 넣은 것(to not leave, to really understand) — 쓰이는 표현이라 틀린 것으로 내지 않습니다. ⑪ 최상급·서수(the first …)·the only·the same·all이 붙은 사물 선행사 뒤의 which — '주로 that을 쓴다'일 뿐 틀린 것이 아니니 오답·틀린 곳으로 내지 않습니다. 이 항목은 that을 고르거나 쓰게 하되, 오답은 what·whose·사람 선행사의 which처럼 분명히 틀린 것으로 만듭니다. ⑫ 공통 빈칸(한 보기를 두 문장 이상의 빈칸에 함께 넣는 문항)은 정답 말고 모든 빈칸에 함께 들어가는 보기가 없어야 합니다 — as/since는 둘 다 '이유'와 '시간'으로 쓰이므로 이유 문장 둘로는 갈리지 않습니다. as를 정답으로 하려면 since가 안 되는 쓰임(~함에 따라, ~처럼, ~로서)을 한 빈칸에 둡니다. ⑬ 분사구문의 뜻을 묻는 문항은 접속사로 풀었을 때 뜻이 하나로만 정해지는 문장만 씁니다(Seeing the clouds, we …처럼 시간·이유 둘로 읽히는 것은 쓰지 않습니다). 해설에서 틀린 보기를 '부자연스럽다'고밖에 말할 수 없으면 그 보기는 틀린 것이 아니니 다른 보기로 바꿉니다.
 - 동사형 쓰기(sa_verb)와 빈칸 쓰기(sa_fill)에서 시제·진행형이 열려 있으면(현재/과거, 단순형/진행형 모두 말이 되는 경우) 가능한 답을 모두 "/"로 잇습니다. 시제가 문맥으로 하나로 정해지게 만드는 편이 더 낫습니다(과거 시점 부사·접속사를 넣는 식).
 - 주어진 단어를 모두 쓰는 배열 영작(sa_order)은 문장 끝의 전치사구·부사가 문두로 옮겨도 성립하는 문장을 쓰지 않습니다. 쓰더라도 정당한 어순을 alts에 모두 적습니다.
 - 학생이 직접 쓰는 문항(sa_*)은 정당한 답이 둘 이상이면 모두 적습니다. verb·fill은 괄호 안에 "/"로 잇고, fix는 right에 "/"로 잇고, 문장 답은 answerText에 대표 하나만 두고 나머지는 alts에 한 문장씩 적습니다. 틀린 답을 alts에 넣지 않습니다. 정답이 하나뿐이면 alts는 빈 배열입니다.
@@ -6429,6 +6429,13 @@ _GRAMMAR_WORDS_COND = re.compile(r"(\d+)\s*단어")
 _GRAMMAR_MOVABLE = {"first", "later", "then", "now", "again", "finally", "soon", "today", "yesterday", "tomorrow",
                     "always", "usually", "often", "sometimes", "quickly", "slowly", "carefully", "easily",
                     "really", "still", "already", "together"}
+# 배열 영작 문장 끝에 붙어 문두로도 옮길 수 있는 부사구(with stones / this weekend / after school …).
+# 'With stones, otters break …'도 정답이라 alts에 그 어순이 없으면 버린다(2026-10-23 검토 28번).
+_GRAMMAR_FRONTABLE_END = re.compile(
+    r"\b((?:with|during|after|before)\s+(?:[a-z']+\s+){0,3}[a-z']+"
+    r"|(?:this|next|last|every)\s+(?:morning|afternoon|evening|night|day|week|weekend|month|year|"
+    r"spring|summer|fall|autumn|winter|sunday|monday|tuesday|wednesday|thursday|friday|saturday)"
+    r"|at night|in the (?:morning|afternoon|evening)|on weekends)\s*[.!?]?\s*$", re.I)
 
 
 def _grammar_flawed(q):
@@ -6451,6 +6458,11 @@ def _grammar_flawed(q):
     # 틀린다(40번 'at the crime scene first', 33번 'later'). 다른 정답(alts)을 적어 둔 문항만 통과시킨다.
     if q.get("format") == "write" and not (q.get("alts") or []):
         if set(re.findall(r"[a-z]+", str(q.get("answerText") or "").lower())) & _GRAMMAR_MOVABLE:
+            return True
+    if q.get("format") == "write":
+        m = _GRAMMAR_FRONTABLE_END.search(str(q.get("answerText") or "").strip())
+        if m and not any(str(a or "").strip().lower().startswith(m.group(1).lower())
+                         for a in (q.get("alts") or [])):
             return True
     # 동사형 쓰기에서 모든 빈칸이 '바꿀 것 없음'((design|design))이면 문제가 되지 않는다
     if q.get("format") == "verb":
