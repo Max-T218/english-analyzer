@@ -1524,6 +1524,7 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
   border-radius:12px; padding:14px 16px; margin-bottom:14px; color:var(--g); font-size:13.5px;
 }
 .passage-error b{display:block; margin-bottom:4px; font-size:14px;}
+.passage-retry{margin-top:10px;}
 /* 실패 안내는 화면에서만 — 종이에 찍히면 학생이 받는 시험지에 빨간 상자가 한 쪽을
    통째로 차지한다(2026-09-27 주관식 시험에서 실제로 그랬다). 감싸는 칸까지 숨겨
    빈 여백도 남기지 않는다. */

@@ -4424,7 +4424,10 @@ async function analyze() {
       okCount++;
     } catch (err) {
       const msg = err.message || String(err);
-      htmlParts.push(buildErrorHtml(job, total, msg));
+      // 한도 소진은 다시 눌러도 안 풀리므로 단추를 달지 않는다
+      const rid = isQuotaError(err) ? "" : retryNextId();
+      if (rid) RETRY_REG.set(rid, (btn) => analyzeRetryOne(btn, job, total));
+      htmlParts.push(buildErrorHtml(job, total, msg, "", "", rid));
       // 한도 소진은 기다려도 안 풀린다 — 남은 지문을 시도하지 않고 즉시 멈춘다
       if (isQuotaError(err)) {
         const left = total - (i + 1);
@@ -4473,6 +4476,76 @@ async function analyze() {
   }
   // 지문 분석은 '직접 수정'이 있는 유일한 탭이라 고치는 방법까지 안내한다
   if (okCount) showDoneGuide(`지문 ${okCount}개의 분석본`, true);
+}
+
+/* 실패한 지문 하나만 다시 분석해 그 카드 자리에 끼운다. 나머지 분석본은 건드리지 않는다 —
+   화면에서 고친 글·쪽 나눔·붙여 둔 요약 이미지가 다시 그리면 사라지기 때문이다.
+   끼운 자리 뒤의 분석본은 번호표(data-entry)를 한 칸씩 밀고, lastAnalyzeEntries에도 같은 자리에 넣는다. */
+let analyzeRetrying = false;
+async function analyzeRetryOne(btn, job, total) {
+  if (analyzeRetrying || analyzeBtn.disabled) return;
+  const card = btn.closest("section.passage-block");
+  if (!card || !resultEl.contains(card)) return;
+  errorEl.textContent = "";
+  const imgLangs = pickedImgLangs("info");
+  const cost = PRICING ? PRICING.analyze + PRICING.infographic * imgLangs.length : 0;
+  if (!(await costConfirmed(cost,
+        `${job.name}만 다시 분석합니다.` +
+          (imgLangs.length ? ` 요약 이미지 ${imgLangs.length}종도 함께 만듭니다.` : ""), 1, ""))) return;
+
+  analyzeRetrying = true;
+  btn.disabled = true;
+  analyzeBtn.disabled = true;
+  lockPassagePanel(true);
+  setEditMode(false);
+  setPagingMode(false);
+  loadingTextEl.textContent = `${job.name} 분석 중… (지문 길이에 따라 20~60초)`;
+  loadingEl.classList.add("on");
+  let madeAt = -1;
+  try {
+    const data = await postGenerate(
+      "/api/analyze",
+      { passage: job.text, targetGrammar: grammarEl.value },
+      "분석에 실패했습니다."
+    );
+    const secs = [...resultEl.querySelectorAll("section.passage-block")];
+    const at = secs.indexOf(card);
+    if (at >= 0) {
+      const pos = secs.slice(0, at).filter((s) => s.dataset.entry !== undefined).length;
+      secs.slice(at + 1).forEach((s) => {
+        if (s.dataset.entry === undefined) return;
+        const n = Number(s.dataset.entry) + 1;
+        s.dataset.entry = n;
+        s.querySelectorAll("[data-infographic]").forEach((h) => { h.dataset.infographic = n; });
+      });
+      card.insertAdjacentHTML("beforebegin", buildAnalysisHtml(data, job, total, pos));
+      card.remove();
+      lastAnalyzeEntries.splice(pos, 0, { job, data });
+      if (Array.isArray(data.vocab) && data.vocab.length) {
+        appendVocabSet({ name: job.name, vocab: data.vocab, src: "analyze" });
+      }
+      if (!resultEl.querySelector(":scope > footer")) {
+        resultEl.insertAdjacentHTML("beforeend", `<footer>구문 단위 직독직해 분석본 · 자동 생성</footer>`);
+      }
+      [printBtn, editBtn, pageBtn, saveBtn, infoMakeBtn].forEach((b) => { b.style.display = "inline-flex"; });
+      syncDocCovers();
+      resetUndo();
+      syncFloatPrint();
+      madeAt = pos;
+    }
+  } catch (err) {
+    const rid = isQuotaError(err) ? "" : btn.dataset.retry;
+    card.insertAdjacentHTML("beforebegin", buildErrorHtml(job, total, err.message || String(err), "", "", rid));
+    card.remove();
+  } finally {
+    loadingEl.classList.remove("on");
+    analyzeBtn.disabled = false;
+    lockPassagePanel(false);
+    analyzeRetrying = false;
+    refreshTokenDisplay();
+  }
+  // 요약 이미지를 골라 뒀으면 처음 분석할 때처럼 이어서 만든다(값은 위 확인 창에 이미 들어 있다)
+  if (madeAt >= 0 && imgLangs.length) await makeInfographics([madeAt]);
 }
 
 /* ══════════════════════════ 지문 요약 인포그래픽 ══════════════════════════ */
@@ -5003,15 +5076,31 @@ function safeHTML(s) {
   return t.innerHTML;
 }
 
+/* 실패 카드의 [🔄 이 지문만 다시 만들기] — 탭마다 다시 만드는 방법이 달라, 카드를 그릴 때 번호표(retryId)를 달고
+   RETRY_REG에 "그 번호표를 눌렀을 때 할 일"을 적어 둔다. 눌림은 문서 한 곳에서 받는다. 워크북 탭만 자기 칸에서 따로 받는다
+   (결과를 통째로 다시 그리는 탭이라 번호표를 결과 목록에서 찾는다). */
+const RETRY_REG = new Map();
+let retrySeq = 0;
+function retryNextId() { return "r" + (++retrySeq); }
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-retry]");
+  const fn = btn && RETRY_REG.get(btn.dataset.retry);
+  if (fn) fn(btn);
+});
+
 // 한 지문의 분석 실패 카드
 // label: 지문 변형 세트 이름 ("원문" / "단어 변형"). 변형을 하나만 골랐으면 빈 값.
 // what: 실패한 작업 이름 (기본 "분석" — 문제 제작 탭에서는 "문제 제작")
-function buildErrorHtml(job, total, msg, label, kind) {
-  const what = kind === "mcq" || kind === "saq" || kind === "mix" ? "문제 제작" : "분석";
+// retryId: 주면 카드에 [이 지문만 다시 만들기] 단추를 단다(워크북 탭 — wbRetryOne이 받는다)
+function buildErrorHtml(job, total, msg, label, kind, retryId) {
+  const what = kind === "mcq" || kind === "saq" || kind === "mix" ? "문제 제작" : kind === "workbook" ? "워크북 제작" : "분석";
   const named = total > 1 || job.named || label;
   const who = [named ? job.name : "", label].filter(Boolean).join(" · ");
   const head = who ? `${who} ${what} 실패` : `${what} 실패`;
-  return `<section class="passage-block"><div class="passage-error"><b>${esc(head)}</b>${esc(msg)}</div></section>`;
+  const retry = retryId
+    ? `<div class="passage-retry"><button type="button" class="btn small" data-retry="${esc(String(retryId))}">🔄 이 지문만 다시 만들기</button></div>`
+    : "";
+  return `<section class="passage-block"><div class="passage-error"><b>${esc(head)}</b>${esc(msg)}${retry}</div></section>`;
 }
 
 // 실패는 아니지만 알려야 하는 것(서버가 낼 수 없는 유형을 뺀 경우 — 요금도 안 나갔다).
@@ -5681,6 +5770,7 @@ function buildBriefHtml(d, job, total, images) {
   return parts.join("");
 }
 
+let briefShown = []; // 화면에 그려진 목록(실패 카드 포함) — 다시 만들기가 제 자리를 찾는 데 쓴다
 function renderBriefEntries(entries) {
   // 화면을 통째로 다시 그리므로 쪽 구성은 먼저 끈다 — 안 끄면 손잡이와 경계선이
   // 사라진 채로 '켜져 있다'고 남아, 단추 글씨와 화면이 어긋난다.
@@ -5690,10 +5780,11 @@ function renderBriefEntries(entries) {
      함께 지워졌다 — 지문 여섯 개 중 앞의 둘이 실패했는데 화면에는 아무 흔적도
      없이 셋째부터 보이던 문제가 이것이다. 인쇄·저장은 성공분(done)만 쓴다. */
   const done = entries.filter((e) => !e.error);
+  briefShown = entries;
   briefDocEl.innerHTML = entries
-    .map(({ job, data, error, image, images }) =>
+    .map(({ job, data, error, image, images, retryId }) =>
       error
-        ? buildErrorHtml(job, entries.length, error)
+        ? buildErrorHtml(job, entries.length, error, "", "", retryId)
         // image는 예전에 저장한 자료가 갖고 있는 한 장짜리 값이다
         : buildBriefHtml(data, job, entries.length, images || (image ? [{ src: image, name: "" }] : []))
     )
@@ -5746,6 +5837,90 @@ function syncBriefLangNote() {
 }
 onPricingReady(syncBriefLangNote);
 // 그림 값은 화면에 숫자를 박지 않는다 — 가격은 서버가 유일한 출처다(/api/pricing)
+
+/* 한 지문의 요약 이미지를 고른 종류대로 만들어 entry.images에 붙인다. 그릴 때마다 redraw()를 부른다.
+   그림 한도가 소진돼 남은 지문의 그림도 못 만들 때 true를 돌려준다. */
+async function briefMakeImages(entry, job, i, jobsLen, redraw) {
+  const imgLangs = pickedImgLangs("brief");
+  for (const lang of imgLangs) {
+    const what = imgLangs.length > 1 ? ` [${IMG_LANG_NAME[lang]}]` : "";
+    briefLoadingTextEl.textContent =
+      jobsLen > 1 || imgLangs.length > 1
+        ? `${job.name}${what} 요약 이미지 그리는 중… (${i + 1}/${jobsLen})`
+        : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
+    try {
+      const img = await postGenerate(
+        "/api/infographic",
+        { passage: job.text, lang, extra: infoExtraOf("brief", lang) },
+        "요약 이미지를 만들지 못했습니다.",
+        (n) => {
+          briefLoadingTextEl.textContent =
+            `${job.name}${what} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${n}/${GEN_RETRY})`;
+        }
+      );
+      entry.images = entry.images || [];
+      entry.images.push({
+        src: b64ToBlobUrl(img.image, img.mime || "image/jpeg"),
+        name: IMG_LANG_NAME[lang],
+      });
+      redraw();
+    } catch (imgErr) {
+      // 그림 한 장이 실패해도 소책자와 나머지 장은 살린다
+      briefErrorEl.textContent = `${job.name}${what} 요약 이미지: ${imgErr.message || imgErr}`;
+      if (isQuotaError(imgErr)) {
+        briefErrorEl.textContent += " — 남은 지문의 요약 이미지는 건너뜁니다.";
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/* 실패한 지문 하나만 다시 만들어 그 카드 자리에 끼운다. 화면에 그려진 목록(briefShown)에서
+   번호표로 제 자리를 찾아 바꾸므로 다른 지문은 그대로다. */
+async function briefRetryOne(retryId) {
+  if (briefBtn.disabled) return;
+  const at0 = briefShown.findIndex((e) => e.retryId === retryId);
+  if (at0 < 0) return;
+  const job = briefShown[at0].job;
+  briefErrorEl.textContent = "";
+  const langs = pickedImgLangs("brief");
+  const cost = PRICING ? PRICING.brief + PRICING.infographic * langs.length : 0;
+  if (!(await costConfirmed(cost,
+        `${job.name}만 요약분석을 다시 만듭니다.` +
+          (langs.length ? ` 요약 이미지 ${langs.length}종도 함께 만듭니다.` : ""), 1, ""))) return;
+  briefBtn.disabled = true;
+  lockPassagePanel(true);
+  briefLoadingTextEl.textContent = `${job.name} 요약분석을 다시 만드는 중…`;
+  briefLoadingEl.classList.add("on");
+  try {
+    const list = () => briefShown.slice();
+    const swap = (entry) => {
+      const next = list();
+      const at = next.findIndex((e) => e.retryId === retryId);
+      if (at >= 0) next[at] = entry;
+      renderBriefEntries(next);
+    };
+    try {
+      const data = await postGenerate(
+        "/api/brief",
+        { passage: job.text, targetGrammar: grammarEl.value },
+        "요약분석에 실패했습니다."
+      );
+      const entry = { job, data };
+      swap(entry);
+      // 그림은 이 entry에 붙이고 그릴 때마다 같은 자리를 다시 그린다(entry가 목록에 들어 있다)
+      await briefMakeImages(entry, job, 0, 1, () => renderBriefEntries(list()));
+    } catch (err) {
+      swap({ job, error: err.message || String(err), retryId: isQuotaError(err) ? "" : retryId });
+    }
+  } finally {
+    briefLoadingEl.classList.remove("on");
+    briefBtn.disabled = false;
+    lockPassagePanel(false);
+    refreshTokenDisplay();
+  }
+}
 
 briefBtn.addEventListener("click", async () => {
   briefErrorEl.textContent = "";
@@ -5800,43 +5975,14 @@ briefBtn.addEventListener("click", async () => {
       const entry = { job, data };
       entries.push(entry);
       renderBriefEntries(entries.slice());   // 하나씩 붙여, 도중에 멈춰도 남게 한다
-      const imgLangs = imgQuota ? [] : pickedImgLangs("brief");
-      for (const lang of imgLangs) {
-        const what = imgLangs.length > 1 ? ` [${IMG_LANG_NAME[lang]}]` : "";
-        briefLoadingTextEl.textContent =
-          jobs.length > 1 || imgLangs.length > 1
-            ? `${job.name}${what} 요약 이미지 그리는 중… (${i + 1}/${jobs.length})`
-            : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
-        try {
-          const img = await postGenerate(
-            "/api/infographic",
-            { passage: job.text, lang, extra: infoExtraOf("brief", lang) },
-            "요약 이미지를 만들지 못했습니다.",
-            (n) => {
-              briefLoadingTextEl.textContent =
-                `${job.name}${what} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${n}/${GEN_RETRY})`;
-            }
-          );
-          entry.images = entry.images || [];
-          entry.images.push({
-            src: b64ToBlobUrl(img.image, img.mime || "image/jpeg"),
-            name: IMG_LANG_NAME[lang],
-          });
-          renderBriefEntries(entries.slice());
-        } catch (imgErr) {
-          // 그림 한 장이 실패해도 소책자와 나머지 장은 살린다
-          briefErrorEl.textContent = `${job.name}${what} 요약 이미지: ${imgErr.message || imgErr}`;
-          if (isQuotaError(imgErr)) {
-            imgQuota = true;
-            briefErrorEl.textContent += " — 남은 지문의 요약 이미지는 건너뜁니다.";
-            break;
-          }
-        }
-      }
+      if (!imgQuota) imgQuota = await briefMakeImages(entry, job, i, jobs.length, () => renderBriefEntries(entries.slice()));
     } catch (err) {
       // 실패도 같은 목록에 넣어 순서대로 그린다 — 따로 덧붙이면 다음 지문이
       // 성공할 때 renderBriefEntries가 화면을 다시 그리면서 함께 지워진다.
-      entries.push({ job, error: err.message || String(err) });
+      // 한도 소진은 다시 눌러도 안 풀리므로 다시 만들기 단추를 달지 않는다.
+      const retryId = isQuotaError(err) ? "" : retryNextId();
+      if (retryId) RETRY_REG.set(retryId, () => briefRetryOne(retryId));
+      entries.push({ job, error: err.message || String(err), retryId });
       renderBriefEntries(entries.slice());
       if (isQuotaError(err)) break;
     }
@@ -7449,6 +7595,149 @@ function setupQuizTab({ prefix, types, footer }) {
     // 유형 칸에 놓인 순서 — 난이도가 섞인 벌(고난도만 + 기본으로 만드는 유형)은 호출이
     // 둘로 갈려 돌아오므로, 문항을 이 순서로 다시 줄 세운다.
     const typeOrder = new Map(picked.map((it, i) => [it.id, i]));
+    const byTypeOrder = (a, b) => (typeOrder.get(a.type) ?? 999) - (typeOrder.get(b.type) ?? 999);
+    // 문제 생성 요청 본문 — 처음 만들 때와 실패한 자리를 다시 만들 때가 같이 쓴다
+    const quizReq = (source, group, difficulty, varied) => ({
+      passage: source,
+      types: group,   // [{id, count}] — 유형별 문항 수가 그대로 실린다
+      variation: "verbatim",
+      // 어법 계열 유형이 섞여 있을 때만 서버가 쓴다. 비어 있으면 지금까지대로
+      // AI가 지문에 맞춰 알아서 문법 포인트를 고른다.
+      targetGrammar: grammarEl.value,
+      // 단어장 중 이 지문에 나오는 것 + 바꿔 넣은 낱말 — 서버는 어휘 계열 유형에만 싣는다
+      targetWords: [...new Set([...quizVocab.forText(source), ...varied.map((x) => x.to)])]
+        .slice(0, VOCAB_BOX_PER_PASSAGE),
+      // 그중 영영풀이까지 적힌 것 — 영영풀이 계열 문항이 그 정의를 그대로 쓴다
+      targetDefs: quizVocab.defsForText(source),
+      difficulty,
+      school: school(),
+    });
+
+    /* 실패 카드의 [🔄 이 지문만 다시 만들기]. 실패한 자리(한 묶음 또는 한 변형 세트)만 다시 만들어, 이미 있는 문제는
+       그대로 두고 더한다. 문항 번호·정답표는 renderQuizEntries가 통째로 다시 매긴다(AI를 부르지 않는다).
+       남아 있는 다른 실패 카드는 문제 뒤(정답표 앞)로 옮겨 둔다. */
+    let retrying = false;
+    const makeRetry = (unit) => {
+      const id = retryNextId();
+      RETRY_REG.set(id, (cardBtn) => retryUnit(cardBtn, unit));
+      return id;
+    };
+    const retryUnit = async (cardBtn, unit) => {
+      if (retrying || btn.disabled) return;
+      const card = cardBtn.closest("section.passage-block");
+      if (!card || !resultEl.contains(card)) return;
+      const { job, total, variation, v, varLabel } = unit;
+      errorEl.textContent = "";
+      const what = unit.kind === "variation"
+        ? `${variation === "verbatim" ? "" : (varLabel || "지문 변형") + " "}세트를 지문 변형부터 다시`
+        : `실패한 문제(${groupLabel(unit.group)})만 다시`;
+      if (!(await costConfirmed(unit.cost, `${job.name}의 ${what} 만듭니다.`, 1, ""))) return;
+      retrying = true;
+      cardBtn.disabled = true;
+      btn.disabled = true;
+      lockPassagePanel(true);
+      loadingEl.classList.add("on");
+      const sets = [];    // 새로 만든 세트 [{label, idx, questions, varied}]
+      const cards = [];   // 이번에 새로 생긴 안내·실패 카드(HTML)
+      let failCard = null; // 변형본을 못 받아 아무것도 못 만들었을 때의 카드
+      try {
+        let source = unit.source;
+        let varied = unit.varied;
+        let groups;
+        if (unit.kind === "variation") {
+          loadingTextEl.textContent = `${job.name} 지문 변형본 만드는 중…`;
+          try {
+            const r = await postGenerate(
+              "/api/reword",
+              { passage: job.text, variation, school: school() },
+              "지문 변형에 실패했습니다."
+            );
+            source = (r.passage || "").trim() || job.text;
+            varied = Array.isArray(r.variations) ? r.variations : [];
+          } catch (err) {
+            failCard = buildErrorHtml(job, total, err.message || String(err), varLabel, prefix,
+              isQuotaError(err) ? "" : makeRetry(unit));
+            return;
+          }
+          const plan = jobPlanOf(job).plan;
+          groups = plan.map((p, l) => ({
+            lv: p.lv, l, planLen: plan.length,
+            label: [varLabel, plan.length > 1 ? LEVEL_LABELS[p.lv] : ""].filter(Boolean).join(" · "),
+            calls: p.runs.flatMap((r) => r.chunks.map((group) => ({ group, difficulty: r.difficulty }))),
+          }));
+        } else {
+          groups = [{ lv: unit.lv, l: unit.l, planLen: unit.planLen, label: unit.label,
+                      calls: [{ group: unit.group, difficulty: unit.difficulty }] }];
+        }
+        let quotaHit = false;
+        for (const gr of groups) {
+          if (quotaHit) break;
+          const questions = [];
+          for (const { group, difficulty } of gr.calls) {
+            loadingTextEl.textContent = `${job.name}${gr.label ? ` · ${gr.label}` : ""} 문제 만드는 중… — ${groupLabel(group)}`;
+            try {
+              const data = await postGenerate("/api/quiz", quizReq(source, group, difficulty, varied), "문제 생성에 실패했습니다.");
+              if (Array.isArray(data.questions)) questions.push(...data.questions);
+              (data.skipped || []).forEach((msg) => cards.push(buildNoticeHtml(job, total, msg, gr.label)));
+            } catch (err) {
+              const quota = isQuotaError(err);
+              cards.push(buildErrorHtml(job, total, `${groupLabel(group)} — ${err.message || String(err)}`, gr.label, prefix,
+                quota ? "" : makeRetry({
+                  kind: "group", job, total, variation, v, l: gr.l, planLen: gr.planLen, varLabel, label: gr.label, lv: gr.lv,
+                  source, varied, group, difficulty, cost: costPerSet(group),
+                })));
+              if (quota) { quotaHit = true; break; }
+            }
+          }
+          if (questions.length) sets.push({ label: gr.label, idx: v * gr.planLen + gr.l, questions, varied });
+        }
+      } finally {
+        loadingEl.classList.remove("on");
+        retrying = false;
+        btn.disabled = false;
+        lockPassagePanel(false);
+        refreshTokenDisplay();
+        if (failCard) {
+          card.insertAdjacentHTML("beforebegin", failCard);
+          card.remove();
+        } else if (!sets.length) {
+          // 새로 만든 문제가 없으면 화면은 그대로 두고 이 카드만 새 결과로 바꾼다
+          card.insertAdjacentHTML("beforebegin", cards.join(""));
+          card.remove();
+        } else {
+          // 같은 지문·같은 세트가 이미 있으면 거기에 더하고, 없으면 그 지문의 마지막 세트 뒤에 새로 둔다
+          const entries = (lastEntries || []).slice();
+          sets.forEach((s) => {
+            s.questions.forEach((q) => { q.__label = s.label; q.__labelIdx = s.idx; q.__variations = s.varied; });
+            const hit = entries.find((e) => e.job && e.job.text === job.text && (e.label || "") === s.label);
+            if (hit) {
+              const qs = [...((hit.set && hit.set.questions) || []), ...s.questions];
+              if (!shuffleInPassage()) qs.sort(byTypeOrder);
+              hit.set = { ...hit.set, questions: qs };
+            } else {
+              s.questions.sort(byTypeOrder);
+              const qs = shuffleInPassage() ? seededShuffle(s.questions, Math.floor(Math.random() * 1e9)) : s.questions;
+              // 그 지문의 세트가 하나도 없으면 입력한 지문 차례에 맞는 자리에 둔다
+              const rank = (t) => jobs.findIndex((j) => j.text === t);
+              let at = entries.findIndex((e) => e.job && rank(e.job.text) > rank(job.text));
+              if (at < 0) at = entries.length;
+              entries.forEach((e, i) => { if (e.job && e.job.text === job.text) at = i + 1; });
+              entries.splice(at, 0, { job, label: s.label, set: { questions: qs, variations: s.varied }, total });
+            }
+          });
+          const keep = [...resultEl.children]
+            .filter((el) => el !== card && el.matches("section.passage-block") && el.querySelector(".passage-error"))
+            .map((el) => el.outerHTML);
+          renderQuizEntries(entries);
+          const anchor = resultEl.querySelector(".qz-answerbook") || resultEl.querySelector(".qz-footer");
+          const html = [...keep, ...cards].join("");
+          if (html) {
+            if (anchor) anchor.insertAdjacentHTML("beforebegin", html);
+            else resultEl.insertAdjacentHTML("beforeend", html);
+          }
+        }
+      }
+    };
     let step = 0;
     let okCount = 0;
     let stopped = false;
@@ -7569,7 +7858,12 @@ function setupQuizTab({ prefix, types, footer }) {
               source = (r.passage || "").trim() || job.text;
               varied = Array.isArray(r.variations) ? r.variations : [];
             } catch (err) {
-              append(buildErrorHtml(job, total, err.message || String(err), varLabel, prefix));
+              // 변형본이 없으면 그 세트의 문제가 하나도 안 만들어진다 — 다시 만들기는 변형부터 문제까지 그 세트를 통째로 만든다
+              const rid = isQuotaError(err) ? "" : makeRetry({
+                kind: "variation", job, total, variation, v, varLabel,
+                cost: PRICING ? PRICING.reword + jp.perVarCost : 0,
+              });
+              append(buildErrorHtml(job, total, err.message || String(err), varLabel, prefix, rid));
               if (isQuotaError(err)) {
                 stopped = true;
                 stopErr = err;
@@ -7604,21 +7898,7 @@ function setupQuizTab({ prefix, types, footer }) {
               try {
                 const data = await postGenerate(
                   "/api/quiz",
-                  {
-                    passage: source,
-                    types: group,   // [{id, count}] — 유형별 문항 수가 그대로 실린다
-                    variation: "verbatim",
-                    // 어법 계열 유형이 섞여 있을 때만 서버가 쓴다. 비어 있으면 지금까지대로
-                    // AI가 지문에 맞춰 알아서 문법 포인트를 고른다.
-                    targetGrammar: grammarEl.value,
-                    // 단어장 중 이 지문에 나오는 것 + 바꿔 넣은 낱말 — 서버는 어휘 계열 유형에만 싣는다
-                    targetWords: [...new Set([...quizVocab.forText(source), ...varied.map((x) => x.to)])]
-                      .slice(0, VOCAB_BOX_PER_PASSAGE),
-                    // 그중 영영풀이까지 적힌 것 — 영영풀이 계열 문항이 그 정의를 그대로 쓴다
-                    targetDefs: quizVocab.defsForText(source),
-                    difficulty,
-                    school: school(),
-                  },
+                  quizReq(source, group, difficulty, varied),
                   "문제 생성에 실패했습니다."
                 );
                 noteCallSecs("quiz", (Date.now() - qzStart) / 1000);
@@ -7627,7 +7907,14 @@ function setupQuizTab({ prefix, types, footer }) {
                 // 요금은 안 나갔지만 빠진 줄은 알려야 한다. 문구에 유형 이름이 이미 들어 있다.
                 (data.skipped || []).forEach((msg) => failed.push({ notice: msg }));
               } catch (err) {
-                failed.push({ group, msg: err.message || String(err) });
+                // 한도 소진은 다시 눌러도 안 풀리므로 다시 만들기 단추를 달지 않는다
+                failed.push({
+                  group, msg: err.message || String(err),
+                  rid: isQuotaError(err) ? "" : makeRetry({
+                    kind: "group", job, total, variation, v, l, planLen: plan.length, varLabel, label, lv,
+                    source, varied, group, difficulty, cost: costPerSet(group),
+                  }),
+                });
                 // 한도 소진·Pro 불가는 기다려도 안 풀린다 — 남은 작업을 시도하지 않는다
                 if (isQuotaError(err)) {
                   stopped = true;
@@ -7686,7 +7973,7 @@ function setupQuizTab({ prefix, types, footer }) {
               failed.forEach((f) => {
                 appendNow(f.notice
                   ? buildNoticeHtml(job, total, f.notice, label)
-                  : buildErrorHtml(job, total, `${groupLabel(f.group)} — ${f.msg}`, label, prefix));
+                  : buildErrorHtml(job, total, `${groupLabel(f.group)} — ${f.msg}`, label, prefix, f.rid));
               });
               if (stopNow && !quotaShown) { // 함께 돌던 지문이 늦게 끝나도 안내는 한 번만
                 quotaShown = true;
@@ -9301,6 +9588,108 @@ wbAnswerPrintBtn.addEventListener("click", () =>
   })
 );
 
+// 지문 하나의 워크북을 만든다 — 처음 만들 때와 실패한 지문만 다시 만들 때가 같이 쓴다.
+// 돌려주는 값: data(없으면 실패), fails(실패 메시지들), quotaErr(한도 소진이면 그 오류)
+async function wbMakeOne(job, total, serverStages, oxCalls) {
+  let data = null;
+  let quotaErr = null;
+  const fails = [];
+  if (serverStages.length) {
+    try {
+      data = await postGenerate(
+        "/api/workbook",
+        // stages는 요금 계산에 쓰인다 — 서버가 단계 수로 값을 매기므로 반드시 보낸다.
+        // (만들어지는 내용은 여러 단계분이 통째로 오고, 고른 것만 화면이 그린다.
+        //  목표어법 배열 영작(11)만은 골랐을 때만 만들어지므로, 만든 뒤 켜면 비어 있다.)
+        // 내용 O/X(12)는 여기 싣지 않는다 — 아래에서 주관식 OX로 따로 만들고 값도 따로다.
+        { passage: job.text, stages: serverStages, targetGrammar: grammarEl.value,
+          wordCounts: wbWordCounts(serverStages) },
+        "워크북 생성에 실패했습니다."
+      );
+    } catch (err) {
+      fails.push(err.message || String(err));
+      if (isQuotaError(err)) quotaErr = err;
+    }
+  }
+  // 내용 O/X — 워크북 호출이 실패해도 따로 만든다(값도 따로 매겨진다). 한도 소진이면 건너뛴다.
+  const ox = [];
+  for (const call of quotaErr ? [] : oxCalls) {
+    wbLoadingTextEl.textContent =
+      `${total > 1 ? `${job.name} ` : ""}내용 O/X ${call.difficulty === "hard" ? "고난도" : "기본"} 만드는 중…`;
+    try {
+      const res = await postGenerate(
+        "/api/quiz",
+        { passage: job.text, types: call.types, variation: "verbatim", difficulty: call.difficulty, school: "high" },
+        "내용 O/X 생성에 실패했습니다."
+      );
+      (res.questions || []).filter((q) => q && (q.tfItems || []).length).forEach((q) =>
+        ox.push({ level: call.difficulty, lang: q.type === "OX진위(영)" ? "en" : "ko",
+                  type: q.type || "", instruction: q.instruction || "",
+                  tfItems: q.tfItems, explanation: q.explanation || "" }));
+    } catch (err) {
+      fails.push(err.message || String(err));
+      if (isQuotaError(err)) { quotaErr = err; break; }
+    }
+  }
+  if (ox.length) {
+    // 해독제 차례 — 우리말 기본 → 영어 기본 → 우리말 고난도 → 영어 고난도
+    const rank = (q) => (q.level === "hard" ? 2 : 0) + (q.lang === "en" ? 1 : 0);
+    ox.sort((a, b) => rank(a) - rank(b));
+    data = Object.assign(data || { sentences: [] }, { ox });
+  }
+  return { data, fails, quotaErr };
+}
+
+// 실패 카드의 [이 지문만 다시 만들기] — 실패한 지문 하나만 다시 만들어 그 카드 자리에 끼운다.
+// 카드마다 번호표(retryId)를 달아 두므로, 앞 카드가 바뀌어 순서가 밀려도 제 자리를 찾는다.
+
+workbookDocEl.addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-retry]");
+  if (!btn || wbGenerating) return;
+  const at = lastWorkbookResults.findIndex((r) => r.retryId === btn.dataset.retry);
+  if (at < 0) return;
+  const { job, total, stages, serverStages, oxCalls } = lastWorkbookResults[at].retry;
+  wbErrorEl.textContent = "";
+  if (!(await costConfirmed(wbPassageCost(stages), `${job.name}만 워크북을 다시 만듭니다.`, 1, ""))) return;
+
+  wbGenerating = true;
+  wbBtn.disabled = true;
+  btn.disabled = true;
+  lockPassagePanel(true);
+  wbLoadingTextEl.textContent = `${job.name} 워크북을 다시 만드는 중… (지문 길이에 따라 40~120초 걸릴 수 있어요)`;
+  wbLoadingEl.classList.add("on");
+  let quotaErr = null;
+  try {
+    const out = await wbMakeOne(job, total, serverStages, oxCalls);
+    quotaErr = out.quotaErr;
+    // 화면이 다른 일로 바뀌었을 수 있으니 번호표로 다시 찾는다
+    const now = lastWorkbookResults.findIndex((r) => r.retryId === btn.dataset.retry);
+    if (now >= 0) {
+      const next = lastWorkbookResults.slice();
+      if (out.data) {
+        const repl = [{ job, data: out.data }];
+        if (out.fails.length) repl.push({ errorHtml: buildErrorHtml(job, total, "일부만 만들었습니다 — " + out.fails.join(" / ")) });
+        next.splice(now, 1, ...repl);
+      } else {
+        const msg = out.fails.join(" / ") || "만들어진 것이 없습니다.";
+        const keep = quotaErr ? "" : btn.dataset.retry;
+        next[now] = {
+          errorHtml: buildErrorHtml(job, total, msg, "", "workbook", keep),
+          ...(keep ? { retryId: keep, retry: lastWorkbookResults[now].retry } : {}),
+        };
+      }
+      drawWorkbook(next, { noScroll: true });
+    }
+  } finally {
+    wbGenerating = false;
+    wbLoadingEl.classList.remove("on");
+    wbBtn.disabled = false;
+    syncWbActions();
+    lockPassagePanel(false);
+    refreshTokenDisplay();
+  }
+});
+
 async function generateWorkbook() {
   wbErrorEl.textContent = "";
   const jobs = passageMgr.getJobs();
@@ -9364,57 +9753,17 @@ async function generateWorkbook() {
       continue;
     }
 
-    let data = null;
-    let quotaErr = null;
-    const fails = [];
-    if (serverStages.length) {
-      try {
-        data = await postGenerate(
-          "/api/workbook",
-          // stages는 요금 계산에 쓰인다 — 서버가 단계 수로 값을 매기므로 반드시 보낸다.
-          // (만들어지는 내용은 여러 단계분이 통째로 오고, 고른 것만 화면이 그린다.
-          //  목표어법 배열 영작(11)만은 골랐을 때만 만들어지므로, 만든 뒤 켜면 비어 있다.)
-          // 내용 O/X(12)는 여기 싣지 않는다 — 아래에서 주관식 OX로 따로 만들고 값도 따로다.
-          { passage: job.text, stages: serverStages, targetGrammar: grammarEl.value,
-            wordCounts: wbWordCounts(serverStages) },
-          "워크북 생성에 실패했습니다."
-        );
-      } catch (err) {
-        fails.push(err.message || String(err));
-        if (isQuotaError(err)) quotaErr = err;
-      }
-    }
-    // 내용 O/X — 워크북 호출이 실패해도 따로 만든다(값도 따로 매겨진다). 한도 소진이면 건너뛴다.
-    const ox = [];
-    for (const call of quotaErr ? [] : oxCalls) {
-      wbLoadingTextEl.textContent =
-        `${total > 1 ? `${job.name} ` : ""}내용 O/X ${call.difficulty === "hard" ? "고난도" : "기본"} 만드는 중…`;
-      try {
-        const res = await postGenerate(
-          "/api/quiz",
-          { passage: job.text, types: call.types, variation: "verbatim", difficulty: call.difficulty, school: "high" },
-          "내용 O/X 생성에 실패했습니다."
-        );
-        (res.questions || []).filter((q) => q && (q.tfItems || []).length).forEach((q) =>
-          ox.push({ level: call.difficulty, lang: q.type === "OX진위(영)" ? "en" : "ko",
-                    type: q.type || "", instruction: q.instruction || "",
-                    tfItems: q.tfItems, explanation: q.explanation || "" }));
-      } catch (err) {
-        fails.push(err.message || String(err));
-        if (isQuotaError(err)) { quotaErr = err; break; }
-      }
-    }
-    if (ox.length) {
-      // 해독제 차례 — 우리말 기본 → 영어 기본 → 우리말 고난도 → 영어 고난도
-      const rank = (q) => (q.level === "hard" ? 2 : 0) + (q.lang === "en" ? 1 : 0);
-      ox.sort((a, b) => rank(a) - rank(b));
-      data = Object.assign(data || { sentences: [] }, { ox });
-    }
+    const { data, fails, quotaErr } = await wbMakeOne(job, total, serverStages, oxCalls);
     if (data) {
       results.push({ job, data });
       if (fails.length) results.push({ errorHtml: buildErrorHtml(job, total, "일부만 만들었습니다 — " + fails.join(" / ")) });
     } else {
-      results.push({ errorHtml: buildErrorHtml(job, total, fails.join(" / ") || "만들어진 것이 없습니다.") });
+      // 한도 소진은 다시 눌러도 안 풀리므로 단추를 달지 않는다
+      const retryId = quotaErr ? "" : retryNextId();
+      results.push({
+        errorHtml: buildErrorHtml(job, total, fails.join(" / ") || "만들어진 것이 없습니다.", "", "workbook", retryId),
+        ...(retryId ? { retryId, retry: { job, total, stages, serverStages, oxCalls } } : {}),
+      });
     }
     // 한도 소진은 기다려도 안 풀린다 — 남은 지문을 시도하지 않고 즉시 멈춘다
     if (quotaErr) {
