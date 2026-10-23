@@ -50,6 +50,7 @@ const GRAMMAR_CATALOG = [
     { name: "일반동사 현재형(3인칭 단수 -s)", g: 0 },
     { name: "일반동사의 부정문·의문문(do/does)", g: 1, re: /\b(don't|doesn't|didn't|do not|does not|did not)\b/i },
     { name: "be동사·일반동사의 과거형", g: 1, re: /\b(was|were)\b/i },
+    { name: "There is / There are (존재 표현)", g: 2, re: /\bthere\s+(is|are|was|were)\b/i },
   ] },
   { topic: "문장의 종류", subs: [
     { name: "명령문(Let's / Don't)", g: 0, re: /\b(let's|don't)\b/i },
@@ -58,6 +59,12 @@ const GRAMMAR_CATALOG = [
     { name: "부가의문문", g: 2, re: /,\s*(isn't|aren't|don't|doesn't|didn't|won't|can't|is|are|do|does|did)\s+\w+\?/i },
     { name: "선택의문문(A or B)", g: 2 },
     { name: "간접의문문", g: 4, re: /\b(know|wonder|tell me|ask)\s+(who|what|when|where|why|how|if|whether)\b/i },
+    { name: "의문사 what / which / whose + 명사", g: 2, re: /\b(what|which|whose)\s+\w+\s+(do|does|did|is|are|was|were|can)\b/i },
+    { name: "how 의문문(how many / much / often / long / old)", g: 2, re: /\bhow\s+(many|much|often|long|old|tall|far)\b/i },
+    { name: "의문사가 주어인 의문문(Who called you?)", g: 2 },
+    { name: "제안문(Let's / Shall we / How about -ing / Why don't we)", g: 2, re: /\b(shall we|how about|why don't we|let's)\b/i },
+    { name: "부정의문문과 대답(Isn't it ~? / Don't you ~?)", g: 2, re: /\b(isn't|aren't|don't|doesn't|didn't|can't|won't)\s+(it|you|he|she|they|we|there)\b[^.?]*\?/i },
+    { name: "간접의문문 Ⅱ(think / believe / guess 뒤에서 의문사가 문장 앞으로)", g: 3, re: /\b(do|does|did)\s+you\s+(think|believe|guess|suppose|imagine)\b/i },
   ] },
   { topic: "시제", subs: [
     { name: "현재진행형(be + -ing)", g: 0, re: /\b(am|are|is)\s+\w+ing\b/i },
@@ -72,6 +79,8 @@ const GRAMMAR_CATALOG = [
     { name: "미래완료(will have p.p.)·과거완료진행", g: 5, re: /\bwill\s+have\s+\w+(ed|en|wn)\b|\bhad\s+been\s+\w+ing\b/i },
     { name: "미래를 나타내는 현재·현재진행 / be about to", g: 5, re: /\b(am|are|is)\s+about\s+to\b/i },
     { name: "진행형으로 쓰지 않는 동사(상태동사: know/belong/resemble)", g: 5, re: /\b(belongs?|resembles?|owns?|consists?)\b/i },
+    { name: "현재진행형의 부정문과 의문문", g: 2, re: /\b(am|are|is)\s+not\s+\w+ing\b|^(Am|Are|Is)\s+\w+\s+\w+ing\b/im },
+    { name: "will / be going to의 부정문과 의문문", g: 2, re: /\b(won't|will not|(am|are|is)\s+not\s+going to)\b|^Will\s+\w+/im },
   ] },
   { topic: "조동사", subs: [
     { name: "can / may (능력·허가·추측)", g: 0, re: /\b(can|may)\b/i },
@@ -83,12 +92,14 @@ const GRAMMAR_CATALOG = [
     { name: "대동사 do(앞의 동사 대신하기)", g: 5, re: /\b(than|as)\s+(I|you|he|she|we|they|it)\s+(do|does|did)\b/i },
     { name: "used to / be used to -ing / be used to 동사원형 구분", g: 5, re: /\b(used to|be used to|is used to|are used to)\b/i },
     { name: "조동사 관용 표현(would rather / may well / cannot ~ too)", g: 5, re: /\b(would rather|may well|may as well|might as well|cannot\s+\w+\s+too)\b/i },
+    { name: "조동사의 기본 형태(조동사 + 동사원형, 부정문·의문문)", g: 2, re: /\b(can't|cannot|mustn't|shouldn't|won't)\b|^(Can|May|Must|Should)\s+\w+/im },
   ] },
   { topic: "명사와 관사", subs: [
     { name: "셀 수 있는 명사의 복수형", g: 0 },
     { name: "셀 수 없는 명사와 수량 표현(a piece of …)", g: 1, re: /\ba (piece|glass|cup|bottle|slice) of\b/i },
     { name: "부정관사 a/an과 정관사 the", g: 1 },
     { name: "관사를 쓰지 않는 경우", g: 2 },
+    { name: "단수로 취급하는 셀 수 없는 명사(news / mathematics)와 고유명사", g: 2, re: /\b(news|mathematics|physics|economics)\b/i },
   ] },
   { topic: "대명사", subs: [
     { name: "인칭대명사의 격(I-my-me-mine)", g: 0 },
@@ -100,6 +111,9 @@ const GRAMMAR_CATALOG = [
     { name: "대명사의 수 일치(it/they, its/their)", g: 5 },
     { name: "지시대명사 that / those(앞 명사 반복 대신)", g: 5, re: /\b(than|as)\s+(that|those)\s+of\b/i },
     { name: "each / every / either / neither / both의 수 일치", g: 5, re: /\b(each|either|neither|both)\s+(of\s+)?\w+/i },
+    { name: "-one / -body / -thing(somebody·anything)과 동사의 수", g: 2, re: /\b(some|any|every|no)(one|body|thing)\b/i },
+    { name: "재귀대명사의 재귀·강조 용법과 관용 표현(by oneself / for oneself)", g: 3, re: /\b(by|for|of|to)\s+(my|your|him|her|it|our|them)selves?\b/i },
+    { name: "all / most / both / each / every의 쓰임", g: 3, re: /\b(all|most|both)\s+(of\s+)?(the\s+)?\w+/i },
   ] },
   { topic: "형용사와 부사", subs: [
     { name: "형용사의 쓰임(명사 꾸미기·보어)", g: 0 },
@@ -120,12 +134,15 @@ const GRAMMAR_CATALOG = [
     { name: "원급 관용 표현(as ~ as possible / not so much A as B)", g: 5, re: /\bas\s+\w+\s+as\s+(possible|\w+\s+can)\b|\bnot so much\b/i },
     { name: "비교급 관용 표현(비교급 and 비교급 / no longer / no more than)", g: 5, re: /\b(\w+er)\s+and\s+\1\b|\bmore and more\b|\bno longer\b|\bno (more|less) than\b/i },
     { name: "비교 대상의 일치(than 뒤 형태 맞추기)", g: 5, re: /\bthan\s+(that|those)\s+of\b/i },
+    { name: "최상급 구문(the 최상급 in / of, one of the 최상급 + 복수명사)", g: 3, re: /\bone of the\s+\w+est\b|\bthe\s+(most\s+)?\w+\s+(in|of)\b/i },
   ] },
   { topic: "전치사", subs: [
     { name: "장소 전치사(in/on/under/next to)", g: 0 },
     { name: "시간 전치사(at/on/in, for/during, by/until)", g: 1, re: /\b(during|until)\b/i },
     { name: "전치사 + 동명사", g: 3, re: /\b(in|on|of|for|about|without|by)\s+\w+ing\b/i },
     { name: "전치사 vs 접속사(during/while, because of/because, despite/although)", g: 5, re: /\b(despite|in spite of|because of|due to)\b/i },
+    { name: "위치·방향 전치사(between / among / across / through / along / over)", g: 2, re: /\b(between|among|across|through|along|over|above|below|behind|toward)\b/i },
+    { name: "여러 가지 전치사(by 교통수단 · with 도구 · like · about)", g: 2, re: /\bby\s+(bus|car|train|subway|plane|bike|taxi)\b|\bwith\s+a\s+\w+\b/i },
   ] },
   { topic: "문장의 형식", subs: [
     { name: "감각동사 + 형용사(look/sound/feel)", g: 2, re: /\b(looks?|sounds?|feels?|smells?|tastes?)\s+(so\s+|very\s+)?\w+/i },
@@ -134,6 +151,7 @@ const GRAMMAR_CATALOG = [
     { name: "사역동사(make/have/let) + 동사원형", g: 4, re: /\b(made|make|makes|let|lets|had|have|has)\s+(me|him|her|us|them|you|it)\s+\w+\b/i },
     { name: "지각동사(see/hear/feel) + 동사원형/-ing", g: 4, re: /\b(saw|see|heard|hear|felt|feel|watched|watch)\s+(me|him|her|us|them|you|it|\w+)\s+\w+ing\b/i },
     { name: "헷갈리는 자동사·타동사(lie/lay, rise/raise, discuss·resemble)", g: 5, re: /\b(lie|lay|lain|laid|rise|rose|risen|raise|raised|discuss|resemble)\b/i },
+    { name: "2형식(be·become·get·turn + 보어)", g: 2, re: /\b(become|became|becomes|get|gets|got|turn|turned|grow|grew|stay|stayed)\s+(a\s+|an\s+)?\w+/i },
     { name: "목적격 보어의 형태(help + (to) 원형 / get + to부정사 / have + p.p.)", g: 5, re: /\b(help|helps|helped)\s+\w+\s+(to\s+)?\w+|\b(have|has|had|get|gets|got)\s+(my|his|her|their|our|your|the|a|an|it|them)\s+(\w+\s+)?\w+(ed|en)\b/i },
   ] },
   { topic: "to부정사", subs: [
@@ -150,6 +168,7 @@ const GRAMMAR_CATALOG = [
     { name: "be to 용법(예정·의무·가능·운명·의도)", g: 5, re: /\b(am|are|is|was|were)\s+to\s+(be|\w+)\b/i },
     { name: "seem / appear to ~ (It seems that 전환)", g: 5, re: /\b(seems?|seemed|appears?|appeared)\s+to\b|\bit\s+(seems|seemed|appears)\s+that\b/i },
     { name: "독립부정사(to be honest / to make matters worse)", g: 5, re: /\b(to be honest|to tell the truth|to make matters worse|needless to say|so to speak|to begin with)\b/i },
+    { name: "목적을 나타내는 in order to / so as to", g: 3, re: /\b(in order to|so as to)\b/i },
   ] },
   { topic: "동명사", subs: [
     { name: "동명사의 쓰임(주어·목적어·보어)", g: 2, re: /\b\w+ing\s+(is|was)\b/i },
@@ -157,6 +176,8 @@ const GRAMMAR_CATALOG = [
     { name: "동명사와 to부정사의 의미 차이(remember/forget/stop/try)", g: 4, re: /\b(remember|forget|stop|try|regret)(s|ed)?\s+(to\s+\w+|\w+ing)\b/i },
     { name: "동명사 관용 표현(be used to -ing, look forward to -ing)", g: 4, re: /\b(look forward to|be used to|used to|feel like|be busy|cannot help)\s+\w+ing\b/i },
     { name: "동명사의 의미상 주어·완료형·수동형(having p.p. / being p.p.)", g: 5, re: /\b(having|being)\s+\w+(ed|en|wn)\b|\b(his|her|my|their|your)\s+\w+ing\b/i },
+    { name: "자주 쓰이는 동명사 표현 기본(go -ing / be good at -ing / How about -ing)", g: 2, re: /\b(go|goes|went)\s+\w+ing\b|\b(good|bad|poor)\s+at\s+\w+ing\b/i },
+    { name: "동명사 vs 현재분사(용도·수식 관계로 구별)", g: 4, re: /\b(a|the)\s+(sleeping|swimming|waiting|dancing|walking|running|writing)\s+(bag|pool|room|shoes|stick|class|desk)\b/i },
   ] },
   { topic: "분사", subs: [
     { name: "현재분사와 과거분사(명사 수식)", g: 3, re: /\b(the|a|an)\s+\w+(ing|ed|en)\s+\w+/i },
@@ -166,6 +187,9 @@ const GRAMMAR_CATALOG = [
     { name: "접속사·주어를 남긴 분사구문(독립분사구문 / When -ing)", g: 5, re: /\b(when|while|after|before|though|if)\s+\w+ing\b/i },
     { name: "분사구문의 관용 표현(generally speaking / considering / judging from)", g: 5, re: /\b(generally|frankly|strictly) speaking\b|\b(considering|judging from|given that)\b/i },
     { name: "분사의 능동·수동 판단(-ing vs p.p.)", g: 5 },
+    { name: "분사의 후치 수식(명사 + -ing / p.p. + 어구)", g: 3, re: /\b\w+\s+(\w+ing|\w+ed|\w+en)\s+(in|on|at|by|with|to|from|under|over)\s+\w+/i },
+    { name: "분사의 보어 역할(주격·목적격 보어로 쓰이는 분사)", g: 4, re: /\b(keep|keeps|kept|see|saw|hear|heard|find|found|leave|left)\s+\w+\s+\w+(ing|ed|en)\b/i },
+    { name: "분사구문의 여러 의미(시간·이유·조건·양보·동시동작·연속동작)", g: 4, re: /^[\s"]*(\w+ing|\w+ed)\b[^,]{0,60},/m },
   ] },
   { topic: "수동태", subs: [
     { name: "수동태의 기본 형태(be + p.p.)", g: 3, re: /\b(am|is|are|was|were|be|been)\s+\w+(ed|en|wn)\b(\s+by\b)?/i },
@@ -175,6 +199,7 @@ const GRAMMAR_CATALOG = [
     { name: "동사구의 수동태(be taken care of)", g: 5 },
     { name: "that절 목적어의 수동태(It is said that ~ / He is said to ~)", g: 5, re: /\bit\s+(is|was)\s+(said|believed|thought|reported|known)\s+that\b|\b(is|are|was|were)\s+(said|believed|thought|known|reported)\s+to\b/i },
     { name: "수동태로 쓰지 않는 동사(happen / appear / resemble / have)", g: 5, re: /\b(happen|happened|occur|occurred|appear|appeared|disappear|disappeared|resemble|resembled)\b/i },
+    { name: "수동태의 부정문과 의문문", g: 3, re: /\b(is|are|was|were)\s+not\s+\w+(ed|en|wn)\b|^(Is|Are|Was|Were)\s+\w+\s+\w+(ed|en|wn)\b/im },
   ] },
   { topic: "접속사", subs: [
     { name: "and / but / or / so", g: 0 },
@@ -188,6 +213,8 @@ const GRAMMAR_CATALOG = [
     { name: "시간·조건 부사절의 시제(미래 대신 현재)", g: 5, re: /\b(when|if|until|before|after|as soon as|unless)\s+\w+\s+\w+s\b[^.]*\bwill\b/i },
     { name: "접속사 that vs 관계대명사 what(뒤 문장의 완전·불완전)", g: 5 },
     { name: "목적·결과의 부사절(so that / in order that / such ~ that)", g: 5, re: /\b(in order that|so that|such\s+an?\s+\w+(\s+\w+)?\s+that)\b/i },
+    { name: "명령문, and / or ~ (~해라, 그러면 / 그렇지 않으면)", g: 3, re: /,\s*(and|or)\s+(you|you'll|I|we|he|she|they|it)\b/i },
+    { name: "다양한 의미로 쓰이는 접속사(as / since / while)", g: 4, re: /\b(as|since|while)\s+(I|you|he|she|we|they|it|the|a)\b/i },
   ] },
   { topic: "관계사", subs: [
     { name: "주격 관계대명사(who / which / that)", g: 3, re: /\b\w+\s+(who|which|that)\s+(is|are|was|were|has|have|\w+s)\b/i },
@@ -200,6 +227,8 @@ const GRAMMAR_CATALOG = [
     { name: "복합관계사(whoever / whatever / however)", g: 5, re: /\b(whoever|whatever|whichever|however|wherever|whenever)\b/i },
     { name: "관계대명사 vs 관계부사(뒤 문장의 완전·불완전)", g: 5 },
     { name: "관계사절의 수 일치(선행사에 맞춘 동사)", g: 5, re: /\b(who|which|that)\s+(is|are|was|were|has|have)\b/i },
+    { name: "관계대명사 that만 쓰는 경우(최상급·서수·the only·all 선행사)", g: 3, re: /\b(the only|the first|the best|the last|the same|all|every|any)\b[^.]*\bthat\b/i },
+    { name: "관계부사 how(the way / how 중 하나만 쓴다)", g: 4, re: /\b(the way|how)\s+(I|you|he|she|we|they)\b/i },
   ] },
   { topic: "가정법", subs: [
     { name: "가정법 과거", g: 4, re: /\bif\s+\w+\s+(were|had|knew|could|did)\b[^.]*\b(would|could|might)\b/i },
@@ -208,6 +237,7 @@ const GRAMMAR_CATALOG = [
     { name: "혼합 가정법·without(but for) 가정법", g: 5, re: /\b(without|but for)\b/i },
     { name: "if의 생략과 도치(Were I ~, Had I ~)", g: 5, re: /^(Were|Had|Should)\s+(I|you|he|she|we|they|it)\b/m },
     { name: "가정법을 이끄는 표현(It's time / otherwise / suppose / provided)", g: 5, re: /\b(it's (high |about )?time|otherwise|suppose|supposing|provided|providing)\b/i },
+    { name: "가정법과 직설법 전환(If 절 ↔ As / Because / Since 문장)", g: 4, re: /\bif\s+\w+\s+(were|had|knew|could|did)\b|\bI wish\b/i },
   ] },
   { topic: "일치와 특수구문", subs: [
     { name: "주어와 동사의 수 일치", g: 3 },
@@ -221,6 +251,9 @@ const GRAMMAR_CATALOG = [
     { name: "생략(반복 어구·부사절의 주어 + be)", g: 5 },
     { name: "동격(the fact that ~)·삽입", g: 5, re: /\bthe (fact|idea|news|belief|evidence|possibility) that\b/i },
     { name: "부정(부분부정 not all / 전체부정 / 이중부정)", g: 5, re: /\bnot\s+(all|always|every|necessarily|entirely)\b|\bnever\s+\w+\s+without\b/i },
+    { name: "평서문의 간접화법(인칭·시제·시간 부사 바꾸기)", g: 4, re: /\b(said|told)\s+(me\s+|him\s+|her\s+)?(that|to)\b/i },
+    { name: "의문문의 간접화법(if / whether, 의문사 + 평서문 어순)", g: 4, re: /\basked\s+(me\s+|him\s+|her\s+)?(if|whether|what|where|when|why|how|who)\b/i },
+    { name: "명령문의 간접화법(tell / ask / order + 목적어 + to부정사)", g: 4, re: /\b(told|asked|ordered|advised)\s+(me|him|her|us|them)\s+(not\s+)?to\b/i },
   ] },
 ];
 const GRAMMAR_GRADE_IDX = Object.fromEntries(GRAMMAR_GRADES.map((g) => [g.id, g.lv]));
