@@ -668,7 +668,7 @@ function grRender() {
 
 function grSyncButtons() {
   const has = grState.questions.length > 0;
-  ["grPrintBtn", "grAnswerPrintBtn", "grSaveBtn", "grNewBtn"].forEach((id) => { grEl(id).style.display = has ? "inline-flex" : "none"; });
+  ["grPrintBtn", "grAnswerPrintBtn", "grSaveBtn", "grShuffleBtn", "grNewBtn"].forEach((id) => { grEl(id).style.display = has ? "inline-flex" : "none"; });
   grEl("grAssignBtn").style.display = has && typeof isClassroomApproved !== "undefined" && isClassroomApproved ? "inline-flex" : "none";
   if (typeof syncFloatPrint === "function") syncFloatPrint();
 }
@@ -780,6 +780,20 @@ grEl("grAssignBtn").addEventListener("click", () =>
   // 배열 영작은 looseOrder를 달아 같은 단어·다른 어순이면 틀림 대신 '확인 대기'로 채점되게 한다.
   openQuizAssign(grState.questions.map(({ gitem, gkind, gshape, ...rest }) =>
     rest.format === "write" ? { ...rest, looseOrder: true } : rest), grSheetName(), "quiz"));
+// 🔀 문제 섞기 — 서버는 항목별로 모아 내므로(같은 항목 문제가 줄줄이 나온다) 순서만 무작위로 섞는다.
+// 실제 시험지처럼 객관식이 앞, 주관식이 뒤인 것은 지킨다. 문항 값은 그대로라 저장·시험 내기도 이 순서를 쓴다.
+grEl("grShuffleBtn").addEventListener("click", () => {
+  const shuffle = (a) => {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+  const qs = grState.questions;
+  grState.questions = shuffle(qs.filter((q) => q.format === "mc")).concat(shuffle(qs.filter((q) => q.format !== "mc")));
+  grRender();
+});
 grEl("grLoadBtn").addEventListener("click", () => openSavedList("tab", null, "grammar"));
 // 🆕 새로 만들기 — 만든 문제·제목·'저장함의 어느 자료와 이어져 있는가'를 비운다. 레벨·항목·문항 수 설정은 남긴다
 // (그대로 다시 만들거나 조금만 바꿔 만드는 일이 많다). 안 비우면 새로 만든 문제를 저장할 때 앞 자료를 덮어쓸지 묻는다.
