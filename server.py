@@ -11414,6 +11414,7 @@ CONTENT_TYPES = {
     ".css": "text/css; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
     ".json": "application/json; charset=utf-8",
+    ".webmanifest": "application/manifest+json; charset=utf-8",
     ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
     # png이 빠져 있어 logo.png·mark.png가 application/octet-stream으로 나가고 있었다.
