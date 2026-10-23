@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "kr.ai.englishlab.student",
+        "sha256_cert_fingerprints": ["AC:30:97:3E:65:6E:C0:04:40:F0:60:0D:F2:43:30:73:D9:F4:7A:61:E2:2F:D5:00:93:3F:57:55:3F:5D:EF:6C"]
+      }
+    }]
