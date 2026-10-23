@@ -630,7 +630,7 @@ function grRender() {
 
 function grSyncButtons() {
   const has = grState.questions.length > 0;
-  ["grPrintBtn", "grAnswerPrintBtn", "grSaveBtn"].forEach((id) => { grEl(id).style.display = has ? "inline-flex" : "none"; });
+  ["grPrintBtn", "grAnswerPrintBtn", "grSaveBtn", "grNewBtn"].forEach((id) => { grEl(id).style.display = has ? "inline-flex" : "none"; });
   grEl("grAssignBtn").style.display = has && typeof isClassroomApproved !== "undefined" && isClassroomApproved ? "inline-flex" : "none";
   if (typeof syncFloatPrint === "function") syncFloatPrint();
 }
@@ -743,6 +743,18 @@ grEl("grAssignBtn").addEventListener("click", () =>
   openQuizAssign(grState.questions.map(({ gitem, gkind, gshape, ...rest }) =>
     rest.format === "write" ? { ...rest, looseOrder: true } : rest), grSheetName(), "quiz"));
 grEl("grLoadBtn").addEventListener("click", () => openSavedList("tab", null, "grammar"));
+// 🆕 새로 만들기 — 만든 문제·제목·'저장함의 어느 자료와 이어져 있는가'를 비운다. 레벨·항목·문항 수 설정은 남긴다
+// (그대로 다시 만들거나 조금만 바꿔 만드는 일이 많다). 안 비우면 새로 만든 문제를 저장할 때 앞 자료를 덮어쓸지 묻는다.
+grEl("grNewBtn").addEventListener("click", () => {
+  if (!confirm("지금 만든 문제가 사라집니다.\n[💾 사이트 저장]으로 저장하셨나요? 저장하지 않은 문제는 되돌릴 수 없습니다.\n\n저장했다면 [확인]을 눌러 비우고 새로 만드세요.")) return;
+  grState.questions = [];
+  grState.title = "";
+  grEl("grTitle").value = "";
+  grEl("grError").textContent = "";
+  if (typeof LOADED_SAVED !== "undefined") delete LOADED_SAVED.grammar;
+  grRender();
+  grEl("grMakeBtn").scrollIntoView({ behavior: "smooth", block: "center" });
+});
 
 TAB_LABELS.grammar = "📐 문법 문제";
 TAB_LIBRARY_WORDS.grammar = {
