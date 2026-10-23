@@ -2679,6 +2679,12 @@ footer{margin-top:34px; text-align:center; font-size:11.5px; color:var(--ink-sof
 .qt-row-opts .qt-opt{width:auto; min-width:52px; justify-content:center;}
 .qt-pick{display:inline-flex; gap:4px; vertical-align:baseline; margin:0 2px;}
 .qt-pick .qt-opt{width:auto; padding:1px 8px; font-size:14px; border-radius:6px; display:inline-block;}
+/* 네모 (A)(B)(C) 고르기 — 지문 속 네모를 눌러 답한다(골라진 조합은 숨은 ①~⑤ 단추가 받는다) */
+.qt-box{font:inherit; font-size:14px; line-height:1.5; padding:1px 8px; cursor:pointer; display:inline-block;
+  background:var(--card); border:1px solid var(--line); border-radius:6px; color:var(--ink);}
+.qt-box.sel{border-color:var(--accent); background:color-mix(in srgb, var(--accent) 10%, var(--card)); font-weight:700;}
+.qt-boxq .qt-opt{display:none;}
+.st-page .qt-box{font-size:16px; padding:3px 9px;}
 .qt-in{font:inherit; font-size:14.5px; padding:6px 9px; border:1px solid var(--line); border-radius:7px;
   background:var(--card); color:var(--ink); min-width:0;}
 .qz-passage .qt-in{width:7.5em; padding:2px 6px; margin:0 2px;}

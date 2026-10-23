@@ -114,6 +114,52 @@
     return "";
   }
 
+  // 네모 (A)(B)(C) 어법 고르기 — 지문에 <b>[a / b]</b>가 있고, 보기 5개가 모두 "x – y – z" 조합이면
+  // 학생은 보기 번호 대신 네모를 눌러 답한다(휴대폰에서 A·B·C 답을 기억했다가 ①~⑤를 찍기 어렵다 — 2026-10-23 사용자).
+  // 그렇지 않은 모양이면 null이라 예전 그대로 ①~⑤를 보여 준다.
+  const BOX_RE = /<b>\[\s*([^\]\/<]+?)\s*\/\s*([^\]\/<]+?)\s*\]<\/b>/g;
+  const boxNorm = (s) => String(s).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  function boxPlan(q) {
+    const html = clean(q.passageHtml);
+    const boxes = [];
+    html.replace(BOX_RE, (_, a, b) => { boxes.push([a, b]); return ""; });
+    if (!boxes.length || boxes.length > 4 || !(q.choices || []).length) return null;
+    const combos = q.choices.map((c) => boxNorm(c).split(/\s+[–—-]\s+/));
+    const ok = combos.every((p) => p.length === boxes.length &&
+      p.every((x, j) => boxes[j].some((o) => boxNorm(o) === x)));
+    return ok ? { html, boxes, combos } : null;
+  }
+  // 네모를 모두 골랐으면 그 조합의 숨은 단추를 켠다 — 어느 보기와도 안 맞으면 0번
+  function boxSync(card) {
+    const wrap = card.querySelector(".qt-boxq");
+    if (!wrap) return;
+    const combos = JSON.parse(wrap.dataset.combos), n = Number(wrap.dataset.n);
+    const pick = [];
+    for (let j = 0; j < n; j++) {
+      const s = card.querySelector(`.qt-box.sel[data-box="${j}"]`);
+      pick.push(s ? s.dataset.v : null);
+    }
+    wrap.querySelectorAll(".qt-opt").forEach((b) => b.classList.remove("sel"));
+    if (pick.some((x) => x === null)) return;
+    const hit = combos.findIndex((c) => c.every((x, j) => x === pick[j]));
+    const el = wrap.querySelector(`.qt-opt[data-v="${hit + 1}"]`);   // hit -1 → 0번
+    if (el) el.classList.add("sel");
+  }
+  // 임시 보관에서 되살린 답 → 네모 표시
+  function boxRestore(root) {
+    root.querySelectorAll(".qt-boxq").forEach((wrap) => {
+      const card = wrap.closest(".qt-card");
+      const sel = wrap.querySelector(".qt-opt.sel");
+      const v = sel ? Number(sel.dataset.v) : 0;
+      const combos = JSON.parse(wrap.dataset.combos);
+      card.querySelectorAll(".qt-box").forEach((b) => b.classList.remove("sel"));
+      if (v >= 1 && combos[v - 1]) combos[v - 1].forEach((x, j) => {
+        const b = Array.from(card.querySelectorAll(`.qt-box[data-box="${j}"]`)).find((e) => e.dataset.v === x);
+        if (b) b.classList.add("sel");
+      });
+    });
+  }
+
   function bodyHtml(q, i, mode) {
     const fmt = q.format;
     const inputAttrs = (u, part) =>
@@ -144,6 +190,24 @@
       return blocks + rows;
     }
     if (fmt === "mc") {
+      if (mode === "take") {
+        const bp = boxPlan(q);
+        if (bp) {
+          let k = 0;
+          const body = bp.html.replace(BOX_RE, (_, a, b) => {
+            const j = k++;
+            return `<span class="qt-pick">${[a, b].map((o) =>
+              `<button type="button" class="qt-box" data-q="${i}" data-box="${j}" data-v="${esc(boxNorm(o))}">${o}</button>`).join("")}</span>`;
+          });
+          // 고른 조합은 숨은 ①~⑤ 단추가 받는다 — 답을 모으고 저장하는 길(collect·restore)이 그대로라서.
+          // 0번은 어느 보기에도 없는 조합이라 답은 한 것으로 치되 틀린다.
+          const hidden = [0].concat(bp.combos.map((_, c) => c + 1)).map((v) =>
+            `<button type="button" class="qt-opt" data-q="${i}" data-u="0" data-v="${v}"></button>`).join("");
+          return `<div class="qz-passage">${body}</div>` +
+            `<div class="qt-boxq" data-combos="${esc(JSON.stringify(bp.combos))}" data-n="${bp.boxes.length}">${hidden}</div>` +
+            `<p class="hint">각 네모에서 알맞은 것을 눌러 고르세요.</p>`;
+        }
+      }
       const n = q.choiceCount || (q.choices || []).length || 5;
       if ((q.choices || []).length) {
         return passageBox(q.passageHtml) + `<div class="qt-opts">${q.choices.map((c, k) =>
@@ -239,6 +303,14 @@
   // 풀기 화면 — 고르기 단추를 누르면 같은 칸의 다른 단추는 꺼진다
   function bind(root, onChange) {
     root.addEventListener("click", (e) => {
+      const bx = e.target.closest(".qt-box");
+      if (bx) {
+        const card = bx.closest(".qt-card");
+        card.querySelectorAll(`.qt-box[data-box="${bx.dataset.box}"]`).forEach((x) => x.classList.toggle("sel", x === bx));
+        boxSync(card);
+        onChange && onChange();
+        return;
+      }
       const b = e.target.closest(".qt-opt");
       if (!b || b.disabled) return;
       root.querySelectorAll(`.qt-opt[data-q="${b.dataset.q}"][data-u="${b.dataset.u}"]`)
@@ -283,6 +355,7 @@
           .forEach((b) => b.classList.toggle("sel", v !== "" && b.dataset.v === String(v)));
       });
     });
+    boxRestore(root);
   }
 
   function blankCount(answers) {
