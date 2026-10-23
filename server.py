@@ -1025,19 +1025,6 @@ _VERTEX_CALLS = threading.local()
 # 합계만 줘서 선생님마다 토큰 원가가 얼마인지 알 길이 없었다. AI Studio는 라벨을 받지 않아
 # Vertex로 간 호출만 잡힌다. 값은 _vertex_cost_tag(회원 id를 줄인 것) — 라벨 값에는 @·.를
 # 못 쓰고 결제 화면에 이메일을 남기고 싶지도 않다. 관리자 화면 회원 표에 같은 값이 나온다.
-# 출력이 아주 긴 Flash 호출(워크북)은 정상으로도 120초를 넘는다 — 그 호출만 기다림을 줄이지 않는다.
-# 켜 둔 동안(스레드별) _flash_attempt_wait가 GEMINI_TIMEOUT을 그대로 돌려준다(2026-10-24).
-_LONG_WAIT = threading.local()
-
-
-def _flash_attempt_wait(model):
-    """Flash 글자 호출 한 번의 기다림(초). 줄여 둔 값은 '매달린' 호출을 빨리 다시 보내려는 것이다."""
-    low = (model or "").lower()
-    if "flash" in low and "image" not in low and not getattr(_LONG_WAIT, "on", False):
-        return min(GEMINI_TIMEOUT, GEMINI_FLASH_ATTEMPT_TIMEOUT)
-    return GEMINI_TIMEOUT
-
-
 _VERTEX_LABELS = threading.local()
 _VERTEX_LOCK = threading.Lock()
 _VERTEX_CREDS = None
@@ -1114,7 +1101,8 @@ def _vertex_post(model, data):
     req = urllib.request.Request(url, data=data, method="POST", headers={
         "content-type": "application/json", "authorization": "Bearer " + creds.token})
     # Flash 글자 호출은 매달리면 기다림을 줄여 한 번 더 보낸다(_gemini_call_with_retry) — 그림 모델은 원래 오래 걸린다
-    wait = _flash_attempt_wait(model)
+    low = (model or "").lower()
+    wait = min(GEMINI_TIMEOUT, GEMINI_FLASH_ATTEMPT_TIMEOUT) if "flash" in low and "image" not in low else GEMINI_TIMEOUT
     with urllib.request.urlopen(req, timeout=wait) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -8265,13 +8253,10 @@ def call_gemini_workbook(passage, api_key, model, complete_hint=None, stages=Non
             "responseSchema": _workbook_schema(stages),
         },
     }
-    # 출력이 길어 Flash도 120초를 넘기는 일이 잦다 — 그 기다림에 끊고 다시 보내면 두 번 다 끊겨 실패한다
-    _LONG_WAIT.on = True
-    try:
-        raw = _gemini_json(payload, api_key, model, _WORKBOOK_TRUNC_MSG, label="workbook")
-    finally:
-        _LONG_WAIT.on = False
-    return normalize_workbook_words(normalize_workbook_arrange(raw, stages), word_counts, passage)
+    return normalize_workbook_words(
+        normalize_workbook_arrange(
+            _gemini_json(payload, api_key, model, _WORKBOOK_TRUNC_MSG, label="workbook"), stages),
+        word_counts, passage)
 
 
 # ── 주제 & 흐름 요약 규칙 (상세분석·소책자 공용) ──
@@ -10396,8 +10381,9 @@ def _gemini_call_with_retry(data, api_key, model, url=None, allow_fallback=True,
         # Flash 글자 호출은 보통 수십 초 안에 끝나는데, 가끔 응답이 아예 안 오고 매달린다 — 그러면 300초를 통째로
         # 기다렸다 '시간 초과'로 실패했다(2026-10-22 지문 6개 기본 문제 제작). 한 번의 기다림을 줄이고
         # 한 번 더 보낸다(_generate). 그림(url을 따로 넘기는 호출)·Pro는 원래 오래 걸리므로 그대로 둔다.
-        if url is None:
-            return _flash_attempt_wait(use_model)
+        low = (use_model or "").lower()
+        if url is None and "flash" in low and "image" not in low:
+            return min(GEMINI_TIMEOUT, GEMINI_FLASH_ATTEMPT_TIMEOUT)
         return GEMINI_TIMEOUT
 
     def _post(use_model):
