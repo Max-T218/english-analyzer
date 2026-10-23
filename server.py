@@ -13490,6 +13490,42 @@ def list_all_users():
     return rows
 
 
+def admin_student_counts():
+    """선생님 계정별 반 수·등록 학생 수 — 관리자 화면 '학생 수 현황' 탭용.
+
+    학생 문서를 통째로 읽지 않고 teacher_id·class_id 두 칸만 가져온다(미성년자 이름·아이디는
+    이 집계에 필요 없다). 학생이 한 명도 없는 선생님도 줄로 남긴다 — 승인만 받고 안 쓰는
+    계정을 가려내는 데도 쓰이기 때문이다. 이미 지워진 계정의 학생은 '(삭제된 계정)'으로 묶는다."""
+    _require_db()
+    users = {}
+    for doc in DB.collection("users").stream():
+        d = doc.to_dict() or {}
+        users[doc.id] = {"email": d.get("email", ""), "name": d.get("name", ""),
+                         "approved": bool(d.get("classroom_approved"))}
+    classes_by = {}
+    for doc in DB.collection("classes").select(["teacher_id"]).stream():
+        t = (doc.to_dict() or {}).get("teacher_id", "")
+        classes_by[t] = classes_by.get(t, 0) + 1
+    students_by = {}
+    for doc in DB.collection("students").select(["teacher_id"]).stream():
+        t = (doc.to_dict() or {}).get("teacher_id", "")
+        students_by[t] = students_by.get(t, 0) + 1
+    rows = []
+    for tid in set(users) | set(classes_by) | set(students_by):
+        u = users.get(tid)
+        if u is None and not (classes_by.get(tid) or students_by.get(tid)):
+            continue
+        if u is None:
+            u = {"email": "(삭제된 계정)", "name": "", "approved": False}
+        rows.append({"id": tid, "email": u["email"], "name": u["name"],
+                     "approved": u["approved"],
+                     "classes": classes_by.get(tid, 0), "students": students_by.get(tid, 0)})
+    # 학생 수가 많은 계정이 위로, 같으면 이메일순. 승인 안 됐고 학생도 없는 계정은 뺀다
+    rows = [r for r in rows if r["approved"] or r["students"] or r["classes"]]
+    rows.sort(key=lambda r: (-r["students"], r["email"]))
+    return rows
+
+
 def list_pending_signups():
     """가입을 시작했지만 아직 인증코드를 넣지 않은 사람들 — 이메일·이름·시작 시각만.
 
@@ -16765,6 +16801,16 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/admin/me":
             self._send_json({"loggedIn": _admin_session_valid(self)})
+            return
+
+        if path == "/api/admin/student-counts":
+            if not _admin_session_valid(self):
+                self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
+                return
+            try:
+                self._send_json({"rows": admin_student_counts()})
+            except Exception as e:
+                self._send_json({"error": str(e) or "집계에 실패했습니다."}, 500)
             return
 
         if path == "/api/admin/users":

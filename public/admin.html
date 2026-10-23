@@ -58,6 +58,28 @@
       </div>
     </div>
 
+    <div class="panel" style="display:flex; gap:8px;">
+      <button type="button" class="btn small" id="viewUsersBtn">회원 목록</button>
+      <button type="button" class="btn ghost small" id="viewCountsBtn">학생 수 현황</button>
+    </div>
+
+    <div class="panel" id="countsView" hidden>
+      <p class="hint" id="countsSummary" style="margin-top:0;"></p>
+      <div class="error" id="countsError"></div>
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="text-align:left; border-bottom:1px solid var(--line);">
+            <th style="padding:8px 6px;">이메일</th>
+            <th style="padding:8px 6px;">이름</th>
+            <th style="padding:8px 6px; text-align:right;">반 수</th>
+            <th style="padding:8px 6px; text-align:right;">등록 학생 수</th>
+          </tr>
+        </thead>
+        <tbody id="countsBody"></tbody>
+      </table>
+    </div>
+
+    <div id="usersView">
     <div class="error" id="adminListError"></div>
     <!-- 가입을 시작했지만 인증을 끝내지 못한 사람들.
          회원 목록에는 안 나오므로(users 문서가 없다) 여기서만 보인다. -->
@@ -107,6 +129,7 @@
         </thead>
         <tbody id="userTableBody"></tbody>
       </table>
+    </div>
     </div>
   </section>
 
@@ -195,7 +218,47 @@ $("adminLogoutBtn").addEventListener("click", async () => {
   try { await postJson("/api/admin/logout"); } catch (_) {}
   showGate();
 });
-$("adminRefreshBtn").addEventListener("click", loadUsers);
+$("adminRefreshBtn").addEventListener("click", () => {
+  loadUsers();
+  if (!$("countsView").hidden) loadCounts();
+});
+
+/* 학생 수 현황 탭 — 선생님 계정(아이디)별 반 수·등록 학생 수.
+   표가 무거워(학생 문서를 훑는다) 탭을 열 때만 받아 온다. */
+function showView(which) {
+  const counts = which === "counts";
+  $("countsView").hidden = !counts;
+  $("usersView").hidden = counts;
+  $("viewUsersBtn").classList.toggle("ghost", counts);
+  $("viewCountsBtn").classList.toggle("ghost", !counts);
+  if (counts) loadCounts();
+}
+$("viewUsersBtn").addEventListener("click", () => showView("users"));
+$("viewCountsBtn").addEventListener("click", () => showView("counts"));
+
+async function loadCounts() {
+  const errEl = $("countsError");
+  errEl.textContent = "";
+  $("countsSummary").textContent = "불러오는 중…";
+  try {
+    const data = await getJson("/api/admin/student-counts");
+    const rows = data.rows || [];
+    const total = rows.reduce((s, r) => s + r.students, 0);
+    $("countsSummary").textContent =
+      `선생님 ${rows.length}명 · 등록 학생 합계 ${total.toLocaleString()}명 (학생이 많은 순)`;
+    $("countsBody").innerHTML = rows.map((r) =>
+      `<tr style="border-bottom:1px solid var(--line);">`
+      + `<td style="padding:7px 6px; word-break:break-all;">${esc(r.email)}</td>`
+      + `<td style="padding:7px 6px;">${esc(r.name)}</td>`
+      + `<td style="padding:7px 6px; text-align:right;">${r.classes}</td>`
+      + `<td style="padding:7px 6px; text-align:right;"><b>${r.students}</b></td></tr>`
+    ).join("") || `<tr><td colspan="4" style="padding:10px 6px;">등록된 학생이 없습니다.</td></tr>`;
+  } catch (err) {
+    if (/로그인/.test(err.message || "")) { showGate(); return; }
+    $("countsSummary").textContent = "";
+    errEl.textContent = err.message || "학생 수를 불러오지 못했습니다.";
+  }
+}
 
 /* 탈퇴 잠금. 상태를 어디에도 저장하지 않는다 — 새로고침하면 늘 잠긴 채로 시작한다.
    "지난번에 켜 뒀다"가 위험한 쪽으로 남으면 안 되기 때문이다. */
