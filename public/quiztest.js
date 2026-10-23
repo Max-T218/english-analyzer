@@ -226,7 +226,7 @@
     const review = mode !== "take";
     return `<div class="qz-card qt-card" data-q="${i}" data-fmt="${esc(q.format)}" data-units="${unitCount(q)}"
         data-status="${review ? questionStatus(q) || "" : ""}">
-      <div class="qz-head"><span class="qz-no">${i + 1}</span>${q.type ? `<span class="qz-type">${esc(q.type)}</span>` : ""}
+      <div class="qz-head"><span class="qz-no">${i + 1}</span>${q.type && opts.grading ? `<span class="qz-type">${esc(q.type)}</span>` : ""}
         ${review ? markHtml(q) : ""}</div>
       ${q.passageName ? `<div class="hint" style="margin-bottom:4px;">${esc(q.passageName)}</div>` : ""}
       <div class="qz-instruction">${emStem(clean(q.instruction))}</div>
