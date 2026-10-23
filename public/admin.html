@@ -248,7 +248,12 @@ async function loadCounts() {
       `선생님 ${rows.length}명 · 등록 학생 합계 ${total.toLocaleString()}명 (학생이 많은 순)`;
     $("countsBody").innerHTML = rows.map((r) =>
       `<tr style="border-bottom:1px solid var(--line);">`
-      + `<td style="padding:7px 6px; word-break:break-all;">${esc(r.email)}</td>`
+      + `<td style="padding:7px 6px; word-break:break-all;">${esc(r.email)}`
+      + ((r.classList || []).length
+          ? `<div style="margin-top:4px; font-size:12px; line-height:1.7; opacity:.85;">`
+            + r.classList.map((c) => `${esc(c.name)} <b>${c.students}명</b>`).join(" · ")
+            + `</div>` : "")
+      + `</td>`
       + `<td style="padding:7px 6px;">${esc(r.name)}</td>`
       + `<td style="padding:7px 6px; text-align:right;">${r.classes}</td>`
       + `<td style="padding:7px 6px; text-align:right;"><b>${r.students}</b></td></tr>`

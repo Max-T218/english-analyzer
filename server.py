@@ -13503,13 +13503,25 @@ def admin_student_counts():
         users[doc.id] = {"email": d.get("email", ""), "name": d.get("name", ""),
                          "approved": bool(d.get("classroom_approved"))}
     classes_by = {}
-    for doc in DB.collection("classes").select(["teacher_id"]).stream():
-        t = (doc.to_dict() or {}).get("teacher_id", "")
+    class_info = {}   # class_id -> (teacher_id, 반 이름)
+    for doc in DB.collection("classes").select(["teacher_id", "name"]).stream():
+        d = doc.to_dict() or {}
+        t = d.get("teacher_id", "")
         classes_by[t] = classes_by.get(t, 0) + 1
+        class_info[doc.id] = (t, d.get("name", ""))
     students_by = {}
-    for doc in DB.collection("students").select(["teacher_id"]).stream():
-        t = (doc.to_dict() or {}).get("teacher_id", "")
+    per_class = {}    # class_id -> 학생 수
+    for doc in DB.collection("students").select(["teacher_id", "class_id"]).stream():
+        d = doc.to_dict() or {}
+        t = d.get("teacher_id", "")
         students_by[t] = students_by.get(t, 0) + 1
+        cid = d.get("class_id", "")
+        per_class[cid] = per_class.get(cid, 0) + 1
+    class_list = {}
+    for cid, (t, cname) in class_info.items():
+        class_list.setdefault(t, []).append({"name": cname, "students": per_class.get(cid, 0)})
+    for lst in class_list.values():
+        lst.sort(key=lambda c: (-c["students"], c["name"]))
     rows = []
     for tid in set(users) | set(classes_by) | set(students_by):
         u = users.get(tid)
@@ -13519,7 +13531,8 @@ def admin_student_counts():
             u = {"email": "(삭제된 계정)", "name": "", "approved": False}
         rows.append({"id": tid, "email": u["email"], "name": u["name"],
                      "approved": u["approved"],
-                     "classes": classes_by.get(tid, 0), "students": students_by.get(tid, 0)})
+                     "classes": classes_by.get(tid, 0), "students": students_by.get(tid, 0),
+                     "classList": class_list.get(tid, [])})
     # 학생 수가 많은 계정이 위로, 같으면 이메일순. 승인 안 됐고 학생도 없는 계정은 뺀다
     rows = [r for r in rows if r["approved"] or r["students"] or r["classes"]]
     rows.sort(key=lambda r: (-r["students"], r["email"]))
