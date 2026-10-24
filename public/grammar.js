@@ -46,7 +46,7 @@ const GRAMMAR_SA_SHAPES = [
   { id: "sa_bank", label: "보기에서 골라 쓰기" },
   { id: "sa_dialog", label: "대화 완성" },
 ];
-const GRAMMAR_MAX_Q = 50;   // server.py GRAMMAR_MAX_QUESTIONS
+const GRAMMAR_MAX_Q = 100;   // server.py GRAMMAR_MAX_QUESTIONS
 
 const GRAMMAR_CATALOG = [
   { topic: "be동사와 일반동사", subs: [
@@ -1119,7 +1119,7 @@ if (typeof HOWTO !== "undefined") {
       "<b>[문제 만들기]</b>를 누릅니다. 마음에 안 드는 문항은 <b>[✏️ 고치기]</b>로 직접 고칩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
-    tip: "한 번에 50문항까지 만들 수 있습니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 학생에게 온라인 시험을 낼 수 있습니다.",
+    tip: "한 번에 100문항까지 만들 수 있습니다(문항이 많을수록 만드는 데 시간이 걸립니다). 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 학생에게 온라인 시험을 낼 수 있습니다.",
   };
 }
 

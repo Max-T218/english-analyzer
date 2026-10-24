@@ -6160,14 +6160,23 @@ def call_gemini_student_comment(data, api_key, model):
 # '연결이 끊겨 다시 받아 오는 중'이 자주 떴다(2026-10-20 사용자). 묶음을 줄이면 지시문(약 3~4천 토큰)을
 # 그만큼 더 보내 입력값이 조금 늘지만, 걸리는 시간은 가장 느린 한 묶음으로 정해진다.
 # 값은 실제로 받아 낸 문항 수로 매긴다(_grammar_cost).
-GRAMMAR_MAX_QUESTIONS = 50
-GRAMMAR_MAX_ITEMS = 40
+# 상한은 처음 50이었다가 100으로 올렸다(2026-10-24 사용자). 학생 시험 내기 상한(QUIZ_TEST_MAX_QUESTIONS)과 같고, 100문항이면
+# 묶음이 20개 동시에 나가 한 요청이 프록시 한도(약 100초) 가까이 걸릴 수 있어 그 위로는 올리지 않았다 — 늦은 묶음은 아래
+# GRAMMAR_ROUND_DEADLINE이 버리고 빠진 문항은 다시 채우므로 느려도 만든 만큼은 돌려준다.
+GRAMMAR_MAX_QUESTIONS = 100
+GRAMMAR_MAX_ITEMS = 100   # 항목 줄(항목 × 레벨) 수 — 줄마다 한 문항 이상이라 총 문항 수 상한과 같게 둔다
 GRAMMAR_CHUNK = 5
 # 한 묶음 호출이 이 시간(초) 안에 안 끝나면 기다리지 않는다. Gemini 호출이 가끔 응답 없이 매달려
 # GEMINI_TIMEOUT(300초)까지 가는데, 그 한 묶음을 기다리다 요청 전체가 프록시에 끊기거나 재배포에
 # 잘려 이미 만든 문항까지 통째로 잃었다(2026-10-22). 늦은 묶음은 버리고 받은 만큼으로 진행하며,
 # 빠진 자리는 아래 다시 채우기가 맡는다. 정상 묶음은 보통 10~40초다.
 GRAMMAR_ROUND_DEADLINE = _env("GRAMMAR_ROUND_DEADLINE", 80.0, float)
+# 빠진 문항을 다시 채우는 라운드는 더 짧게 기다린다 — 100문항 시험에서 다시 채우는 묶음 2개 중 하나가 느려 80초를 다 기다리는 바람에
+# 전체가 155초가 됐다(2026-10-24). 다시 채우는 묶음은 문항이 적어 보통 20~30초면 끝난다.
+GRAMMAR_REFILL_DEADLINE = _env("GRAMMAR_REFILL_DEADLINE", 35.0, float)
+# 한 묶음(5문항)의 출력 상한(생각 포함). 정상 묶음은 3천 토큰 안팎이고 큰 것도 8천이었는데, 같은 시험에서 한 묶음이
+# 출력만 14,604토큰을 써 전체 원가의 약 10%가 거기서 나갔다. 넘으면 잘리고, 받은 문항은 salvage가 건진다.
+GRAMMAR_MAX_OUTPUT_TOKENS = _env("GRAMMAR_MAX_OUTPUT_TOKENS", 10000, int)
 GRAMMAR_PASSAGE_MAX = 8000
 # 레벨 — 화면 grammar.js의 GRAMMAR_GRADES와 같은 열쇠. 화면 이름은 초등 고학년 · 중등 Level 1~3 ·
 # 수능 Level이다(2026-10-20 — 학년 이름이 다른 사이트를 따라 한 티가 난다고 바꿨다. 열쇠는 그대로 둔다).
@@ -6839,7 +6848,7 @@ def _grammar_call(plan, slots, api_key, model, theme=None, avoid=None):
         "contents": [{"role": "user", "parts": [{"text": _grammar_user_prompt(dict(plan, grade=grade), slots, theme, avoid)}]}],
         "generationConfig": {
             "temperature": 0.8,
-            "maxOutputTokens": 16384,
+            "maxOutputTokens": GRAMMAR_MAX_OUTPUT_TOKENS,
             "responseMimeType": "application/json",
             "responseSchema": GRAMMAR_SCHEMA,
         },
@@ -6875,7 +6884,7 @@ def call_gemini_grammar(plan, api_key, model=None):
 
     themes = random.sample(_GRAMMAR_THEMES, len(_GRAMMAR_THEMES))
 
-    def run(groups, avoid=None):
+    def run(groups, avoid=None, deadline=GRAMMAR_ROUND_DEADLINE):
         def work(k, group):
             _vertex_set_labels(labels)
             try:
@@ -6886,12 +6895,12 @@ def call_gemini_grammar(plan, api_key, model=None):
         threads = [threading.Thread(target=work, args=(k, g), daemon=True) for k, g in enumerate(groups)]
         for t in threads:
             t.start()
-        end = time.monotonic() + GRAMMAR_ROUND_DEADLINE
+        end = time.monotonic() + deadline
         for t in threads:
             t.join(max(0.0, end - time.monotonic()))
         hung = sum(1 for t in threads if t.is_alive())
         if hung:   # 늦은 묶음의 결과가 나중에 도착해도 got.update가 덮어쓸 뿐이라 해가 없다
-            print(f"[grammar] 묶음 {hung}/{len(threads)}개가 {GRAMMAR_ROUND_DEADLINE:.0f}초 안에 끝나지 않아 "
+            print(f"[grammar] 묶음 {hung}/{len(threads)}개가 {deadline:.0f}초 안에 끝나지 않아 "
                   f"기다리지 않습니다", file=sys.stderr, flush=True)
 
     def drop_dups():
@@ -6927,7 +6936,7 @@ def call_gemini_grammar(plan, api_key, model=None):
             break
         avoid = [re.sub(r"<[^>]+>", " ", q.get("answerText") or q.get("passageHtml") or "")[:120]
                  for q in got.values()][:40]
-        run(chunks(missing), avoid)
+        run(chunks(missing), avoid, GRAMMAR_REFILL_DEADLINE)   # 다시 채우는 라운드는 짧게 기다린다
         drop_dups()
     final = dict(got)   # 늦게 도착하는 묶음이 아래 계산 중에 값을 바꾸지 못하게 복사해 둔다
     questions = [final[s["slot"]] for s in slots if s["slot"] in final]
