@@ -10725,14 +10725,14 @@ function buildStageWord(stageId, wp) {
   return { html: `<div class="${cls}">${html.join("")}</div>`, answers };
 }
 
-/* 워크북12 — 내용 O/X. 지문은 워크북 맨 위(좌지문 우해석)에 한 번만 있으므로 여기서는 진술만 싣는다
+/* 워크북12 — 내용 O/X. 지문은 이 단계 맨 앞 카드에 한 번 싣는다
    (주관식 탭은 O/X 문항마다 지문 전문을 다시 싣는다). 진술 번호는 이 단계 안에서 1부터 이어 매기고,
    주관식 문항(진술 5개) 하나를 한 덩어리로 두어 쪽 사이에서 쪼개지지 않게 한다.
    답지에는 O/X만 싣는다(주관식 답지에 해설을 안 넣는 것과 같은 까닭 — 글씨가 작아진다). */
-/* 좌지문 우해석(1)을 안 골랐으면 지문이 워크북 어디에도 없다 — 그때는 O/X 위에 지문을 싣는다.
+/* 좌지문 우해석(1)을 골랐어도 O/X 위에 지문을 한 번 싣는다(2026-10-24 사용자 — 쪽 구성·단계별 출력으로
+   O/X가 지문에서 떨어지면 지문을 보고 풀 수 없다).
    지문은 워크북이 나눈 문장(sentences)을 잇고, 워크북 호출 없이 O/X만 만든 경우는 넣은 지문 그대로. */
 function wbOxCtx(stages, d, sentences, job) {
-  if (stages.includes(1)) return null;
   const text = (sentences || []).length
     ? sentences.map((x) => (x.heading ? `${x.heading}\n` : "") + x.en).join(" ")
     : (job && job.text) || "";
@@ -10743,7 +10743,7 @@ function buildStageOx(ox, passageText) {
   if (!groups.length) return { html: "", answers: [] };
   /* 모양은 주관식 탭의 O/X 카드 그대로 — 머리(번호·유형)·발문·(1)~(5)·괄호 칸을 주관식과 같은
      quizBodyHtml로 그린다. 다른 것은 지문 하나뿐이다: 주관식은 카드마다 지문을 다시 싣지만, 여기서는
-     좌지문 우해석이 없을 때(passageText가 있을 때) 첫 카드에만 한 번 싣는다. */
+     passageText가 있으면(늘 있다) 첫 카드에만 한 번 싣는다. */
   const passageHtml = passageText ? esc(passageText).replace(/\n/g, "<br>") : "";
   const html = [];
   const answers = [];
