@@ -6311,6 +6311,96 @@ GRAMMAR_SYSTEM_PROMPT = """당신은 한국 중·고등학교와 초등학교 �
 - HTML은 <br>, <u>, <b>만 씁니다.
 - 실존 인물의 사생활, 폭력·선정적인 내용, 특정 상표 광고는 쓰지 않습니다."""
 
+# 난이도 — 화면 grammar.js의 GRAMMAR_DIFFICULTIES와 같은 열쇠(함께 고칠 것). 학생들이 문제가 어렵다고 해서 만들었다
+# (2026-10-24 사용자). 위 기본 지시문은 시판 교재 수준의 까다로운 오답을 요구하므로 '어려움'이 예전 그대로이고,
+# 기본값인 '보통'은 그보다 한 단계 쉬우며, '쉬움'은 기본 규칙 한 가지만 알면 풀리게 한다. 아래 글은 기본 지시문
+# 뒤에 붙어 충돌하는 규칙을 덮어쓴다(QUIZ_HARD_RULES와 같은 방식). 문제 모양을 줄이는 일은 화면이 맡는다.
+GRAMMAR_DIFFICULTIES = {
+    "easy": "쉬움",
+    "normal": "보통",
+    "hard": "어려움",
+}
+GRAMMAR_DIFFICULTY_DEFAULT = "normal"
+_GRAMMAR_DIFFICULTY_RULES = {
+    "easy": """
+
+## 난이도: 쉬움 — 위 규칙과 충돌하면 이 규칙이 우선합니다
+수업 직후 이해 확인용입니다. 학생이 그 문법의 기본 규칙 한 가지만 알면 풀려야 합니다.
+- 오답은 그 규칙을 어긴 가장 기본적인 오류(형태·수일치·어순·동사원형 등) 하나로 만듭니다. 오답끼리 함정 종류가 같아도 되고, 같은 항목의 문항끼리 같은 오류 수법을 써도 됩니다. '쉽게 소거되면 안 된다'·'한눈에 비문인 보기를 쓰지 않는다'는 적용하지 않으니 분명히 틀린 보기를 섞어도 됩니다. 단 정답은 여전히 하나뿐이어야 합니다.
+- 문장은 한 문장으로, 학년 규칙의 가장 짧은 쪽(그보다 짧아도 됩니다)으로 씁니다. 절이 둘 이상인 문장은 그 문법 항목이 요구할 때만 씁니다.
+- 답의 근거(시간 부사·주어·상대방의 말)가 문장 안에 분명히 있게 합니다. 문맥을 길게 따져야 풀리는 문항은 내지 않습니다.
+- 주관식은 힌트를 넉넉히 줍니다. 우리말을 영작하는 문항은 쓸 낱말을 <보기>(wordBank)나 첫 글자 힌트로 주고, 빈칸·동사형은 한두 곳만, 배열 영작은 5~8단어로 합니다. 정답이 여러 가지로 갈리는 문장은 쓰지 않습니다.
+- 교재식 출제 패턴 중 쉬운 것(형태 고르기·빈칸·동사형 바꾸기·옳은 문장 고르기)을 우선합니다.""",
+    "normal": """
+
+## 난이도: 보통 — 위 규칙과 충돌하면 이 규칙이 우선합니다
+학교 진도·교과서 본문 수준입니다.
+- 객관식 오답은 학생이 실제로 자주 하는 실수 한 가지씩이고, 한 보기에는 오류가 하나만 들어 있습니다. 한 보기 안에서 두 가지 문법을 한꺼번에 따져야 하는 복합 함정은 쓰지 않습니다. 한눈에 비문인 보기는 쓰지 않습니다.
+- 문장 길이는 학년 규칙 범위의 가운데 이하로 씁니다.
+- 조건 영작·문장 전환의 조건은 쓸 문법 장치 하나만 요구합니다. 영작 문항은 우리말 앞뒤 단서로 정답이 하나로 정해지게 합니다.
+- 같은 항목의 문항이 여럿이면 쉬운 것에서 어려운 것 순으로 놓되, 가장 어려운 것도 교과서 문제 수준을 넘지 않게 합니다.""",
+    "hard": """
+
+## 난이도: 어려움 — 위 규칙을 그대로 따릅니다
+변별력이 필요한 심화·내신 대비용입니다. 위의 까다로운 오답 보기와 교재식 함정을 모두 씁니다. 문장 길이는 학년 규칙의 긴 쪽까지 쓸 수 있습니다.""",
+}
+
+# 문항 영어 문장의 낱말 기준 — 2022 개정 교육과정 기본 어휘(curriculum_vocab_2022.csv, 지문 변형이 쓰는 것과 같은 목록).
+# 목록은 지시문에 붙이므로 같은 레벨의 모든 묶음·요청이 같은 앞부분을 나눠 쓴다(Gemini 자동 캐시). 난이도 글은 목록 뒤에
+# 붙여 난이도가 달라도 목록 앞부분은 캐시를 탄다.
+_GRAMMAR_VOCAB_RULES = """
+
+## 어휘 기준 — 2022 개정 교육과정 기본 어휘
+맨 끝의 목록은 교육부 영어과 교육과정이 정한 학교급별 기본 어휘입니다. 문항의 영어 문장(지문·보기·정답·<보기> 낱말·대화 모두)은 이 목록의 낱말로 짓습니다. 문법이 아니라 낱말이 어려워서 학생이 틀리는 일이 없게 하려는 것입니다.
+- 목록의 표제어와 그 굴절형(복수·시제·비교급)·흔한 파생형(un-, re-, -ly, -ness, -tion, -er, -ful, -less, -able …)은 목록 안으로 칩니다.
+- 사람 이름·도시 이름·나라 이름·숫자·요일·달 이름은 목록과 상관없이 씁니다. 선생님이 넣은 재료 지문의 낱말도 그대로 씁니다.
+- 그 문법 항목을 묻는 데 꼭 필요한 낱말이 목록에 없을 때만 목록 밖 낱말을 쓰고, 그때도 그 학년 학생이 아는 낱말로 합니다. 문법과 상관없는 명사·형용사·동사는 목록 안에서 고릅니다.
+- {strength}"""
+_GRAMMAR_VOCAB_STRENGTH = {
+    "easy": "문장 속 낱말은 거의 전부 목록에서 고릅니다. 목록 밖 낱말은 한 문장에 하나도 두지 않는 것이 원칙입니다.",
+    "normal": "목록 밖 낱말은 한 문장에 많아야 하나, 그것도 아주 쉬운 낱말로만 둡니다.",
+    "hard": "목록 안의 낱말을 먼저 고르되, 그 학년 수준이면 목록 밖 낱말도 쓸 수 있습니다.",
+}
+_GRAMMAR_VOCAB_LEVELS = {"e56": 1, "m1": 2, "m2": 2, "m3": 2, "high": 3}   # 레벨 → 싣는 학교급 수(초등 / +중학교·공통 / +고등 선택)
+_GRAMMAR_SYSTEM_CACHE = {}
+
+
+def _grammar_system_text(plan):
+    """레벨·난이도에 맞는 지시문 = 기본 지시문 + 교육과정 어휘 목록 + 난이도 규칙. 같은 값이면 같은 글을 재사용한다."""
+    key = (plan["grade"], plan["difficulty"])
+    text = _GRAMMAR_SYSTEM_CACHE.get(key)
+    if text is None:
+        text = GRAMMAR_SYSTEM_PROMPT
+        levels = _CURRICULUM_LEVELS[:_GRAMMAR_VOCAB_LEVELS.get(plan["grade"], 2)]
+        if any(_CURRICULUM_HEADS[lv] for lv in levels):   # 목록 파일이 없으면 이 기능만 꺼진다
+            text += _GRAMMAR_VOCAB_RULES.replace("{strength}", _GRAMMAR_VOCAB_STRENGTH[plan["difficulty"]])
+            for lv in levels:
+                text += f"\n\n[{lv} — {len(_CURRICULUM_HEADS[lv])}단어]\n" + ", ".join(_CURRICULUM_HEADS[lv])
+        text += _GRAMMAR_DIFFICULTY_RULES[plan["difficulty"]]
+        _GRAMMAR_SYSTEM_CACHE[key] = text
+    return text
+
+
+def _grammar_offlist_stats(questions):
+    """만든 문항의 영어 낱말 중 교육과정 목록 밖으로 보이는 것 — 화면에는 안 보이고 Render 로그로만 남긴다
+    (목록을 얼마나 지키는지 실측하려고). 대문자로 시작하는 낱말(이름·I)과 숫자는 센 대상에서 뺀다."""
+    if not _CURRICULUM_FORMS:
+        return 0, 0, []
+    total, off, seen = 0, 0, []
+    for q in questions:
+        text = " ".join([str(q.get("passageHtml") or ""), str(q.get("answerText") or "")]
+                        + [str(c) for c in (q.get("choices") or [])] + [str(w) for w in (q.get("wordBank") or [])])
+        text = re.sub(r"<[^>]+>|\([^()|]*\|", " ", text)
+        for t in re.findall(r"[A-Za-z][A-Za-z’'\-]*", text):
+            if t[0].isupper():
+                continue
+            total += 1
+            if not _curriculum_known(t):
+                off += 1
+                if t.lower() not in seen and len(seen) < 25:
+                    seen.append(t.lower())
+    return off, total, seen
+
 
 def parse_grammar_request(req):
     """요청에서 학년·항목(객관식·주관식 개수)·허용 모양·지문을 꺼내 다듬는다. 잘못되면 ValueError."""
@@ -6339,8 +6429,12 @@ def parse_grammar_request(req):
         raise ValueError(f"한 번에 {GRAMMAR_MAX_QUESTIONS}문항까지 만들 수 있습니다 (지금 {total}문항).")
     mc_shapes = [s for s in (req.get("mcShapes") or []) if s in GRAMMAR_MC_SHAPES] or list(GRAMMAR_MC_SHAPES)
     sa_shapes = [s for s in (req.get("saShapes") or []) if s in GRAMMAR_SA_SHAPES] or list(GRAMMAR_SA_SHAPES)
+    difficulty = str(req.get("difficulty") or GRAMMAR_DIFFICULTY_DEFAULT)
+    if difficulty not in GRAMMAR_DIFFICULTIES:
+        difficulty = GRAMMAR_DIFFICULTY_DEFAULT
     return {
         "grade": grade,
+        "difficulty": difficulty,
         "items": items,
         "mc_shapes": list(dict.fromkeys(mc_shapes)),
         "sa_shapes": list(dict.fromkeys(sa_shapes)),
@@ -6701,7 +6795,7 @@ def _grammar_finish(raw, slot):
 
 def _grammar_call(plan, slots, api_key, model, theme=None, avoid=None):
     payload = {
-        "systemInstruction": {"parts": [{"text": GRAMMAR_SYSTEM_PROMPT}]},
+        "systemInstruction": {"parts": [{"text": _grammar_system_text(plan)}]},
         "contents": [{"role": "user", "parts": [{"text": _grammar_user_prompt(plan, slots, theme, avoid)}]}],
         "generationConfig": {
             "temperature": 0.8,
@@ -6794,6 +6888,10 @@ def call_gemini_grammar(plan, api_key, model=None):
         if isinstance(first, (QuotaExceeded, ProUnavailable)):
             raise first
         raise RuntimeError(str(first) if first else "문항을 만들지 못했습니다. 다시 시도해 주세요.")
+    off, words, sample = _grammar_offlist_stats(questions)
+    if words:
+        print(f"[grammar] {plan['grade']}·{GRAMMAR_DIFFICULTIES[plan['difficulty']]} 교육과정 밖 낱말 {off}/{words}개"
+              f"({off * 100 // words}%): {', '.join(sample)}", flush=True)
     return {"questions": questions, "missing": len(slots) - len(questions)}
 
 
@@ -12645,6 +12743,15 @@ CHANGELOG = [
             "새 문제 모양 5가지(공통 빈칸, ⓐ~ⓓ 틀린 문장 고치기, 글 속 틀린 곳 고치기, 보기에서 골라 형태 바꿔 쓰기, 대화 완성)도 더했습니다. 요금은 그대로입니다.",
         ],
     },
+    {
+        "version": 96,
+        "date": "2026-10-24",
+        "items": [
+            "문법문제 마법사 — '난이도'(쉬움·보통·어려움)를 고를 수 있습니다. 학생들이 문제가 어렵다는 의견이 있어, 기본값은 예전보다 한 단계 쉬운 '보통'입니다. "
+            "쉬움은 기본 규칙 하나만 알면 풀리고, 어려움은 예전과 같습니다. 난이도를 바꾸면 짝짓기·개수 세기 같은 어려운 문제 모양이 알아서 빠지며 다시 체크해 넣을 수 있습니다. "
+            "또 문제 속 영어 낱말은 교육부 2022 개정 교육과정 기본 어휘를 기준으로 짓습니다(초등 고학년은 초등 어휘, 중등은 초등·중학교 어휘). 요금은 그대로입니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -13857,7 +13964,7 @@ def save_item(item_id, user_id, tab, title, payload):
 # 목록(entry·lang·key)만 적는다. 한 장씩이면 1MiB 안에 들어가므로 줄이지 않고 그대로 쓴다.
 SAVED_IMAGES = "saved_images"
 SAVED_IMAGE_MAX_CHARS = 1_000_000      # base64 글자 수 — 문서 한도(1,048,576바이트)보다 조금 작게
-SAVED_IMAGES_PER_ITEM = 12
+SAVED_IMAGES_PER_ITEM = 60   # 지문 하나에 영·한 두 장이라 12장이면 지문 6개에서 막혔다(2026-10-23)
 _SAVED_IMG_KEY_RE = re.compile(r"^[0-9a-z_]{1,24}$")
 _SAVED_IMG_MAGIC = {                    # mime → 파일 첫머리(바이트) — 이름만 속인 파일을 막는다
     "image/jpeg": (b"\xff\xd8\xff",),

@@ -302,8 +302,30 @@ const GRAMMAR_CATALOG = [
 ];
 const GRAMMAR_GRADE_IDX = Object.fromEntries(GRAMMAR_GRADES.map((g) => [g.id, g.lv]));
 
+/* 난이도 — server.py의 GRAMMAR_DIFFICULTIES와 같은 열쇠(함께 고칠 것). 학생들이 문제가 어렵다고 해서 만들었다(2026-10-24).
+   서버는 열쇠만 받아 지시문을 바꾸고(어휘는 교육과정 기본 어휘 기준), 어려운 문제 모양을 빼는 일은 여기서 한다 —
+   난이도를 바꾸면 아래 모양 체크가 그에 맞게 바뀌고, 선생님이 다시 체크해 넣을 수 있다. 기본은 '보통'(예전은 '어려움'과 같았다). */
+const GRAMMAR_DIFFICULTIES = [
+  { id: "easy", label: "쉬움", hint: "수업 직후 확인용 — 그 문법의 기본 규칙 하나만 알면 풀리고, 낱말은 교육과정 기본 어휘 안에서만 씁니다. 짝짓기·개수 세기 같은 어려운 모양은 뺍니다." },
+  { id: "normal", label: "보통", hint: "교과서·학교 진도 수준 — 오답 보기는 흔한 실수 하나씩이고, 낱말은 거의 교육과정 기본 어휘입니다. 여러 문장을 한꺼번에 따지는 모양은 뺍니다." },
+  { id: "hard", label: "어려움", hint: "내신 심화용 — 까다로운 오답 보기와 교재식 함정을 모두 씁니다. 모든 문제 모양을 씁니다." },
+];
+const GRAMMAR_HARD_SHAPES = {   // 난이도마다 뺄 모양
+  easy: ["mc_count", "mc_combo", "mc_same", "mc_common", "mc_box", "sa_judge", "sa_passage", "sa_combine", "sa_compose"],
+  normal: ["mc_count", "mc_combo", "sa_judge", "sa_passage"],
+  hard: [],
+};
+function grShapesFor(diff) {
+  const out = GRAMMAR_HARD_SHAPES[diff] || [];
+  return {
+    mc: GRAMMAR_MC_SHAPES.map((s) => s.id).filter((id) => !out.includes(id)),
+    sa: GRAMMAR_SA_SHAPES.map((s) => s.id).filter((id) => !out.includes(id)),
+  };
+}
+
 /* ── 상태 ── */
 const grState = {
+  difficulty: "normal",
   grade: "m1",
   topic: null,              // STEP 2에서 고른 항목 이름
   picked: [],               // STEP 4 — [{name, mc, sa}] (name = "항목 › 세부")
@@ -318,6 +340,7 @@ const grState = {
   questions: [],
   busy: false,
 };
+{ const sh = grShapesFor(grState.difficulty); grState.mcShapes = sh.mc; grState.saShapes = sh.sa; }
 
 const grEl = (id) => document.getElementById(id);
 
@@ -457,6 +480,13 @@ function grRenderAll() {
   grSyncStep5();
 }
 
+function grRenderDifficulty() {
+  const d = GRAMMAR_DIFFICULTIES.find((x) => x.id === grState.difficulty) || GRAMMAR_DIFFICULTIES[1];
+  grEl("grDiffList").innerHTML = GRAMMAR_DIFFICULTIES.map((x) =>
+    `<label class="chk"><input type="radio" name="grDiff" value="${x.id}"${x.id === d.id ? " checked" : ""}> ${esc(x.label)}</label>`).join("");
+  grEl("grDiffHint").textContent = d.hint;
+}
+
 function grRenderShapes() {
   const row = (list, key) => list.map((s) =>
     `<label class="chk"><input type="checkbox" data-shape="${s.id}" data-key="${key}"${grState[key].includes(s.id) ? " checked" : ""}> ${esc(s.label)}</label>`).join("");
@@ -465,6 +495,15 @@ function grRenderShapes() {
 }
 
 /* ── 입력 연결 ── */
+grEl("grDiffList").addEventListener("change", (e) => {
+  if (e.target.name !== "grDiff") return;
+  grState.difficulty = e.target.value;
+  const sh = grShapesFor(grState.difficulty);   // 난이도에 맞게 모양 체크를 다시 맞춘다 — 선생님이 이어서 고칠 수 있다
+  grState.mcShapes = sh.mc;
+  grState.saShapes = sh.sa;
+  grRenderDifficulty();
+  grRenderShapes();
+});
 grEl("grGradeList").addEventListener("change", (e) => {
   if (e.target.name !== "grGrade") return;
   grState.grade = e.target.value;
@@ -585,6 +624,7 @@ document.addEventListener("input", (e) => {
 function grRequest() {
   return {
     grade: grState.grade,
+    difficulty: grState.difficulty,
     items: grState.picked.filter((p) => p.mc + p.sa > 0).map((p) => ({ name: p.name, mc: p.mc, sa: p.sa })),
     mcShapes: grState.mcShapes,
     saShapes: grState.saShapes,
@@ -851,7 +891,7 @@ TAB_SAVE.grammar = {
   getPayload: () => ({
     v: 1,
     settings: {
-      grade: grState.grade, picked: grState.picked, mode: grState.mode, split: grState.split,
+      grade: grState.grade, difficulty: grState.difficulty, picked: grState.picked, mode: grState.mode, split: grState.split,
       mcTotal: grState.mcTotal, saTotal: grState.saTotal, aiPick: grState.aiPick,
       mcShapes: grState.mcShapes, saShapes: grState.saShapes, cols: grState.cols,
     },
@@ -862,6 +902,8 @@ TAB_SAVE.grammar = {
   applyPayload: (payload) => {
     const s = payload.settings || {};
     if (GRAMMAR_GRADE_IDX[s.grade] !== undefined) grState.grade = s.grade;
+    // 난이도가 생기기 전 저장본에는 값이 없다 — 지금 고른 난이도를 그대로 둔다
+    if (GRAMMAR_DIFFICULTIES.some((x) => x.id === s.difficulty)) grState.difficulty = s.difficulty;
     grState.picked = Array.isArray(s.picked) ? s.picked.filter((p) => p && p.name)
       .map((p) => ({ name: String(p.name), mc: p.mc | 0, sa: p.sa | 0 })) : [];
     grState.mode = s.mode === "passage" ? "passage" : "plain";
@@ -879,6 +921,7 @@ TAB_SAVE.grammar = {
     // 꾸미기가 생기기 전 저장본에는 값이 없다 — 지금 고른 모양을 그대로 둔다
     if (payload.sheetStyle) grSheetStyle.set(payload.sheetStyle);
     grState.topic = null;
+    grRenderDifficulty();
     grRenderShapes();
     grRenderAll();
     syncTabChrome("grammar");
@@ -894,7 +937,7 @@ if (typeof HOWTO !== "undefined") {
     steps: [
       "맨 위에서 <b>문법만으로</b> / <b>넣은 지문으로</b>를 고르고, <b>① 레벨</b>(초등 고학년 · 중등 Level 1~3 · 수능 Level)을 고릅니다.",
       "<b>② 문법 항목</b>을 누르고 <b>③ 세부 항목</b>을 체크합니다. 체크한 것은 <b>④ 고른 항목</b>에 모입니다.",
-      "<b>⑤ 문항 수 · 모양</b>에서 객관식·주관식 문항 수, 문제 모양, 1단/2단을 정합니다. <b>항목마다 직접 정하기</b>를 고르면 ④에서 항목별 개수를 적습니다.",
+      "<b>⑤ 문항 수 · 모양</b>에서 객관식·주관식 문항 수, <b>난이도</b>(쉬움 · 보통 · 어려움), 문제 모양, 1단/2단을 정합니다. 난이도를 바꾸면 어려운 문제 모양이 알아서 빠지고, 문장의 낱말은 교육과정 기본 어휘로 맞춰집니다. <b>항목마다 직접 정하기</b>를 고르면 ④에서 항목별 개수를 적습니다.",
       "<b>[문제 만들기]</b>를 누릅니다. 마음에 안 드는 문항은 <b>[✏️ 고치기]</b>로 직접 고칩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
@@ -902,5 +945,6 @@ if (typeof HOWTO !== "undefined") {
   };
 }
 
+grRenderDifficulty();
 grRenderShapes();
 grRenderAll();
