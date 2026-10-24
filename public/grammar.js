@@ -504,6 +504,7 @@ function grSyncStep5() {
     ? `<span class="gr-warn">한 번에 ${GRAMMAR_MAX_Q}문항까지 만들 수 있습니다.</span>`
     : sum && cost !== null ? `예상 비용 <b>${pt(cost)}</b> (기본 ${pt(PRICING.grammarBase)} + 문제당 ${pt(PRICING.grammarPerQ)} × ${sum}문제${sheets > 1 ? ` × 시험지 ${sheets}장` : ""})` : "";
   grEl("grMakeBtn").disabled = grState.busy || !grState.picked.length || !sum || over;
+  grSyncDiffCost();   // 문항 수가 바뀌면 난이도별 개수 안내도 바뀐다
   document.querySelectorAll('input[name="grCols"]').forEach((r) => { r.checked = Number(r.value) === grState.cols; });
   document.querySelectorAll('input[name="grSplit"]').forEach((r) => { r.checked = r.value === grState.split; });
   document.querySelectorAll('input[name="grMode"]').forEach((r) => { r.checked = r.value === grState.mode; });
@@ -538,10 +539,23 @@ function grRenderDifficulty() {
 function grSheetCount() {
   return grState.diffs.length > 1 && grState.diffMode === "split" ? grState.diffs.length : 1;
 }
+// 섞으면 적은 문항 수가 시험지 전체 문항 수다 — 난이도 셋을 체크하면 '난이도마다 5문항'으로 읽혀서(사용자 2026-10-25)
+// 난이도별 개수를 함께 보인다. 나누는 셈은 server.py _grammar_slots(문항마다 난이도를 차례로 돌린다)와 같다.
 function grSyncDiffCost() {
   const n = grSheetCount();
-  grEl("grDiffCostNote").textContent = n > 1
-    ? `시험지 ${n}장(${grState.diffs.map(grDiffLabel).join("·")})이 나오고, 값도 시험지마다 냅니다.` : "";
+  const t = grTotals();
+  const sum = t.mc + t.sa;
+  const k = grState.diffs.length;
+  if (n > 1) {
+    grEl("grDiffCostNote").innerHTML =
+      `시험지 ${n}장(${grState.diffs.map(grDiffLabel).join("·")})이 나오고${sum ? `(장마다 ${sum}문항)` : ""}, 값도 시험지마다 냅니다.`;
+  } else if (k > 1 && sum) {
+    const each = grState.diffs.map((d, i) => `${grDiffLabel(d)} ${Math.floor((sum - i + k - 1) / k)}`).join(" · ");
+    grEl("grDiffCostNote").innerHTML =
+      `이 시험지는 <b>모두 ${sum}문항</b>입니다(${each}). 난이도마다 ${sum}문항씩이 아닙니다.`;
+  } else {
+    grEl("grDiffCostNote").textContent = "";
+  }
 }
 
 function grRenderShapes() {
