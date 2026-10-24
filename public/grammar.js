@@ -323,9 +323,22 @@ function grShapesFor(diff) {
   };
 }
 
+// 난이도를 여럿 고르면 모양은 고른 난이도들이 쓰는 모양의 합집합이다(어려운 쪽이 허용하는 모양까지 켜진다)
+function grShapesUnion(diffs) {
+  const sets = diffs.map(grShapesFor);
+  const pick = (k) => [...new Set(sets.flatMap((s) => s[k]))];
+  const order = (list, k) => list.map((s) => s.id).filter((id) => pick(k).includes(id));
+  return { mc: order(GRAMMAR_MC_SHAPES, "mc"), sa: order(GRAMMAR_SA_SHAPES, "sa") };
+}
+const GRAMMAR_DIFF_RANK = { easy: 0, normal: 1, hard: 2 };
+const grDiffLabel = (id) => (GRAMMAR_DIFFICULTIES.find((x) => x.id === id) || {}).label || "";
+
 /* ── 상태 ── */
 const grState = {
-  difficulty: "normal",
+  diffs: ["normal"],        // 고른 난이도(중복 체크) — 하나 이상
+  diffMode: "split",        // 둘 이상일 때: split = 난이도별 시험지를 따로 / mix = 한 시험지에 섞어서
+  sheets: null,             // split으로 만든 {난이도: 문항[]} — 아래 questions는 그중 보고 있는 한 장이다
+  sheetDiff: null,          // 지금 보고 있는 난이도별 시험지
   grade: "m1",
   topic: null,              // STEP 2에서 고른 항목 이름
   picked: [],               // STEP 4 — [{name, mc, sa}] (name = "항목 › 세부")
@@ -340,7 +353,7 @@ const grState = {
   questions: [],
   busy: false,
 };
-{ const sh = grShapesFor(grState.difficulty); grState.mcShapes = sh.mc; grState.saShapes = sh.sa; }
+{ const sh = grShapesUnion(grState.diffs); grState.mcShapes = sh.mc; grState.saShapes = sh.sa; }
 
 const grEl = (id) => document.getElementById(id);
 
@@ -457,10 +470,12 @@ function grSyncStep5() {
   grEl("grSum").textContent = sum;
   const over = sum > GRAMMAR_MAX_Q;
   grEl("grSum").classList.toggle("over", over);
-  const cost = grCost(t.mc, t.sa);
+  const one = grCost(t.mc, t.sa);
+  const sheets = grSheetCount();
+  const cost = one === null ? null : one * sheets;
   grEl("grCostHint").innerHTML = over
     ? `<span class="gr-warn">한 번에 ${GRAMMAR_MAX_Q}문항까지 만들 수 있습니다.</span>`
-    : sum && cost !== null ? `예상 비용 <b>${pt(cost)}</b> (기본 ${pt(PRICING.grammarBase)} + 문제당 ${pt(PRICING.grammarPerQ)} × ${sum}문제)` : "";
+    : sum && cost !== null ? `예상 비용 <b>${pt(cost)}</b> (기본 ${pt(PRICING.grammarBase)} + 문제당 ${pt(PRICING.grammarPerQ)} × ${sum}문제${sheets > 1 ? ` × 시험지 ${sheets}장` : ""})` : "";
   grEl("grMakeBtn").disabled = grState.busy || !grState.picked.length || !sum || over;
   document.querySelectorAll('input[name="grCols"]').forEach((r) => { r.checked = Number(r.value) === grState.cols; });
   document.querySelectorAll('input[name="grSplit"]').forEach((r) => { r.checked = r.value === grState.split; });
@@ -481,10 +496,25 @@ function grRenderAll() {
 }
 
 function grRenderDifficulty() {
-  const d = GRAMMAR_DIFFICULTIES.find((x) => x.id === grState.difficulty) || GRAMMAR_DIFFICULTIES[1];
   grEl("grDiffList").innerHTML = GRAMMAR_DIFFICULTIES.map((x) =>
-    `<label class="chk"><input type="radio" name="grDiff" value="${x.id}"${x.id === d.id ? " checked" : ""}> ${esc(x.label)}</label>`).join("");
-  grEl("grDiffHint").textContent = d.hint;
+    `<label class="chk"><input type="checkbox" name="grDiff" value="${x.id}"${grState.diffs.includes(x.id) ? " checked" : ""}> ${esc(x.label)}</label>`).join("");
+  const multi = grState.diffs.length > 1;
+  grEl("grDiffHint").textContent = multi
+    ? "난이도를 여러 개 골랐습니다. 아래에서 시험지를 난이도별로 따로 만들지, 한 시험지에 섞을지 고르세요."
+    : (GRAMMAR_DIFFICULTIES.find((x) => x.id === grState.diffs[0]) || GRAMMAR_DIFFICULTIES[1]).hint;
+  grEl("grDiffModeRow").style.display = multi ? "" : "none";
+  document.querySelectorAll('input[name="grDiffMode"]').forEach((r) => { r.checked = r.value === grState.diffMode; });
+  grSyncDiffCost();
+}
+
+// 난이도별로 따로 만들면 시험지가 난이도 수만큼 나온다 — 값도 시험지마다 낸다
+function grSheetCount() {
+  return grState.diffs.length > 1 && grState.diffMode === "split" ? grState.diffs.length : 1;
+}
+function grSyncDiffCost() {
+  const n = grSheetCount();
+  grEl("grDiffCostNote").textContent = n > 1
+    ? `시험지 ${n}장(${grState.diffs.map(grDiffLabel).join("·")})이 나오고, 값도 시험지마다 냅니다.` : "";
 }
 
 function grRenderShapes() {
@@ -497,13 +527,24 @@ function grRenderShapes() {
 /* ── 입력 연결 ── */
 grEl("grDiffList").addEventListener("change", (e) => {
   if (e.target.name !== "grDiff") return;
-  grState.difficulty = e.target.value;
-  const sh = grShapesFor(grState.difficulty);   // 난이도에 맞게 모양 체크를 다시 맞춘다 — 선생님이 이어서 고칠 수 있다
+  const on = [...grEl("grDiffList").querySelectorAll("input:checked")].map((c) => c.value);
+  if (!on.length) {   // 하나는 남겨 둔다 — 다 끄면 어떤 난이도로 만들지 모른다
+    e.target.checked = true;
+    return;
+  }
+  grState.diffs = GRAMMAR_DIFFICULTIES.map((x) => x.id).filter((id) => on.includes(id));
+  const sh = grShapesUnion(grState.diffs);   // 난이도에 맞게 모양 체크를 다시 맞춘다 — 선생님이 이어서 고칠 수 있다
   grState.mcShapes = sh.mc;
   grState.saShapes = sh.sa;
   grRenderDifficulty();
   grRenderShapes();
+  grSyncStep5();
 });
+document.querySelectorAll('input[name="grDiffMode"]').forEach((r) => r.addEventListener("change", () => {
+  grState.diffMode = r.value === "mix" ? "mix" : "split";
+  grSyncDiffCost();
+  grSyncStep5();
+}));
 grEl("grGradeList").addEventListener("change", (e) => {
   if (e.target.name !== "grGrade") return;
   grState.grade = e.target.value;
@@ -621,19 +662,72 @@ document.addEventListener("input", (e) => {
 });
 
 /* ── 만들기 ── */
-function grRequest() {
-  return {
+// diff를 주면 그 난이도 한 가지로(난이도별 시험지), 안 주면 고른 난이도가 둘 이상일 때 섞어서 만든다.
+function grRequest(diff) {
+  const req = {
     grade: grState.grade,
-    difficulty: grState.difficulty,
     items: grState.picked.filter((p) => p.mc + p.sa > 0).map((p) => ({ name: p.name, mc: p.mc, sa: p.sa })),
     mcShapes: grState.mcShapes,
     saShapes: grState.saShapes,
     aiPick: grState.aiPick,
     passage: grPassageText(),
   };
+  if (diff) {
+    req.difficulty = diff;
+    // 난이도마다 그 난이도에 맞는 모양만 — 선생님이 체크한 것 중에서 고르고, 겹치는 게 없으면 그 난이도의 기본 모양을 쓴다
+    const allow = grShapesFor(diff);
+    const pick = (mine, ok) => { const m = mine.filter((id) => ok.includes(id)); return m.length ? m : ok; };
+    req.mcShapes = pick(grState.mcShapes, allow.mc);
+    req.saShapes = pick(grState.saShapes, allow.sa);
+  } else if (grState.diffs.length > 1) {
+    req.difficulties = grState.diffs.slice();
+    req.difficulty = grState.diffs[0];
+  } else {
+    req.difficulty = grState.diffs[0];
+  }
+  return req;
 }
 
 const grNorm = (s) => String(s || "").replace(/\s+/g, " ").trim().slice(0, 80);   // 서버 parse_grammar_request가 이름을 다듬는 것과 같게
+
+// 요청 하나로 문항을 만든다 — 서버가 두 번 채워 보고도 빠진 문항은 바로 이어서 만든다(최대 두 번, 빠진 항목·종류 그대로).
+// 서버는 이어 채우기에 문항당 값만 받는다(기본값은 처음에 냈다).
+async function grMakeOne(req, onTick) {
+  const data = await postGenerate("/api/grammar", req, "문법 문제를 만들지 못했습니다.",
+    (n) => { grEl("grLoadingText").textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; });
+  let qs = data.questions || [];
+  let missing = data.missing || 0;
+  const want = JSON.parse(JSON.stringify(req.items));
+  for (let round = 0; missing > 0 && round < 2; round++) {
+    const have = {};
+    qs.forEach((q) => { const k = `${grNorm(q.gitem)}|${q.gkind}`; have[k] = (have[k] || 0) + 1; });
+    const lack = want.map((it) => ({
+      name: it.name,
+      mc: Math.max(0, it.mc - (have[`${grNorm(it.name)}|mc`] || 0)),
+      sa: Math.max(0, it.sa - (have[`${grNorm(it.name)}|sa`] || 0)),
+    })).filter((it) => it.mc + it.sa > 0);
+    const n = lack.reduce((a, it) => a + it.mc + it.sa, 0);
+    if (!n) break;
+    if (onTick) onTick(n);
+    try {
+      const more = await postGenerate("/api/grammar", Object.assign({}, req, { items: lack, topup: true }),
+        "빠진 문항을 만들지 못했습니다.");
+      const mq = more.questions || [];
+      const mcs = qs.filter((q) => q.format === "mc");
+      const sas = qs.filter((q) => q.format !== "mc");
+      qs = mcs.concat(mq.filter((q) => q.format === "mc"), sas, mq.filter((q) => q.format !== "mc"));
+      missing = n - mq.length;
+    } catch (_) { missing = n; break; }
+  }
+  return { questions: qs, missing };
+}
+
+// 섞은 시험지는 쉬운 문항부터 어려운 문항 순으로 놓는다(객관식이 앞, 주관식이 뒤인 것은 그대로) — 순서만 무작위로 하려면 [🔀 문제 섞기]
+function grSortByDifficulty(qs) {
+  const rank = (q) => GRAMMAR_DIFF_RANK[q.gdiff] ?? 1;
+  const sortKind = (list) => list.map((q, i) => [q, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map((x) => x[0]);
+  return sortKind(qs.filter((q) => q.format === "mc")).concat(sortKind(qs.filter((q) => q.format !== "mc")));
+}
 
 async function grMake() {
   const errEl = grEl("grError");
@@ -643,45 +737,54 @@ async function grMake() {
     return;
   }
   const t = grTotals();
-  const cost = grCost(t.mc, t.sa);
-  if (!(await costConfirmed(cost, `문법 문제 ${t.mc + t.sa}문항 (객관식 ${t.mc} · 주관식 ${t.sa})`))) return;
+  const diffs = grState.diffs.slice();
+  const split = grSheetCount() > 1;   // 난이도별로 시험지를 따로 — 난이도마다 요청 한 번(= 시험지 한 장 값)
+  const mix = diffs.length > 1 && !split;
+  const one = grCost(t.mc, t.sa);
+  const cost = one === null ? null : one * (split ? diffs.length : 1);
+  const what = split
+    ? `문법 문제 ${t.mc + t.sa}문항 × 난이도별 시험지 ${diffs.length}장(${diffs.map(grDiffLabel).join("·")})`
+    : `문법 문제 ${t.mc + t.sa}문항 (객관식 ${t.mc} · 주관식 ${t.sa})${mix ? ` · ${diffs.map(grDiffLabel).join("·")} 섞기` : ""}`;
+  if (!(await costConfirmed(cost, what))) return;
   grState.busy = true;
   grSyncStep5();
   const loading = grEl("grLoading");
   loading.classList.add("on");
-  grEl("grLoadingText").textContent = `AI가 문법 문제 ${t.mc + t.sa}문항을 만들고 있습니다… (20문항에 30초~1분)`;
+  const text = grEl("grLoadingText");
+  text.textContent = `AI가 문법 문제 ${t.mc + t.sa}문항을 만들고 있습니다… (20문항에 30초~1분)`;
   try {
-    const data = await postGenerate("/api/grammar", grRequest(), "문법 문제를 만들지 못했습니다.",
-      (n) => { grEl("grLoadingText").textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; });
-    grState.questions = data.questions || [];
-    // 서버가 두 번 채워 보고도 빠진 문항은 바로 이어서 만든다(최대 두 번) — 빠진 항목·종류 그대로.
-    // 서버는 이어 채우기에 문항당 값만 받는다(기본값은 처음에 냈다).
-    let missing = data.missing || 0;
-    const want = JSON.parse(JSON.stringify(grRequest().items));
-    for (let round = 0; missing > 0 && round < 2; round++) {
-      const have = {};
-      grState.questions.forEach((q) => { const k = `${grNorm(q.gitem)}|${q.gkind}`; have[k] = (have[k] || 0) + 1; });
-      const lack = want.map((it) => ({
-        name: it.name,
-        mc: Math.max(0, it.mc - (have[`${grNorm(it.name)}|mc`] || 0)),
-        sa: Math.max(0, it.sa - (have[`${grNorm(it.name)}|sa`] || 0)),
-      })).filter((it) => it.mc + it.sa > 0);
-      const n = lack.reduce((a, it) => a + it.mc + it.sa, 0);
-      if (!n) break;
-      grEl("grLoadingText").textContent = `빠진 ${n}문항을 이어서 만들고 있습니다…`;
-      try {
-        const more = await postGenerate("/api/grammar", Object.assign(grRequest(), { items: lack, topup: true }),
-          "빠진 문항을 만들지 못했습니다.");
-        const mq = more.questions || [];
-        const mcs = grState.questions.filter((q) => q.format === "mc");
-        const sas = grState.questions.filter((q) => q.format !== "mc");
-        grState.questions = mcs.concat(mq.filter((q) => q.format === "mc"), sas, mq.filter((q) => q.format !== "mc"));
-        missing = n - mq.length;
-      } catch (_) { missing = n; break; }
+    const made = {};   // 난이도 → 문항[]
+    let missing = 0;
+    const failed = [];
+    if (split) {
+      for (let i = 0; i < diffs.length; i++) {
+        const d = diffs[i];
+        text.textContent = `${grDiffLabel(d)} 시험지를 만들고 있습니다… (${i + 1}/${diffs.length})`;
+        try {
+          const r = await grMakeOne(grRequest(d), (n) => { text.textContent = `${grDiffLabel(d)} 시험지의 빠진 ${n}문항을 이어서 만들고 있습니다…`; });
+          made[d] = r.questions;
+          missing += r.missing;
+        } catch (e) {
+          failed.push(`${grDiffLabel(d)}: ${e.message || "만들지 못했습니다."}`);
+        }
+      }
+      if (!Object.keys(made).length) throw new Error(failed[0] || "문법 문제를 만들지 못했습니다.");
+      grState.sheets = made;
+      grState.sheetDiff = diffs.find((d) => made[d]);
+      grState.questions = made[grState.sheetDiff];
+    } else {
+      const r = await grMakeOne(grRequest(), (n) => { text.textContent = `빠진 ${n}문항을 이어서 만들고 있습니다…`; });
+      grState.sheets = null;
+      grState.sheetDiff = null;
+      grState.questions = mix ? grSortByDifficulty(r.questions) : r.questions;
+      missing = r.missing;
     }
     if (typeof LOADED_SAVED !== "undefined") delete LOADED_SAVED.grammar;   // 새로 만든 것은 어느 저장본도 아니다
     grRender();
-    if (missing > 0) errEl.textContent = `${missing}문항은 만들지 못해 빠졌습니다(값은 받은 문항만큼만 나갔습니다). 문제 만들기를 다시 누르면 새로 만듭니다.`;
+    const notes = [];
+    if (failed.length) notes.push(`못 만든 시험지: ${failed.join(" / ")} (그 시험지의 값은 나가지 않았습니다)`);
+    if (missing > 0) notes.push(`${missing}문항은 만들지 못해 빠졌습니다(값은 받은 문항만큼만 나갔습니다). 문제 만들기를 다시 누르면 새로 만듭니다.`);
+    if (notes.length) errEl.textContent = notes.join(" ");
   } catch (err) {
     errEl.textContent = err.message || "문법 문제를 만들지 못했습니다.";
   } finally {
@@ -695,7 +798,18 @@ grEl("grMakeBtn").addEventListener("click", grMake);
 
 /* ── 결과 그리기 — 문제 탭의 buildQuizHtml을 그대로 쓴다 ── */
 function grSheetName() {
-  return grState.title || `${(GRAMMAR_GRADES.find((g) => g.id === grState.grade) || {}).label || ""} 문법 문제`.trim();
+  const base = grState.title || `${(GRAMMAR_GRADES.find((g) => g.id === grState.grade) || {}).label || ""} 문법 문제`.trim();
+  // 난이도별로 따로 만든 시험지는 이름 뒤에 난이도를 붙여 인쇄·저장·시험 내기에서 어느 시험지인지 가른다
+  return grState.sheets && grState.sheetDiff ? `${base} (${grDiffLabel(grState.sheetDiff)})` : base;
+}
+
+// 난이도별 시험지 사이를 오간다 — 보고 있던 시험지의 고친 내용을 먼저 되돌려 두고 다른 시험지를 연다
+function grSwitchSheet(d) {
+  if (!grState.sheets || !grState.sheets[d] || d === grState.sheetDiff) return;
+  grState.sheets[grState.sheetDiff] = grState.questions;
+  grState.sheetDiff = d;
+  grState.questions = grState.sheets[d];
+  grRender();
 }
 
 function grApplyTitle() {
@@ -715,17 +829,27 @@ function grRender() {
     return;
   }
   const built = buildQuizHtml({ questions: qs }, { name: "", named: false }, 1, "grammar", "", "", true, 0);
-  res.innerHTML =
+  // 난이도별로 따로 만든 시험지가 있으면 맨 위에 시험지 탭(화면 전용 — 인쇄에는 안 나온다)
+  const tabs = grState.sheets
+    ? `<div class="gr-sheet-tabs no-print">${GRAMMAR_DIFFICULTIES.filter((x) => grState.sheets[x.id]).map((x) =>
+      `<button type="button" class="btn ${x.id === grState.sheetDiff ? "" : "ghost "}small" data-gr-sheet="${x.id}">${esc(x.label)} 시험지 (${grState.sheets[x.id].length}문항)</button>`).join(" ")}` +
+      `<span class="hint"> 인쇄·저장·시험 내기는 지금 보는 시험지 한 장씩 합니다.</span></div>`
+    : "";
+  res.innerHTML = tabs +
     `<div class="qz-sheet-title"></div>` + built.html +
     `<section class="qz-answerbook"><h2 class="qz-answerbook-head"></h2>${built.answerHtml}</section>` +
     `<footer class="qz-footer">문법 문제 · 자동 생성</footer>`;
   res.classList.toggle("gr-1col", grState.cols === 1);
   // 문항마다 [✏️ 고치기] — 화면에서만 보인다(인쇄 안 됨). 한 문항만 AI로 다시 만들기는 2026-10-20에 뺐다
   // (한 문항에 값을 따로 매겨야 해 선생님이 납득하기 어려웠다 — 마음에 안 들면 직접 고친다).
+  // 섞은 시험지(난이도가 둘 이상 든 시험지)는 문항마다 난이도 이름표도 단다 — 화면 전용
+  const mixed = new Set(grState.questions.map((q) => q.gdiff).filter(Boolean)).size > 1;
   res.querySelectorAll(".qz-card").forEach((card, i) => {
     const bar = document.createElement("div");
     bar.className = "gr-card-tools no-print";
-    bar.innerHTML = `<button type="button" class="btn ghost small" data-gr-edit="${i}">✏️ 고치기</button>`;
+    const q = grState.questions[i] || {};
+    bar.innerHTML = `<button type="button" class="btn ghost small" data-gr-edit="${i}">✏️ 고치기</button>` +
+      (mixed && q.gdiff ? ` <span class="hint gr-diff-tag">난이도: ${esc(grDiffLabel(q.gdiff))}</span>` : "");
     card.appendChild(bar);
   });
   grApplyTitle();
@@ -826,6 +950,8 @@ grEl("grEditModal").addEventListener("click", (e) => { if (e.target === grEl("gr
 grEl("grResult").addEventListener("click", (e) => {
   const ed = e.target.closest("[data-gr-edit]");
   if (ed) grEdit(Number(ed.dataset.grEdit));
+  const sh = e.target.closest("[data-gr-sheet]");
+  if (sh) grSwitchSheet(sh.dataset.grSheet);
 });
 
 /* ── 인쇄·저장·반에 시험 내기 ── */
@@ -845,7 +971,7 @@ grEl("grSaveBtn").addEventListener("click", () => openSaveDialog("grammar"));
 grEl("grAssignBtn").addEventListener("click", () =>
   // gkind(값 셈용)와 옛 저장본의 gitem·gshape는 학생 시험에 싣지 않는다(서버도 버린다).
   // 배열 영작은 looseOrder를 달아 같은 단어·다른 어순이면 틀림 대신 '확인 대기'로 채점되게 한다.
-  openQuizAssign(grState.questions.map(({ gitem, gkind, gshape, ...rest }) =>
+  openQuizAssign(grState.questions.map(({ gitem, gkind, gshape, gdiff, ...rest }) =>
     rest.format === "write" ? { ...rest, looseOrder: true } : rest), grSheetName(), "quiz"));
 // 🔀 문제 섞기 — 서버는 항목별로 모아 내므로(같은 항목 문제가 줄줄이 나온다) 순서만 무작위로 섞는다.
 // 실제 시험지처럼 객관식이 앞, 주관식이 뒤인 것은 지킨다. 문항 값은 그대로라 저장·시험 내기도 이 순서를 쓴다.
@@ -867,6 +993,8 @@ grEl("grLoadBtn").addEventListener("click", () => openSavedList("tab", null, "gr
 grEl("grNewBtn").addEventListener("click", () => {
   if (!confirm("지금 만든 문제가 사라집니다.\n[💾 사이트 저장]으로 저장하셨나요? 저장하지 않은 문제는 되돌릴 수 없습니다.\n\n저장했다면 [확인]을 눌러 비우고 새로 만드세요.")) return;
   grState.questions = [];
+  grState.sheets = null;
+  grState.sheetDiff = null;
   grState.title = "";
   grEl("grTitle").value = "";
   grEl("grError").textContent = "";
@@ -891,7 +1019,7 @@ TAB_SAVE.grammar = {
   getPayload: () => ({
     v: 1,
     settings: {
-      grade: grState.grade, difficulty: grState.difficulty, picked: grState.picked, mode: grState.mode, split: grState.split,
+      grade: grState.grade, diffs: grState.diffs, diffMode: grState.diffMode, picked: grState.picked, mode: grState.mode, split: grState.split,
       mcTotal: grState.mcTotal, saTotal: grState.saTotal, aiPick: grState.aiPick,
       mcShapes: grState.mcShapes, saShapes: grState.saShapes, cols: grState.cols,
     },
@@ -902,8 +1030,12 @@ TAB_SAVE.grammar = {
   applyPayload: (payload) => {
     const s = payload.settings || {};
     if (GRAMMAR_GRADE_IDX[s.grade] !== undefined) grState.grade = s.grade;
-    // 난이도가 생기기 전 저장본에는 값이 없다 — 지금 고른 난이도를 그대로 둔다
-    if (GRAMMAR_DIFFICULTIES.some((x) => x.id === s.difficulty)) grState.difficulty = s.difficulty;
+    // 난이도가 생기기 전 저장본에는 값이 없다 — 지금 고른 난이도를 그대로 둔다. 저장본은 시험지 한 장이라 난이도별 묶음(sheets)은 없다.
+    const savedDiffs = (Array.isArray(s.diffs) ? s.diffs : [s.difficulty]).filter((d) => GRAMMAR_DIFFICULTIES.some((x) => x.id === d));
+    if (savedDiffs.length) grState.diffs = GRAMMAR_DIFFICULTIES.map((x) => x.id).filter((id) => savedDiffs.includes(id));
+    grState.diffMode = s.diffMode === "mix" ? "mix" : "split";
+    grState.sheets = null;
+    grState.sheetDiff = null;
     grState.picked = Array.isArray(s.picked) ? s.picked.filter((p) => p && p.name)
       .map((p) => ({ name: String(p.name), mc: p.mc | 0, sa: p.sa | 0 })) : [];
     grState.mode = s.mode === "passage" ? "passage" : "plain";
@@ -927,7 +1059,7 @@ TAB_SAVE.grammar = {
     syncTabChrome("grammar");
     grRender();
   },
-  clearResults: () => { grState.questions = []; grRender(); },
+  clearResults: () => { grState.questions = []; grState.sheets = null; grState.sheetDiff = null; grRender(); },
 };
 
 if (typeof HOWTO !== "undefined") {
@@ -938,6 +1070,7 @@ if (typeof HOWTO !== "undefined") {
       "맨 위에서 <b>문법만으로</b> / <b>넣은 지문으로</b>를 고르고, <b>① 레벨</b>(초등 고학년 · 중등 Level 1~3 · 수능 Level)을 고릅니다.",
       "<b>② 문법 항목</b>을 누르고 <b>③ 세부 항목</b>을 체크합니다. 체크한 것은 <b>④ 고른 항목</b>에 모입니다.",
       "<b>⑤ 문항 수 · 모양</b>에서 객관식·주관식 문항 수, <b>난이도</b>(쉬움 · 보통 · 어려움), 문제 모양, 1단/2단을 정합니다. 난이도를 바꾸면 어려운 문제 모양이 알아서 빠지고, 문장의 낱말은 교육과정 기본 어휘로 맞춰집니다. <b>항목마다 직접 정하기</b>를 고르면 ④에서 항목별 개수를 적습니다.",
+      "난이도는 <b>여러 개 체크</b>할 수 있습니다. 둘 이상 고르면 <b>난이도별로 시험지를 따로</b>(시험지마다 값이 나가고, 위쪽 탭으로 오갑니다) 만들거나 <b>한 시험지에 섞어서</b>(쉬운 문항부터 순서대로, 문항마다 난이도 이름표) 만들 수 있습니다.",
       "<b>[문제 만들기]</b>를 누릅니다. 마음에 안 드는 문항은 <b>[✏️ 고치기]</b>로 직접 고칩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],

@@ -6321,6 +6321,13 @@ GRAMMAR_DIFFICULTIES = {
     "hard": "어려움",
 }
 GRAMMAR_DIFFICULTY_DEFAULT = "normal"
+# 난이도마다 뺄 문제 모양 — 화면 grammar.js의 GRAMMAR_HARD_SHAPES와 같은 값(함께 고칠 것). 화면은 난이도를 바꾸면 이 모양의
+# 체크를 끄고(선생님이 다시 켤 수 있다), 서버는 '섞어서 만들기'에서만 이 표로 문항별로 거른다.
+GRAMMAR_DIFF_EXCLUDE = {
+    "easy": ("mc_count", "mc_combo", "mc_same", "mc_common", "mc_box", "sa_judge", "sa_passage", "sa_combine", "sa_compose"),
+    "normal": ("mc_count", "mc_combo", "sa_judge", "sa_passage"),
+    "hard": (),
+}
 _GRAMMAR_DIFFICULTY_RULES = {
     "easy": """
 
@@ -6432,9 +6439,16 @@ def parse_grammar_request(req):
     difficulty = str(req.get("difficulty") or GRAMMAR_DIFFICULTY_DEFAULT)
     if difficulty not in GRAMMAR_DIFFICULTIES:
         difficulty = GRAMMAR_DIFFICULTY_DEFAULT
+    # difficulties(둘 이상)가 오면 한 시험지에 난이도를 섞는다. 하나뿐이면 그 난이도로 만든다.
+    picked = req.get("difficulties")
+    diffs = [d for d in GRAMMAR_DIFFICULTIES if isinstance(picked, list) and d in picked]
+    if len(diffs) == 1:
+        difficulty = diffs[0]
     return {
         "grade": grade,
         "difficulty": difficulty,
+        "difficulties": diffs if len(diffs) > 1 else [difficulty],
+        "mix": len(diffs) > 1,
         "items": items,
         "mc_shapes": list(dict.fromkeys(mc_shapes)),
         "sa_shapes": list(dict.fromkeys(sa_shapes)),
@@ -6498,6 +6512,23 @@ def _grammar_slots(plan):
         pool += block
     for s, n in zip(mc_slots, pool):
         s["target"] = n
+    # 난이도 — 한 가지면 모든 문항이 같고, 섞기(mix)면 문항마다 돌려 가며 나눠 준다(객관식·주관식을 이어 세므로 전체가 고르다).
+    # 섞을 때는 난이도마다 뺄 모양(GRAMMAR_DIFF_EXCLUDE)을 서버가 걸러 준다 — 한 지시문에 난이도 여럿을 못 싣고 묶음마다
+    # 난이도가 하나여야 하는데, 선생님이 고른 모양은 모든 난이도의 합집합이라 쉬운 문항에 어려운 모양이 걸리면 안 되기 때문이다.
+    ds = plan.get("difficulties") or []
+    for n, s in enumerate(slots):
+        if plan.get("mix") and len(ds) > 1:
+            s["diff"] = ds[n % len(ds)]
+            ex = GRAMMAR_DIFF_EXCLUDE.get(s["diff"], ())
+            ok = [x for x in s["shapes"] if x not in ex]
+            if not ok:   # 고른 모양이 이 난이도에 안 맞으면 그 난이도에 맞는 모양 중에서 돌려 쓴다
+                catalog = GRAMMAR_MC_SHAPES if s["kind"] == "mc" else GRAMMAR_SA_SHAPES
+                mine = [x for x in plan["mc_shapes" if s["kind"] == "mc" else "sa_shapes"] if x not in ex]
+                safe = mine or [x for x in catalog if x not in ex]
+                ok = [safe[n % len(safe)]]
+            s["shapes"] = ok
+        else:
+            s["diff"] = plan["difficulty"]
     return slots
 
 
@@ -6790,12 +6821,15 @@ def _grammar_finish(raw, slot):
         return None
     clean["gkind"] = slot["kind"]   # 객관식·주관식 — 받아 낸 문항 수로 값을 셀 때 쓴다
     clean["gitem"] = slot["item"]   # 어느 항목의 문항인지 — 빠진 문항을 항목별로 이어서 채울 때 쓴다
+    clean["gdiff"] = slot.get("diff") or "normal"   # 난이도 — 섞은 시험지에서 문항마다 어떤 난이도인지 화면이 보인다
     return clean
 
 
 def _grammar_call(plan, slots, api_key, model, theme=None, avoid=None):
+    # 한 묶음은 난이도가 하나다 — 난이도는 지시문(systemInstruction)에 실리므로 묶음 단위로만 바꿀 수 있다
+    diff = (slots[0].get("diff") if slots else None) or plan["difficulty"]
     payload = {
-        "systemInstruction": {"parts": [{"text": _grammar_system_text(plan)}]},
+        "systemInstruction": {"parts": [{"text": _grammar_system_text({"grade": plan["grade"], "difficulty": diff})}]},
         "contents": [{"role": "user", "parts": [{"text": _grammar_user_prompt(plan, slots, theme, avoid)}]}],
         "generationConfig": {
             "temperature": 0.8,
@@ -6867,7 +6901,15 @@ def call_gemini_grammar(plan, api_key, model=None):
             elif key:
                 seen.add(key)
 
-    run([slots[i:i + GRAMMAR_CHUNK] for i in range(0, len(slots), GRAMMAR_CHUNK)])
+    def chunks(sl):
+        """난이도가 같은 문항끼리 GRAMMAR_CHUNK개씩 묶는다(난이도 하나면 예전과 같다)."""
+        out = []
+        for d in dict.fromkeys(s["diff"] for s in sl):
+            grp = [s for s in sl if s["diff"] == d]
+            out += [grp[i:i + GRAMMAR_CHUNK] for i in range(0, len(grp), GRAMMAR_CHUNK)]
+        return out
+
+    run(chunks(slots))
     drop_dups()
     # 빠진 자리(AI가 빠뜨렸거나 기계 검사에서 걸러진 문항)를 최대 두 번 다시 채운다
     for _round in range(2):
@@ -6879,7 +6921,7 @@ def call_gemini_grammar(plan, api_key, model=None):
             break
         avoid = [re.sub(r"<[^>]+>", " ", q.get("answerText") or q.get("passageHtml") or "")[:120]
                  for q in got.values()][:40]
-        run([missing[i:i + GRAMMAR_CHUNK] for i in range(0, len(missing), GRAMMAR_CHUNK)], avoid)
+        run(chunks(missing), avoid)
         drop_dups()
     final = dict(got)   # 늦게 도착하는 묶음이 아래 계산 중에 값을 바꾸지 못하게 복사해 둔다
     questions = [final[s["slot"]] for s in slots if s["slot"] in final]
@@ -6890,7 +6932,8 @@ def call_gemini_grammar(plan, api_key, model=None):
         raise RuntimeError(str(first) if first else "문항을 만들지 못했습니다. 다시 시도해 주세요.")
     off, words, sample = _grammar_offlist_stats(questions)
     if words:
-        print(f"[grammar] {plan['grade']}·{GRAMMAR_DIFFICULTIES[plan['difficulty']]} 교육과정 밖 낱말 {off}/{words}개"
+        labels_used = "+".join(GRAMMAR_DIFFICULTIES[d] for d in dict.fromkeys(s["diff"] for s in slots))
+        print(f"[grammar] {plan['grade']}·{labels_used} 교육과정 밖 낱말 {off}/{words}개"
               f"({off * 100 // words}%): {', '.join(sample)}", flush=True)
     return {"questions": questions, "missing": len(slots) - len(questions)}
 
@@ -12750,6 +12793,14 @@ CHANGELOG = [
             "문법문제 마법사 — '난이도'(쉬움·보통·어려움)를 고를 수 있습니다. 학생들이 문제가 어렵다는 의견이 있어, 기본값은 예전보다 한 단계 쉬운 '보통'입니다. "
             "쉬움은 기본 규칙 하나만 알면 풀리고, 어려움은 예전과 같습니다. 난이도를 바꾸면 짝짓기·개수 세기 같은 어려운 문제 모양이 알아서 빠지며 다시 체크해 넣을 수 있습니다. "
             "또 문제 속 영어 낱말은 교육부 2022 개정 교육과정 기본 어휘를 기준으로 짓습니다(초등 고학년은 초등 어휘, 중등은 초등·중학교 어휘). 요금은 그대로입니다.",
+        ],
+    },
+    {
+        "version": 97,
+        "date": "2026-10-24",
+        "items": [
+            "문법문제 마법사 — 난이도를 여러 개 체크할 수 있습니다. 둘 이상 고르면 '난이도별로 시험지를 따로' 만들거나(시험지마다 요금, 위쪽 탭으로 오가며 인쇄·저장) "
+            "'한 시험지에 섞어서' 만들 수 있습니다(문항 수는 난이도에 고르게 나뉘고 쉬운 문항부터 놓이며, 문항마다 난이도 이름표가 붙습니다).",
         ],
     },
 ]

@@ -2811,7 +2811,9 @@ input.st-in{width:100%; box-sizing:border-box;}
 .gr-shape-l{font-size:11.5px; font-weight:700; color:var(--ink-soft); margin-top:4px;}
 .gr-shapes{display:grid; grid-template-columns:1fr 1fr; gap:2px 6px;}
 .gr-shapes .chk{font-size:12px; font-weight:500;}
-.gr-card-tools{display:flex; gap:6px; margin-top:10px; justify-content:flex-end;}
+.gr-card-tools{display:flex; gap:6px; margin-top:10px; justify-content:flex-end; align-items:center;}
+.gr-sheet-tabs{display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:12px;}
+.gr-diff-tag{margin:0;}
 .gr-edit-modal{max-width:620px; max-height:88vh; overflow-y:auto;}
 .gr-edit-modal textarea, .gr-edit-modal input{width:100%; box-sizing:border-box; font:inherit; font-size:13px;}
 .gr-ed-l{display:block; font-weight:700; font-size:13px; margin:10px 0 4px;}
@@ -2825,7 +2827,7 @@ input.st-in{width:100%; box-sizing:border-box;}
   .gr-level{flex:1 1 40%;}
 }
 @media print{
-  .gr-card-tools{display:none !important;}
+  .gr-card-tools, .gr-sheet-tabs{display:none !important;}
   /* 1단을 고르면 문항 카드를 한 줄로 흘린다(기본은 문제 탭과 같은 2단) */
   #grResult.gr-1col .qz-cards{column-count:1;}
 }
