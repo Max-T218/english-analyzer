@@ -369,8 +369,10 @@ function grPassageText() {
 /* ── STEP 1~4 그리기 ── */
 function grRenderGrades() {
   grEl("grGradeList").innerHTML = GRAMMAR_GRADES.map((g) => {
-    const on = grState.grades.includes(g.id);
-    return `<label class="gr-level${on ? " picked" : ""}"><input type="checkbox" name="grGrade" value="${g.id}"${on ? " checked" : ""}> ${esc(g.label)}</label>`;
+    const on = g.id === grState.grade;
+    // 레벨 옆에 그 레벨로 고른 항목 수 — 다른 레벨을 눌러도 앞서 고른 것이 ④에 남아 있음을 알린다
+    const n = grState.picked.filter((p) => grItemGrade(p) === g.id).length;
+    return `<label class="gr-level${on ? " picked" : ""}"><input type="radio" name="grGrade" value="${g.id}"${on ? " checked" : ""}> ${esc(g.label)}${n ? ` <span class="gr-count">${n}</span>` : ""}</label>`;
   }).join("");
 }
 
@@ -404,7 +406,7 @@ function grRenderTopics() {
   const topics = GRAMMAR_CATALOG.filter((t) => grVisibleSubs(t).length);
   if (!topics.some((t) => t.topic === grState.topic)) grState.topic = null;
   grEl("grTopicList").innerHTML = topics.map((t) => {
-    const n = grState.picked.filter((p) => p.name.startsWith(t.topic + " › ")).length;
+    const n = grState.picked.filter((p) => p.name.startsWith(t.topic + " › ") && grItemGrade(p) === grState.grade).length;   // 지금 레벨로 고른 수
     const seen = text && grVisibleSubs(t).some((s) => s.re && s.re.test(text));
     return `<label class="gr-topic${t.topic === grState.topic ? " on" : ""}">
       <input type="radio" name="grTopic" value="${esc(t.topic)}"${t.topic === grState.topic ? " checked" : ""}>
@@ -572,11 +574,9 @@ document.querySelectorAll('input[name="grDiffMode"]').forEach((r) => r.addEventL
 }));
 grEl("grGradeList").addEventListener("change", (e) => {
   if (e.target.name !== "grGrade") return;
-  const on = [...grEl("grGradeList").querySelectorAll("input:checked")].map((c) => c.value);
-  if (!on.length) {   // 하나는 남겨 둔다 — 다 끄면 어느 레벨로 만들지 모른다
-    e.target.checked = true;
-    return;
-  }
+  // 레벨을 누르면 그 레벨에서 새로 고른다 — ②·③에는 그 레벨로 고른 것만 체크돼 있어(처음엔 아무것도 없다)
+  // 레벨마다 따로 고를 수 있고, 고른 항목은 레벨이 달라도 ④에 함께 모인다.
+  const on = [e.target.value];
   // 레벨을 옮겨도 이미 고른 항목은 그대로 둔다 — 항목마다 자기 레벨을 갖고(④의 레벨 칸), ①은 '지금 고르는 레벨'이다.
   // 예전에는 새 레벨에 없는 항목을 뺐지만, 레벨이 다른 항목을 한 시험지에 섞을 수 있어 그러지 않는다.
   // 레벨을 정하지 않은 항목(옛 저장본)은 옛 레벨로 못 박아 둔다 — 안 그러면 ①을 옮길 때 같이 따라간다.
@@ -837,7 +837,9 @@ grEl("grMakeBtn").addEventListener("click", grMake);
 
 /* ── 결과 그리기 — 문제 탭의 buildQuizHtml을 그대로 쓴다 ── */
 function grSheetName() {
-  const gl = grState.grades.map((id) => (GRAMMAR_GRADES.find((g) => g.id === id) || {}).label || "").filter(Boolean).join("·");
+  // 시험지 이름에는 고른 항목들이 가진 레벨을 모두 쓴다(레벨이 섞여 있으면 "초등 고학년·중등 Level 3")
+  const used = GRAMMAR_GRADES.map((g) => g.id).filter((id) => grState.picked.some((p) => grItemGrade(p) === id));
+  const gl = (used.length ? used : [grState.grade]).map((id) => (GRAMMAR_GRADES.find((g) => g.id === id) || {}).label || "").filter(Boolean).join("·");
   const base = grState.title || `${gl} 문법 문제`.trim();
   // 난이도별로 따로 만든 시험지는 이름 뒤에 난이도를 붙여 인쇄·저장·시험 내기에서 어느 시험지인지 가른다
   return grState.sheets && grState.sheetDiff ? `${base} (${grDiffLabel(grState.sheetDiff)})` : base;
@@ -1112,7 +1114,7 @@ if (typeof HOWTO !== "undefined") {
       "맨 위에서 <b>문법만으로</b> / <b>넣은 지문으로</b>를 고르고, <b>① 레벨</b>(초등 고학년 · 중등 Level 1~3 · 수능 Level)을 고릅니다.",
       "<b>② 문법 항목</b>을 누르고 <b>③ 세부 항목</b>을 체크합니다. 체크한 것은 <b>④ 고른 항목</b>에 모입니다.",
       "<b>⑤ 문항 수 · 모양</b>에서 객관식·주관식 문항 수, <b>난이도</b>(쉬움 · 보통 · 어려움), 문제 모양, 1단/2단을 정합니다. 난이도를 바꾸면 어려운 문제 모양이 알아서 빠지고, 문장의 낱말은 교육과정 기본 어휘로 맞춰집니다. <b>항목마다 직접 정하기</b>를 고르면 ④에서 항목별 개수를 적습니다.",
-      "<b>레벨은 여러 개 체크</b>할 수 있습니다. 둘 이상 체크하고 세부 항목을 한 번 체크하면 ④에 레벨마다 한 줄씩 들어가고(<b>L1·L2…</b> 칸), 줄마다 그 레벨의 낱말·문장 길이로 만들어져 한 시험지에 레벨이 섞입니다. ④에서 줄의 레벨을 바꾸거나 줄만 뺄 수도 있습니다. 문항 수는 줄 수로 나뉩니다.",
+      "<b>레벨을 바꿔 가며 고를 수</b> 있습니다. ①에서 한 레벨을 누르고 항목을 고른 뒤 다른 레벨을 누르면 ②·③이 비어 있는 상태에서 새로 고르고, 고른 항목은 ④에 함께 모입니다(<b>L1·L2…</b> 칸). 줄마다 그 레벨의 낱말·문장 길이로 만들어져 한 시험지에 레벨이 섞입니다. ④에서 줄의 레벨을 바꾸거나 줄만 뺄 수도 있고, 문항 수는 줄 수로 나뉩니다.",
       "난이도는 <b>여러 개 체크</b>할 수 있습니다. 둘 이상 고르면 <b>난이도별로 시험지를 따로</b>(시험지마다 값이 나가고, 위쪽 탭으로 오갑니다) 만들거나 <b>한 시험지에 섞어서</b>(쉬운 문항부터 순서대로, 문항마다 난이도 이름표) 만들 수 있습니다.",
       "<b>[문제 만들기]</b>를 누릅니다. 마음에 안 드는 문항은 <b>[✏️ 고치기]</b>로 직접 고칩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",

@@ -2787,10 +2787,11 @@ input.st-in{width:100%; box-sizing:border-box;}
 .gr-topic > span:first-of-type, .gr-sub > span:first-of-type{flex:1 1 auto;}
 .gr-sub-all{font-size:12px; color:var(--accent); border-bottom:1px dashed var(--line); border-radius:0;}
 .gr-count{background:var(--accent); color:#fff; border-radius:999px; font-size:11px; padding:0 7px; font-weight:700;}
+.gr-level .gr-count{margin-left:auto; flex:0 0 auto;}
 .gr-seen{font-size:10.5px; font-weight:700; color:var(--conj); border:1px solid var(--conj); border-radius:4px; padding:0 5px; white-space:nowrap;}
 .gr-empty{color:var(--ink-soft); font-size:12.5px; margin:6px 2px;}
-.gr-picked{display:flex; align-items:center; gap:6px; padding:6px 2px; border-bottom:1px dashed var(--line); font-size:12.5px;}
-.gr-picked-name{flex:1 1 auto; min-width:0;}
+.gr-picked{display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; padding:6px 2px; border-bottom:1px dashed var(--line); font-size:12.5px;}
+.gr-picked-name{flex:1 1 100%; min-width:0; overflow-wrap:anywhere;}   /* 이름은 윗줄에 통째로, 레벨·개수·빼기는 아랫줄에 — 좁은 칸에서 이름이 세로로 깨지던 것을 막는다 */
 .gr-picked-n{white-space:nowrap; color:var(--ink-soft); font-size:12px;}
 .gr-picked-n input{width:44px; padding:3px 4px; margin:0 2px;}
 .gr-x{border:none; background:none; color:var(--ink-soft); cursor:pointer; font-size:13px; padding:2px 4px;}
@@ -2812,7 +2813,7 @@ input.st-in{width:100%; box-sizing:border-box;}
 .gr-shapes{display:grid; grid-template-columns:1fr 1fr; gap:2px 6px;}
 .gr-shapes .chk{font-size:12px; font-weight:500;}
 .gr-card-tools{display:flex; gap:6px; margin-top:10px; justify-content:flex-end; align-items:center;}
-.gr-lv{font:inherit; font-size:12px; padding:2px 4px; border:1px solid #cfd6e4; border-radius:6px; background:#fff; flex:0 0 auto;}
+.gr-lv{font:inherit; font-size:12px; padding:2px 4px; border:1px solid #cfd6e4; border-radius:6px; background:#fff; flex:0 0 auto; width:68px !important; margin:0;}
 .gr-sheet-tabs{display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:12px;}
 .gr-diff-tag{margin:0;}
 .gr-edit-modal{max-width:620px; max-height:88vh; overflow-y:auto;}
