@@ -6643,7 +6643,13 @@ _GRAMMAR_SWAPPABLE = ("mc_common", "mc_right", "mc_wrong", "mc_blank", "mc_box",
 # '부자연스럽'·'(여기서는'은 혼잣말이라기보다 틀린 보기가 사실 틀리지 않았다는 표시다 — 2026-10-20 시험에서
 # so/such 문항의 해설이 "such hot sun은 부자연스럽습니다(여기서는 …)"로 흐렸고, 그 보기는 옳게도 읽혔다.
 _GRAMMAR_MONOLOGUE = ("다시 점검", "다시 확인", "다시 검토", "다시 따져", "잠깐", "정정", "(실제", "고쳐야 할 것 같지만",
-                      "부자연스럽", "(여기서는")
+                      "부자연스럽", "(여기서는", "수정 점검", "수정 필요")
+# 정답이 아닌 보기를 해설이 '옳다고도 볼 수 있다'며 흐린 문항 — 복수 정답이거나 정답이 없는 문제다.
+# 2026-10-24 검토: "burn은 자동사로도 쓰이지만"(정답 없음), "옳은 듯 보이지만 … 가장 흠 없이"(정답 둘),
+# "써야 어색하지 않습니다"(정답 둘). 저장된 문법 시험지 135문항에 대 보아 불량 5문항에만 걸렸다.
+_GRAMMAR_HEDGE = ("옳은 듯", "듯 보이지만", "볼 수도 있", "볼 수 있지만", "보더라도", "보지 않더라도",
+                  "로도 쓰이지만", "로도 쓰일", "쓰일 수도", "흠 없이", "어색하지 않", "가능하지만", "보기 어렵",
+                  "문법적으로는", "엄밀히", "허용되", "일 수도 있", "입장이거나", "관계이거나")
 # 콤마 뒤 which 바로 뒤의 동사 빈칸 — which가 앞 절 전체를 받는지 앞 명사를 받는지 갈려 수일치 정답이 흔들린다
 _GRAMMAR_SENT_WHICH = re.compile(r",\s*which\s*\([^()|]*\|")
 _GRAMMAR_WORDS_COND = re.compile(r"(\d+)\s*단어")
@@ -6667,6 +6673,13 @@ def _grammar_flawed(q):
     expl = str(q.get("explanation") or "")
     if any(w in expl for w in _GRAMMAR_MONOLOGUE) or len(expl) > 900:
         return True
+    if any(w in expl for w in _GRAMMAR_HEDGE):
+        return True
+    # 보기가 ①~⑤인 글 속 밑줄 문항은 글에 ①~⑤가 하나씩 있어야 한다(2026-10-24 검토: ①이 빠진 채 나왔다)
+    if [str(c).strip() for c in (q.get("choices") or [])] == list(_CIRCLED_NO):
+        p = str(q.get("passageHtml") or "")
+        if any(p.count(c) != 1 for c in _CIRCLED_NO):
+            return True
     if _GRAMMAR_SENT_WHICH.search(str(q.get("passageHtml") or "")):
         return True
     # 'why + to부정사'가 틀렸다는 전제의 문항 — 한국 교재 규칙이지만 영어권에서는 'why to avoid …'가 쓰여
@@ -6797,11 +6810,11 @@ def _grammar_finish(raw, slot):
     q = dict(raw)
     q["format"] = _GRAMMAR_SHAPE_FORMAT[shape]
     q["type"] = slot["item"]
+    if shape == "mc_underline":   # 보기를 먼저 정해야 _grammar_flawed가 글 속 ①~⑤를 센다
+        q["choices"] = ["①", "②", "③", "④", "⑤"]
     if _grammar_flawed(q):
         return None
-    if shape == "mc_underline":
-        q["choices"] = ["①", "②", "③", "④", "⑤"]
-    elif shape == "mc_count":
+    if shape == "mc_count":
         if not _grammar_build_count(q):
             return None
     if q["format"] == "mc" and len(q.get("choices") or []) != 5:
