@@ -2812,6 +2812,7 @@ input.st-in{width:100%; box-sizing:border-box;}
 .gr-shapes{display:grid; grid-template-columns:1fr 1fr; gap:2px 6px;}
 .gr-shapes .chk{font-size:12px; font-weight:500;}
 .gr-card-tools{display:flex; gap:6px; margin-top:10px; justify-content:flex-end; align-items:center;}
+.gr-lv{font:inherit; font-size:12px; padding:2px 4px; border:1px solid #cfd6e4; border-radius:6px; background:#fff; flex:0 0 auto;}
 .gr-sheet-tabs{display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:12px;}
 .gr-diff-tag{margin:0;}
 .gr-edit-modal{max-width:620px; max-height:88vh; overflow-y:auto;}

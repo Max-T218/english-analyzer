@@ -6428,7 +6428,9 @@ def parse_grammar_request(req):
             continue
         if mc + sa == 0:
             continue
-        items.append({"name": name, "mc": mc, "sa": sa})
+        # 항목마다 레벨을 따로 둘 수 있다(2026-10-24 사용자 — 같은 시험지에서 항목마다 수준이 다르게). 없거나 잘못되면 시험지 레벨.
+        item_grade = str(it.get("grade") or "")
+        items.append({"name": name, "mc": mc, "sa": sa, "grade": item_grade if item_grade in GRAMMAR_GRADES else grade})
         total += mc + sa
     if not items:
         raise ValueError("세부 항목을 하나 이상 고르고 문항 수를 정해 주세요.")
@@ -6496,7 +6498,8 @@ def _grammar_slots(plan):
         for i, it in enumerate(plan["items"]):
             for j in range(it[kind]):
                 pick = shapes if plan["ai_pick"] else [shapes[(i + j) % len(shapes)]]
-                slots.append({"slot": len(slots) + 1, "item": it["name"], "kind": kind, "shapes": pick})
+                slots.append({"slot": len(slots) + 1, "item": it["name"], "kind": kind, "shapes": pick,
+                              "grade": it.get("grade") or plan["grade"]})
     # 항목 안에서 몇째 문항인지 — 묶음들이 따로 만들어져도 같은 항목의 오류 수법이 겹치지 않게 한다
     seen = {}
     for s in slots:
@@ -6821,6 +6824,7 @@ def _grammar_finish(raw, slot):
         return None
     clean["gkind"] = slot["kind"]   # 객관식·주관식 — 받아 낸 문항 수로 값을 셀 때 쓴다
     clean["gitem"] = slot["item"]   # 어느 항목의 문항인지 — 빠진 문항을 항목별로 이어서 채울 때 쓴다
+    clean["ggrade"] = slot.get("grade") or ""   # 항목의 레벨 — 같은 항목이 레벨별로 따로 들어올 때 빠진 문항을 가려 채우는 데 쓴다
     clean["gdiff"] = slot.get("diff") or "normal"   # 난이도 — 섞은 시험지에서 문항마다 어떤 난이도인지 화면이 보인다
     return clean
 
@@ -6828,9 +6832,11 @@ def _grammar_finish(raw, slot):
 def _grammar_call(plan, slots, api_key, model, theme=None, avoid=None):
     # 한 묶음은 난이도가 하나다 — 난이도는 지시문(systemInstruction)에 실리므로 묶음 단위로만 바꿀 수 있다
     diff = (slots[0].get("diff") if slots else None) or plan["difficulty"]
+    # 레벨도 묶음 단위다 — 항목마다 레벨이 다를 수 있어 레벨이 같은 문항끼리 묶는다(chunks)
+    grade = (slots[0].get("grade") if slots else None) or plan["grade"]
     payload = {
-        "systemInstruction": {"parts": [{"text": _grammar_system_text({"grade": plan["grade"], "difficulty": diff})}]},
-        "contents": [{"role": "user", "parts": [{"text": _grammar_user_prompt(plan, slots, theme, avoid)}]}],
+        "systemInstruction": {"parts": [{"text": _grammar_system_text({"grade": grade, "difficulty": diff})}]},
+        "contents": [{"role": "user", "parts": [{"text": _grammar_user_prompt(dict(plan, grade=grade), slots, theme, avoid)}]}],
         "generationConfig": {
             "temperature": 0.8,
             "maxOutputTokens": 16384,
@@ -6902,10 +6908,10 @@ def call_gemini_grammar(plan, api_key, model=None):
                 seen.add(key)
 
     def chunks(sl):
-        """난이도가 같은 문항끼리 GRAMMAR_CHUNK개씩 묶는다(난이도 하나면 예전과 같다)."""
+        """난이도·레벨이 같은 문항끼리 GRAMMAR_CHUNK개씩 묶는다(둘 다 하나면 예전과 같다)."""
         out = []
-        for d in dict.fromkeys(s["diff"] for s in sl):
-            grp = [s for s in sl if s["diff"] == d]
+        for key in dict.fromkeys((s["diff"], s["grade"]) for s in sl):
+            grp = [s for s in sl if (s["diff"], s["grade"]) == key]
             out += [grp[i:i + GRAMMAR_CHUNK] for i in range(0, len(grp), GRAMMAR_CHUNK)]
         return out
 
@@ -6933,7 +6939,8 @@ def call_gemini_grammar(plan, api_key, model=None):
     off, words, sample = _grammar_offlist_stats(questions)
     if words:
         labels_used = "+".join(GRAMMAR_DIFFICULTIES[d] for d in dict.fromkeys(s["diff"] for s in slots))
-        print(f"[grammar] {plan['grade']}·{labels_used} 교육과정 밖 낱말 {off}/{words}개"
+        grades_used = "+".join(dict.fromkeys(s["grade"] for s in slots))
+        print(f"[grammar] {grades_used}·{labels_used} 교육과정 밖 낱말 {off}/{words}개"
               f"({off * 100 // words}%): {', '.join(sample)}", flush=True)
     return {"questions": questions, "missing": len(slots) - len(questions)}
 
@@ -12801,6 +12808,22 @@ CHANGELOG = [
         "items": [
             "문법문제 마법사 — 난이도를 여러 개 체크할 수 있습니다. 둘 이상 고르면 '난이도별로 시험지를 따로' 만들거나(시험지마다 요금, 위쪽 탭으로 오가며 인쇄·저장) "
             "'한 시험지에 섞어서' 만들 수 있습니다(문항 수는 난이도에 고르게 나뉘고 쉬운 문항부터 놓이며, 문항마다 난이도 이름표가 붙습니다).",
+        ],
+    },
+    {
+        "version": 98,
+        "date": "2026-10-24",
+        "items": [
+            "문법문제 마법사 — 항목마다 레벨을 따로 정할 수 있습니다. ①에서 레벨을 바꿔 가며 항목을 고르면 고른 항목이 그 레벨로 만들어지고(낱말·문장 길이가 레벨에 맞춰집니다), "
+            "④ 고른 항목의 레벨 칸에서 바꿀 수도 있습니다. 같은 항목을 다른 레벨로 한 번 더 고를 수도 있어, 한 시험지에 레벨이 다른 문제를 섞어 낼 수 있습니다. 요금은 그대로입니다.",
+        ],
+    },
+    {
+        "version": 99,
+        "date": "2026-10-24",
+        "items": [
+            "문법문제 마법사 — 레벨도 난이도처럼 여러 개 체크할 수 있습니다. 레벨을 둘 이상 체크하고 세부 항목을 한 번 체크하면 레벨마다 한 줄씩 들어가, "
+            "같은 항목을 레벨만 달리해 한 시험지에 낼 수 있습니다. 요금은 그대로입니다.",
         ],
     },
 ]

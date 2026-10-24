@@ -339,7 +339,8 @@ const grState = {
   diffMode: "split",        // 둘 이상일 때: split = 난이도별 시험지를 따로 / mix = 한 시험지에 섞어서
   sheets: null,             // split으로 만든 {난이도: 문항[]} — 아래 questions는 그중 보고 있는 한 장이다
   sheetDiff: null,          // 지금 보고 있는 난이도별 시험지
-  grade: "m1",
+  grade: "m1",              // 체크한 레벨 중 가장 높은 것 — 보이는 세부 항목의 범위·시험지 기본 레벨
+  grades: ["m1"],           // ① 체크한 레벨(중복 가능) — 항목을 체크하면 체크한 모든 레벨 줄로 ④에 들어간다
   topic: null,              // STEP 2에서 고른 항목 이름
   picked: [],               // STEP 4 — [{name, mc, sa}] (name = "항목 › 세부")
   mode: "plain",            // plain = 문법만 / passage = 넣은 지문으로
@@ -367,9 +368,31 @@ function grPassageText() {
 
 /* ── STEP 1~4 그리기 ── */
 function grRenderGrades() {
-  grEl("grGradeList").innerHTML = GRAMMAR_GRADES.map((g) =>
-    `<label class="gr-level${g.id === grState.grade ? " picked" : ""}"><input type="radio" name="grGrade" value="${g.id}"${g.id === grState.grade ? " checked" : ""}> ${esc(g.label)}</label>`).join("");
+  grEl("grGradeList").innerHTML = GRAMMAR_GRADES.map((g) => {
+    const on = grState.grades.includes(g.id);
+    return `<label class="gr-level${on ? " picked" : ""}"><input type="checkbox" name="grGrade" value="${g.id}"${on ? " checked" : ""}> ${esc(g.label)}</label>`;
+  }).join("");
 }
+
+// 체크한 레벨을 정리한다 — 낮은 레벨부터, 가장 높은 것이 grState.grade
+function grSetGrades(list) {
+  const ids = GRAMMAR_GRADES.map((g) => g.id).filter((id) => list.includes(id));
+  grState.grades = ids.length ? ids : [grState.grade];
+  grState.grade = grState.grades[grState.grades.length - 1];
+}
+
+// 이 세부 항목을 체크했을 때 줄이 생길 레벨들 — 체크한 레벨 중 그 항목을 배우는 레벨 이상인 것만
+function grLevelsFor(name) {
+  const [topic, sub] = String(name).split(" › ");
+  const t = GRAMMAR_CATALOG.find((x) => x.topic === topic);
+  const s = t && t.subs.find((x) => x.name === sub);
+  const ok = grState.grades.filter((id) => !s || s.g <= GRAMMAR_GRADE_IDX[id]);
+  return ok.length ? ok : [grState.grade];   // 직접 적은 항목은 체크한 레벨 모두
+}
+
+// 항목마다 레벨을 따로 둘 수 있다(2026-10-24 사용자). 레벨을 정하지 않은(옛 저장본) 항목은 ①에서 고른 레벨을 따른다.
+const GRAMMAR_GRADE_SHORT = { e56: "초등", m1: "L1", m2: "L2", m3: "L3", high: "수능" };
+const grItemGrade = (p) => (p && GRAMMAR_GRADE_IDX[p.grade] !== undefined ? p.grade : grState.grade);
 
 function grVisibleSubs(topic) {
   const lim = GRAMMAR_GRADE_IDX[grState.grade];
@@ -402,7 +425,7 @@ function grRenderSubs() {
   box.innerHTML = `<label class="gr-sub gr-sub-all"><input type="checkbox" id="grSubAll"> <b>전체 선택</b></label>` +
     subs.map((s) => {
       const name = `${t.topic} › ${s.name}`;
-      const on = grState.picked.some((p) => p.name === name);
+      const on = grState.picked.some((p) => p.name === name && grState.grades.includes(grItemGrade(p)));   // 같은 항목도 레벨이 다르면 따로 고른 것
       const seen = text && s.re && s.re.test(text);
       return `<label class="gr-sub"><input type="checkbox" data-name="${esc(name)}"${on ? " checked" : ""}>
         <span>${esc(s.name)}</span>
@@ -421,6 +444,8 @@ function grRenderPicked() {
     box.innerHTML = grState.picked.map((p, i) => `
       <div class="gr-picked" data-i="${i}">
         <span class="gr-picked-name">${esc(p.name)}</span>
+        <select class="gr-lv" title="이 항목을 만들 레벨(낱말·문장 길이가 이 레벨에 맞춰집니다)">${GRAMMAR_GRADES.map((g) =>
+          `<option value="${g.id}"${g.id === grItemGrade(p) ? " selected" : ""} title="${esc(g.label)}">${esc(GRAMMAR_GRADE_SHORT[g.id])}</option>`).join("")}</select>
         <span class="gr-picked-n">객 <input type="number" min="0" max="${GRAMMAR_MAX_Q}" class="gr-n" data-k="mc" value="${p.mc}"${manual ? "" : " disabled"}>
           주 <input type="number" min="0" max="${GRAMMAR_MAX_Q}" class="gr-n" data-k="sa" value="${p.sa}"${manual ? "" : " disabled"}></span>
         <button type="button" class="gr-x" title="빼기">✕</button>
@@ -547,15 +572,16 @@ document.querySelectorAll('input[name="grDiffMode"]').forEach((r) => r.addEventL
 }));
 grEl("grGradeList").addEventListener("change", (e) => {
   if (e.target.name !== "grGrade") return;
-  grState.grade = e.target.value;
-  // 새 레벨에 없는 세부 항목은 뺀다(선생님이 직접 적은 항목은 남긴다)
-  const lim = GRAMMAR_GRADE_IDX[grState.grade];
-  grState.picked = grState.picked.filter((p) => {
-    const [topic, sub] = p.name.split(" › ");
-    const t = GRAMMAR_CATALOG.find((x) => x.topic === topic);
-    const s = t && t.subs.find((x) => x.name === sub);
-    return !s || s.g <= lim;
-  });
+  const on = [...grEl("grGradeList").querySelectorAll("input:checked")].map((c) => c.value);
+  if (!on.length) {   // 하나는 남겨 둔다 — 다 끄면 어느 레벨로 만들지 모른다
+    e.target.checked = true;
+    return;
+  }
+  // 레벨을 옮겨도 이미 고른 항목은 그대로 둔다 — 항목마다 자기 레벨을 갖고(④의 레벨 칸), ①은 '지금 고르는 레벨'이다.
+  // 예전에는 새 레벨에 없는 항목을 뺐지만, 레벨이 다른 항목을 한 시험지에 섞을 수 있어 그러지 않는다.
+  // 레벨을 정하지 않은 항목(옛 저장본)은 옛 레벨로 못 박아 둔다 — 안 그러면 ①을 옮길 때 같이 따라간다.
+  grState.picked.forEach((p) => { if (GRAMMAR_GRADE_IDX[p.grade] === undefined) p.grade = grState.grade; });
+  grSetGrades(on);
   grRenderAll();
 });
 grEl("grTopicList").addEventListener("change", (e) => {
@@ -570,9 +596,13 @@ grEl("grSubList").addEventListener("change", (e) => {
   targets.forEach((b) => {
     const name = b.dataset.name;
     if (!name) return;
-    const at = grState.picked.findIndex((p) => p.name === name);
-    if (b.checked && at < 0) grState.picked.push({ name, mc: 1, sa: 1 });
-    if (!b.checked && at >= 0) grState.picked.splice(at, 1);
+    if (b.checked) {   // 체크한 레벨마다 줄을 하나씩 — 이미 있는 레벨은 건너뛴다
+      grLevelsFor(name).forEach((g) => {
+        if (!grState.picked.some((p) => p.name === name && grItemGrade(p) === g)) grState.picked.push({ name, mc: 1, sa: 1, grade: g });
+      });
+    } else {   // 체크를 끄면 체크한 레벨의 줄을 모두 뺀다(체크 밖 레벨로 따로 고른 줄은 남긴다)
+      grState.picked = grState.picked.filter((p) => !(p.name === name && grState.grades.includes(grItemGrade(p))));
+    }
   });
   grRenderAll();
 });
@@ -581,6 +611,12 @@ grEl("grPickedList").addEventListener("click", (e) => {
   const i = Number(e.target.closest(".gr-picked").dataset.i);
   grState.picked.splice(i, 1);
   grRenderAll();
+});
+grEl("grPickedList").addEventListener("change", (e) => {
+  if (!e.target.classList.contains("gr-lv")) return;
+  const i = Number(e.target.closest(".gr-picked").dataset.i);
+  grState.picked[i].grade = e.target.value;
+  grRenderAll();   // 세부 항목 칸의 체크도 '지금 레벨' 기준이라 다시 그린다
 });
 grEl("grPickedList").addEventListener("input", (e) => {
   if (!e.target.classList.contains("gr-n")) return;
@@ -603,7 +639,9 @@ grEl("grCustomAdd").addEventListener("click", () => {
   const v = el.value.trim().slice(0, 80);
   if (!v) return;
   const name = `직접 입력 › ${v}`;
-  if (!grState.picked.some((p) => p.name === name)) grState.picked.push({ name, mc: 1, sa: 1 });
+  grState.grades.forEach((g) => {
+    if (!grState.picked.some((p) => p.name === name && grItemGrade(p) === g)) grState.picked.push({ name, mc: 1, sa: 1, grade: g });
+  });
   el.value = "";
   grRenderAll();
 });
@@ -666,7 +704,7 @@ document.addEventListener("input", (e) => {
 function grRequest(diff) {
   const req = {
     grade: grState.grade,
-    items: grState.picked.filter((p) => p.mc + p.sa > 0).map((p) => ({ name: p.name, mc: p.mc, sa: p.sa })),
+    items: grState.picked.filter((p) => p.mc + p.sa > 0).map((p) => ({ name: p.name, mc: p.mc, sa: p.sa, grade: grItemGrade(p) })),
     mcShapes: grState.mcShapes,
     saShapes: grState.saShapes,
     aiPick: grState.aiPick,
@@ -700,11 +738,12 @@ async function grMakeOne(req, onTick) {
   const want = JSON.parse(JSON.stringify(req.items));
   for (let round = 0; missing > 0 && round < 2; round++) {
     const have = {};
-    qs.forEach((q) => { const k = `${grNorm(q.gitem)}|${q.gkind}`; have[k] = (have[k] || 0) + 1; });
+    qs.forEach((q) => { const k = `${grNorm(q.gitem)}|${q.ggrade || ""}|${q.gkind}`; have[k] = (have[k] || 0) + 1; });
     const lack = want.map((it) => ({
       name: it.name,
-      mc: Math.max(0, it.mc - (have[`${grNorm(it.name)}|mc`] || 0)),
-      sa: Math.max(0, it.sa - (have[`${grNorm(it.name)}|sa`] || 0)),
+      grade: it.grade,
+      mc: Math.max(0, it.mc - (have[`${grNorm(it.name)}|${it.grade || ""}|mc`] || 0)),
+      sa: Math.max(0, it.sa - (have[`${grNorm(it.name)}|${it.grade || ""}|sa`] || 0)),
     })).filter((it) => it.mc + it.sa > 0);
     const n = lack.reduce((a, it) => a + it.mc + it.sa, 0);
     if (!n) break;
@@ -798,7 +837,8 @@ grEl("grMakeBtn").addEventListener("click", grMake);
 
 /* ── 결과 그리기 — 문제 탭의 buildQuizHtml을 그대로 쓴다 ── */
 function grSheetName() {
-  const base = grState.title || `${(GRAMMAR_GRADES.find((g) => g.id === grState.grade) || {}).label || ""} 문법 문제`.trim();
+  const gl = grState.grades.map((id) => (GRAMMAR_GRADES.find((g) => g.id === id) || {}).label || "").filter(Boolean).join("·");
+  const base = grState.title || `${gl} 문법 문제`.trim();
   // 난이도별로 따로 만든 시험지는 이름 뒤에 난이도를 붙여 인쇄·저장·시험 내기에서 어느 시험지인지 가른다
   return grState.sheets && grState.sheetDiff ? `${base} (${grDiffLabel(grState.sheetDiff)})` : base;
 }
@@ -971,7 +1011,7 @@ grEl("grSaveBtn").addEventListener("click", () => openSaveDialog("grammar"));
 grEl("grAssignBtn").addEventListener("click", () =>
   // gkind(값 셈용)와 옛 저장본의 gitem·gshape는 학생 시험에 싣지 않는다(서버도 버린다).
   // 배열 영작은 looseOrder를 달아 같은 단어·다른 어순이면 틀림 대신 '확인 대기'로 채점되게 한다.
-  openQuizAssign(grState.questions.map(({ gitem, gkind, gshape, gdiff, ...rest }) =>
+  openQuizAssign(grState.questions.map(({ gitem, gkind, gshape, gdiff, ggrade, ...rest }) =>
     rest.format === "write" ? { ...rest, looseOrder: true } : rest), grSheetName(), "quiz"));
 // 🔀 문제 섞기 — 서버는 항목별로 모아 내므로(같은 항목 문제가 줄줄이 나온다) 순서만 무작위로 섞는다.
 // 실제 시험지처럼 객관식이 앞, 주관식이 뒤인 것은 지킨다. 문항 값은 그대로라 저장·시험 내기도 이 순서를 쓴다.
@@ -1019,7 +1059,7 @@ TAB_SAVE.grammar = {
   getPayload: () => ({
     v: 1,
     settings: {
-      grade: grState.grade, diffs: grState.diffs, diffMode: grState.diffMode, picked: grState.picked, mode: grState.mode, split: grState.split,
+      grade: grState.grade, grades: grState.grades, diffs: grState.diffs, diffMode: grState.diffMode, picked: grState.picked, mode: grState.mode, split: grState.split,
       mcTotal: grState.mcTotal, saTotal: grState.saTotal, aiPick: grState.aiPick,
       mcShapes: grState.mcShapes, saShapes: grState.saShapes, cols: grState.cols,
     },
@@ -1030,6 +1070,8 @@ TAB_SAVE.grammar = {
   applyPayload: (payload) => {
     const s = payload.settings || {};
     if (GRAMMAR_GRADE_IDX[s.grade] !== undefined) grState.grade = s.grade;
+    const savedGrades = (Array.isArray(s.grades) ? s.grades : [s.grade]).filter((id) => GRAMMAR_GRADE_IDX[id] !== undefined);
+    if (savedGrades.length) grSetGrades(savedGrades);   // 레벨 체크가 생기기 전 저장본은 시험지 레벨 하나
     // 난이도가 생기기 전 저장본에는 값이 없다 — 지금 고른 난이도를 그대로 둔다. 저장본은 시험지 한 장이라 난이도별 묶음(sheets)은 없다.
     const savedDiffs = (Array.isArray(s.diffs) ? s.diffs : [s.difficulty]).filter((d) => GRAMMAR_DIFFICULTIES.some((x) => x.id === d));
     if (savedDiffs.length) grState.diffs = GRAMMAR_DIFFICULTIES.map((x) => x.id).filter((id) => savedDiffs.includes(id));
@@ -1037,7 +1079,7 @@ TAB_SAVE.grammar = {
     grState.sheets = null;
     grState.sheetDiff = null;
     grState.picked = Array.isArray(s.picked) ? s.picked.filter((p) => p && p.name)
-      .map((p) => ({ name: String(p.name), mc: p.mc | 0, sa: p.sa | 0 })) : [];
+      .map((p) => ({ name: String(p.name), mc: p.mc | 0, sa: p.sa | 0, grade: GRAMMAR_GRADE_IDX[p.grade] !== undefined ? p.grade : (GRAMMAR_GRADE_IDX[s.grade] !== undefined ? s.grade : grState.grade) })) : [];
     grState.mode = s.mode === "passage" ? "passage" : "plain";
     grState.split = s.split === "manual" ? "manual" : "auto";
     grState.mcTotal = s.mcTotal | 0; grState.saTotal = s.saTotal | 0;
@@ -1070,6 +1112,7 @@ if (typeof HOWTO !== "undefined") {
       "맨 위에서 <b>문법만으로</b> / <b>넣은 지문으로</b>를 고르고, <b>① 레벨</b>(초등 고학년 · 중등 Level 1~3 · 수능 Level)을 고릅니다.",
       "<b>② 문법 항목</b>을 누르고 <b>③ 세부 항목</b>을 체크합니다. 체크한 것은 <b>④ 고른 항목</b>에 모입니다.",
       "<b>⑤ 문항 수 · 모양</b>에서 객관식·주관식 문항 수, <b>난이도</b>(쉬움 · 보통 · 어려움), 문제 모양, 1단/2단을 정합니다. 난이도를 바꾸면 어려운 문제 모양이 알아서 빠지고, 문장의 낱말은 교육과정 기본 어휘로 맞춰집니다. <b>항목마다 직접 정하기</b>를 고르면 ④에서 항목별 개수를 적습니다.",
+      "<b>레벨은 여러 개 체크</b>할 수 있습니다. 둘 이상 체크하고 세부 항목을 한 번 체크하면 ④에 레벨마다 한 줄씩 들어가고(<b>L1·L2…</b> 칸), 줄마다 그 레벨의 낱말·문장 길이로 만들어져 한 시험지에 레벨이 섞입니다. ④에서 줄의 레벨을 바꾸거나 줄만 뺄 수도 있습니다. 문항 수는 줄 수로 나뉩니다.",
       "난이도는 <b>여러 개 체크</b>할 수 있습니다. 둘 이상 고르면 <b>난이도별로 시험지를 따로</b>(시험지마다 값이 나가고, 위쪽 탭으로 오갑니다) 만들거나 <b>한 시험지에 섞어서</b>(쉬운 문항부터 순서대로, 문항마다 난이도 이름표) 만들 수 있습니다.",
       "<b>[문제 만들기]</b>를 누릅니다. 마음에 안 드는 문항은 <b>[✏️ 고치기]</b>로 직접 고칩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
