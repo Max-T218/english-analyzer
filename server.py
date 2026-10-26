@@ -3366,7 +3366,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
     # Pro 호출(지문을 고치는 유형·고난도)은 생각이 품질을 좌우하므로 건드리지 않는다.
     if "pro" not in (model or "").lower() and difficulty != "hard":
         payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
-    result = _gemini_json(payload, api_key, model, _QUIZ_TRUNC_MSG, label="quiz")
+    result = _gemini_json(payload, api_key, model, _QUIZ_TRUNC_MSG, label="quiz", cache_system="auto")
     _check_ox_plan(result, ox_plan)
     _check_answer_plan(result, answer_plan)
 
@@ -7723,7 +7723,8 @@ def call_gemini_mock_restore(file, api_key, nos=None, model=None, key=None, key_
         }
         try:
             res = _gemini_json(payload, api_key, model,
-                               "지문이 너무 길어 옮기다가 잘렸습니다.", salvage=True, label="mockrestore")
+                               "지문이 너무 길어 옮기다가 잘렸습니다.", salvage=True, label="mockrestore",
+                               cache_system=len(ranges) >= 2, cache_prefix=1)   # 같은 PDF를 범위마다 보낸다
             got[(lo, hi)] = res.get("passages") or []
         except Exception as e:   # 한 범위 실패가 전체를 막지 않게
             errors.append(e)
@@ -7855,7 +7856,8 @@ def call_gemini_quiz_restore(file, api_key, n_pages, model=None):
         }
         try:
             res = _gemini_json(payload, api_key, model, "문항이 너무 길어 옮기다가 잘렸습니다.",
-                               salvage=True, label="quizrestore")
+                               salvage=True, label="quizrestore",
+                               cache_system=len(ranges) >= 2, cache_prefix=1)   # 같은 PDF를 범위마다 보낸다
             got[(lo, hi)] = res.get("questions") or []
         except Exception as e:   # 한 범위 실패가 전체를 막지 않게
             errors.append(e)
@@ -9401,7 +9403,7 @@ def call_gemini_brief(passage, api_key, model, target_grammar="",
             "responseSchema": BRIEF_SCHEMA,
         },
     }
-    return _finish_brief(_gemini_json(payload, api_key, model, _BRIEF_TRUNC_MSG, label="brief"))
+    return _finish_brief(_gemini_json(payload, api_key, model, _BRIEF_TRUNC_MSG, label="brief", cache_system="auto"))
 
 
 def _finish_brief(result):
@@ -10934,45 +10936,74 @@ def _log_usage(body, model, label=""):
 
 
 # ── 지시문 캐시(AI Studio의 cachedContents) ──
-# 문법 마법사는 5문항씩 묶어 동시에 부르는데, 묶음마다 같은 지시문(기본 규칙 + 교육과정 단어 목록, 중2 약 7천 토큰)을
-# 처음부터 다시 보냈다. 동시에 나가니 구글의 자동 캐시도 안 걸렸다. 지시문을 한 번 맡겨 두고 이름으로 가리키면
-# 그 몫은 캐시 값(보통 입력의 약 10분의 1)만 나간다. 맡기는 첫 번에는 그 토큰을 원래 값으로 한 번 내고,
-# 맡겨 둔 동안 보관료가 붙어(분 단위, 수천 토큰이라 1원 안팎) 묶음이 둘 이상일 때만 쓴다.
-# 보내는 글은 그대로라 결과물은 같다. Vertex는 쓰지 않기로 해(2026-10-26) 그 길이 켜져 있으면 캐시 없이 보낸다.
+# 같은 지시문을 여러 번 보내는 호출이 많다 — 문법 마법사는 5문항씩 묶어 동시에, 상세분석·요약분석·문제 제작은 지문마다
+# 따로(선생님 여럿이 같은 지시문을 쓴다), 모의고사 지문 되살리기는 같은 PDF를 범위마다 동시에 보낸다. 구글의 자동 캐시는
+# 동시에 나가면 안 걸리고 차례로 보내도 걸렸다 말았다 했다(2026-10-26 실측: 문제 제작 지시문은 둘째 호출에 1만 4천
+# 토큰이 걸렸는데 상세분석은 3초 뒤 같은 지시문에 0). 지시문(과 PDF)을 한 번 맡겨 두고 이름으로 가리키면 그 몫은 캐시
+# 값(보통 입력의 약 10분의 1)만 나간다. 맡기는 첫 번에는 그 토큰을 원래 값으로 한 번 내고 맡겨 둔 동안 보관료가 붙으므로
+# (분 단위) 여러 번 쓸 때만 맡긴다. 보내는 글은 그대로라 결과물은 같다. Vertex는 쓰지 않기로 해(2026-10-26) 그 길이
+# 켜져 있으면 캐시 없이 보낸다.
 CONTEXT_CACHE_TTL = _env("CONTEXT_CACHE_TTL", 300, int)   # 한 요청(최대 약 100초)과 이어 오는 요청을 덮는 길이
-_CTX_CACHE = {}          # (모델, 지시문 해시) → (캐시 이름, 끝나는 시각) — 이름이 None이면 만들기 실패(잠시 다시 안 해 본다)
+_CTX_CACHE = {}          # 열쇠 → (캐시 이름, 끝나는 시각) — 이름이 None이면 만들기 실패(잠시 다시 안 해 본다)
+_CTX_SEEN = {}           # 열쇠 → 마지막으로 쓰인 시각("auto" — 두 번째로 쓰일 때 맡긴다)
 _CTX_CACHE_LOCK = threading.Lock()
 _CTX_CACHE_KEY_LOCKS = {}
+_CTX_API = "https://generativelanguage.googleapis.com/v1beta/"
 
 
-def _context_cache_name(model, system_instruction, api_key, create=True):
-    """지시문을 맡겨 둔 캐시 이름. 못 만들면 None — 부른 쪽은 캐시 없이 보낸다.
-    create=False면 이미 맡겨 둔 것만 쓴다(묶음이 하나뿐이라 새로 맡기면 오히려 손해일 때)."""
-    text = json.dumps(system_instruction, ensure_ascii=False, sort_keys=True)
+def _ctx_request(method, path, api_key, body=None):
+    req = urllib.request.Request(_CTX_API + path, method=method,
+                                 data=json.dumps(body).encode("utf-8") if body is not None else None,
+                                 headers={"content-type": "application/json", "x-goog-api-key": api_key})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.loads(resp.read().decode("utf-8") or "{}")
+
+
+def _context_cache_name(model, system_instruction, api_key, mode=True, prefix=None):
+    """지시문(+ 첫 사용자 차례의 앞 조각 prefix)을 맡겨 둔 캐시 이름. 못 만들거나 안 맡길 때는 None — 부른 쪽은
+    캐시 없이 보낸다. mode: True=없으면 지금 맡긴다 / "reuse"=이미 맡겨 둔 것만 쓴다(묶음이 하나뿐이라 새로 맡기면
+    손해일 때) / "auto"=이 열쇠가 CONTEXT_CACHE_TTL 안에 한 번 쓰인 적이 있을 때(=두 번째부터) 맡긴다."""
+    text = json.dumps([system_instruction, prefix or []], ensure_ascii=False, sort_keys=True)
     key = (model, hashlib.sha256(text.encode("utf-8")).hexdigest())
+    now = time.time()
     with _CTX_CACHE_LOCK:
         lock = _CTX_CACHE_KEY_LOCKS.setdefault(key, threading.Lock())
-    # 같은 지시문으로 동시에 나가는 묶음들이 저마다 캐시를 만들지 않게 — 첫 묶음이 만드는 동안 나머지는 기다린다
+        seen = _CTX_SEEN.get(key)
+        _CTX_SEEN[key] = now
+        for k, t in list(_CTX_SEEN.items()):   # 오래된 기록은 버린다
+            if now - t > CONTEXT_CACHE_TTL * 2:
+                _CTX_SEEN.pop(k, None)
+    # 같은 것으로 동시에 나가는 호출들이 저마다 캐시를 만들지 않게 — 첫 호출이 만드는 동안 나머지는 기다린다
     with lock:
         hit = _CTX_CACHE.get(key)
-        if hit and hit[1] - time.time() > (120 if hit[0] else 0):   # 쓰는 도중 끝나지 않게 2분은 남아 있어야 쓴다
-            return hit[0]
-        if not create:
+        if hit and not hit[0] and hit[1] > now:
+            return None   # 방금 만들기에 실패했다
+        if hit and hit[0]:
+            left = hit[1] - time.time()
+            if left > 120:   # 쓰는 도중 끝나지 않게 2분은 남아 있어야 그대로 쓴다
+                return hit[0]
+            if left > 10:
+                # 계속 쓰이는 중이면 새로 맡기지 않고 시간만 늘린다(보관료만 붙는다)
+                try:
+                    _ctx_request("PATCH", f"{hit[0]}?updateMask=ttl", api_key, {"ttl": f"{CONTEXT_CACHE_TTL}s"})
+                    _CTX_CACHE[key] = (hit[0], time.time() + CONTEXT_CACHE_TTL)
+                    return hit[0]
+                except Exception as e:
+                    print(f"[cache] {model} 캐시 시간 늘리기 실패 — 새로 맡깁니다: {e}", flush=True)
+        if mode == "reuse" or (mode == "auto" and not (seen and now - seen <= CONTEXT_CACHE_TTL)):
             return None
         name = None
         try:
-            body = json.dumps({"model": f"models/{model}", "systemInstruction": system_instruction,
-                               "ttl": f"{CONTEXT_CACHE_TTL}s"}).encode("utf-8")
-            req = urllib.request.Request(
-                "https://generativelanguage.googleapis.com/v1beta/cachedContents", data=body, method="POST",
-                headers={"content-type": "application/json", "x-goog-api-key": api_key})
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                name = json.loads(resp.read().decode("utf-8")).get("name") or None
+            body = {"model": f"models/{model}", "systemInstruction": system_instruction,
+                    "ttl": f"{CONTEXT_CACHE_TTL}s"}
+            if prefix:
+                body["contents"] = [{"role": "user", "parts": prefix}]
+            name = _ctx_request("POST", "cachedContents", api_key, body).get("name") or None
         except urllib.error.HTTPError as e:
-            print(f"[cache] {model} 지시문 캐시 만들기 실패 {e.code} — 캐시 없이 보냅니다: "
+            print(f"[cache] {model} 캐시 만들기 실패 {e.code} — 캐시 없이 보냅니다: "
                   f"{e.read().decode('utf-8', 'replace')[:200]}", flush=True)
         except Exception as e:
-            print(f"[cache] {model} 지시문 캐시 만들기 실패 — 캐시 없이 보냅니다: {e}", flush=True)
+            print(f"[cache] {model} 캐시 만들기 실패 — 캐시 없이 보냅니다: {e}", flush=True)
         # 실패도 잠시 기억한다(1분) — 요청마다 헛걸음하지 않게
         _CTX_CACHE[key] = (name, time.time() + (CONTEXT_CACHE_TTL if name else 60))
         return name
@@ -10985,7 +11016,7 @@ def _context_cache_drop(name):
                 _CTX_CACHE.pop(k, None)
 
 
-def _gemini_json(payload, api_key, model, trunc_msg, salvage=False, label="", cache_system=False):
+def _gemini_json(payload, api_key, model, trunc_msg, salvage=False, label="", cache_system=False, cache_prefix=0):
     """페이로드를 보내고 JSON 결과를 받는다 (모든 Gemini 호출의 공통 입구).
 
     RECITATION으로 막히면 표본추출 설정을 바꿔 다시 시도한다. 이 차단은 '가장 그럴듯한
@@ -10994,14 +11025,16 @@ def _gemini_json(payload, api_key, model, trunc_msg, salvage=False, label="", ca
     담으면서도 차단을 피해 가는 경우가 많다.
     (safetySettings로는 끌 수 없다 — RECITATION은 유해성 분류가 아니라 별도 검사다)
 
-    cache_system: 지시문(systemInstruction)을 캐시로 맡겨 두고 이름으로 가리킨다(_context_cache_name).
-    "reuse"면 이미 맡겨 둔 캐시만 쓰고 새로 맡기지 않는다. 캐시가 없거나 그걸로 보낸 요청이 거절되면 지시문을 그대로 실어 다시 보낸다."""
+    cache_system: 지시문(systemInstruction)을 캐시로 맡겨 두고 이름으로 가리킨다(_context_cache_name — True·"reuse"·
+    "auto"). cache_prefix: 첫 사용자 차례의 앞 조각 몇 개(같은 PDF 등)도 함께 맡긴다. 캐시가 없거나 그걸로 보낸 요청이
+    거절되면 지시문을 그대로 실어 다시 보낸다."""
     attempts = (None, 0.4, 0.85)
     last = None
     cache = None
     if cache_system and payload.get("systemInstruction") and not _vertex_ready():
         key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
-        cache = (_context_cache_name(model, payload["systemInstruction"], key, create=cache_system != "reuse")
+        prefix = payload["contents"][0]["parts"][:cache_prefix] if cache_prefix else None
+        cache = (_context_cache_name(model, payload["systemInstruction"], key, cache_system, prefix)
                  if key else None)
     for temp in attempts:
         if temp is not None:
@@ -11009,6 +11042,9 @@ def _gemini_json(payload, api_key, model, trunc_msg, salvage=False, label="", ca
         data = json.dumps(payload).encode("utf-8")
         if cache:
             lean = {k: v for k, v in payload.items() if k != "systemInstruction"}
+            if cache_prefix:   # 맡긴 조각은 빼고 나머지만 보낸다
+                first = dict(payload["contents"][0], parts=payload["contents"][0]["parts"][cache_prefix:])
+                lean["contents"] = [first] + payload["contents"][1:]
             lean["cachedContent"] = cache
             try:
                 body = _gemini_call_with_retry(json.dumps(lean).encode("utf-8"), api_key, model,
@@ -11155,7 +11191,7 @@ def call_gemini(passage, target_grammar, mode, api_key, model, complete_hint=Non
             "responseSchema": _analysis_schema(),
         },
     }
-    result = _gemini_json(payload, api_key, model, _ANALYZE_TRUNC_MSG, label="analyze")
+    result = _gemini_json(payload, api_key, model, _ANALYZE_TRUNC_MSG, label="analyze", cache_system="auto")
     return finalize_analysis(result)
 
 
@@ -11306,7 +11342,7 @@ def call_gemini_fix(passage, result, targets, api_key, model,
             "responseSchema": SENTENCE_FIX_SCHEMA,
         },
     }
-    fixed = _gemini_json(payload, api_key, model, FIX_TRUNC_MSG, label="fix")
+    fixed = _gemini_json(payload, api_key, model, FIX_TRUNC_MSG, label="fix", cache_system="auto")
 
     merged = splice_sentences({"sentences": raw}, fixed, targets)
     if merged is None:
