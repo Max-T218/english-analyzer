@@ -11533,6 +11533,7 @@ async function runVocabPdf(fileList) {
   syncVocabDropBusy();
 
   const rows = [];
+  let docTitle = "";   // 첫 PDF 머리의 큰 제목(예: 'Day 27') — 서버가 찾았을 때만
   const bookSections = [];
   const notes = [];
   const fails = [];
@@ -11570,6 +11571,7 @@ async function runVocabPdf(fileList) {
         continue;
       }
       rows.push(...res.items);
+      if (!docTitle && res.title) docTitle = String(res.title).trim();
       if (res.note) notes.push(`${who}: ${res.note}`);
     } catch (err) {
       const msg = err.message || String(err);
@@ -11618,7 +11620,9 @@ async function runVocabPdf(fileList) {
   if (rows.length) {
     parts.push(`<b>${rows.length}단어</b>를 단어장에 저장했습니다. PDF와 대조해 확인하세요.`);
     vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
-    vocabEditorAdd(rows, `${files[0].name.replace(/\.pdf$/i, "")} · ${todayStr()}`, "pdf");
+    vocabEditorAdd(rows, docTitle || `${files[0].name.replace(/\.pdf$/i, "")} · ${todayStr()}`, "pdf");
+    // 선생님이 이미 적어 둔 제목은 덮어쓰지 않는다
+    if (docTitle && !vocabTitleEl.value.trim()) vocabTitleEl.value = docTitle;
   } else if (bookSections.length) {
     vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
   } else {

@@ -5560,6 +5560,45 @@ def read_pdf_pages(raw):
     return _pdf_drop_running_heads(pages)
 
 
+def _pdf_doc_title(raw):
+    """첫 쪽 위쪽에 본문보다 확연히 큰 글씨로 한 줄만 있으면 그 글을 문서 제목으로 본다
+    (단어 시험지 머리의 'Day 27' 같은 것). 없거나 애매하면 빈 글자 — 화면은 그때 제목 칸을 안 건드린다."""
+    if not PDF_READY:
+        return ""
+    try:
+        page = next(iter(_pdf_extract_pages(io.BytesIO(raw), laparams=LAParams(), maxpages=1)), None)
+    except Exception:
+        return ""
+    if page is None:
+        return ""
+    lines, sizes = [], []
+    for box in page:
+        if not isinstance(box, LTTextContainer):
+            continue
+        for line in box:
+            if not isinstance(line, LTTextLine):
+                continue
+            cs = [c.size for c in line if isinstance(c, LTChar) and c.get_text().strip()]
+            if not cs:
+                continue
+            sizes.extend(cs)
+            lines.append((max(cs), line.y0, re.sub(r"\s+", " ", line.get_text()).strip()))
+    if not lines:
+        return ""
+    sizes.sort()
+    body = sizes[len(sizes) // 2]
+    top = max(s for s, _, _ in lines)
+    if top < body * 1.4:
+        return ""
+    big = [(y, t) for s, y, t in lines if s >= top - 0.5]
+    if len(big) != 1:
+        return ""
+    y, text = big[0]
+    if y < page.height / 2 or not (2 <= len(text) <= 40) or not re.search(r"[A-Za-z0-9가-힣]", text):
+        return ""
+    return text
+
+
 def split_pdf_passages(pages):
     """쪽별 줄 목록을 지문 목록으로 나눈다. {mode, passages} 를 돌려준다.
     Gemini를 부르지 않는다 — 규칙만으로 나눈다."""
@@ -18877,7 +18916,8 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:
                     self._send_json({"error": str(e)}, 502)
                     return
-                self._charge_and_send(path, req, {"mode": "ai", "items": found["items"], "note": found["note"]})
+                self._charge_and_send(path, req, {"mode": "ai", "items": found["items"], "note": found["note"],
+                                                  "title": _pdf_doc_title(raw_pdf)})
                 return
             # 번호 붙은 단어장 책(쪽마다 단원 하나)이면 쪽별로 나눠 돌려준다 — 제목은 쪽에 써 있는 그대로
             sections = parse_vocab_book_pdf(raw_pdf)
@@ -18897,6 +18937,8 @@ class Handler(BaseHTTPRequestHandler):
                 # 규칙으로 못 뽑았다 — 화면이 'AI로 다시 시도'를 권할 수 있게 알린다
                 "canAi": not items,
                 "note": "",
+                # 첫 쪽 머리의 큰 제목(예: 'Day 27') — 화면이 비어 있는 제목 칸에 넣는다
+                "title": _pdf_doc_title(raw_pdf),
             })
             return
 
