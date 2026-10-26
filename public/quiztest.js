@@ -103,6 +103,12 @@
             `<li><span class="qz-num">${CIRCLED[k] || k + 1}</span><span>${esc(c)}</span></li>`).join("")}</ul></div>` : "");
   }
 
+  // 풀기 화면의 '오답 지우기' ✕ — 종이 시험지에서 정답이 아닌 보기에 줄을 긋듯 표시만 한다(답으로 내지 않는다)
+  function xBtn(mode, i, v) {
+    return mode === "take"
+      ? `<button type="button" class="qt-x" data-q="${i}" data-v="${v}" aria-label="${v}번 보기 지우기" title="정답이 아닌 보기 지우기">✕</button>` : "";
+  }
+
   // 결과 화면에서 고른 보기에 맞음/틀림 색을 입힌다
   function optClass(q, value, mode) {
     if (mode === "take") return "";
@@ -211,13 +217,14 @@
       const n = q.choiceCount || (q.choices || []).length || 5;
       if ((q.choices || []).length) {
         return passageBox(q.passageHtml) + `<div class="qt-opts">${q.choices.map((c, k) =>
+          `<div class="qt-cell">` +
           `<button type="button" class="qt-opt${optClass(q, k + 1, mode)}" data-q="${i}" data-u="0" data-v="${k + 1}"${mode === "take" ? "" : " disabled"}>` +
-          `<span class="qz-num">${CIRCLED[k] || k + 1}</span><span>${clean(c)}</span></button>`).join("")}</div>`;
+          `<span class="qz-num">${CIRCLED[k] || k + 1}</span><span>${clean(c)}</span></button>${xBtn(mode, i, k + 1)}</div>`).join("")}</div>`;
       }
       // 어법·어휘처럼 지문의 밑줄 ①~⑤가 곧 보기인 문항 — 번호 단추만 둔다
       return passageBox(q.passageHtml) + `<div class="qt-row-opts">${Array.from({ length: n }, (_, k) =>
-        `<button type="button" class="qt-opt${optClass(q, k + 1, mode)}" data-q="${i}" data-u="0" data-v="${k + 1}"${mode === "take" ? "" : " disabled"}>` +
-        `<span class="qz-num">${CIRCLED[k] || k + 1}</span></button>`).join("")}</div>`;
+        `<div class="qt-cell"><button type="button" class="qt-opt${optClass(q, k + 1, mode)}" data-q="${i}" data-u="0" data-v="${k + 1}"${mode === "take" ? "" : " disabled"}>` +
+        `<span class="qz-num">${CIRCLED[k] || k + 1}</span></button>${xBtn(mode, i, k + 1)}</div>`).join("")}</div>`;
     }
     if (fmt === "tf") {
       return passageBox(q.passageHtml) + (q.statements || []).map((t, j) =>
@@ -311,8 +318,21 @@
         onChange && onChange();
         return;
       }
+      const xb = e.target.closest(".qt-x");
+      if (xb) {
+        const opt = root.querySelector(`.qt-opt[data-q="${xb.dataset.q}"][data-u="0"][data-v="${xb.dataset.v}"]`);
+        if (!opt) return;
+        const out = !opt.classList.contains("out");
+        opt.classList.toggle("out", out);
+        xb.classList.toggle("on", out);
+        if (out && opt.classList.contains("sel")) { opt.classList.remove("sel"); onChange && onChange(); }
+        return;
+      }
       const b = e.target.closest(".qt-opt");
       if (!b || b.disabled) return;
+      b.classList.remove("out");
+      const own = b.closest(".qt-cell");
+      if (own) { const x = own.querySelector(".qt-x"); if (x) x.classList.remove("on"); }
       root.querySelectorAll(`.qt-opt[data-q="${b.dataset.q}"][data-u="${b.dataset.u}"]`)
         .forEach((x) => x.classList.toggle("sel", x === b));
       onChange && onChange();

@@ -520,14 +520,8 @@ function showQuizStep(i) {
 }
 $("quizPrevBtn").addEventListener("click", () => { clearTimeout(quizAutoTimer); showQuizStep(quizIndex - 1); });
 $("quizNextBtn").addEventListener("click", () => { clearTimeout(quizAutoTimer); showQuizStep(quizIndex + 1); });
-// 고르기 한 칸짜리 문항(객관식)은 보기를 누르면 바로 다음 문항으로
-$("quizBody").addEventListener("click", (e) => {
-  const b = e.target.closest(".qt-opt");
-  if (!b || b.disabled || quizAutoTimer) return;
-  const q = quizQuestions[quizIndex];
-  if (!q || q.format !== "mc" || QT.unitCount(q) !== 1 || quizIndex >= quizQuestions.length - 1) return;
-  quizAutoTimer = setTimeout(() => { quizAutoTimer = null; showQuizStep(quizIndex + 1); }, 250);
-});
+// 객관식도 보기를 눌러도 자동으로 넘어가지 않는다 — 보기를 하나씩 지워 가며(✕) 검토하고
+// 직접 [다음]을 누르게 한다(2026-10-27 사용자: 자동으로 넘어가면 검토가 안 된다)
 
 function openQuiz(assignmentId, data) {
   currentAssignmentId = assignmentId;
