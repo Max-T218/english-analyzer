@@ -115,15 +115,15 @@
         </colgroup>
         <thead>
           <tr style="text-align:left; border-bottom:1px solid var(--line);">
-            <th style="padding:8px 6px;">이메일</th>
-            <th style="padding:8px 6px;">이름</th>
-            <th style="padding:8px 6px;">가입</th>
-            <th style="padding:8px 6px;">가입일</th>
-            <th style="padding:8px 6px;" title="마지막으로 로그인하거나 접속해 쓴 날(KST). 1년 넘게 비면 이용약관 14조 6항에 따라 휴면으로 전환된다 — 전환 30일 전에 메일로 알린다">최근 접속</th>
-            <th style="padding:8px 6px; text-align:right;">잔액(원)</th>
-            <th style="padding:8px 6px;" title="반/학생 등록 기능 사용 허가 — 미성년자 데이터가 걸려 있어 기본은 꺼짐">학생기능</th>
-            <th style="padding:8px 6px;" title="동형 모의고사 제작 사용 허가 — 남의 학교 기출 시험지를 올려 읽는 기능이라 기본은 꺼짐">모의고사</th>
-            <th style="padding:8px 6px;" title="레벨테스트 탭 사용 허가 — 특정 학원의 시험지라 기본은 꺼짐">레벨테스트</th>
+            <th style="padding:8px 6px; cursor:pointer; user-select:none;" class="sort-th" data-sort="email"><span class="sort-label">이메일</span><span class="sort-arrow"></span></th>
+            <th style="padding:8px 6px; cursor:pointer; user-select:none;" class="sort-th" data-sort="name"><span class="sort-label">이름</span><span class="sort-arrow"></span></th>
+            <th style="padding:8px 6px; cursor:pointer; user-select:none;" class="sort-th" data-sort="provider"><span class="sort-label">가입</span><span class="sort-arrow"></span></th>
+            <th style="padding:8px 6px; cursor:pointer; user-select:none;" class="sort-th" data-sort="createdAt"><span class="sort-label">가입일</span><span class="sort-arrow"></span></th>
+            <th style="padding:8px 6px; cursor:pointer; user-select:none;" title="마지막으로 로그인하거나 접속해 쓴 날(KST). 1년 넘게 비면 이용약관 14조 6항에 따라 휴면으로 전환된다 — 전환 30일 전에 메일로 알린다" class="sort-th" data-sort="lastLogin"><span class="sort-label">최근 접속</span><span class="sort-arrow"></span></th>
+            <th style="padding:8px 6px; cursor:pointer; user-select:none; text-align:right;" class="sort-th" data-sort="krwRemaining"><span class="sort-label">잔액(원)</span><span class="sort-arrow"></span></th>
+            <th style="padding:8px 6px; cursor:pointer; user-select:none;" title="반/학생 등록 기능 사용 허가 — 미성년자 데이터가 걸려 있어 기본은 꺼짐" class="sort-th" data-sort="classroomApproved"><span class="sort-label">학생기능</span><span class="sort-arrow"></span></th>
+            <th style="padding:8px 6px; cursor:pointer; user-select:none;" title="동형 모의고사 제작 사용 허가 — 남의 학교 기출 시험지를 올려 읽는 기능이라 기본은 꺼짐" class="sort-th" data-sort="examApproved"><span class="sort-label">모의고사</span><span class="sort-arrow"></span></th>
+            <th style="padding:8px 6px; cursor:pointer; user-select:none;" title="레벨테스트 탭 사용 허가 — 특정 학원의 시험지라 기본은 꺼짐" class="sort-th" data-sort="leveltestApproved"><span class="sort-label">레벨테스트</span><span class="sort-arrow"></span></th>
             <th style="padding:8px 6px;">관리</th>
           </tr>
         </thead>
@@ -306,6 +306,34 @@ function fmtDate(iso) {
 }
 
 let currentUsers = [];
+let sortKey = "", sortDir = 1;   // sortDir 1=오름차순, -1=내림차순. sortKey가 비면 서버가 준 차례 그대로
+
+function sortedUsers() {
+  if (!sortKey) return currentUsers;
+  const val = (u) => {
+    const v = u[sortKey];
+    if (sortKey === "examApproved") return (u.examOpen || v) ? 1 : 0;
+    return typeof v === "boolean" ? (v ? 1 : 0) : (v ?? "");
+  };
+  return currentUsers.slice().sort((a, b) => {
+    const x = val(a), y = val(b);
+    // 비어 있는 값(기록 없음 등)은 방향과 상관없이 맨 아래로 보낸다
+    if (x === "" && y !== "") return 1;
+    if (y === "" && x !== "") return -1;
+    const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "ko");
+    return c * sortDir;
+  });
+}
+
+document.querySelectorAll("th.sort-th").forEach((th) => {
+  th.addEventListener("click", () => {
+    const k = th.dataset.sort;
+    if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = 1; }
+    document.querySelectorAll("th.sort-th .sort-arrow").forEach((a) => { a.textContent = ""; });
+    th.querySelector(".sort-arrow").textContent = sortDir === 1 ? " ▲" : " ▼";
+    renderUsers();
+  });
+});
 
 let lastLoadedAt = null;   // 이 목록을 언제 받아 왔는지 (화면에 그대로 적는다)
 
@@ -379,7 +407,7 @@ function dormancyCell(u) {
 function renderUsers() {
   renderSummary();
 
-  $("userTableBody").innerHTML = currentUsers.map((u) => `
+  $("userTableBody").innerHTML = sortedUsers().map((u) => `
     <tr style="border-bottom:1px solid var(--line-soft);" data-uid="${esc(u.id)}">
       <td style="padding:8px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
           title="${esc(u.email)}">${esc(u.email)}${u.costTag ? `<div style="font-size:11px; color:var(--ink-soft); font-family:monospace;"
