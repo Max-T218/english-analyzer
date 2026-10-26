@@ -4960,7 +4960,7 @@ async function fitImageForSave(blob) {
   throw new Error("그림이 너무 커서 줄여도 저장 한도에 들어가지 않습니다.");
 }
 
-// 저장본이 만들어진 뒤 그림을 올린다 — 서로 기다릴 까닭이 없어 한꺼번에 보낸다.
+// 저장본이 만들어진 뒤 그림을 올린다 — 한꺼번에 몰리지 않게 세 장씩 보낸다(아래 주석 참고).
 // 실패한 장수만 알려 주려고 오류는 모아서 던진다.
 async function uploadInfographics(itemId, metas, onProgress) {
   const todo = metas.filter((m) => {
@@ -4973,7 +4973,10 @@ async function uploadInfographics(itemId, metas, onProgress) {
   let done = 0;
   const reasons = new Set();   // 실패한 까닭 — 예전에는 버려서 무엇 때문인지 알 수 없었다
   if (onProgress && todo.length) onProgress(0, todo.length);
-  await Promise.all(todo.map(async (m) => {
+  // 한꺼번에 다 보내면 장수가 많을 때(한 장이 700KB 남짓) 요청이 몰려 실패했다 — 세 장씩만 보낸다
+  const queue = todo.slice();
+  const worker = async () => { for (let m; (m = queue.shift()); ) await sendOne(m); };
+  const sendOne = async (m) => {
     const img = resultEl.querySelector(
       `.passage-block[data-entry="${m.entry}"] .info-shot[data-lang="${m.lang}"] img.infographic`
     );
@@ -4995,7 +4998,8 @@ async function uploadInfographics(itemId, metas, onProgress) {
     }
     done++;
     if (onProgress) onProgress(done, todo.length);
-  }));
+  };
+  await Promise.all([worker(), worker(), worker()]);
   if (failed) {
     throw new Error(`글은 저장됐지만 요약 이미지 ${failed}장은 저장하지 못했습니다 — ${[...reasons].join(" / ")} 다시 저장해 보세요.`);
   }
