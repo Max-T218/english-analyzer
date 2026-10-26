@@ -278,6 +278,7 @@ let currentAssignmentId = null;
 let currentFormat = "saq";
 let currentQuestions = [];
 let currentAnswers = [];
+let currentOut = [];   // 문항마다 ✕로 지운 보기(풀이 도중 표시 — 답이 아니다)
 let currentIndex = 0;
 
 async function openTest(assignmentId) {
@@ -297,6 +298,7 @@ async function openTest(assignmentId) {
     currentFormat = data.format;
     currentQuestions = data.questions;
     currentAnswers = currentQuestions.map(() => "");
+    currentOut = [];
     currentIndex = 0;
     renderQuestion();
   } catch (err) {
@@ -322,11 +324,15 @@ function renderQuestion() {
         ${currentFormat === "saq" ? `<span class="hint">(${q.direction === "en2ko" ? "뜻 쓰기" : "영어 쓰기"})</span>` : ""}
       </div>
       ${currentFormat === "mcq"
-        ? `<div class="qt-opts">${(q.options || []).map((opt, k) => `
-            <label class="qt-opt st-opt${opt === saved ? " sel" : ""}">
+        ? `<div class="qt-opts">${(q.options || []).map((opt, k) => {
+            const out = ((currentOut[currentIndex] || []).includes(opt)) && opt !== saved;
+            return `<div class="qt-cell">
+            <label class="qt-opt st-opt${opt === saved ? " sel" : ""}${out ? " out" : ""}">
               <input type="radio" name="qCurrent" value="${esc(opt)}"${opt === saved ? " checked" : ""}>
               <span class="qz-num">${"①②③④⑤⑥⑦⑧"[k] || ""}</span><span>${esc(opt)}</span>
-            </label>`).join("")}</div>`
+            </label>
+            <button type="button" class="qt-x st-x${out ? " on" : ""}" data-v="${esc(opt)}" aria-label="${k + 1}번 보기 지우기" title="정답이 아닌 보기 지우기">✕</button></div>`;
+          }).join("")}</div>`
         : `<input type="text" class="qt-in st-in" id="qCurrentInput" autocomplete="off" value="${esc(saved)}">`}
     </div>
   `;
@@ -455,20 +461,34 @@ $("prevBtn").addEventListener("click", () => {
   renderQuestion();
 });
 
-// 객관식: 보기를 누르면 바로 다음 문항으로. 이미 골라 둔 보기를 다시 눌러도 넘어간다
-// (이전으로 돌아왔을 때 같은 답을 그대로 두고 앞으로 가려는 경우).
+// 객관식: 보기를 눌러도 자동으로 넘어가지 않는다(2026-10-27 사용자 — 자동으로 넘어가면 검토가
+// 안 된다). 정답이 아닌 보기는 ✕로 지워 가며 풀고, 직접 [다음]을 누른다. 지운 표시는 답이 아니라
+// 풀이 도중 표시일 뿐이라 이 화면 안에서만 기억한다(currentOut).
 $("takeForm").addEventListener("click", (e) => {
   if (currentFormat !== "mcq") return;
+  const xb = e.target.closest(".st-x");
+  if (xb) {
+    const list = currentOut[currentIndex] || (currentOut[currentIndex] = []);
+    const v = xb.dataset.v;
+    const at = list.indexOf(v);
+    if (at >= 0) list.splice(at, 1); else list.push(v);
+    const lab = xb.parentElement.querySelector("label.st-opt");
+    const input = lab.querySelector('input[name="qCurrent"]');
+    const out = at < 0;
+    lab.classList.toggle("out", out);
+    xb.classList.toggle("on", out);
+    if (out && input.checked) { input.checked = false; lab.classList.remove("sel"); }
+    return;
+  }
   const opt = e.target.closest("label.st-opt");
   const input = opt && opt.querySelector('input[name="qCurrent"]');
   if (!input) return;
-  if (autoAdvanceTimer) return;                               // 더블클릭으로 두 칸 건너뛰지 않게
   input.checked = true;
+  const list = currentOut[currentIndex];
+  if (list) { const at = list.indexOf(input.value); if (at >= 0) list.splice(at, 1); }
+  opt.classList.remove("out");
+  opt.parentElement.querySelector(".st-x").classList.remove("on");
   $("takeForm").querySelectorAll("label.st-opt").forEach((l) => l.classList.toggle("sel", l === opt));
-  autoAdvanceTimer = setTimeout(() => {
-    autoAdvanceTimer = null;
-    goNext();
-  }, 220);   // 고른 표시가 잠깐 보이게 (마지막 문항이면 goNext가 제출 확인창을 연다)
 });
 
 /* ══════ 문제 시험 — 객관식·주관식 탭에서 선생님이 낸 문제를 푼다 ══════
