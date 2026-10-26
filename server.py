@@ -6171,6 +6171,8 @@ GRAMMAR_CHUNK = 5
 # 잘려 이미 만든 문항까지 통째로 잃었다(2026-10-22). 늦은 묶음은 버리고 받은 만큼으로 진행하며,
 # 빠진 자리는 아래 다시 채우기가 맡는다. 정상 묶음은 보통 10~40초다.
 GRAMMAR_ROUND_DEADLINE = _env("GRAMMAR_ROUND_DEADLINE", 80.0, float)
+# 묶음이 이 시간(초) 넘게 안 끝나면 같은 묶음을 한 번 더 보내 먼저 오는 쪽을 쓴다(정상 묶음은 20~45초).
+GRAMMAR_HEDGE_AFTER = _env("GRAMMAR_HEDGE_AFTER", 45.0, float)
 # 빠진 문항을 다시 채우는 라운드는 더 짧게 기다린다 — 100문항 시험에서 다시 채우는 묶음 2개 중 하나가 느려 80초를 다 기다리는 바람에
 # 전체가 155초가 됐다(2026-10-24). 다시 채우는 묶음은 문항이 적어 보통 20~30초면 끝난다.
 GRAMMAR_REFILL_DEADLINE = _env("GRAMMAR_REFILL_DEADLINE", 35.0, float)
@@ -6287,7 +6289,9 @@ GRAMMAR_SCHEMA = {
                     "conditions": {"type": "ARRAY", "items": {"type": "STRING"}},
                     "explanation": {"type": "STRING"},
                 },
-                "required": ["slot", "shape", "format", "instruction", "passageHtml", "explanation"],
+                # answerText·answer를 필수로 둔다 — 선택이면 AI가 정답을 해설에만 적고 빼먹어, 문장 합치기·전환·배열 영작이
+                # 통째로 버려지고 빠진 문항을 다시 채우느라 한 번 더 호출이 돌았다(2026-10-26 진단). 모양이 안 쓰는 칸은 ""·0으로 둔다.
+                "required": ["slot", "shape", "format", "instruction", "passageHtml", "answer", "answerText", "explanation"],
                 "propertyOrdering": ["slot", "shape", "format", "instruction", "passageHtml", "choices",
                                      "answer", "answerText", "alts", "countItems", "fixes", "wordBank", "conditions", "explanation"],
             },
@@ -6343,7 +6347,7 @@ _GRAMMAR_DIFFICULTY_RULES = {
 ## 난이도: 쉬움 — 위 규칙과 충돌하면 이 규칙이 우선합니다
 수업 직후 이해 확인용입니다. 학생이 그 문법의 기본 규칙 한 가지만 알면 풀려야 합니다.
 - 오답은 그 규칙을 어긴 가장 기본적인 오류(형태·수일치·어순·동사원형 등) 하나로 만듭니다. 오답끼리 함정 종류가 같아도 되고, 같은 항목의 문항끼리 같은 오류 수법을 써도 됩니다. '쉽게 소거되면 안 된다'·'한눈에 비문인 보기를 쓰지 않는다'는 적용하지 않으니 분명히 틀린 보기를 섞어도 됩니다. 단 정답은 여전히 하나뿐이어야 합니다.
-- 문장은 한 문장으로, 학년 규칙의 가장 짧은 쪽(그보다 짧아도 됩니다)으로 씁니다. 절이 둘 이상인 문장은 그 문법 항목이 요구할 때만 씁니다.
+- 문장 길이: {sent} 이 길이가 위의 '학년 규칙' 단어 수보다 우선합니다. 절이 둘 이상인 문장은 그 문법 항목이 요구할 때만 씁니다. 글 속 밑줄·네모 문항처럼 문장을 여럿 잇는 모양도 문장 하나하나가 이 길이를 넘지 않게 합니다.
 - 답의 근거(시간 부사·주어·상대방의 말)가 문장 안에 분명히 있게 합니다. 문맥을 길게 따져야 풀리는 문항은 내지 않습니다.
 - 주관식은 힌트를 넉넉히 줍니다. 우리말을 영작하는 문항은 쓸 낱말을 <보기>(wordBank)나 첫 글자 힌트로 주고, 빈칸·동사형은 한두 곳만, 배열 영작은 5~8단어로 합니다. 정답이 여러 가지로 갈리는 문장은 쓰지 않습니다.
 - 교재식 출제 패턴 중 쉬운 것(형태 고르기·빈칸·동사형 바꾸기·옳은 문장 고르기)을 우선합니다.""",
@@ -6352,13 +6356,16 @@ _GRAMMAR_DIFFICULTY_RULES = {
 ## 난이도: 보통 — 위 규칙과 충돌하면 이 규칙이 우선합니다
 학교 진도·교과서 본문 수준입니다.
 - 객관식 오답은 학생이 실제로 자주 하는 실수 한 가지씩이고, 한 보기에는 오류가 하나만 들어 있습니다. 한 보기 안에서 두 가지 문법을 한꺼번에 따져야 하는 복합 함정은 쓰지 않습니다. 한눈에 비문인 보기는 쓰지 않습니다.
-- 문장 길이는 학년 규칙 범위의 가운데 이하로 씁니다.
+- 문장 길이: {sent} 이 길이가 위의 '학년 규칙' 단어 수보다 우선합니다. 절이 둘 이상인 문장은 문항의 3분의 1 이하로만 씁니다.
 - 조건 영작·문장 전환의 조건은 쓸 문법 장치 하나만 요구합니다. 영작 문항은 우리말 앞뒤 단서로 정답이 하나로 정해지게 합니다.
 - 같은 항목의 문항이 여럿이면 쉬운 것에서 어려운 것 순으로 놓되, 가장 어려운 것도 교과서 문제 수준을 넘지 않게 합니다.""",
     "hard": """
 
 ## 난이도: 어려움 — 위 규칙을 그대로 따릅니다
-변별력이 필요한 심화·내신 대비용입니다. 위의 까다로운 오답 보기와 교재식 함정을 모두 씁니다. 문장 길이는 학년 규칙의 긴 쪽까지 쓸 수 있습니다.""",
+변별력이 필요한 심화·내신 대비용입니다. 위의 까다로운 오답 보기와 교재식 함정을 모두 씁니다.
+- 문장 길이: {sent} 이 길이가 위의 '학년 규칙' 단어 수보다 우선합니다. 문항의 절반 이상은 절이 둘 이상인 문장(관계절·종속절·분사구문 등)으로 씁니다.
+- 객관식 오답 넷 가운데 적어도 둘은 정답과 한 글자·한 낱말만 다른 '아슬아슬한' 보기이거나, 다른 문법 규칙에서 온 그럴듯한 함정(수일치·시제·준동사 혼동 등)이어야 합니다.
+- 답을 가르는 단서를 문장 속 한 곳이 아니라 둘 이상(주어의 수+시간 부사, 앞 절+뒤 절 등)에서 모아야 풀리게 하는 문항을 절반 이상 섞습니다.""",
 }
 
 # 문항 영어 문장의 낱말 기준 — 2022 개정 교육과정 기본 어휘(curriculum_vocab_2022.csv, 지문 변형이 쓰는 것과 같은 목록).
@@ -6379,6 +6386,42 @@ _GRAMMAR_VOCAB_STRENGTH = {
 }
 _GRAMMAR_VOCAB_LEVELS = {"e56": 1, "m1": 2, "m2": 2, "m3": 2, "high": 3}   # 레벨 → 싣는 학교급 수(초등 / +중학교·공통 / +고등 선택)
 _GRAMMAR_SYSTEM_CACHE = {}
+# 영어 문장 하나의 단어 수 범위(레벨 × 난이도) — 지시문에 숫자로 싣고, 쉬움·보통은 넘는 문항을 기계로도 버린다
+# (2026-10-26 실측: 중2 보통 문장당 10.2단어·어려움 10.7단어로 거의 같았고, 초등은 쉬움·보통이 5.9단어로 같았다).
+_GRAMMAR_SENT_LIMITS = {
+    "e56": {"easy": (4, 6), "normal": (5, 8), "hard": (7, 11)},
+    "m1": {"easy": (5, 7), "normal": (6, 10), "hard": (9, 14)},
+    "m2": {"easy": (6, 9), "normal": (8, 12), "hard": (11, 17)},
+    "m3": {"easy": (7, 10), "normal": (9, 14), "hard": (12, 19)},
+    "high": {"easy": (8, 12), "normal": (11, 17), "hard": (15, 24)},
+}
+_GRAMMAR_SENT_SLACK = 2   # 기계 검사는 상한에서 이만큼 더 봐 준다(쉬움·보통만)
+
+
+def _grammar_sent_words(text):
+    """글 속 영어 문장마다의 단어 수. 네모 [a / b]·괄호 (힌트|정답)는 낱말 하나로, 우리말 문장은 센 대상이 아니다."""
+    t = re.sub(r"<br\s*/?>|\n", ". ", str(text or ""))
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = re.sub(r"\[[^\]]*\]|\([^()]*\)", " x ", t)
+    t = re.sub(r"[①-⑤ⓐ-ⓩ]", " ", t)
+    out = []
+    for s in re.split(r"(?<=[.?!])\s+", t):
+        n = len(re.findall(r"[A-Za-z][A-Za-z’'\-]*", s))
+        if n >= 3:
+            out.append(n)
+    return out
+
+
+def _grammar_too_long(q, slot):
+    """쉬움·보통 문항에 상한을 넘는 영어 문장이 있으면 참 — 어려움은 길이로 버리지 않는다."""
+    diff, grade = slot.get("diff") or "normal", slot.get("grade") or ""
+    lim = (_GRAMMAR_SENT_LIMITS.get(grade) or {}).get(diff)
+    if not lim or diff == "hard":
+        return False
+    texts = [q.get("passageHtml"), q.get("answerText")]
+    if q.get("format") == "mc":   # 보기가 문장인 문항(옳은 문장 고르기 등)
+        texts += list(q.get("choices") or [])
+    return any(n > lim[1] + _GRAMMAR_SENT_SLACK for tx in texts for n in _grammar_sent_words(tx))
 
 
 def _grammar_system_text(plan):
@@ -6392,7 +6435,8 @@ def _grammar_system_text(plan):
             text += _GRAMMAR_VOCAB_RULES.replace("{strength}", _GRAMMAR_VOCAB_STRENGTH[plan["difficulty"]])
             for lv in levels:
                 text += f"\n\n[{lv} — {len(_CURRICULUM_HEADS[lv])}단어]\n" + ", ".join(_CURRICULUM_HEADS[lv])
-        text += _GRAMMAR_DIFFICULTY_RULES[plan["difficulty"]]
+        lo, hi = (_GRAMMAR_SENT_LIMITS.get(plan["grade"]) or _GRAMMAR_SENT_LIMITS["m2"])[plan["difficulty"]]
+        text += _GRAMMAR_DIFFICULTY_RULES[plan["difficulty"]].replace("{sent}", f"영어 문장 하나는 {lo}~{hi}단어로 씁니다.")
         _GRAMMAR_SYSTEM_CACHE[key] = text
     return text
 
@@ -6798,6 +6842,17 @@ def _grammar_hint_fill(q):
     q["passageHtml"] = re.sub(r"\(([^()|]*)\|([^()|]*)\)", one, str(q.get("passageHtml") or ""))
 
 
+def _grammar_rescue_answer(q):
+    """문장을 쓰는 문항(배열 영작·문장 전환·합치기·조건 영작)에서 AI가 모범답안(answerText)을 비우고 alts에만 적었으면
+    alts의 첫 문장을 대표 답으로 올린다. 해설 속 문장을 답으로 추측해 쓰지는 않는다 — 학생 시험의 정답표가
+    틀리는 것보다 버리고 다시 만드는 편이 낫다."""
+    if q.get("format") not in ("write", "convert", "compose") or str(q.get("answerText") or "").strip():
+        return
+    alts = [a for a in (q.get("alts") or []) if str(a or "").strip()]
+    if alts:
+        q["answerText"], q["alts"] = str(alts[0]).strip(), alts[1:]
+
+
 def _grammar_finish(raw, slot):
     """AI가 만든 문항 하나를 다듬어 화면·문제 시험이 쓰는 모양으로. 못 쓰면 None."""
     if not isinstance(raw, dict):
@@ -6810,9 +6865,10 @@ def _grammar_finish(raw, slot):
     q = dict(raw)
     q["format"] = _GRAMMAR_SHAPE_FORMAT[shape]
     q["type"] = slot["item"]
+    _grammar_rescue_answer(q)
     if shape == "mc_underline":   # 보기를 먼저 정해야 _grammar_flawed가 글 속 ①~⑤를 센다
         q["choices"] = ["①", "②", "③", "④", "⑤"]
-    if _grammar_flawed(q):
+    if _grammar_flawed(q) or _grammar_too_long(q, slot):
         return None
     if shape == "mc_count":
         if not _grammar_build_count(q):
@@ -6897,23 +6953,38 @@ def call_gemini_grammar(plan, api_key, model=None):
 
     themes = random.sample(_GRAMMAR_THEMES, len(_GRAMMAR_THEMES))
 
-    def run(groups, avoid=None, deadline=GRAMMAR_ROUND_DEADLINE):
+    def run(groups, avoid=None, deadline=GRAMMAR_ROUND_DEADLINE, hedge_after=GRAMMAR_HEDGE_AFTER):
+        done = set()
+
         def work(k, group):
             _vertex_set_labels(labels)
             try:
                 got.update(_grammar_call(plan, group, api_key, model,
                                          theme=themes[k % len(themes)], avoid=avoid))
+                done.add(k)
             except Exception as e:   # 한 묶음 실패가 전체를 막지 않게 — 아래에서 모아 판단한다
                 errors.append(e)
         threads = [threading.Thread(target=work, args=(k, g), daemon=True) for k, g in enumerate(groups)]
         for t in threads:
             t.start()
-        end = time.monotonic() + deadline
-        for t in threads:
-            t.join(max(0.0, end - time.monotonic()))
-        hung = sum(1 for t in threads if t.is_alive())
+        began = time.monotonic()
+        end = began + deadline
+        hedged = False
+        # 묶음 하나가 유독 느리면(보통 20~40초인데 80초 넘게 매달리는 일이 있다 — 2026-10-26 진단) 같은 묶음을 한 번 더
+        # 보내 먼저 오는 쪽을 쓴다. 느린 묶음을 80초 다 기다린 뒤 다시 채우느라 요청이 100~150초가 되던 것을 줄인다.
+        while time.monotonic() < end and len(done) < len(groups) and any(t.is_alive() for t in threads):
+            if not hedged and time.monotonic() - began >= hedge_after:
+                hedged = True
+                for k, g in enumerate(groups):
+                    if k not in done:
+                        t = threading.Thread(target=work, args=(k, g), daemon=True)
+                        threads.append(t)
+                        t.start()
+                        print(f"[grammar] 묶음 {k + 1}/{len(groups)}이 {hedge_after:.0f}초 넘게 걸려 한 번 더 보냅니다", flush=True)
+            time.sleep(0.2)
+        hung = len(groups) - len(done) if any(t.is_alive() for t in threads) else 0
         if hung:   # 늦은 묶음의 결과가 나중에 도착해도 got.update가 덮어쓸 뿐이라 해가 없다
-            print(f"[grammar] 묶음 {hung}/{len(threads)}개가 {deadline:.0f}초 안에 끝나지 않아 "
+            print(f"[grammar] 묶음 {hung}/{len(groups)}개가 {deadline:.0f}초 안에 끝나지 않아 "
                   f"기다리지 않습니다", file=sys.stderr, flush=True)
 
     def drop_dups():
@@ -6949,7 +7020,7 @@ def call_gemini_grammar(plan, api_key, model=None):
             break
         avoid = [re.sub(r"<[^>]+>", " ", q.get("answerText") or q.get("passageHtml") or "")[:120]
                  for q in got.values()][:40]
-        run(chunks(missing), avoid, GRAMMAR_REFILL_DEADLINE)   # 다시 채우는 라운드는 짧게 기다린다
+        run(chunks(missing), avoid, GRAMMAR_REFILL_DEADLINE, hedge_after=28.0)   # 다시 채우는 라운드는 짧게 기다린다
         drop_dups()
     final = dict(got)   # 늦게 도착하는 묶음이 아래 계산 중에 값을 바꾸지 못하게 복사해 둔다
     questions = [final[s["slot"]] for s in slots if s["slot"] in final]
