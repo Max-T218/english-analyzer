@@ -6948,7 +6948,7 @@ def _grammar_finish(raw, slot):
     return clean
 
 
-def _grammar_call(plan, slots, api_key, model, theme=None, avoid=None):
+def _grammar_call(plan, slots, api_key, model, theme=None, avoid=None, cache="reuse"):
     # 한 묶음은 난이도가 하나다 — 난이도는 지시문(systemInstruction)에 실리므로 묶음 단위로만 바꿀 수 있다
     diff = (slots[0].get("diff") if slots else None) or plan["difficulty"]
     # 레벨도 묶음 단위다 — 항목마다 레벨이 다를 수 있어 레벨이 같은 문항끼리 묶는다(chunks)
@@ -6964,7 +6964,7 @@ def _grammar_call(plan, slots, api_key, model, theme=None, avoid=None):
         },
     }
     result = _gemini_json(payload, api_key, model, "문항이 너무 길어 잘렸습니다. 문항 수를 줄여 다시 시도해 주세요.",
-                          salvage=True, label="grammar")
+                          salvage=True, label="grammar", cache_system=cache)
     by_slot = {s["slot"]: s for s in slots}
     out = {}
     for raw in result.get("questions") or []:
@@ -6996,12 +6996,19 @@ def call_gemini_grammar(plan, api_key, model=None):
 
     def run(groups, avoid=None, deadline=GRAMMAR_ROUND_DEADLINE, hedge_after=GRAMMAR_HEDGE_AFTER):
         done = set()
+        # 같은 지시문(난이도·레벨)으로 묶음이 둘 이상 나갈 때만 지시문을 캐시로 새로 맡긴다 — 하나뿐이면 맡기는 값이
+        # 더 들어 이미 맡겨 둔 캐시만 쓴다(_context_cache_name)
+        same = {}
+        for g in groups:
+            same[(g[0]["diff"], g[0]["grade"])] = same.get((g[0]["diff"], g[0]["grade"]), 0) + 1
 
         def work(k, group):
             _vertex_set_labels(labels)
             try:
+                many = same[(group[0]["diff"], group[0]["grade"])] >= 2
                 got.update(_grammar_call(plan, group, api_key, model,
-                                         theme=themes[k % len(themes)], avoid=avoid))
+                                         theme=themes[k % len(themes)], avoid=avoid,
+                                         cache=True if many else "reuse"))
                 done.add(k)
             except Exception as e:   # 한 묶음 실패가 전체를 막지 않게 — 아래에서 모아 판단한다
                 errors.append(e)
@@ -10926,21 +10933,99 @@ def _log_usage(body, model, label=""):
     )
 
 
-def _gemini_json(payload, api_key, model, trunc_msg, salvage=False, label=""):
+# ── 지시문 캐시(AI Studio의 cachedContents) ──
+# 문법 마법사는 5문항씩 묶어 동시에 부르는데, 묶음마다 같은 지시문(기본 규칙 + 교육과정 단어 목록, 중2 약 7천 토큰)을
+# 처음부터 다시 보냈다. 동시에 나가니 구글의 자동 캐시도 안 걸렸다. 지시문을 한 번 맡겨 두고 이름으로 가리키면
+# 그 몫은 캐시 값(보통 입력의 약 10분의 1)만 나간다. 맡기는 첫 번에는 그 토큰을 원래 값으로 한 번 내고,
+# 맡겨 둔 동안 보관료가 붙어(분 단위, 수천 토큰이라 1원 안팎) 묶음이 둘 이상일 때만 쓴다.
+# 보내는 글은 그대로라 결과물은 같다. Vertex는 쓰지 않기로 해(2026-10-26) 그 길이 켜져 있으면 캐시 없이 보낸다.
+CONTEXT_CACHE_TTL = _env("CONTEXT_CACHE_TTL", 300, int)   # 한 요청(최대 약 100초)과 이어 오는 요청을 덮는 길이
+_CTX_CACHE = {}          # (모델, 지시문 해시) → (캐시 이름, 끝나는 시각) — 이름이 None이면 만들기 실패(잠시 다시 안 해 본다)
+_CTX_CACHE_LOCK = threading.Lock()
+_CTX_CACHE_KEY_LOCKS = {}
+
+
+def _context_cache_name(model, system_instruction, api_key, create=True):
+    """지시문을 맡겨 둔 캐시 이름. 못 만들면 None — 부른 쪽은 캐시 없이 보낸다.
+    create=False면 이미 맡겨 둔 것만 쓴다(묶음이 하나뿐이라 새로 맡기면 오히려 손해일 때)."""
+    text = json.dumps(system_instruction, ensure_ascii=False, sort_keys=True)
+    key = (model, hashlib.sha256(text.encode("utf-8")).hexdigest())
+    with _CTX_CACHE_LOCK:
+        lock = _CTX_CACHE_KEY_LOCKS.setdefault(key, threading.Lock())
+    # 같은 지시문으로 동시에 나가는 묶음들이 저마다 캐시를 만들지 않게 — 첫 묶음이 만드는 동안 나머지는 기다린다
+    with lock:
+        hit = _CTX_CACHE.get(key)
+        if hit and hit[1] - time.time() > (120 if hit[0] else 0):   # 쓰는 도중 끝나지 않게 2분은 남아 있어야 쓴다
+            return hit[0]
+        if not create:
+            return None
+        name = None
+        try:
+            body = json.dumps({"model": f"models/{model}", "systemInstruction": system_instruction,
+                               "ttl": f"{CONTEXT_CACHE_TTL}s"}).encode("utf-8")
+            req = urllib.request.Request(
+                "https://generativelanguage.googleapis.com/v1beta/cachedContents", data=body, method="POST",
+                headers={"content-type": "application/json", "x-goog-api-key": api_key})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                name = json.loads(resp.read().decode("utf-8")).get("name") or None
+        except urllib.error.HTTPError as e:
+            print(f"[cache] {model} 지시문 캐시 만들기 실패 {e.code} — 캐시 없이 보냅니다: "
+                  f"{e.read().decode('utf-8', 'replace')[:200]}", flush=True)
+        except Exception as e:
+            print(f"[cache] {model} 지시문 캐시 만들기 실패 — 캐시 없이 보냅니다: {e}", flush=True)
+        # 실패도 잠시 기억한다(1분) — 요청마다 헛걸음하지 않게
+        _CTX_CACHE[key] = (name, time.time() + (CONTEXT_CACHE_TTL if name else 60))
+        return name
+
+
+def _context_cache_drop(name):
+    with _CTX_CACHE_LOCK:
+        for k, v in list(_CTX_CACHE.items()):
+            if v[0] == name:
+                _CTX_CACHE.pop(k, None)
+
+
+def _gemini_json(payload, api_key, model, trunc_msg, salvage=False, label="", cache_system=False):
     """페이로드를 보내고 JSON 결과를 받는다 (모든 Gemini 호출의 공통 입구).
 
     RECITATION으로 막히면 표본추출 설정을 바꿔 다시 시도한다. 이 차단은 '가장 그럴듯한
     다음 토큰'만 고르는 결정적 디코딩에서 특히 잘 나는데, 그렇게 뽑은 문장이 학습 데이터에
     있는 원문과 글자 단위로 일치해 버리기 때문이다. 온도를 올려 표본을 흔들면 같은 내용을
     담으면서도 차단을 피해 가는 경우가 많다.
-    (safetySettings로는 끌 수 없다 — RECITATION은 유해성 분류가 아니라 별도 검사다)"""
+    (safetySettings로는 끌 수 없다 — RECITATION은 유해성 분류가 아니라 별도 검사다)
+
+    cache_system: 지시문(systemInstruction)을 캐시로 맡겨 두고 이름으로 가리킨다(_context_cache_name).
+    "reuse"면 이미 맡겨 둔 캐시만 쓰고 새로 맡기지 않는다. 캐시가 없거나 그걸로 보낸 요청이 거절되면 지시문을 그대로 실어 다시 보낸다."""
     attempts = (None, 0.4, 0.85)
     last = None
+    cache = None
+    if cache_system and payload.get("systemInstruction") and not _vertex_ready():
+        key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+        cache = (_context_cache_name(model, payload["systemInstruction"], key, create=cache_system != "reuse")
+                 if key else None)
     for temp in attempts:
         if temp is not None:
             payload.setdefault("generationConfig", {})["temperature"] = temp
         data = json.dumps(payload).encode("utf-8")
-        body = _gemini_call_with_retry(data, api_key, model)
+        if cache:
+            lean = {k: v for k, v in payload.items() if k != "systemInstruction"}
+            lean["cachedContent"] = cache
+            try:
+                body = _gemini_call_with_retry(json.dumps(lean).encode("utf-8"), api_key, model,
+                                               allow_fallback=False)
+            except (QuotaExceeded, ProUnavailable):
+                raise
+            except RuntimeError as e:
+                low = str(e).lower()
+                # 캐시가 일찍 사라졌거나 모양을 거절당했을 때만 — 시간 초과·과부하는 다시 보내 봐야 또 기다린다
+                if not ("cache" in low or any(f"오류 {c}" in low for c in (400, 403, 404))):
+                    raise
+                print(f"[cache] {model} 캐시로 보낸 요청이 거절됨 — 지시문을 실어 다시 보냅니다: {e}", flush=True)
+                _context_cache_drop(cache)
+                cache = None
+                body = _gemini_call_with_retry(data, api_key, model)
+        else:
+            body = _gemini_call_with_retry(data, api_key, model)
         _log_usage(body, model, label)
         try:
             return _extract_gemini_json(body, trunc_msg, salvage)
