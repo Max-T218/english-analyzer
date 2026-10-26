@@ -6173,6 +6173,8 @@ GRAMMAR_CHUNK = 5
 GRAMMAR_ROUND_DEADLINE = _env("GRAMMAR_ROUND_DEADLINE", 80.0, float)
 # 묶음이 이 시간(초) 넘게 안 끝나면 같은 묶음을 한 번 더 보내 먼저 오는 쪽을 쓴다(정상 묶음은 20~45초).
 GRAMMAR_HEDGE_AFTER = _env("GRAMMAR_HEDGE_AFTER", 45.0, float)
+# 첫 라운드가 이 시간(초) 넘게 걸렸고 빠진 문항이 적으면 서버가 다시 채우지 않고 돌려준다(화면이 이어 채운다).
+GRAMMAR_REFILL_SKIP_AFTER = _env("GRAMMAR_REFILL_SKIP_AFTER", 30.0, float)
 # 빠진 문항을 다시 채우는 라운드는 더 짧게 기다린다 — 100문항 시험에서 다시 채우는 묶음 2개 중 하나가 느려 80초를 다 기다리는 바람에
 # 전체가 155초가 됐다(2026-10-24). 다시 채우는 묶음은 문항이 적어 보통 20~30초면 끝난다.
 GRAMMAR_REFILL_DEADLINE = _env("GRAMMAR_REFILL_DEADLINE", 35.0, float)
@@ -7014,6 +7016,11 @@ def call_gemini_grammar(plan, api_key, model=None):
     for _round in range(2):
         missing = [s for s in slots if s["slot"] not in got]
         if not missing or _over_budget(t0):
+            break
+        # 첫 라운드가 이미 오래 걸렸고 빠진 문항이 몇 개뿐이면 서버가 더 기다리지 않고 돌려준다 — 화면이 빠진 수만큼
+        # 곧바로 이어 채운다(grammar.js, 문항당 값만). 실서비스 로그(2026-10-26): 첫 라운드 44초 뒤 1문항을 채우느라
+        # 36초를 더 기다리다 포기하고(늦게 끝난 호출 두 개는 버려져 비용만 나갔다), 이어 채우기는 15초에 끝났다.
+        if time.monotonic() - t0 >= GRAMMAR_REFILL_SKIP_AFTER and len(missing) <= max(3, len(slots) // 6):
             break
         # 한 문항도 못 받았어도 한도 소진·Pro 불가가 아니면 한 번 더 부른다(일시적인 지연·과부하가 많다)
         if not got and any(isinstance(e, (QuotaExceeded, ProUnavailable)) for e in errors):
