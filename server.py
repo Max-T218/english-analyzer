@@ -14987,7 +14987,8 @@ def list_students(teacher_id, class_id):
             "passed": sum(1 for t in tests if t["status"] == "passed"),
             "last": ({"title": last["title"], "score": last["rounds"][-1]["score"],
                       "total": last["rounds"][-1]["total"], "status": last["status"],
-                      "qc": last.get("qc"), "at": last["lastAt"]} if last else None),
+                      "qc": last.get("qc"), "at": last["lastAt"],
+                      "noCriterion": last.get("kind") != "quiz" and last.get("maxWrong") is None} if last else None),
         })
     rows.sort(key=lambda r: r["createdAt"])
     return rows
@@ -15576,6 +15577,7 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
         return {
             "score": last.get("score", 0), "total": last.get("total", 0),
             "wrong": last.get("wrong", 0), "passed": True, "round": last.get("round", 1),
+            "noCriterion": assignment.get("max_wrong") is None,
         }
     round = progress["nextRound"]
 
@@ -15629,10 +15631,11 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
         return {
             "score": d.get("score", 0), "total": d.get("total", 0),
             "wrong": d.get("wrong", 0), "passed": d.get("passed", True),
-            "round": d.get("round", round),
+            "round": d.get("round", round), "noCriterion": max_wrong is None,
         }
+    # noCriterion — 합격 기준(max_wrong) 없이 낸 시험. 화면이 '합격' 대신 '시험을 마쳤습니다'로 쓴다(2026-10-28 사용자)
     return {"score": score, "total": total, "wrong": wrong, "passed": passed, "round": round,
-            "wrongItems": _wrong_items(details)}
+            "noCriterion": max_wrong is None, "wrongItems": _wrong_items(details)}
 
 
 def _wrong_items(details):
@@ -15665,6 +15668,7 @@ def get_result_for_student(student_id, assignment_id):
         "title": assignment.get("title", ""), "round": last.get("round", 1),
         "score": last.get("score", 0), "total": last.get("total", 0),
         "wrong": last.get("wrong", 0), "passed": progress["passed"],
+        "noCriterion": assignment.get("max_wrong") is None,
         "retakeOpen": progress["retakeOpen"],
         "attemptCount": len(attempts),
         "hasDetails": "details" in last,
@@ -15861,6 +15865,8 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
     out = {
         "attempts": rows,
         "kind": "quiz" if quiz else "vocab",
+        # 합격 기준 없이 낸 단어시험 — 화면이 '합격' 대신 '시험 마침'으로 쓴다
+        "noCriterion": (not quiz) and assignment.get("max_wrong") is None,
         "summary": {
             "targets": len(rows), "submitted": len(submitted),
             "passed": sum(1 for r in rows if r["status"] == "passed"),

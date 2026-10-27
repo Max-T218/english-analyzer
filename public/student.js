@@ -188,7 +188,10 @@ function renderTests(tests) {
       buttons = `<button type="button" class="btn take-btn" data-id="${id}">재시험 보기</button>
         <button type="button" class="btn ghost result-btn" data-id="${id}">지난 결과 보기</button>${study}`;
     } else if (t.passed) {
-      status = `<div class="st-card-status ok">✅ 합격 (${t.passedRound}회차 · ${t.score}/${t.total})</div>`;
+      // 합격 기준 없이 낸 시험은 '합격'이 아니라 '시험 마침'(2026-10-28 사용자)
+      status = t.maxWrong == null
+        ? `<div class="st-card-status ok">✅ 시험 마침 (${t.score}/${t.total})</div>`
+        : `<div class="st-card-status ok">✅ 합격 (${t.passedRound}회차 · ${t.score}/${t.total})</div>`;
       buttons = `<button type="button" class="btn ghost result-btn" data-id="${id}">결과 보기</button>${study}`;
     } else {
       status = `<div class="st-card-status bad">미통과 (${t.attemptCount}회 시도 · 최근 ${t.score}/${t.total})</div>`;
@@ -370,7 +373,9 @@ function showResultScreen(result, opts) {
   opts = opts || {};
   $("resultHeading").textContent = opts.title ? opts.title : "제출 완료!";
   $("resultScore").textContent = `${result.score} / ${result.total}점`;
-  $("resultLead").textContent = result.passed
+  $("resultLead").textContent = result.passed && result.noCriterion
+    ? "✅ 시험을 마쳤습니다."
+    : result.passed
     ? (result.round > 1 ? `🎉 ${result.round}회차 만에 합격했습니다!` : "🎉 합격했습니다!")
     : result.retakeOpen
       ? "🔁 선생님이 재시험을 내셨어요. 다시 도전해 보세요."

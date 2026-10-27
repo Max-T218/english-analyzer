@@ -17011,7 +17011,8 @@ function studentLastScoreHtml(s) {
   if (!s.tests) return `<span class="hint">배정된 시험 없음</span>`;
   const sub = `<span class="hint">응시 ${s.done}/${s.tests} · 합격 ${s.passed}</span>`;
   if (!s.last) return `<span class="hint">아직 응시 안 함</span><br>${sub}`;
-  const st = SCORE_STATUS[s.last.status] || SCORE_STATUS.none;
+  const st = s.last.noCriterion && s.last.status === "passed"
+    ? ["✅ 시험 마침", "var(--accent)"] : (SCORE_STATUS[s.last.status] || SCORE_STATUS.none);
   const result = s.last.qc ? QT.countsText(s.last.qc, true) : `<b>${s.last.score}/${s.last.total}</b>`;
   return `${esc(s.last.title)} ${result} <span style="color:${st[1]};">${st[0]}</span><br>${sub}`;
 }
@@ -17059,9 +17060,11 @@ function reportTilesHtml(tiles) {
     <div class="trend-tile" style="--acc:${t.color}"><span>${t.label}</span>
       <b>${t.value}<small>${t.unit || ""}</small></b><em>${t.sub || "&nbsp;"}</em></div>`).join("")}</div></div>`;
 }
-function statusTagHtml(status, passedRound) {
+function statusTagHtml(status, passedRound, noCriterion) {
   // done — 문제 시험(합격 기준 없이 한 번 푸는 시험)을 냈다
   // retake — 선생님이 재시험을 열어 주었고 학생이 아직 안 봤다
+  // noCriterion — 합격 기준 없이 낸 단어시험: 냈으면 '합격'이 아니라 '시험 마침'(2026-10-28 사용자)
+  if (noCriterion && status === "passed") return `<span class="tag pass">시험 마침</span>`;
   const label = { passed: "합격", failed: "미통과", none: "미제출", done: "제출", retake: "재시험 대기" }[status] || "미제출";
   const cls = { passed: "pass", failed: "fail", none: "none", done: "pass", retake: "fail" }[status] || "none";
   if (status === "done" || status === "retake") passedRound = null;
@@ -17112,7 +17115,7 @@ function renderTestResults(data, title) {
       r.status === "retake" ? `<button type="button" class="btn ghost small retake-btn" data-cancel="1" ${who}>재시험 거두기</button>` : "";
     return `<tr>
         <td class="tk">${esc(r.studentName)}${r.removed ? ' <span class="hint">(삭제된 학생)</span>' : ""}</td>
-        <td>${statusTagHtml(r.status, r.passedRound)}</td>
+        <td>${statusTagHtml(r.status, r.passedRound, data.noCriterion)}</td>
         <td class="tk">${esc(roundsText(r.rounds)) || "—"}</td>
         <td>${esc(fmtDateTime(r.lastAt))}</td>
         <td class="no-print">${wrongBtn} ${retakeBtn}</td>
@@ -17273,7 +17276,7 @@ function studentReportPrintableHtml(data, period, commentHtml) {
   const top = done.reduce((a, t) => (!a || t.bestPercent > a.bestPercent ? t : a), null);
   const missing = sm.tests - sm.done;
   const testRows = tests.length ? tests.map((t) => `<tr><td class="tk">${esc(t.title)}</td>
-      <td>${statusTagHtml(t.status, t.passedRound)}</td>
+      <td>${statusTagHtml(t.status, t.passedRound, t.kind !== "quiz" && t.maxWrong == null)}</td>
       <td class="tk">${t.kind === "quiz"
         ? (t.qc ? `📝 ${QT.countsText(t.qc)}` : "—")
         : esc(roundsText(t.rounds)) || "—"}</td><td>${esc(fmtDateTime(t.lastAt))}</td></tr>`).join("")
