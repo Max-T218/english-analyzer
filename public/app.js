@@ -17916,7 +17916,7 @@ assignRetestChkEl.addEventListener("change", () => {
   assignRetestFieldEl.hidden = !assignRetestChkEl.checked;
 });
 
-async function refreshClassSelectForModal() {
+async function refreshClassSelectForModal(preClassId) {
   try {
     const data = await getJson("/api/classes", "");
     classesCache = data.classes || [];
@@ -17926,6 +17926,8 @@ async function refreshClassSelectForModal() {
   assignClassSelectEl.innerHTML = classesCache.length
     ? classesCache.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")
     : `<option value="">먼저 '학생 관리' 탭에서 반을 만들어 주세요</option>`;
+  // 학생 관리 탭에서 열었으면 그 화면에서 고른 반으로 맞춘다
+  if (preClassId && classesCache.some((c) => c.id === preClassId)) assignClassSelectEl.value = preClassId;
   await refreshAssignTargetSelect();
 }
 
@@ -18145,7 +18147,7 @@ async function openVocabAssign(preIds, preTitle, pick) {
   assignMaxWrongEl.value = "";
   // 단어장 제목 칸에 적어 둔 이름을 시험 제목으로 가져온다(비어 있으면 비운다).
   $("assignTitle").value = preIds && preIds.length ? (preTitle || "") : ($("vocabTitle").value || "").trim();
-  await Promise.all([refreshClassSelectForModal(), refreshAssignVocabSourceSelect(preIds)]);
+  await Promise.all([refreshClassSelectForModal(pick ? selectedClassId : ""), refreshAssignVocabSourceSelect(preIds)]);
   openModal(assignModalEl);
 }
 vocabAssignBtn.addEventListener("click", () => openVocabAssign());
