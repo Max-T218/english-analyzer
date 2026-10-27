@@ -6007,18 +6007,76 @@ briefPrintBtn.addEventListener("click", () => printDoc(() => passageBasedName("�
 TAB_SAVE.brief = {
   saveBtn: briefSaveBtn,
   canSave: () => (lastBriefEntries.length ? "" : "저장할 요약분석이 없습니다. 먼저 만들어 주세요."),
+  /* 요약 이미지는 상세분석과 같은 길로 저장한다 — 그림 주소(blob:)를 글에 넣어 두면 불러올 때 깨진
+     그림만 남는다(2026-10-27). 저장본에는 목록(entry·lang·key=`지문번호_그림번호`)만 두고 본체는
+     저장 뒤 한 장씩 올린다. 그림 이름(한글요약 등)은 lang 칸에 담는다. */
   getPayload: () => ({
     passages: passageMgr.getJobs(),
-    entries: lastBriefEntries,
+    entries: lastBriefEntries.map((e) => ({ ...e, images: undefined, image: undefined })),
+    images: lastBriefEntries.flatMap((e, i) =>
+      (e.images || []).map((im, j) => ({ entry: i, lang: im.name || "", key: `${i}_${j}` }))),
     settings: { targetGrammar: grammarEl.value },
     sheetStyle: briefSheetStyle.get(),
   }),
+  afterSave: async (itemId, payload, onProgress) => {
+    const todo = (payload.images || []).filter((m) => {
+      const [i, j] = m.key.split("_").map(Number);
+      const im = lastBriefEntries[i] && (lastBriefEntries[i].images || [])[j];
+      return im && infoSavedSrc.get(itemId + "|" + m.key) !== im.src;
+    });
+    let failed = 0;
+    const reasons = new Set();
+    if (onProgress && todo.length) onProgress(0, todo.length);
+    for (let n = 0; n < todo.length; n++) {
+      const m = todo[n];
+      try {
+        const [i, j] = m.key.split("_").map(Number);
+        const src = lastBriefEntries[i].images[j].src;
+        const fit = await fitImageForSave(await fetch(src).then((r) => r.blob()));
+        await postJson("/api/saved-image", { id: itemId, key: m.key, mime: fit.mime, image: fit.b64 },
+          "그림 저장에 실패했습니다.");
+        infoSavedSrc.set(itemId + "|" + m.key, src);
+      } catch (e) {
+        failed++;
+        reasons.add((e && e.message) || String(e));
+        console.error("요약 이미지 저장 실패", m.key, e);
+      }
+      if (onProgress) onProgress(n + 1, todo.length);
+    }
+    if (failed) {
+      throw new Error(`글은 저장됐지만 요약 이미지 ${failed}장은 저장하지 못했습니다 — ${[...reasons].join(" / ")} 다시 저장해 보세요.`);
+    }
+  },
+  afterLoad: async (itemId, payload) => {
+    const metas = Array.isArray(payload.images) ? payload.images : [];
+    if (!metas.length) return;
+    const next = lastBriefEntries.map((e) => ({ ...e, images: [] }));
+    let added = 0;
+    for (const m of metas) {
+      try {
+        const d = await getJson(
+          `/api/saved-image/${encodeURIComponent(itemId)}/${encodeURIComponent(m.key)}`, "");
+        if (d && d.image && next[m.entry]) {
+          const src = b64ToBlobUrl(d.image, d.mime || "image/jpeg");
+          next[m.entry].images.push({ src, name: m.lang || "" });
+          infoSavedSrc.set(itemId + "|" + m.key, src);
+          added++;
+        }
+      } catch (_e) { /* 이 그림만 건너뛴다 */ }
+    }
+    if (added) renderBriefEntries(next);
+  },
   applyPayload: (payload) => {
     passageMgr.setJobs(payload.passages || []);
     grammarEl.value = (payload.settings && payload.settings.targetGrammar) || "";
     // 그리기 전에 글꼴을 맞춘다 — 짧은 문장 묶기(briefFitsOneLine)가 그 글꼴로 잰다
     if (payload.sheetStyle) briefSheetStyle.set(payload.sheetStyle);
-    renderBriefEntries(payload.entries || []);
+    // 예전 저장본에는 이미 죽은 그림 주소(blob:)가 글에 박혀 있다 — 깨진 그림 칸이 남지 않게 뺀다
+    renderBriefEntries((payload.entries || []).map((e) => {
+      const live = (e.images || []).filter((im) => im && im.src && !String(im.src).startsWith("blob:"));
+      const one = e.image && !String(e.image).startsWith("blob:") ? e.image : "";
+      return { ...e, images: live, image: one };
+    }));
   },
   clearResults: () => renderBriefEntries([]),
 };
