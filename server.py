@@ -1221,6 +1221,8 @@ PDF_MIME = "application/pdf"
 # 넉넉히 잡았다. 상한을 두는 이유는 크기가 아니라 글자층 해석에 드는 시간이다
 # (실측: 27쪽 2.3초 — 쪽 수에 거의 비례한다).
 PDF_MAX_PAGES = int(os.environ.get("PDF_MAX_PAGES", "80"))
+# 단어장 책(쪽마다 단원·Day 하나)은 글자 위치만 읽고 줄을 합치지 않아 가볍다 — 80쪽을 넘는 책도 받는다
+VOCAB_BOOK_MAX_PAGES = int(os.environ.get("VOCAB_BOOK_MAX_PAGES", "300"))
 # 꺼낸 글자가 이 길이를 넘으면 자른다 — AI 보조(경계 찾기)에 통째로 넣기 때문이다.
 PDF_MAX_CHARS = int(os.environ.get("PDF_MAX_CHARS", "200000"))
 # 이보다 짧은 덩어리는 지문이 아니라 제목·안내문 조각으로 본다.
@@ -5827,9 +5829,129 @@ def _book_page_items(chars):
     return items
 
 
+def _table_cell(chars):
+    """뜻 한 갈래(표의 한 칸)의 글자들 → (품사, 뜻). 뜻이 두 줄로 꺾이면 '(동)' 같은 품사가
+    두 줄의 가운데 높이에 따로 찍혀 있어, 줄 순서로 이으면 뜻 한가운데에 끼어든다 — 품사 줄을 먼저 뗀다."""
+    rows = []
+    for c in sorted((c for c in chars if not c.get_text().isspace()), key=lambda c: -(c.y0 + c.y1)):
+        cy = (c.y0 + c.y1) / 2
+        if rows and abs(rows[-1][0] - cy) <= 3.2:
+            rows[-1][1].append(c)
+        else:
+            rows.append((cy, [c]))
+    if not rows:
+        return "", ""
+    # 줄 끝에 공백 글자가 있으면 낱말 사이에서 꺾인 것이고, 없으면 낱말 한가운데서 꺾인 것이다
+    # ('명시하' / '다' — 뜻이 칸 너비에서 글자 단위로 꺾인다)
+    spaced = set()
+    for c in chars:
+        if c.get_text().isspace():
+            for i, (cy, cs) in enumerate(rows):
+                if abs(cy - (c.y0 + c.y1) / 2) <= 3.2 and c.x0 >= max(x.x0 for x in cs):
+                    spaced.add(i)
+    left = min(c.x0 for _, cs in rows for c in cs)
+    pos, text = [], ""
+    glue = False   # 앞 줄에서 낱말이 이어지는 중인가
+    for i, (_, cs) in enumerate(rows):
+        txt = _book_join(cs)
+        m = re.match(r"^\(([^()]{1,8})\)\s*(.*)$", txt)
+        if m and min(c.x0 for c in cs) - left < 2 and _HANGUL_RE.search(m.group(1)):
+            pos.append(m.group(1).replace(" ", ""))
+            txt = m.group(2)
+            if not txt.strip():
+                continue
+        txt = txt.strip()
+        if not txt:
+            continue
+        if text:
+            text += txt if (glue and _HANGUL_RE.match(txt[0])) else " " + txt
+        else:
+            text = txt
+        glue = i not in spaced and bool(_HANGUL_RE.match(txt[-1]))
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"([(\[]) +", r"\1", text)
+    text = re.sub(r" +([)\],;.])", r"\1", text)
+    return "·".join(pos), text
+
+
+def _table_page_items(chars):
+    """'번호 | 영단어 | 번호 | 뜻 | 뜻' 표(예: 토익 단어 PDF — 쪽마다 25단어)에서 단어 항목을 뽑는다.
+    오른쪽 번호(8pt)를 닻으로 삼아 그 높이의 영단어(12pt, 왼쪽)와 뜻(오른쪽 두 칸)을 짝짓는다.
+    뜻 칸이 둘이면 ' / '로 잇고 품사는 '명·형'처럼 모은다. 못 뽑으면 빈 목록."""
+    raw = [c for c in chars if 60 < c.y0 < 790]   # 맨 위 머리글('토익 독종반' 등)·쪽 아래는 뺀다
+    # 이 PDF는 글씨를 살짝 어긋나게 세 번씩 겹쳐 찍어 굵게 만든다 — 그대로 읽으면 글자가 셋씩 나오니 하나만 남긴다
+    kept, seen = [], {}
+    for c in raw:
+        near = seen.setdefault(c.get_text(), [])
+        if any(abs(k.x0 - c.x0) < 1.0 and abs(k.y0 - c.y0) < 1.0 for k in near):
+            continue
+        near.append(c)
+        kept.append(c)
+    chars = kept
+    digits = sorted((c for c in chars if c.size < 9 and c.get_text().isdigit() and 280 <= c.x0 < 326),
+                    key=lambda c: (-round(c.y0), c.x0))
+    anchors = []
+    for c in digits:
+        for a in anchors:
+            if abs(a["y0"] - c.y0) < 1.0 and -2.0 <= c.x0 - a["x1"] < 2.0:   # 두 자리 이상은 글자끼리 살짝 겹친다
+                a["text"] += c.get_text()
+                a["x1"] = c.x1
+                break
+        else:
+            anchors.append({"text": c.get_text(), "x1": c.x1, "y0": c.y0})
+    anchors = [a for a in anchors if re.fullmatch(r"\d{1,5}", a["text"])]
+    if len(anchors) < 5:
+        return []
+    owner = [{"word": [], "c1": [], "c2": []} for _ in anchors]
+    for c in chars:
+        cy = (c.y0 + c.y1) / 2
+        i = min(range(len(anchors)), key=lambda k: abs(cy - (anchors[k]["y0"] + 4)))
+        if abs(cy - (anchors[i]["y0"] + 4)) > 16:
+            continue
+        if c.x0 < 285:
+            if c.size >= 10:
+                owner[i]["word"].append(c)
+        elif c.x0 >= 326 and c.size < 10:
+            owner[i]["c2" if c.x0 >= 425 else "c1"].append(c)
+    # 영단어는 겹쳐 찍은 세 벌 중 한 벌이 몇 pt 어긋난 줄이 있다(meanwhile) — 위치로는 같은 글자인지 알 수 없어,
+    # 겹치기 전 글자를 찍힌 순서대로 모아 'P P P'로 반복되면 첫 벌만 쓴다. 영단어 칸의 한글(숨은 글자)은 버린다.
+    first = [[] for _ in anchors]
+    for c in raw:
+        if c.x0 < 285 and c.size >= 10 and not _HANGUL_RE.search(c.get_text()) and not c.get_text().isspace():
+            cy = (c.y0 + c.y1) / 2
+            i = min(range(len(anchors)), key=lambda k: abs(cy - (anchors[k]["y0"] + 4)))
+            if abs(cy - (anchors[i]["y0"] + 4)) <= 16:
+                first[i].append(c)
+    for i, cs in enumerate(first):
+        t = "".join(c.get_text() for c in cs)
+        for L in range(1, len(t) // 2 + 1):
+            if t[:2 * L] == t[:L] * 2 and abs(len(t) - 3 * L) <= 2:
+                owner[i]["word"] = cs[:L]
+                break
+        else:
+            owner[i]["word"] = [c for c in owner[i]["word"] if not _HANGUL_RE.search(c.get_text())]
+    items = []
+    for a, o in zip(anchors, owner):
+        word = _book_text(o["word"])
+        cells = [_table_cell(o["c1"]), _table_cell(o["c2"])]
+        meaning = " / ".join(t for _, t in cells if t)
+        if not word or not meaning:
+            continue
+        pos = []
+        for p, _ in cells:
+            for t in p.split("·"):
+                if t and t not in pos:
+                    pos.append(t)
+        items.append({"no": int(a["text"]), "word": word, "pos": "·".join(pos),
+                      "meaning": meaning, "synonym": "", "antonym": "", "definition": ""})
+    items.sort(key=lambda v: v["no"])
+    return items if len(items) >= 5 else []
+
+
 def parse_vocab_book_pdf(raw):
     """번호 붙은 단어장 책을 쪽(단원)별로 나눠 [{title, page, items}]로 돌려준다.
-    이 모양의 책이 아니면 빈 목록 — 호출한 쪽이 기존 규칙·AI 길로 넘어간다."""
+    이 모양의 책이 아니면 빈 목록 — 호출한 쪽이 기존 규칙·AI 길로 넘어간다.
+    쪽마다 단원 하나가 아닌 '번호|영단어|번호|뜻' 표(토익 단어 PDF)는 쪽 하나를 'Day N' 하나로 본다."""
     if not PDF_READY:
         return []
     def walk(o):
@@ -5838,15 +5960,21 @@ def parse_vocab_book_pdf(raw):
         elif isinstance(o, LTContainer):
             for c in o:
                 yield from walk(c)
-    sections = []
+    sections, tables = [], []
     try:
-        for pno, page in enumerate(_pdf_extract_pages(io.BytesIO(raw), maxpages=PDF_MAX_PAGES), 1):
+        for pno, page in enumerate(_pdf_extract_pages(io.BytesIO(raw), maxpages=VOCAB_BOOK_MAX_PAGES), 1):
             chars = list(walk(page))
             items = _book_page_items(chars)
             if items:
                 sections.append({"title": _book_title(chars) or f"{pno}쪽", "page": pno, "items": items})
+                continue
+            items = _table_page_items(chars)
+            if items:
+                tables.append({"title": f"Day {pno}", "page": pno, "items": items})
     except Exception:
         return []
+    if sum(len(s["items"]) for s in sections) < 20:
+        sections = tables
     if sum(len(s["items"]) for s in sections) < 20:
         return []
     for s in sections:

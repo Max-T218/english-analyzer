@@ -11666,8 +11666,10 @@ async function runVocabPdf(fileList) {
       _id: `v${stamp}${i}${Math.floor(Math.random() * 1e6)}`,
     }));
     fresh.forEach((s) => { if (s.off === undefined) delete s.off; if (!s.book) delete s.book; });
-    const names = new Set(fresh.map((s) => s.name));
-    saveVocabSets([...getVocabSets().filter((s) => !(s.src === "book" && names.has(s.name))), ...fresh]);
+    // 책 이름까지 같아야 같은 단원이다 — 'Day 1'처럼 단원 이름이 책마다 겹칠 수 있다
+    const keyOf = (s) => `${s.book || ""}\u0000${s.name}`;
+    const keys = new Set(fresh.map(keyOf));
+    saveVocabSets([...getVocabSets().filter((s) => !(s.src === "book" && keys.has(keyOf(s)))), ...fresh]);
     const total = bookSections.reduce((n, s) => n + s.items.length, 0);
     parts.push(many
       ? `<b>${bookSections.length}개 단어장</b>(${esc(bookSections[0].title)} … ${esc(bookSections[bookSections.length - 1].title)}) · ${total}단어를 쪽별로 나눴습니다. ` +
