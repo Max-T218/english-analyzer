@@ -16872,7 +16872,7 @@ deleteClassBtn.addEventListener("click", async () => {
    앞부분이 다르다). 지금 보고 있는 주소를 그대로 써서 통째로 복사할 수 있게 한다. */
 const studentUrlDisplayEl = $("studentUrlDisplay");
 const copyStudentUrlBtn = $("copyStudentUrlBtn");
-const STUDENT_URL = `${location.origin}/student.html`;
+const STUDENT_URL = `${location.origin}/student`;
 studentUrlDisplayEl.textContent = STUDENT_URL;
 copyStudentUrlBtn.addEventListener("click", async () => {
   try {
