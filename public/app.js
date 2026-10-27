@@ -17149,6 +17149,14 @@ function reportMonthDefault() {
 // "2026-10" → 그 달 1일 0시 ~ 다음 달 1일 0시(선생님 컴퓨터의 시간대 = 한국 시간)
 function reportPeriod(monthStr) {
   if (!monthStr) return null;
+  if (monthStr === "week" || monthStr === "lastweek") {   // 월~일 한 주 — 주간 오답테스트용
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - (monthStr === "lastweek" ? 7 : 0));   // 그 주 월요일
+    const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7);
+    const thu = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 3);   // 목요일이 든 달을 그 주의 달로 본다
+    return { start: d.toISOString(), end: end.toISOString(), label: `${thu.getMonth() + 1}월 ${Math.ceil(thu.getDate() / 7)}주차`, week: true };
+  }
   const [y, m] = monthStr.split("-").map(Number);
   if (!y || !m) return null;
   return {
@@ -17156,6 +17164,12 @@ function reportPeriod(monthStr) {
     end: new Date(y, m, 1).toISOString(),
     label: `${y}년 ${m}월`,
   };
+}
+
+// 틀린 단어 시험·단어장 이름 — "10월 4주차 오답테스트" (기간이 월이면 "2026년 10월 오답테스트", 전체면 "오답테스트")
+function wrongTestName(reportRow) {
+  const p = reportRow.dataset.period;
+  return p && p !== "전체 기간" ? `${p} 오답테스트` : "오답테스트";
 }
 
 // 시험별 점수 막대그래프(SVG). 막대 = 기간 안 최고 점수(100점 환산), 빨간 선 = 합격선,
@@ -17295,7 +17309,8 @@ function renderStudentReport(data, period) {
       `<textarea class="report-comment rp-comment" rows="4">${esc(buildReportComment(data))}</textarea>`)}
     <!-- 자주 틀린 단어는 선생님이 화면에서만 본다 — .results-printable 밖에 두어 인쇄본에 안 실린다 -->
     <div class="trend-report report-frequent"><h4>자주 틀린 단어 <span class="hint">(화면에서만 보이며 인쇄되지 않습니다)</span></h4>${freqHtml}
-      ${(data.wrongAll || []).length ? `<button type="button" class="btn small wrong-to-vocab-btn" style="margin-top:8px;">📒 틀린 단어 ${data.wrongAll.length}개로 단어장 만들기</button>` : ""}</div>
+      ${(data.wrongAll || []).length ? `<button type="button" class="btn small wrong-to-vocab-btn" style="margin-top:8px;">📒 틀린 단어 ${data.wrongAll.length}개로 단어장 만들기</button>
+        <button type="button" class="btn small wrong-test-btn" style="margin-top:8px;">🎯 틀린 단어 ${data.wrongAll.length}개로 바로 시험 내기</button>` : ""}</div>
     <button type="button" class="btn small report-ai-btn">✨ AI로 코멘트 쓰기${aiPriceLabel()}</button>
     <button type="button" class="btn ghost small report-comment-reset-btn">기본 초안으로 되돌리기</button>
     <span class="error report-ai-err"></span>
@@ -17309,7 +17324,9 @@ async function loadStudentReport(tr, studentId, monthStr) {
   const cell = tr.querySelector("td");
   cell.innerHTML = `<div class="report-controls no-print" style="margin-bottom:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
       <label>기간</label>
-      <input type="month" class="report-month" value="${esc(monthStr || "")}" style="width:auto;">
+      <input type="month" class="report-month" value="${/week$/.test(monthStr || "") ? "" : esc(monthStr || "")}" style="width:auto;">
+      <button type="button" class="btn ghost small report-week-btn" data-week="lastweek">지난 주</button>
+      <button type="button" class="btn ghost small report-week-btn" data-week="week">이번 주</button>
       <button type="button" class="btn ghost small report-all-btn">전체 기간</button>
     </div><div class="report-body"><p class="hint">불러오는 중…</p></div>`;
   const bodyEl = cell.querySelector(".report-body");
@@ -17398,8 +17415,7 @@ studentTableBodyEl.addEventListener("click", async (e) => {
     if (getVocabSets().length && !confirm(
       "단어장 탭에 모아 둔 단어장이 있습니다.\n이 학생의 틀린 단어로 바꿀까요? (저장하지 않은 단어장은 사라집니다)"
     )) return;
-    const period = rr.dataset.period && rr.dataset.period !== "전체 기간" ? ` (${rr.dataset.period})` : "";
-    const name = `${data.student.name} 틀린 단어${period}`;
+    const name = `${data.student.name} ${wrongTestName(rr)}`;   // 단어장 목록에서 학생이 구분되게 이름을 앞에 붙인다
     saveVocabSets([{
       name, src: "manual", _id: `v${Date.now()}${Math.floor(Math.random() * 1e6)}`,
       vocab: words.map((w) => ({ word: w.word, meaning: w.meaning, pos: "", synonym: "", antonym: "" })),
@@ -17409,6 +17425,19 @@ studentTableBodyEl.addEventListener("click", async (e) => {
     vocabTitleEl.value = name;
     document.querySelector('.tab-btn[data-tab="vocab"]').click();
     buildVocab(true);
+    return;
+  }
+  const wrongTestBtn = e.target.closest(".wrong-test-btn");
+  if (wrongTestBtn) {   // 이 학생의 (선택한 기간) 틀린 단어를 그 학생 한 명에게 바로 시험으로 낸다
+    const rr = wrongTestBtn.closest("tr.report-row");
+    const data = rr && rr._reportData;
+    const words = (data && data.wrongAll) || [];
+    if (words.length < 2) { alert("틀린 단어가 2개 이상 있어야 시험을 낼 수 있습니다."); return; }
+    const label = wrongTestName(rr);
+    openVocabAssign(null, label, false, {
+      studentId: data.student.id, title: label, label: "이 학생의 틀린 단어",
+      rows: words.map((w) => ({ word: w.word, meaning: w.meaning, pos: "", synonym: "", antonym: "" })),
+    });
     return;
   }
   const closeBtn = e.target.closest(".close-report-btn");
@@ -17469,6 +17498,12 @@ studentTableBodyEl.addEventListener("click", async (e) => {
   if (resetBtn) {
     const rr = resetBtn.closest("tr.report-row");
     if (rr._reportData) rr.querySelector("textarea.report-comment").value = buildReportComment(rr._reportData);
+    return;
+  }
+  const weekBtn = e.target.closest(".report-week-btn");
+  if (weekBtn) {
+    const rr = weekBtn.closest("tr.report-row");
+    loadStudentReport(rr, rr.dataset.for, weekBtn.dataset.week);
     return;
   }
   const allBtn = e.target.closest(".report-all-btn");
@@ -17966,6 +18001,7 @@ const assignSavedRowsCache = new Map(); // 저장본 id → 펼친 단어 줄(�
    한꺼번에 내되 학생에게는 day별 시험으로 보이게). 따로 낼 때는 단어장 이름이 그 시험의 제목이 된다. */
 let assignVocabGroups = [];      // [{ id, title, rows }] — 체크한 단어장마다(그 안에서만 같은 단어를 한 번으로)
 const assignSourceTitles = new Map(); // 저장본 id → 이름
+let assignPreset = null;         // 성적표에서 연 틀린 단어 시험 — 목록 맨 위에 id "preset"으로 들어간다
 const assignVocabModeWrapEl = $("assignVocabModeWrap");
 const assignVocabEach = () => assignVocabModeWrapEl && !assignVocabModeWrapEl.hidden &&
   !!document.querySelector('input[name="assignVocabMode"][value="each"]:checked');
@@ -18056,13 +18092,14 @@ async function renderAssignSourceList(pre, keepCurrent) {
   const row = (value, text, checked) =>
     `<label class="chk" style="display:block; margin:4px 0;">` +
     `<input type="checkbox" value="${esc(value)}"${checked ? " checked" : ""}> ${text}</label>`;
-  const cur = pre.size && !keepCurrent ? 0 : lastVocabRows.length;   // 저장본을 골라 열었으면 화면 단어장은 기본으로 체크하지 않는다
+  const cur = (pre.size && !keepCurrent) || assignPreset ? 0 : lastVocabRows.length;   // 저장본을 골라 열었으면 화면 단어장은 기본으로 체크하지 않는다
   assignSourceTitles.clear();
   items.forEach((it) => assignSourceTitles.set(it.id, it.title || "제목 없음"));
   const mergeRadio = document.querySelector('input[name="assignVocabMode"][value="merge"]');
   if (mergeRadio) mergeRadio.checked = true;
   // 화면에 단어장이 있으면 그것을 기본으로 체크해 둔다(예전 기본값과 같다).
   assignVocabSourceListEl.innerHTML =
+    (assignPreset ? row("preset", `🎯 ${esc(assignPreset.label)} <span class="hint">(${assignPreset.rows.length}개)</span>`, true) : "") +
     row("current", `지금 화면에 있는 단어장 <span class="hint">(${lastVocabRows.length ? lastVocabRows.length + "개" : "비어 있음"})</span>`, cur > 0) +
     assignFolderListHtml(items, pre, row);
   assignSyncFolderChecks();
@@ -18109,7 +18146,7 @@ function assignSyncFolderChecks() {
 
 async function assignSetFolder(folder) {
   const ids = [...assignVocabSourceListEl.querySelectorAll("input:not([data-group]):checked")]
-    .map((el) => el.value).filter((id) => id !== "current");
+    .map((el) => el.value).filter((id) => id !== "current" && id !== "preset");
   if (!ids.length) { assignErrorEl.textContent = "폴더에 넣을 저장 단어장을 먼저 체크해 주세요."; return; }
   assignErrorEl.textContent = "";
   try {
@@ -18134,7 +18171,8 @@ $("assignFolderOutBtn").addEventListener("click", () => assignSetFolder(""));
 function recomputeAssignVocabRows() {
   const seq = ++assignVocabSeq;
   const ids = [...assignVocabSourceListEl.querySelectorAll("input:not([data-group]):checked")].map((el) => el.value);
-  const need = ids.filter((id) => id !== "current" && !assignSavedRowsCache.has(id));
+  const need = ids.filter((id) => id !== "current" && id !== "preset" && !assignSavedRowsCache.has(id));
+  const srcOf = (id) => id === "current" ? lastVocabRows : id === "preset" ? assignPreset.rows : (assignSavedRowsCache.get(id) || []);
   if (need.length) assignVocabSourceHintEl.textContent = "불러오는 중…";
   const job = (async () => {
     let failed = "";
@@ -18152,7 +18190,7 @@ function recomputeAssignVocabRows() {
     const rows = [];
     let dup = 0;
     ids.forEach((id) => {
-      const src = id === "current" ? lastVocabRows : (assignSavedRowsCache.get(id) || []);
+      const src = srcOf(id);
       src.forEach((r) => {
         const key = String(r.word || "").trim().toLowerCase();
         if (!key) return;
@@ -18164,9 +18202,9 @@ function recomputeAssignVocabRows() {
     assignVocabRows = rows;
     assignVocabDup = dup;
     assignVocabGroups = ids.map((id) => {
-      const src = id === "current" ? lastVocabRows : (assignSavedRowsCache.get(id) || []);
+      const src = srcOf(id);
       const own = new Set();
-      const title = id === "current"
+      const title = id === "preset" ? assignPreset.title : id === "current"
         ? (($("vocabTitle").value || "").trim() || "지금 화면의 단어장")
         : assignSourceTitles.get(id) || "단어시험";
       return { id, title, rows: src.filter((r) => {
@@ -18202,7 +18240,10 @@ if (assignVocabModeWrapEl) assignVocabModeWrapEl.addEventListener("change", upda
 
 // preIds: 시험 출제 창에서 고른 단어장 저장본 id 목록 — 그것들을 체크해 두고, 제목도 그 이름으로
 // pick: 학생 관리 탭의 [＋ 시험 출제]에서 열 때 — 단어장 말고 문제·문법·워크북 저장본도 이 창에서 고른다
-async function openVocabAssign(preIds, preTitle, pick) {
+// preset: 성적표에서 연 '틀린 단어 시험' — { studentId, title, label, rows }. 그 단어들이 맨 위에 체크된 채 들어가고
+//         반·낼 대상도 그 학생으로 맞춘다.
+async function openVocabAssign(preIds, preTitle, pick, preset) {
+  assignPreset = preset || null;
   assignErrorEl.textContent = "";
   $("assignHeading").textContent = pick ? "반에 시험 내기" : "반에 단어시험 내기";
   $("assignKindWrap").hidden = !pick;
@@ -18213,8 +18254,9 @@ async function openVocabAssign(preIds, preTitle, pick) {
   assignRetestFieldEl.hidden = true;
   assignMaxWrongEl.value = "";
   // 단어장 제목 칸에 적어 둔 이름을 시험 제목으로 가져온다(비어 있으면 비운다).
-  $("assignTitle").value = preIds && preIds.length ? (preTitle || "") : ($("vocabTitle").value || "").trim();
-  await Promise.all([refreshClassSelectForModal(pick ? selectedClassId : ""), refreshAssignVocabSourceSelect(preIds)]);
+  $("assignTitle").value = preset ? preset.title : preIds && preIds.length ? (preTitle || "") : ($("vocabTitle").value || "").trim();
+  await Promise.all([refreshClassSelectForModal(pick || preset ? selectedClassId : ""), refreshAssignVocabSourceSelect(preIds)]);
+  if (preset) assignTargetSelectEl.value = preset.studentId;
   openModal(assignModalEl);
 }
 vocabAssignBtn.addEventListener("click", () => openVocabAssign());
