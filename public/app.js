@@ -17991,7 +17991,7 @@ function flattenVocabSets(sets) {
 }
 
 function updateAssignVocabHint() {
-  const picked = assignVocabSourceListEl.querySelectorAll("input:checked").length;
+  const picked = assignVocabSourceListEl.querySelectorAll("input:not([data-group]):checked").length;
   if (assignVocabModeWrapEl) assignVocabModeWrapEl.hidden = picked < 2;
   const each = assignVocabEach();
   // 따로 낼 때는 단어장 이름이 제목이 되므로 제목 칸을 아예 감춘다(입력해야 하는 줄 알 수 있어서)
@@ -18032,9 +18032,10 @@ async function refreshAssignVocabSourceSelect(preIds) {
 }
 
 // 자료 종류에 맞는 목록을 그린다 — 단어장은 체크(여러 개), 나머지는 하나만 고른다
-async function renderAssignSourceList(pre) {
+async function renderAssignSourceList(pre, keepCurrent) {
   const vocabMode = assignKind === "vocab";
   $("assignVocabOnly").hidden = !vocabMode;
+  $("assignFolderBar").hidden = !vocabMode;
   assignVocabModeWrapEl.hidden = true;
   assignErrorEl.textContent = "";
   if (!vocabMode) {
@@ -18055,7 +18056,7 @@ async function renderAssignSourceList(pre) {
   const row = (value, text, checked) =>
     `<label class="chk" style="display:block; margin:4px 0;">` +
     `<input type="checkbox" value="${esc(value)}"${checked ? " checked" : ""}> ${text}</label>`;
-  const cur = pre.size ? 0 : lastVocabRows.length;   // 저장본을 골라 열었으면 화면 단어장은 기본으로 체크하지 않는다
+  const cur = pre.size && !keepCurrent ? 0 : lastVocabRows.length;   // 저장본을 골라 열었으면 화면 단어장은 기본으로 체크하지 않는다
   assignSourceTitles.clear();
   items.forEach((it) => assignSourceTitles.set(it.id, it.title || "제목 없음"));
   const mergeRadio = document.querySelector('input[name="assignVocabMode"][value="merge"]');
@@ -18063,14 +18064,76 @@ async function renderAssignSourceList(pre) {
   // 화면에 단어장이 있으면 그것을 기본으로 체크해 둔다(예전 기본값과 같다).
   assignVocabSourceListEl.innerHTML =
     row("current", `지금 화면에 있는 단어장 <span class="hint">(${lastVocabRows.length ? lastVocabRows.length + "개" : "비어 있음"})</span>`, cur > 0) +
-    items.map((it) => row(it.id, `💾 ${esc(it.title || "제목 없음")}`, pre.has(it.id))).join("");
+    assignFolderListHtml(items, pre, row);
+  assignSyncFolderChecks();
   await recomputeAssignVocabRows();
 }
+
+/* 단어장 폴더 — ① 선생님이 [📁 폴더에 넣기]로 정한 폴더(저장본의 folder) ② 정하지 않았으면 이름의
+   ' · ' 앞부분이 같은 것끼리 자동으로 묶는다(단원별로 저장한 '책 이름 · Unit 01 …'). 자동은 둘 이상일 때만
+   묶고, 폴더 안은 이름의 숫자 순서(Unit 2 < Unit 10)로 늘어놓는다. */
+const assignFolderOf = (it) => it.folder || (String(it.title || "").includes(" · ") ? String(it.title).split(" · ")[0].trim() : "");
+function assignFolderListHtml(items, pre, row) {
+  const groups = new Map();
+  items.forEach((it) => {
+    const g = assignFolderOf(it);
+    if (!g) return;
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(it);
+  });
+  const single = (it) => !assignFolderOf(it) || (groups.get(assignFolderOf(it)).length < 2 && !it.folder);
+  const byTitle = (a, b) => String(a.title || "").localeCompare(String(b.title || ""), "ko", { numeric: true });
+  let html = "";
+  groups.forEach((list, name) => {
+    if (list.length < 2 && !list[0].folder) return;
+    const open = list.some((it) => pre.has(it.id));
+    html += `<details class="assign-folder"${open ? " open" : ""} style="margin:4px 0;"><summary style="cursor:pointer;">` +
+      `<label class="chk" style="display:inline-flex;"><input type="checkbox" data-group="${esc(name)}"> 📁 ${esc(name)}</label> ` +
+      `<span class="hint">(${list.length}개)</span></summary><div style="margin-left:18px;">` +
+      list.slice().sort(byTitle).map((it) => row(it.id, esc(String(it.title || "제목 없음").replace(name + " · ", "")), pre.has(it.id))).join("") +
+      `</div></details>`;
+  });
+  return html + items.filter(single).map((it) => row(it.id, `💾 ${esc(it.title || "제목 없음")}`, pre.has(it.id))).join("");
+}
+
+// 폴더 머리 체크 — 안의 것을 모두 고르면 켜짐, 일부면 반쯤 켜짐
+function assignSyncFolderChecks() {
+  assignVocabSourceListEl.querySelectorAll("details.assign-folder").forEach((d) => {
+    const kids = [...d.querySelectorAll("input:not([data-group])")];
+    const on = kids.filter((k) => k.checked).length;
+    const head = d.querySelector("input[data-group]");
+    head.checked = on > 0 && on === kids.length;
+    head.indeterminate = on > 0 && on < kids.length;
+  });
+}
+
+async function assignSetFolder(folder) {
+  const ids = [...assignVocabSourceListEl.querySelectorAll("input:not([data-group]):checked")]
+    .map((el) => el.value).filter((id) => id !== "current");
+  if (!ids.length) { assignErrorEl.textContent = "폴더에 넣을 저장 단어장을 먼저 체크해 주세요."; return; }
+  assignErrorEl.textContent = "";
+  try {
+    await postJson("/api/saved/folder", { ids, folder }, "폴더를 바꾸지 못했습니다.");
+  } catch (err) {
+    assignErrorEl.textContent = err.message || "폴더를 바꾸지 못했습니다.";
+    return;
+  }
+  assignAllItems.forEach((it) => { if (ids.includes(it.id)) { if (folder) it.folder = folder; else delete it.folder; } });
+  const keepCur = !!assignVocabSourceListEl.querySelector('input[value="current"]:checked');
+  await renderAssignSourceList(new Set(ids), keepCur);
+}
+$("assignFolderBtn").addEventListener("click", async () => {
+  const first = assignAllItems.find((it) => it.folder && assignVocabSourceListEl.querySelector(`input[value="${CSS.escape(it.id)}"]:checked`));
+  const name = prompt("폴더 이름을 적어 주세요. (체크한 단어장이 이 폴더로 묶입니다)", first ? first.folder : "");
+  if (name == null || !name.trim()) return;
+  await assignSetFolder(name.trim());
+});
+$("assignFolderOutBtn").addEventListener("click", () => assignSetFolder(""));
 
 // 체크한 단어장을 목록 차례대로 합친다. 저장본은 처음 고를 때 한 번만 받아 둔다.
 function recomputeAssignVocabRows() {
   const seq = ++assignVocabSeq;
-  const ids = [...assignVocabSourceListEl.querySelectorAll("input:checked")].map((el) => el.value);
+  const ids = [...assignVocabSourceListEl.querySelectorAll("input:not([data-group]):checked")].map((el) => el.value);
   const need = ids.filter((id) => id !== "current" && !assignSavedRowsCache.has(id));
   if (need.length) assignVocabSourceHintEl.textContent = "불러오는 중…";
   const job = (async () => {
@@ -18125,6 +18188,10 @@ assignVocabSourceListEl.addEventListener("change", (e) => {
     $("assignTitle").value = e.target.dataset.title || "";
     return;
   }
+  if (e.target.dataset.group !== undefined) {   // 폴더 머리 체크 — 안의 단어장을 모두 켜거나 끈다
+    e.target.closest("details").querySelectorAll("input:not([data-group])").forEach((k) => { k.checked = e.target.checked; });
+  }
+  assignSyncFolderChecks();
   recomputeAssignVocabRows();
 });
 assignKindSelectEl.addEventListener("change", () => {

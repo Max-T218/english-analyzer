@@ -14250,6 +14250,8 @@ def list_saved_items(user_id):
             "title": d.get("title"),
             "updated_at": d.get("updated_at"),
         }
+        if d.get("folder"):
+            row["folder"] = d["folder"]
         # 지문 저장본은 지문 개수를 함께 준다 — 저장함에서 여러 개를 골라 불러올 때 입력칸 상한을 미리 알려 주려고.
         # 문서는 이미 통째로 읽혀 있어 따로 드는 비용이 없다.
         if d.get("tab") == "passage":
@@ -14392,6 +14394,21 @@ def rename_saved_item(item_id, user_id, title):
         return False
     ref.update({"title": title})
     return True
+
+
+def set_saved_folder(item_ids, user_id, folder):
+    """저장 항목 여럿을 한 폴더에 넣는다(folder가 비면 폴더에서 뺀다). 내용·수정 시각은 그대로.
+    남의 항목은 건너뛰고, 실제로 바꾼 개수를 돌려준다."""
+    _require_db()
+    n = 0
+    for item_id in item_ids:
+        ref = DB.collection("saved_items").document(item_id)
+        snap = ref.get()
+        if not snap.exists or snap.to_dict().get("user_id") != user_id:
+            continue
+        ref.update({"folder": folder})
+        n += 1
+    return n
 
 
 def delete_saved_item(item_id, user_id):
@@ -17824,7 +17841,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/logout", "/api/auth/delete",
                         "/api/account/recharge", "/api/account/recharge/confirm",
                         "/api/account/ack-update", "/api/portone/webhook",
-                        "/api/saved", "/api/saved/delete", "/api/saved/rename",
+                        "/api/saved", "/api/saved/delete", "/api/saved/rename", "/api/saved/folder",
                         "/api/saved-image", "/api/brand",
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
@@ -18864,6 +18881,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "저장한 항목을 찾을 수 없습니다."}, 404)
                 return
             self._send_json({"ok": True, "title": title})
+            return
+
+        if path == "/api/saved/folder":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            ids = req.get("ids")
+            ids = [str(i) for i in ids[:200]] if isinstance(ids, list) else []
+            folder = str(req.get("folder") or "").strip()[:60]
+            if not ids:
+                self._send_json({"error": "단어장을 먼저 골라 주세요."}, 400)
+                return
+            try:
+                n = set_saved_folder(ids, user_id, folder)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            self._send_json({"ok": True, "n": n, "folder": folder})
             return
 
         if path == "/api/saved/delete":
