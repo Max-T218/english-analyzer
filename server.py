@@ -17737,6 +17737,8 @@ class Handler(BaseHTTPRequestHandler):
             path = "/lt.html"
         if path == "/test":   # 레벨테스트 사이트 — 학생에게 알려 주기 쉽게 짧은 주소도 받는다
             path = "/test.html"
+        if path == "/student":   # 학생 사이트 — .html 없이 englishlab.ai.kr/student 로도 열린다
+            path = "/student.html"
 
         if path == "/":
             path = "/index.html"
