@@ -2458,6 +2458,17 @@
         <span class="error" id="classReportStatus"></span>
       </div>
       <p class="hint">고른 달의 성적표를 학생마다 한 장씩 이어서 인쇄합니다. 코멘트는 기본 초안이 들어가고, 학생 줄의 [성적표]를 같은 달로 열어 코멘트를 고쳐 두었으면 고친 글이 들어갑니다.</p>
+      <div class="row" style="align-items:center; gap:8px; margin-top:12px;">
+        <label for="classWrongWeek" style="margin:0;">반 전체 주간 오답테스트</label>
+        <input type="week" id="classWrongWeek" style="width:auto;">
+        <select id="classWrongFormat" style="width:auto;">
+          <option value="mcq">객관식(5지선다)</option>
+          <option value="saq">주관식</option>
+        </select>
+        <button type="button" class="btn small" id="classWrongBtn">🎯 학생마다 오답테스트 내기</button>
+        <span class="error" id="classWrongStatus"></span>
+      </div>
+      <p class="hint">고른 주(월~일)에 학생이 틀린 단어만 모아, 학생마다 자기 단어로 만든 '○월 ○주차 오답테스트'를 그 학생에게만 냅니다. 한 학생당 많이 틀린 단어부터 최대 30개이고, 틀린 단어가 2개 미만인 학생은 건너뜁니다. 같은 주 오답테스트가 이미 나간 학생에게는 다시 내지 않습니다.</p>
     </section>
 
     <section class="panel" id="assignedTestsPanel" hidden>

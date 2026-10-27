@@ -17636,6 +17636,95 @@ studentTableBodyEl.addEventListener("click", async (e) => {
    코멘트는 규칙으로 쓴 기본 초안(AI를 안 불러 요금 없음)이고, 학생 줄의 [성적표]를 같은 달로
    열어 코멘트를 고쳐 두었으면 그 글을 쓴다. 자주 틀린 단어는 학생 한 명 인쇄처럼 싣지 않는다. */
 $("classReportMonth").value = reportMonthDefault();
+
+/* 반 전체 주간 오답테스트 — 학생마다 고른 주(월~일)의 틀린 단어를 모아 그 학생 한 명에게 따로 낸다.
+   성적표의 [🎯 틀린 단어로 바로 시험 내기]를 반 전체로 한 번에 하는 것이다. */
+const WRONG_TEST_MAX_WORDS = 30;
+// "2026-W43" → reportPeriod와 같은 모양({start,end,label}) — 월요일 0시부터 다음 월요일 0시, 주차 이름은 목요일이 든 달 기준
+function isoWeekPeriod(weekStr) {
+  const m = /^(\d{4})-W(\d{2})$/.exec(weekStr || "");
+  if (!m) return null;
+  const jan4 = new Date(+m[1], 0, 4);
+  const mon = new Date(+m[1], 0, 4 - ((jan4.getDay() + 6) % 7) + (+m[2] - 1) * 7);
+  const end = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 7);
+  const thu = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 3);
+  return { start: mon.toISOString(), end: end.toISOString(), label: `${thu.getMonth() + 1}월 ${Math.ceil(thu.getDate() / 7)}주차` };
+}
+function isoWeekValue(d) {   // 날짜가 든 주의 <input type=week> 값
+  const thu = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const wk = Math.ceil(((thu - new Date(thu.getFullYear(), 0, 1)) / 864e5 + 1) / 7);
+  return `${thu.getFullYear()}-W${String(wk).padStart(2, "0")}`;
+}
+$("classWrongWeek").value = isoWeekValue(new Date(Date.now() - 7 * 864e5));   // 기본은 지난 주
+
+$("classWrongBtn").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  const statusEl = $("classWrongStatus");
+  const period = isoWeekPeriod($("classWrongWeek").value);
+  const rows = [...studentTableBodyEl.querySelectorAll("tr[data-sid]")];
+  statusEl.textContent = "";
+  if (!period) { statusEl.textContent = "주를 골라 주세요."; return; }
+  if (!rows.length) { statusEl.textContent = "이 반에 등록된 학생이 없습니다."; return; }
+  const title = `${period.label} 오답테스트`;
+  const label = btn.textContent;
+  btn.disabled = true;
+  const plans = [];   // { sid, name, words, total }
+  let skipped = 0, already = 0, failedLoad = "";
+  try {
+    const existing = await getJson(`/api/vocab-tests?classId=${encodeURIComponent(selectedClassId)}`, "시험 목록을 불러오지 못했습니다.");
+    const had = new Set((existing.assignments || existing.tests || existing || [])
+      .filter((a) => a.studentId && a.title === title).map((a) => a.studentId));
+    let done = 0;
+    const queue = rows.slice();
+    const worker = async () => {
+      while (queue.length) {
+        const r = queue.shift();
+        const sid = r.dataset.sid;
+        if (had.has(sid)) { already++; continue; }
+        try {
+          const data = await getJson(
+            `/api/students/report?studentId=${encodeURIComponent(sid)}&start=${encodeURIComponent(period.start)}&end=${encodeURIComponent(period.end)}`,
+            "성적표를 불러오지 못했습니다.");
+          const all = data.wrongAll || [];
+          if (all.length < 2) skipped++;
+          else plans.push({ sid, name: r.dataset.name, total: all.length, words: all.slice(0, WRONG_TEST_MAX_WORDS) });
+        } catch (_) { failedLoad = r.dataset.name; }
+        btn.textContent = `불러오는 중… ${++done}/${rows.length}`;
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+  } catch (err) {
+    statusEl.textContent = err.message || "불러오지 못했습니다.";
+    btn.disabled = false; btn.textContent = label;
+    return;
+  }
+  btn.disabled = false; btn.textContent = label;
+  if (failedLoad) { statusEl.textContent = `${failedLoad} 학생의 기록을 불러오지 못했습니다. 다시 눌러 주세요.`; return; }
+  if (!plans.length) {
+    statusEl.textContent = already && !skipped ? "이미 모두 낸 주입니다." : "이 주에 틀린 단어가 2개 이상인 학생이 없습니다.";
+    return;
+  }
+  const fmt = $("classWrongFormat").value;
+  if (!confirm(`"${title}"을(를) ${plans.length}명에게 각자의 틀린 단어로 냅니다 (${fmt === "mcq" ? "객관식" : "주관식"}).\n` +
+      (skipped ? `틀린 단어가 2개 미만이라 건너뛰는 학생 ${skipped}명\n` : "") +
+      (already ? `이미 낸 학생 ${already}명\n` : "") + "\n내시겠습니까?")) return;
+  btn.disabled = true;
+  let sent = 0;
+  const failed = [];
+  for (const p of plans) {
+    btn.textContent = `내는 중… ${sent + failed.length + 1}/${plans.length}`;
+    try {
+      await postJson("/api/vocab-tests", {
+        classId: selectedClassId, studentId: p.sid, title, format: fmt, maxWrong: null,
+        vocab: p.words.map((w) => ({ word: w.word, meaning: w.meaning, pos: "", synonym: "", antonym: "" })),
+      }, "시험 내기에 실패했습니다.");
+      sent++;
+    } catch (err) { failed.push(`${p.name}(${err.message || "실패"})`); }
+  }
+  btn.disabled = false; btn.textContent = label;
+  statusEl.textContent = `${sent}명에게 냈습니다.` + (failed.length ? ` 못 낸 학생: ${failed.join(", ")}` : "");
+  if (typeof loadAssignedTests === "function") loadAssignedTests();
+});
 $("classReportPrintBtn").addEventListener("click", async (e) => {
   const btn = e.currentTarget;
   const statusEl = $("classReportStatus");
