@@ -12190,6 +12190,15 @@ def delete_user_account(user_id, by_admin=False):
         _lt_release_login_id(d.get("login_id"), doc.id)
         _lt_drop_sessions(doc.id)
         doc.reference.delete()
+    # 반/학생 — 이 선생님이 등록한 반·학생(이름·아이디·로그인 세션)·시험·답안·성적을 모두 지운다.
+    # 개인정보처리방침이 '교사 탈퇴 시 파기'라고 약속하는 자료이고, 학생은 미성년자일 수 있어 남기면 안 된다.
+    # 반을 먼저 지워 딸린 것을 한꺼번에 치우고, 반 없이 남은 시험·학생이 있으면 그것도 지운다.
+    for doc in DB.collection("classes").where("teacher_id", "==", user_id).stream():
+        delete_class(user_id, doc.id)
+    for doc in DB.collection("test_assignments").where("teacher_id", "==", user_id).stream():
+        delete_assignment(user_id, doc.id)
+    for doc in DB.collection("students").where("teacher_id", "==", user_id).stream():
+        delete_student(user_id, doc.id)
     for sess in DB.collection("sessions").where("user_id", "==", user_id).stream():
         sess.reference.delete()
     DB.collection("users").document(user_id).delete()
