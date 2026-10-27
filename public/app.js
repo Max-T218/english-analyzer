@@ -3735,7 +3735,7 @@ const START_TOUR = [
   { tab: "brief", title: "📑 지문 요약분석", text: "같은 색 구분에 한 줄 의역 — 학생이 들고 다니는 얇은 정리", img: "howto-brief-1.png" },
   { tab: "mcq", title: "📝 객관식 문제", text: "수능형 23 · 중학교 내신 13유형, 정답·해설 포함", img: "howto-mcq-1.jpg" },
   { tab: "saq", title: "✍️ 주관식 문제", text: "서술형 배열·조건 영작 등 18유형", img: "howto-saq-1.jpg" },
-  { tab: "workbook", title: "📚 워크북", text: "좌지문 우해석부터 영작까지 9단계 학습지", img: "howto-workbook-1.jpg" },
+  { tab: "workbook", title: "📚 워크북", text: "좌지문 우해석부터 영작까지 14단계 학습지", img: "howto-workbook-1.jpg" },
   { tab: "exam", title: "🧾 동형 모의고사", text: "기출 시험지의 유형 구성 그대로, 내 시험 범위로", img: "howto-exam-1.jpg" },
   { tab: "trend", title: "📊 시험지 분석 리포트", text: "기출 PDF를 올리면 출제경향 보고서와 총평까지", img: "howto-trend-1.jpg" },
 ];
@@ -10028,7 +10028,7 @@ function updateWbOrderHint() {
   if (!wbOrderHintEl) return;
   wbOrderHintEl.innerHTML = wbOrderEl.value === "stage"
     ? "<b>모든 지문의 같은 단계</b>를 모아 찍습니다 — 지문1·2·3의 좌지문 우해석 → 지문1·2·3의 빈칸 완성 … 순서입니다."
-    : "<b>지문 하나의 단계를 모두</b> 찍고 다음 지문으로 넘어갑니다 — 지문1의 1~9단계 → 지문2의 1~9단계 … 순서입니다.";
+    : "<b>지문 하나의 단계를 모두</b> 찍고 다음 지문으로 넘어갑니다 — 지문1의 모든 단계 → 지문2의 모든 단계 … 순서입니다.";
 }
 if (wbOrderEl) {
   const saved = localStorage.getItem(WB_ORDER_STORE);
