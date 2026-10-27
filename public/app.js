@@ -10718,8 +10718,8 @@ function buildStageWord(stageId, wp) {
   return { html: `<div class="${cls}">${html.join("")}</div>`, answers };
 }
 
-/* 워크북12 — 내용 O/X. 지문은 이 단계 맨 앞 카드에 한 번 싣는다
-   (주관식 탭은 O/X 문항마다 지문 전문을 다시 싣는다). 진술 번호는 이 단계 안에서 1부터 이어 매기고,
+/* 워크북12 — 내용 O/X. 지문은 O/X 카드마다 싣는다(2026-10-27 — 쪽이 갈리면 앞 카드의 지문이 안 보인다.
+   주관식 탭도 O/X 문항마다 지문 전문을 싣는다). 진술 번호는 이 단계 안에서 1부터 이어 매기고,
    주관식 문항(진술 5개) 하나를 한 덩어리로 두어 쪽 사이에서 쪼개지지 않게 한다.
    답지에는 O/X만 싣는다(주관식 답지에 해설을 안 넣는 것과 같은 까닭 — 글씨가 작아진다). */
 /* 좌지문 우해석(1)을 골랐어도 O/X 위에 지문을 한 번 싣는다(2026-10-24 사용자 — 쪽 구성·단계별 출력으로
@@ -10736,7 +10736,7 @@ function buildStageOx(ox, passageText) {
   if (!groups.length) return { html: "", answers: [] };
   /* 모양은 주관식 탭의 O/X 카드 그대로 — 머리(번호·유형)·발문·(1)~(5)·괄호 칸을 주관식과 같은
      quizBodyHtml로 그린다. 다른 것은 지문 하나뿐이다: 주관식은 카드마다 지문을 다시 싣지만, 여기서는
-     passageText가 있으면(늘 있다) 첫 카드에만 한 번 싣는다. */
+     passageText가 있으면(늘 있다) 카드마다 싣는다 — 쪽이 갈려도 지문을 보고 풀 수 있게(2026-10-27 사용자). */
   const passageHtml = passageText ? esc(passageText).replace(/\n/g, "<br>") : "";
   const html = [];
   const answers = [];
@@ -10747,7 +10747,7 @@ function buildStageOx(ox, passageText) {
       format: "tf",
       type: (q.type || lang) + (q.level === "hard" ? " · 고난도" : ""),
       instruction: q.instruction || "다음 글의 내용과 일치하면 O, 일치하지 않으면 X를 쓰시오.",
-      passageHtml: i === 0 ? passageHtml : "",
+      passageHtml,
       tfItems: q.tfItems,
     };
     let body = quizBodyHtml(qq);
