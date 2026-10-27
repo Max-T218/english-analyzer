@@ -81,8 +81,10 @@ $("codeForm").addEventListener("submit", async (e) => {
     $("loginPwInput").value = "";
     showOnly(listWorkspaceEl);
     loadTests();
-    // 아직 한 번도 직접 바꾸지 않았으면 바꾸라고 권한다(다음에 하기도 가능)
-    if (info.pwChanged === false) setPwNudge(true);
+    // 아직 한 번도 직접 바꾸지 않았으면 바꾸라고 권한다. [다음에 하기]를 한 번 눌렀으면 이 기기에서는
+    // 다시 띄우지 않는다 — 위쪽 [비밀번호 변경]에서 언제든 바꿀 수 있다(2026-10-27 사용자)
+    pwNudgeId = loginId.toLowerCase();
+    if (info.pwChanged === false && !pwNudgeSkipped()) setPwNudge(true);
   } catch (err) {
     codeError.textContent = err.message || "로그인에 실패했습니다.";
   } finally {
@@ -92,6 +94,10 @@ $("codeForm").addEventListener("submit", async (e) => {
 });
 
 /* ── 첫 로그인 안내창 ── */
+let pwNudgeId = "";   // 안내창을 띄운 학생의 아이디 — [다음에 하기]를 아이디별로 기억한다
+function pwNudgeSkipped() {
+  try { return localStorage.getItem("pwNudgeSkip:" + pwNudgeId) === "1"; } catch (_) { return false; }
+}
 function setPwNudge(on) {
   const el = $("pwNudge");
   el.hidden = !on;
@@ -101,7 +107,10 @@ $("pwNudgeNowBtn").addEventListener("click", () => {
   setPwNudge(false);
   $("openPwBtn").click();
 });
-$("pwNudgeLaterBtn").addEventListener("click", () => setPwNudge(false));
+$("pwNudgeLaterBtn").addEventListener("click", () => {
+  try { localStorage.setItem("pwNudgeSkip:" + pwNudgeId, "1"); } catch (_) { /* 저장이 막혀 있으면 다음에 또 뜬다 */ }
+  setPwNudge(false);
+});
 
 /* ── 비밀번호 변경 ── */
 $("openPwBtn").addEventListener("click", () => {
