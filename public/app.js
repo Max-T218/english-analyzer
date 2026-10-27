@@ -3794,8 +3794,7 @@ tabBtns.forEach((btn) => {
 // '만드는 법' 단추는 열린 탭이 없는 시작 화면에서도 늘 보인다(안내가 사라진 줄 알고
 // 찾는 일이 있었다). 탭이 없을 때 누르면 첫 단계(지문 붙여넣기)가 담긴 상세분석 안내를 연다.
 
-// 학생 관리 탭의 [＋ 시험 출제] — 저장해 둔 자료를 골라 바로 낸다(openTestPicker, 반에 시험 내기 쪽에 있다)
-$("goVocabTabBtn").addEventListener("click", () => openTestPicker());
+// 학생 관리 탭의 [＋ 시험 출제] — 시험 내기 창 하나에서 자료를 고른다(반에 시험 내기 쪽에 있다)
 
 /* ── 분석본 직접 수정 ──
    결과는 이미 화면에 HTML로 그려져 있으므로, 그 영역을 편집 가능 상태로 바꾸기만 하면
@@ -17909,6 +17908,9 @@ const assignVocabSourceHintEl = $("assignVocabSourceHint");
 const assignRetestChkEl = $("assignRetestChk");
 const assignRetestFieldEl = $("assignRetestField");
 const assignMaxWrongEl = $("assignMaxWrong");
+const assignKindSelectEl = $("assignKindSelect");
+let assignKind = "vocab";   // 시험 내기 창에서 고른 자료 종류(TEST_PICK_KINDS의 tab)
+let assignAllItems = [];    // 저장함의 모든 저장본 — 종류를 바꿔도 다시 받지 않는다
 
 assignRetestChkEl.addEventListener("change", () => {
   assignRetestFieldEl.hidden = !assignRetestChkEl.checked;
@@ -17990,8 +17992,9 @@ function updateAssignVocabHint() {
   const picked = assignVocabSourceListEl.querySelectorAll("input:checked").length;
   if (assignVocabModeWrapEl) assignVocabModeWrapEl.hidden = picked < 2;
   const each = assignVocabEach();
-  $("assignTitleLabel").textContent = each ? "시험 제목 (따로 낼 때는 단어장 이름이 제목이 됩니다)" : "시험 제목";
-  $("assignTitle").disabled = each;
+  // 따로 낼 때는 단어장 이름이 제목이 되므로 제목 칸을 아예 감춘다(입력해야 하는 줄 알 수 있어서)
+  $("assignTitleLabel").hidden = each;
+  $("assignTitle").hidden = each;
   if (!picked) {
     assignVocabSourceHintEl.textContent = "낼 단어장을 하나 이상 골라 주세요.";
     return;
@@ -18010,21 +18013,47 @@ function updateAssignVocabHint() {
     : "고른 단어장이 비어 있습니다 — 다른 단어장을 골라 주세요.";
 }
 
-async function refreshAssignVocabSourceSelect(preId) {
+async function refreshAssignVocabSourceSelect(preIds) {
+  const pre = new Set(preIds || []);
   assignVocabRows = [];
   assignVocabDup = 0;
   assignSavedRowsCache.clear(); // 그사이 저장본을 고쳤을 수 있어 창을 열 때마다 새로 받는다
-  let items = [];
   try {
     const data = await getJson("/api/saved", "");
-    items = (data.items || []).filter((it) => it.tab === "vocab");
+    assignAllItems = data.items || [];
   } catch (_) {
-    items = [];
+    assignAllItems = [];
   }
+  assignKind = "vocab";
+  assignKindSelectEl.value = "vocab";
+  await renderAssignSourceList(pre);
+}
+
+// 자료 종류에 맞는 목록을 그린다 — 단어장은 체크(여러 개), 나머지는 하나만 고른다
+async function renderAssignSourceList(pre) {
+  const vocabMode = assignKind === "vocab";
+  $("assignVocabOnly").hidden = !vocabMode;
+  assignVocabModeWrapEl.hidden = true;
+  assignErrorEl.textContent = "";
+  if (!vocabMode) {
+    const kind = TEST_PICK_KINDS.find((k) => k.tab === assignKind);
+    const rows = assignAllItems.filter((it) => it.tab === assignKind);
+    $("assignSourceLabel").innerHTML = `낼 자료 <span class="hint" style="font-weight:400;">(${esc(kind ? kind.label : "")} 저장본 중 하나)</span>`;
+    assignVocabSourceListEl.innerHTML = rows.length
+      ? rows.map((it) => `<label class="chk" style="display:block; margin:4px 0;"><input type="radio" name="assignQuizPick" value="${esc(it.id)}" data-title="${esc(it.title || "")}"> ${esc(it.title || "제목 없음")}</label>`).join("")
+      : `<p class="hint">저장된 ${esc(kind ? kind.label : "")} 자료가 없습니다. 그 탭에서 만든 뒤 [💾 사이트 저장]을 눌러 두세요.</p>`;
+    assignVocabSourceHintEl.textContent = rows.length ? "낼 자료를 하나 골라 주세요." : "";
+    $("assignTitleLabel").hidden = false;
+    $("assignTitle").hidden = false;
+    $("assignTitle").value = "";
+    return;
+  }
+  const items = assignAllItems.filter((it) => it.tab === "vocab");
+  $("assignSourceLabel").innerHTML = `낼 단어장 <span class="hint" style="font-weight:400;">(여러 개를 고르면 합칠지 따로 낼지 고릅니다)</span>`;
   const row = (value, text, checked) =>
     `<label class="chk" style="display:block; margin:4px 0;">` +
     `<input type="checkbox" value="${esc(value)}"${checked ? " checked" : ""}> ${text}</label>`;
-  const cur = preId ? 0 : lastVocabRows.length;   // 저장본을 골라 열었으면 화면 단어장은 기본으로 체크하지 않는다
+  const cur = pre.size ? 0 : lastVocabRows.length;   // 저장본을 골라 열었으면 화면 단어장은 기본으로 체크하지 않는다
   assignSourceTitles.clear();
   items.forEach((it) => assignSourceTitles.set(it.id, it.title || "제목 없음"));
   const mergeRadio = document.querySelector('input[name="assignVocabMode"][value="merge"]');
@@ -18032,7 +18061,7 @@ async function refreshAssignVocabSourceSelect(preId) {
   // 화면에 단어장이 있으면 그것을 기본으로 체크해 둔다(예전 기본값과 같다).
   assignVocabSourceListEl.innerHTML =
     row("current", `지금 화면에 있는 단어장 <span class="hint">(${lastVocabRows.length ? lastVocabRows.length + "개" : "비어 있음"})</span>`, cur > 0) +
-    items.map((it) => row(it.id, `💾 ${esc(it.title || "제목 없음")}`, it.id === preId)).join("");
+    items.map((it) => row(it.id, `💾 ${esc(it.title || "제목 없음")}`, pre.has(it.id))).join("");
   await recomputeAssignVocabRows();
 }
 
@@ -18088,21 +18117,35 @@ function recomputeAssignVocabRows() {
   return job;
 }
 
-assignVocabSourceListEl.addEventListener("change", () => {
+assignVocabSourceListEl.addEventListener("change", (e) => {
   assignErrorEl.textContent = "";
+  if (assignKind !== "vocab") {   // 문제·문법·워크북 — 고른 저장본 이름을 제목으로
+    $("assignTitle").value = e.target.dataset.title || "";
+    return;
+  }
   recomputeAssignVocabRows();
+});
+assignKindSelectEl.addEventListener("change", () => {
+  assignKind = assignKindSelectEl.value;
+  renderAssignSourceList(new Set());
 });
 if (assignVocabModeWrapEl) assignVocabModeWrapEl.addEventListener("change", updateAssignVocabHint);
 
-// preId: 시험 출제 창에서 고른 단어장 저장본 — 그것을 체크해 두고, 제목도 그 이름으로
-async function openVocabAssign(preId, preTitle) {
+// preIds: 시험 출제 창에서 고른 단어장 저장본 id 목록 — 그것들을 체크해 두고, 제목도 그 이름으로
+// pick: 학생 관리 탭의 [＋ 시험 출제]에서 열 때 — 단어장 말고 문제·문법·워크북 저장본도 이 창에서 고른다
+async function openVocabAssign(preIds, preTitle, pick) {
   assignErrorEl.textContent = "";
+  $("assignHeading").textContent = pick ? "반에 시험 내기" : "반에 단어시험 내기";
+  $("assignKindWrap").hidden = !pick;
+  if (pick) {
+    assignKindSelectEl.innerHTML = TEST_PICK_KINDS.map((k) => `<option value="${k.tab}">${k.label}</option>`).join("");
+  }
   assignRetestChkEl.checked = false;
   assignRetestFieldEl.hidden = true;
   assignMaxWrongEl.value = "";
   // 단어장 제목 칸에 적어 둔 이름을 시험 제목으로 가져온다(비어 있으면 비운다).
-  $("assignTitle").value = preId ? (preTitle || "") : ($("vocabTitle").value || "").trim();
-  await Promise.all([refreshClassSelectForModal(), refreshAssignVocabSourceSelect(preId)]);
+  $("assignTitle").value = preIds && preIds.length ? (preTitle || "") : ($("vocabTitle").value || "").trim();
+  await Promise.all([refreshClassSelectForModal(), refreshAssignVocabSourceSelect(preIds)]);
   openModal(assignModalEl);
 }
 vocabAssignBtn.addEventListener("click", () => openVocabAssign());
@@ -18116,6 +18159,7 @@ assignFormEl.addEventListener("submit", async (e) => {
     assignErrorEl.textContent = "반을 먼저 만들어 주세요.";
     return;
   }
+  if (assignKind !== "vocab") { await submitAssignQuiz(classId); return; }
   if (assignVocabLoading) await assignVocabLoading; // 저장본을 받는 중이면 다 받고 나서 낸다
   const each = assignVocabEach();
   const rows = assignVocabRows;
@@ -18168,12 +18212,11 @@ assignFormEl.addEventListener("submit", async (e) => {
   }
 });
 
-/* ══════ 시험 출제 창 — 학생 관리 탭의 [＋ 시험 출제] ══════
-   예전엔 단어장 탭으로 넘어가기만 했다. 이제 문제·문법·워크북도 시험으로 낼 수 있어 단어장으로
-   보내는 게 어색하다는 의견으로(2026-10-20 사용자) 저장해 둔 자료를 여기서 바로 고르게 했다.
-   고른 저장본을 받아 단어장이면 단어시험 내기 창(openVocabAssign), 나머지는 문제 시험 내기 창(openQuizAssign)을
-   연다 — 각 탭의 [🏫 반에 시험 내기]와 같은 변환을 저장본에 그대로 쓰므로, 그 탭을 열거나 화면의 작업을
-   건드리지 않는다. */
+/* ══════ 시험 출제 — 학생 관리 탭의 [＋ 시험 출제] ══════
+   예전엔 단어장 탭으로 넘어가기만 했다(2026-10-20 사용자: 문제·문법·워크북도 낼 수 있어 어색하다).
+   창이 둘(자료 고르기 → 시험 내기)이라 번거롭다는 의견으로(2026-10-27 사용자) **시험 내기 창 하나**에서
+   자료 종류를 고르고 저장본을 체크해 바로 낸다. 단어장은 위의 단어시험 내기 흐름 그대로, 나머지는 각 탭의
+   [🏫 반에 시험 내기]와 같은 변환을 저장본에 써서 /api/quiz-tests로 낸다 — 그 탭을 열거나 화면 작업을 건드리지 않는다. */
 const TEST_PICK_KINDS = [
   { tab: "vocab", label: "📒 단어장" },
   { tab: "mcq", label: "📝 객관식" },
@@ -18182,83 +18225,53 @@ const TEST_PICK_KINDS = [
   { tab: "grammar", label: "📐 문법 문제" },
   { tab: "workbook", label: "📚 워크북" },
 ];
-const testPickModalEl = $("testPickModalOverlay");
-let testPickItems = [];
-let testPickKind = "";
-function renderTestPickList() {
-  const listEl = $("testPickList");
-  const counts = {};
-  testPickItems.forEach((it) => { counts[it.tab] = (counts[it.tab] || 0) + 1; });
-  $("testPickKinds").innerHTML = [{ tab: "", label: "전체" }, ...TEST_PICK_KINDS]
-    .filter((k) => !k.tab || counts[k.tab])
-    .map((k) => `<button type="button" class="btn ghost small${testPickKind === k.tab ? " on" : ""}" data-kind="${k.tab}">` +
-      `${k.label} <span class="hint">${k.tab ? counts[k.tab] : testPickItems.length}</span></button>`).join("");
-  const rows = testPickItems.filter((it) => !testPickKind || it.tab === testPickKind);
-  listEl.innerHTML = rows.length ? rows.map((it) => {
-    const k = TEST_PICK_KINDS.find((x) => x.tab === it.tab);
-    return `<button type="button" class="tp-item" data-id="${esc(it.id)}" data-tab="${esc(it.tab)}" data-title="${esc(it.title || "")}">` +
-      `<span class="saved-list-tag">${esc(k ? k.label : it.tab)}</span>` +
-      // 날짜는 싣지 않는다 — 같은 책의 단원 저장본은 같은 시각에 만들어져 날짜로는 못 가르고, 제목이 잘려 구분이 안 됐다(2026-10-20 사용자)
-      `<span class="tp-title">${esc(it.title || "제목 없음")}</span></button>`;
-  }).join("") : `<p class="saved-list-empty">시험으로 낼 수 있는 저장본이 없습니다. 단어장·문제·워크북 탭에서 만든 뒤 [💾 사이트 저장]을 눌러 두세요.</p>`;
-}
-async function openTestPicker() {
-  $("testPickError").textContent = "";
-  testPickKind = "";
-  $("testPickList").innerHTML = `<p class="saved-list-empty">불러오는 중…</p>`;
-  openModal(testPickModalEl);
-  try {
-    const data = await getJson("/api/saved", "저장 목록을 불러오지 못했습니다.");
-    testPickItems = (data.items || []).filter((it) => TEST_PICK_KINDS.some((k) => k.tab === it.tab));
-  } catch (err) {
-    testPickItems = [];
-    $("testPickError").textContent = err.message || "저장 목록을 불러오지 못했습니다.";
+$("goVocabTabBtn").addEventListener("click", () => openVocabAssign(null, "", true));
+
+// 저장본 하나(tab, 받아 온 item)를 학생에게 낼 문항으로 바꾼다
+function quizQuestionsFromSaved(tab, item) {
+  const p = item.payload || {};
+  if (tab === "grammar") {
+    // 문법 탭의 [🏫 반에 시험 내기]와 같다 — 값 셈용 표시는 빼고, 배열 영작은 어순만 다르면 확인 대기
+    return { source: "quiz", questions: (p.questions || []).map(({ gitem, gkind, gshape, ...rest }) =>
+      rest.format === "write" ? { ...rest, looseOrder: true } : rest) };
   }
-  renderTestPickList();
-}
-$("testPickModalClose").addEventListener("click", () => closeModal(testPickModalEl));
-$("testPickKinds").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-kind]");
-  if (!b) return;
-  testPickKind = b.dataset.kind;
-  renderTestPickList();
-});
-$("testPickList").addEventListener("click", async (e) => {
-  const b = e.target.closest("button.tp-item");
-  if (!b || b.disabled) return;
-  const { id, tab, title } = b.dataset;
-  $("testPickError").textContent = "";
-  if (tab === "vocab") {
-    closeModal(testPickModalEl);
-    openVocabAssign(id, title);
-    return;
+  if (tab === "workbook") {
+    const stages = ((p.settings && p.settings.stages) || []).map(Number);
+    return { source: "workbook",
+      questions: wbQuestionsForStudents(p.entries || [], stages.length ? stages : WB_STAGES.map((m) => m.id)) };
   }
-  b.disabled = true;
+  return { source: "quiz", questions: quizQuestionsFromEntries(p.entries || []) };
+}
+
+async function submitAssignQuiz(classId) {
+  const picked = assignVocabSourceListEl.querySelector('input[name="assignQuizPick"]:checked');
+  if (!picked) { assignErrorEl.textContent = "낼 자료를 하나 골라 주세요."; return; }
+  const target = assignTargetSelectEl.value;
+  const btn = $("assignSubmitBtn");
+  btn.disabled = true;
+  assignStatusEl.textContent = "내는 중…";
   try {
-    const item = await getJson(`/api/saved/${encodeURIComponent(id)}`, "저장본을 불러오지 못했습니다.");
-    const p = item.payload || {};
-    let questions = [];
-    let source = "quiz";
-    if (tab === "grammar") {
-      // 문법 탭의 [🏫 반에 시험 내기]와 같다 — 값 셈용 표시는 빼고, 배열 영작은 어순만 다르면 확인 대기
-      questions = (p.questions || []).map(({ gitem, gkind, gshape, ...rest }) =>
-        rest.format === "write" ? { ...rest, looseOrder: true } : rest);
-    } else if (tab === "workbook") {
-      source = "workbook";
-      const stages = ((p.settings && p.settings.stages) || []).map(Number);
-      questions = wbQuestionsForStudents(p.entries || [], stages.length ? stages : WB_STAGES.map((m) => m.id));
-    } else {
-      questions = quizQuestionsFromEntries(p.entries || []);
-    }
+    const item = await getJson(`/api/saved/${encodeURIComponent(picked.value)}`, "저장본을 불러오지 못했습니다.");
+    const { source, questions } = quizQuestionsFromSaved(assignKind, item);
     if (!questions.length) throw new Error("이 저장본에는 학생에게 낼 문항이 없습니다.");
-    closeModal(testPickModalEl);
-    openQuizAssign(questions, title, source);
+    if (questions.length > QUIZ_TEST_MAX_QUESTIONS) {
+      throw new Error(`문항이 ${questions.length}개라 한 번에 낼 수 없습니다(${QUIZ_TEST_MAX_QUESTIONS}문항까지).`);
+    }
+    const r = await postJson("/api/quiz-tests", {
+      classId, studentId: target === "class" ? null : target,
+      title: $("assignTitle").value, questions, source,
+    }, "시험 내기에 실패했습니다.");
+    closeModal(assignModalEl);
+    alert(`${r.questions}${source === "workbook" ? "단계" : "문항"}을 냈습니다.` +
+      (r.skipped ? ` (학생 화면에서 풀 수 없는 모양의 문항 ${r.skipped}개는 뺐습니다.)` : "") +
+      " '학생 관리' 탭의 시험 목록에서 결과를 확인할 수 있습니다.");
   } catch (err) {
-    $("testPickError").textContent = err.message || "저장본을 불러오지 못했습니다.";
+    assignErrorEl.textContent = err.message || "시험 내기에 실패했습니다.";
   } finally {
-    b.disabled = false;
+    assignStatusEl.textContent = "";
+    btn.disabled = false;
   }
-});
+}
 
 /* ══════ 문제 시험 내기 — 객관식·주관식·혼합 탭에서 만든 문제를 학생이 사이트에서 푼다 ══════
    서버(create_quiz_assignment)가 정답을 쥐고 학생에게는 정답을 뺀 문제만 보낸다. 채점·정답 공개도

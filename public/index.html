@@ -994,23 +994,11 @@
     </div>
   </div>
 
-  <!-- ══════════ 시험 출제 — 저장해 둔 자료를 골라 바로 낸다(학생 관리 탭 [＋ 시험 출제], app.js openTestPicker) ══════════ -->
-  <div class="modal-overlay" id="testPickModalOverlay" hidden>
-    <div class="modal-box">
-      <button type="button" class="modal-close" id="testPickModalClose" aria-label="닫기">&times;</button>
-      <h3 class="modal-title">시험 낼 자료 고르기</h3>
-      <p class="hint">저장해 둔 자료를 누르면 시험 내기 창이 열립니다. 새로 만들려면 그 탭에서 만든 뒤 "🏫 반에 시험 내기"를 누르세요.</p>
-      <div class="tp-kinds" id="testPickKinds"></div>
-      <div id="testPickList" style="max-height:360px; overflow-y:auto; overflow-x:hidden; border:1px solid #d6dde8; border-radius:8px; padding:4px 8px;"></div>
-      <div class="error" id="testPickError"></div>
-    </div>
-  </div>
-
   <!-- ══════════ 반에 시험 내기 창(플로팅) ══════════ -->
   <div class="modal-overlay" id="assignModalOverlay" hidden>
     <div class="modal-box">
       <button type="button" class="modal-close" id="assignModalClose" aria-label="닫기">&times;</button>
-      <h3 class="modal-title">반에 단어시험 내기</h3>
+      <h3 class="modal-title" id="assignHeading">반에 단어시험 내기</h3>
       <form class="auth-panel" id="assignForm">
         <label for="assignClassSelect">낼 반</label>
         <select id="assignClassSelect"></select>
@@ -1018,7 +1006,11 @@
         <select id="assignTargetSelect">
           <option value="class">반 전체</option>
         </select>
-        <label>낼 단어장 <span class="hint" style="font-weight:400;">(여러 개를 고르면 합칠지 따로 낼지 고릅니다)</span></label>
+        <div id="assignKindWrap" hidden>
+          <label for="assignKindSelect">자료 종류</label>
+          <select id="assignKindSelect"></select>
+        </div>
+        <label id="assignSourceLabel">낼 단어장 <span class="hint" style="font-weight:400;">(여러 개를 고르면 합칠지 따로 낼지 고릅니다)</span></label>
         <div id="assignVocabSourceList" style="max-height:180px; overflow-y:auto; border:1px solid #d6dde8; border-radius:8px; padding:6px 10px; margin-bottom:4px;"></div>
         <div id="assignVocabModeWrap" hidden style="margin:2px 0 6px;">
           <label class="chk" style="display:inline-flex; margin-right:14px;"><input type="radio" name="assignVocabMode" value="merge" checked> 하나의 시험으로 합치기</label>
@@ -1027,18 +1019,20 @@
         <p class="hint" id="assignVocabSourceHint"></p>
         <label for="assignTitle" id="assignTitleLabel">시험 제목</label>
         <input type="text" id="assignTitle" placeholder="예: 3과 단어시험">
-        <label for="assignFormat">형식</label>
-        <select id="assignFormat">
-          <option value="mcq">객관식(5지선다)</option>
-          <option value="saq">주관식(직접 입력)</option>
-        </select>
-        <p class="hint">문제마다 "영어 보고 뜻 맞히기"·"뜻 보고 영어 쓰기"가 무작위로 섞여 나갑니다.</p>
-        <label class="chk" style="margin:4px 0 8px;">
-          <input type="checkbox" id="assignRetestChk"> 합격 기준을 두고, 기준 미달이면 통과할 때까지 재시험
-        </label>
-        <div id="assignRetestField" hidden>
-          <label for="assignMaxWrong">허용 오답 수 (이 개수 이하로 틀리면 합격)</label>
-          <input type="number" id="assignMaxWrong" min="0" step="1" placeholder="예: 5">
+        <div id="assignVocabOnly">
+          <label for="assignFormat">형식</label>
+          <select id="assignFormat">
+            <option value="mcq">객관식(5지선다)</option>
+            <option value="saq">주관식(직접 입력)</option>
+          </select>
+          <p class="hint">문제마다 "영어 보고 뜻 맞히기"·"뜻 보고 영어 쓰기"가 무작위로 섞여 나갑니다.</p>
+          <label class="chk" style="margin:4px 0 8px;">
+            <input type="checkbox" id="assignRetestChk"> 합격 기준을 두고, 기준 미달이면 통과할 때까지 재시험
+          </label>
+          <div id="assignRetestField" hidden>
+            <label for="assignMaxWrong">허용 오답 수 (이 개수 이하로 틀리면 합격)</label>
+            <input type="number" id="assignMaxWrong" min="0" step="1" placeholder="예: 5">
+          </div>
         </div>
         <div class="gate-actions">
           <button type="submit" class="btn" id="assignSubmitBtn">시험 내기</button>

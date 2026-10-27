@@ -2848,17 +2848,6 @@ input.st-in{width:100%; box-sizing:border-box;}
   /* 1단을 고르면 문항 카드를 한 줄로 흘린다(기본은 문제 탭과 같은 2단) */
   #grResult.gr-1col .qz-cards{column-count:1;}
 }
-/* 시험 출제 창 — 저장본 목록(app.js openTestPicker) */
-.tp-kinds{display:flex; flex-wrap:wrap; gap:6px; margin:8px 0;}
-.tp-kinds .btn.on{background:var(--accent); color:#fff; border-color:var(--accent);}
-.tp-kinds .btn.on .hint{color:#fff;}
-.tp-item{display:flex; align-items:flex-start; gap:8px; width:100%; box-sizing:border-box; text-align:left; background:none; border:0;
-  border-bottom:1px solid var(--line-soft, #e6ebf2); padding:9px 4px; cursor:pointer; font:inherit; color:inherit;}
-.tp-item:last-child{border-bottom:0;}
-.tp-item:hover{background:var(--paper, #f6f8fb);}
-.tp-item:disabled{opacity:.5; cursor:wait;}
-.tp-item .tp-title{flex:1; font-weight:600; min-width:0; white-space:normal; overflow-wrap:anywhere; line-height:1.45;}
-.tp-item .saved-list-tag{flex:0 0 auto;}
 
 /* 모의고사 문제지 → 지문 복원 — AI가 고른 답 목록(app.js runMockRestore) */
 .mock-restore-answers{margin-top:6px;}
