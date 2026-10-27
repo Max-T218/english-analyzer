@@ -15647,6 +15647,30 @@ def _wrong_items(details):
     ]
 
 
+def _wrong_items_all(attempts):
+    """모든 회차에서 틀린 단어를 합친 목록 — 시험별 성적표의 [틀린 단어]가 쓴다(2026-10-28 사용자).
+    마지막 회차만 보면 재시험으로 합격한 학생은 늘 0개라, 처음에 무엇을 몰랐는지가 안 보였다.
+    같은 단어는 한 줄로 모으고 틀린 회차(rounds)를 붙인다. 문제·학생 답은 가장 최근에 틀린 것."""
+    merged = {}
+    for a in attempts:
+        r = a.get("round", 1)
+        for d in a.get("details") or []:
+            if d.get("ok"):
+                continue
+            key = (d.get("word") or d.get("correct") or d.get("prompt") or "").strip().lower()
+            item = merged.get(key)
+            if item is None:
+                item = merged[key] = {"rounds": []}
+            item.update({"prompt": d.get("prompt", ""), "given": d.get("given", ""),
+                         "correct": d.get("correct", "")})
+            if r not in item["rounds"]:
+                item["rounds"].append(r)
+    out = sorted(merged.values(), key=lambda x: (-len(x["rounds"]), x["rounds"][0]))
+    for i, x in enumerate(out, 1):
+        x["no"] = i
+    return out
+
+
 def get_result_for_student(student_id, assignment_id):
     """학생이 이미 본 시험의 최근 결과(틀린 단어 포함) — 목록의 [결과 보기]."""
     _require_db()
@@ -15854,8 +15878,8 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
                 "submittedAt": x.get("submitted_at", ""),
             } for x in atts],
             "lastAt": last.get("submitted_at", "") if last else "",
-            "wrongItems": _wrong_items(last.get("details")) if last else [],
-            "hasDetails": bool(last and "details" in last),
+            "wrongItems": [] if quiz else _wrong_items_all(atts),
+            "hasDetails": any("details" in x for x in atts),
         })
     order = {"failed": 0, "retake": 0, "done": 1, "passed": 1, "none": 2}
     rows.sort(key=lambda r: (order[r["status"]], r["studentName"]))

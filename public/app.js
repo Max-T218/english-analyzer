@@ -1043,7 +1043,11 @@ logoutBtn.addEventListener("click", async () => {
 
 const deleteAccountBtn = $("deleteAccountBtn");
 deleteAccountBtn.addEventListener("click", async () => {
-  if (!confirm("정말 탈퇴하시겠습니까?\n남은 잔액과 저장된 자료가 모두 사라지며 되돌릴 수 없습니다."))
+  // 학생 관리(또는 레벨테스트)를 쓰는 선생님에게는 학생 자료도 함께 지워진다는 것을 덧붙인다(2026-10-28 사용자)
+  // — 탈퇴하면 delete_user_account가 반·학생·시험·답안·성적까지 지운다.
+  const withStudents = isClassroomApproved || !$("leveltestTabBtn").hidden;
+  if (!confirm("정말 탈퇴하시겠습니까?\n남은 잔액과 저장된 자료가 모두 사라지며 되돌릴 수 없습니다."
+    + (withStudents ? "\n\n등록한 반·학생과 낸 시험, 학생들의 답안·성적도 모두 함께 지워집니다." : "")))
     return;
   try {
     await postJson("/api/auth/delete", {}, "탈퇴 처리에 실패했습니다.");
@@ -17001,9 +17005,12 @@ function wrongItemsHtml(items, hasDetails) {
       ? `<p class="hint">이 기록에는 틀린 단어가 저장되어 있지 않습니다.</p>`
       : `<p class="hint">틀린 단어가 없습니다.</p>`;
   }
-  return `<table><thead><tr><th>#</th><th>문제</th><th>학생 답</th><th>정답</th></tr></thead><tbody>${items
+  // rounds — 모든 회차를 합친 목록(시험별 성적표)이면 틀린 회차를 함께 보인다
+  const byRound = items.some((w) => Array.isArray(w.rounds));
+  return `<table><thead><tr><th>#</th><th>문제</th><th>학생 답</th><th>정답</th>${byRound ? "<th>틀린 회차</th>" : ""}</tr></thead><tbody>${items
     .map((w) => `<tr><td>${esc(w.no)}</td><td>${esc(w.prompt)}</td>
-      <td>${w.given ? esc(w.given) : '<span class="hint">(무응답)</span>'}</td><td><b>${esc(w.correct)}</b></td></tr>`)
+      <td>${w.given ? esc(w.given) : '<span class="hint">(무응답)</span>'}</td><td><b>${esc(w.correct)}</b></td>${byRound
+        ? `<td>${esc((w.rounds || []).map((r) => r + "회").join(", "))}${(w.rounds || []).length > 1 ? ` <b>(${w.rounds.length}번)</b>` : ""}</td>` : ""}</tr>`)
     .join("")}</tbody></table>`;
 }
 // 학생 표의 '최근 성적' 칸
@@ -17121,7 +17128,7 @@ function renderTestResults(data, title) {
         <td class="no-print">${wrongBtn} ${retakeBtn}</td>
       </tr>
       <tr class="wrong-row no-print" hidden><td colspan="5" class="tk">
-        <b>마지막 시도의 틀린 단어</b>${wrongItemsHtml(r.wrongItems, r.hasDetails)}
+        <b>모든 회차의 틀린 단어</b>${wrongItemsHtml(r.wrongItems, r.hasDetails)}
       </td></tr>`;
   }).join("");
   const missing = sm.targets - sm.submitted;
