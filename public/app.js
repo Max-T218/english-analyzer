@@ -7023,6 +7023,54 @@ const QUIZ_SHEET_TITLE = {};
 const QUIZ_ASSIGN_SYNC = [];
 function syncQuizAssignBtns() { QUIZ_ASSIGN_SYNC.forEach((f) => f()); }
 
+/* 긴 지문 나눠 출제(2026-10-28 사용자) — 교과서 본문처럼 2,000자쯤 되는 지문으로 문제를 내면
+   문항이 글 전체를 묻게 된다. 학교 시험은 모의고사처럼 1,000자 안쪽으로 잘라 내므로, 문단을
+   이어 모아 LONG_PASSAGE_LIMIT 안쪽 토막으로 나눈다. 문단 중간은 자르지 않는다 — 문단은 빈 줄로
+   나뉜 덩어리이고, 빈 줄이 없으면 줄마다 문장 부호로 끝날 때만 줄을 문단으로 본다(PDF에서 붙여
+   넣은 글은 줄이 문장 중간에서 꺾여 있다). 나눌 수 없으면 [text] 그대로다.
+   토막 수는 가장 적게, 그 수 안에서는 가장 긴 토막이 가장 짧도록 고른다(앞에서부터 욕심껏 담으면
+   1,000 · 200처럼 꼬리가 짧게 남는다). */
+const LONG_PASSAGE_LIMIT = 1000;
+function splitLongPassage(text, limit = LONG_PASSAGE_LIMIT) {
+  const raw = String(text || "").trim();
+  if (raw.length <= limit) return [raw];
+  let paras = raw.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+  if (paras.length < 2) {
+    const lines = raw.split(/\n/).map((s) => s.trim()).filter(Boolean);
+    if (lines.length >= 2 && lines.every((s) => /[.!?]["'”’)\]]*$/.test(s))) paras = lines;
+  }
+  if (paras.length < 2) return [raw];
+  const n = paras.length;
+  const pre = [0];
+  paras.forEach((p, i) => pre.push(pre[i] + p.length + (i ? 2 : 0)));
+  const len = (i, j) => pre[j] - pre[i] - (i ? 2 : 0); // paras[i..j-1]을 빈 줄로 이은 길이
+  // best[k][j] = 앞 j문단을 k토막으로 나눌 때 가장 긴 토막의 길이(최소), cut[k][j] = 마지막 토막의 시작
+  const best = [Array(n + 1).fill(Infinity)];
+  const cut = [[]];
+  best[0][0] = 0;
+  for (let k = 1; k <= n; k++) {
+    best.push(Array(n + 1).fill(Infinity));
+    cut.push(Array(n + 1).fill(0));
+    for (let j = k; j <= n; j++) {
+      for (let i = k - 1; i < j; i++) {
+        const v = Math.max(best[k - 1][i], len(i, j));
+        if (v < best[k][j]) { best[k][j] = v; cut[k][j] = i; }
+      }
+    }
+    // 이 수로 모두 limit 안에 들거나, 문단 하나가 이미 limit을 넘어 더 쪼갤 수 없으면 멈춘다
+    if (best[k][n] <= limit || k === n) {
+      const parts = [];
+      for (let kk = k, j = n; kk > 0; kk--) {
+        const i = cut[kk][j];
+        parts.unshift(paras.slice(i, j).join("\n\n"));
+        j = i;
+      }
+      return parts;
+    }
+  }
+  return [raw];
+}
+
 function setupQuizTab({ prefix, types, footer }) {
   const gridEl = $(prefix + "TypeGrid");
   const allEl = $(prefix + "TypeAll");
@@ -7065,6 +7113,7 @@ function setupQuizTab({ prefix, types, footer }) {
   // 그 걱정이 사라져 주관식에도 붙였다(2026-09-25).
   const variationEl = checkGroup(prefix + "Variation");
   const variationHintEl = $(prefix + "VariationHint");
+  const splitLongEl = $(prefix + "SplitLong"); // 긴 지문 나눠 출제 — 지금은 객관식 탭에만 있다
   const VARIATION_STORE = "gemini_" + prefix + "_variation";
   const costHintEl = $(prefix + "CostHint");
   // 난이도 — 객관식·주관식 두 탭에 있다(칸이 없으면 늘 기본). 주관식은 고난도가 되는
@@ -7479,7 +7528,15 @@ function setupQuizTab({ prefix, types, footer }) {
 
   async function generate() {
     errorEl.textContent = "";
-    const jobs = passageMgr.getJobs();
+    // 긴 지문 나눠 출제 — 입력 칸은 건드리지 않고 이번 출제에서만 토막을 지문 하나로 본다.
+    // 토막은 '지문 1 (1/2)'처럼 이름에 차례를 단다.
+    const splitLong = !!(splitLongEl && splitLongEl.checked);
+    const jobs = passageMgr.getJobs().flatMap((j) => {
+      if (!splitLong) return [j];
+      const parts = splitLongPassage(j.text);
+      return parts.length < 2 ? [j]
+        : parts.map((text, k) => ({ ...j, text, name: `${j.name} (${k + 1}/${parts.length})` }));
+    });
     if (!jobs.length) {
       errorEl.textContent = "문제를 만들 영어 지문을 입력하세요.";
       return;
@@ -12912,7 +12969,7 @@ const HOWTO = {
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "(선택) <b>목표 어법</b>·<b>단어장</b>을 넣으면 그 문법·단어로 문제를 냅니다.",
       "<b>유형</b>을 체크하고 ＋ － 로 <b>문항 수</b>를 정합니다. 대화문 유형은 대화문을 넣었을 때만 만들어집니다.",
-      "<b>학교급 · 난이도 · 출제 순서 · 지문 변형</b>을 고릅니다. 난이도를 둘 다 고르면 기본·고난도 두 벌이 나옵니다.",
+      "<b>학교급 · 난이도 · 출제 순서 · 지문 변형</b>을 고릅니다. 난이도를 둘 다 고르면 기본·고난도 두 벌이 나옵니다. 교과서처럼 긴 지문은 <b>긴 지문</b> 체크로 문단 단위 1,000자 안쪽 토막으로 나눠 낼 수 있습니다.",
       "<b>[문제 만들기]</b>를 누릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>[🔀 문제 섞기]</b>는 요금 없이 순서만 바꿉니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
