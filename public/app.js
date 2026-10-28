@@ -16998,6 +16998,13 @@ const SCORE_STATUS = {
 function roundsText(rounds) {
   return (rounds || []).map((r) => `${r.round}회 ${r.score}/${r.total}${r.passed ? " ✅" : ""}`).join(" · ");
 }
+// 단어 학습 기록 — "총 3번 (1회차 2번 · 2회차 1번) · 마지막 10.29 09:15". 기록이 없으면 '—'
+function studyText(r) {
+  const st = r.studies || [];
+  if (!st.length) return "—";
+  const last = st.reduce((a, b) => (a.studiedAt > b.studiedAt ? a : b));
+  return `총 ${r.studyTotal}번 (${st.map((x) => `${x.round}회차 ${x.count}번`).join(" · ")}) · 마지막 ${fmtDateTime(last.studiedAt)}`;
+}
 // 틀린 단어 표(문제·내 답·정답) — 시험별 성적표와 학생별 성적표가 같이 쓴다
 function wrongItemsHtml(items, hasDetails) {
   if (!items || !items.length) {
@@ -17124,10 +17131,11 @@ function renderTestResults(data, title) {
         <td class="tk">${esc(r.studentName)}${r.removed ? ' <span class="hint">(삭제된 학생)</span>' : ""}</td>
         <td>${statusTagHtml(r.status, r.passedRound, data.noCriterion)}</td>
         <td class="tk">${esc(roundsText(r.rounds)) || "—"}</td>
+        <td class="tk no-print">${esc(studyText(r))}</td>
         <td>${esc(fmtDateTime(r.lastAt))}</td>
         <td class="no-print">${wrongBtn} ${retakeBtn}</td>
       </tr>
-      <tr class="wrong-row no-print" hidden><td colspan="5" class="tk">
+      <tr class="wrong-row no-print" hidden><td colspan="6" class="tk">
         <b>모든 회차의 틀린 단어</b>${wrongItemsHtml(r.wrongItems, r.hasDetails)}
       </td></tr>`;
   }).join("");
@@ -17142,7 +17150,7 @@ function renderTestResults(data, title) {
     ])}
     <h4 class="sec">학생별 결과</h4>
     <table>
-      <thead><tr><th>학생</th><th>결과</th><th>회차별 점수</th><th>마지막 제출</th><th class="no-print"></th></tr></thead>
+      <thead><tr><th>학생</th><th>결과</th><th>회차별 점수</th><th class="no-print">단어 학습</th><th>마지막 제출</th><th class="no-print"></th></tr></thead>
       <tbody>${body}</tbody></table></div>
     <button type="button" class="btn ghost small print-results-btn">🖨️ 성적표 인쇄</button>
     <button type="button" class="btn ghost small close-report-btn">✕ 성적표 닫기</button>`;
@@ -17667,7 +17675,66 @@ function isoWeekValue(d) {   // 날짜가 든 주의 <input type=week> 값
   const wk = Math.ceil(((thu - new Date(thu.getFullYear(), 0, 1)) / 864e5 + 1) / 7);
   return `${thu.getFullYear()}-W${String(wk).padStart(2, "0")}`;
 }
-$("classWrongWeek").value = isoWeekValue(new Date(Date.now() - 7 * 864e5));   // 기본은 지난 주
+// 주 고르기 — 달력 입력(type=week)은 "2026, 43번째 주"로만 보여서, 버튼을 누르면 한 달 달력이
+// 뜨고 날짜가 든 줄(월~일)을 누르면 그 주가 골라진다. 값은 예전과 같은 "2026-W43"
+(function setupWrongWeekPicker() {
+  const valEl = $("classWrongWeek"), btn = $("classWrongWeekBtn"), pop = $("classWrongWeekPop");
+  const md = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+  const mondayOf = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7));
+  const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+  const weekLabel = (mon) => {
+    const thu = addDays(mon, 3);
+    return `${thu.getFullYear()}년 ${thu.getMonth() + 1}월 ${Math.ceil(thu.getDate() / 7)}주차 (${md(mon)}~${md(addDays(mon, 6))})`;
+  };
+  const thisMon = mondayOf(new Date());
+  let selMon = addDays(thisMon, -7);          // 기본은 지난 주
+  let view = new Date(selMon.getFullYear(), selMon.getMonth(), 1);
+  const sync = () => { valEl.value = isoWeekValue(selMon); btn.textContent = `📅 ${weekLabel(selMon)}`; };
+  const draw = () => {
+    const first = mondayOf(view);
+    const rows = [];
+    for (let r = 0; r < 6; r++) {
+      const mon = addDays(first, r * 7);
+      if (r >= 4 && mon.getMonth() !== view.getMonth()) break;
+      const future = mon > thisMon;
+      const sel = mon.getTime() === selMon.getTime();
+      const cells = [0, 1, 2, 3, 4, 5, 6].map((i) => {
+        const d = addDays(mon, i);
+        const other = d.getMonth() !== view.getMonth();
+        return `<td style="padding:6px 0; text-align:center; color:${other ? "#b5bac4" : i === 6 ? "#d33" : i === 5 ? "#36c" : "inherit"};">${d.getDate()}</td>`;
+      }).join("");
+      rows.push(`<tr data-mon="${mon.getTime()}" style="${future ? "opacity:.35; cursor:not-allowed;" : "cursor:pointer;"}${sel ? "background:#2563eb; color:#fff; font-weight:700;" : ""}">${cells}</tr>`);
+    }
+    pop.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+        <button type="button" class="btn ghost small" data-nav="-1">‹</button>
+        <b>${view.getFullYear()}년 ${view.getMonth() + 1}월</b>
+        <button type="button" class="btn ghost small" data-nav="1">›</button>
+      </div>
+      <table style="width:100%; border-collapse:separate; border-spacing:0; font-size:14px;">
+        <thead><tr>${"월화수목금토일".split("").map((c) => `<th style="padding:4px 0; font-weight:600; color:#778;">${c}</th>`).join("")}</tr></thead>
+        <tbody>${rows.join("")}</tbody>
+      </table>
+      <div style="margin-top:6px; font-size:12px; color:#778;">날짜를 누르면 그 주(월~일)가 골라집니다.</div>`;
+  };
+  btn.addEventListener("click", () => {
+    if (pop.hidden) { view = new Date(selMon.getFullYear(), selMon.getMonth(), 1); draw(); }
+    pop.hidden = !pop.hidden;
+  });
+  pop.addEventListener("click", (e) => {
+    const nav = e.target.closest("[data-nav]");
+    if (nav) { view = new Date(view.getFullYear(), view.getMonth() + (+nav.dataset.nav), 1); draw(); return; }
+    const tr = e.target.closest("tr[data-mon]");
+    if (!tr) return;
+    const mon = new Date(+tr.dataset.mon);
+    if (mon > thisMon) return;                // 아직 안 온 주는 고를 수 없다
+    selMon = mon; sync(); pop.hidden = true;
+  });
+  document.addEventListener("click", (e) => {
+    if (!pop.hidden && !pop.contains(e.target) && e.target !== btn) pop.hidden = true;
+  });
+  sync();
+})();
 
 $("classWrongBtn").addEventListener("click", async (e) => {
   const btn = e.currentTarget;

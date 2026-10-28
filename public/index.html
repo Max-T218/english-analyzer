@@ -2459,8 +2459,12 @@
       </div>
       <p class="hint">고른 달의 성적표를 학생마다 한 장씩 이어서 인쇄합니다. 코멘트는 기본 초안이 들어가고, 학생 줄의 [성적표]를 같은 달로 열어 코멘트를 고쳐 두었으면 고친 글이 들어갑니다.</p>
       <div class="row" style="align-items:center; gap:8px; margin-top:12px;">
-        <label for="classWrongWeek" style="margin:0;">반 전체 주간 오답테스트</label>
-        <input type="week" id="classWrongWeek" style="width:auto;">
+        <label style="margin:0;">반 전체 주간 오답테스트</label>
+        <span style="position:relative; display:inline-block;">
+          <input type="hidden" id="classWrongWeek">
+          <button type="button" class="btn ghost" id="classWrongWeekBtn" aria-haspopup="true"></button>
+          <div id="classWrongWeekPop" hidden style="position:absolute; z-index:40; top:calc(100% + 6px); left:0; width:288px; padding:10px; background:#fff; color:#222; border:1px solid #d5d9e0; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.15);"></div>
+        </span>
         <select id="classWrongFormat" style="width:auto;">
           <option value="mcq">객관식(5지선다)</option>
           <option value="saq">주관식</option>

@@ -72,9 +72,8 @@
   <section class="panel" id="studyWorkspace" hidden>
     <button type="button" class="btn ghost small" id="backToListBtn3">← 목록으로</button>
     <h3 id="studyTitle" style="margin:12px 0 4px;"></h3>
-    <label class="chk" style="margin:6px 0 10px; display:inline-flex; align-items:center; gap:6px;">
-      <input type="checkbox" id="studyHideMeaning"> 뜻 가리고 외우기 (눌러서 확인)
-    </label>
+    <p class="hint" style="margin:6px 0 10px;">단어를 눌러서 뜻을 확인하세요. 모든 단어의 뜻을 확인해야 시험을 볼 수 있습니다.</p>
+    <div id="studyProgress" style="font-weight:600; margin-bottom:8px;"></div>
     <div class="error" id="studyError"></div>
     <div class="table-wrap">
       <table class="st-table">
@@ -83,7 +82,7 @@
       </table>
     </div>
     <div class="actions" style="margin-top:16px;">
-      <button type="button" class="btn" id="studyTakeBtn">이 시험 보기</button>
+      <button type="button" class="btn" id="studyTakeBtn" disabled>이 시험 보기</button>
     </div>
   </section>
 

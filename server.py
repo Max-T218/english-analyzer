@@ -13231,6 +13231,15 @@ CHANGELOG = [
             "교사가 학생의 아이디·비밀번호를 다시 정해 줄 수 있다는 점을 적었습니다. 환불정책은 내용 변경 없이 시행일만 같이 맞췄습니다. 내용은 이용약관에서 볼 수 있습니다.",
         ],
     },
+    {
+        "version": 101,
+        "date": "2026-10-28",
+        "items": [
+            "단어시험을 보기 전에 단어 학습이 필수가 됩니다. 학생이 단어 학습 화면에서 모든 단어의 뜻을 하나씩 눌러 확인해야 시험이 열리고, "
+            "재시험이 나오면 그 회차도 다시 학습해야 응시할 수 있습니다. 학습 화면은 처음부터 뜻이 가려져 있습니다. "
+            "선생님은 시험 성적표의 '단어 학습' 칸에서 학생이 몇 번 학습했는지 볼 수 있습니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -15462,6 +15471,57 @@ def open_retake(teacher_id, assignment_id, student_id, cancel=False):
     ref.update({f"retakes.{student_id}": progress["nextRound"]})
 
 
+class StudyRequired(ValueError):
+    """단어시험을 열기 전에 이 회차의 단어 학습을 아직 마치지 않았다."""
+
+
+def _study_done(assignment, assignment_id, student_id, round):
+    """이 회차의 단어 학습(모든 뜻을 눌러 확인)을 마쳤는지. 단어가 없는 시험은 학습할 게
+    없으니 마친 것으로 본다. 학습 기록은 회차마다 따로라 재시험은 다시 학습해야 한다."""
+    if not (assignment.get("vocab") or []):
+        return True
+    return DB.collection("test_studies").document(f"{assignment_id}_{student_id}_{round}").get().exists
+
+
+def record_study_done(student_id, assignment_id, revealed):
+    """학생 화면이 '모든 뜻을 눌러 봤다'고 알려 오면 다음에 볼 회차의 학습 기록을 남긴다.
+    눌러 본 개수(revealed)가 단어 수에 못 미치면 기록하지 않는다."""
+    _require_db()
+    s_snap = DB.collection("students").document(student_id).get()
+    if not s_snap.exists:
+        raise ValueError("학생 정보를 찾을 수 없습니다.")
+    a_snap = DB.collection("test_assignments").document(assignment_id).get()
+    if not a_snap.exists:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    assignment = a_snap.to_dict()
+    if not _assignment_targets_student(assignment, student_id, s_snap.to_dict()):
+        raise ValueError("이 시험은 이 학생에게 배정되지 않았습니다.")
+    if assignment.get("kind") == "quiz":
+        raise ValueError("단어시험만 학습할 수 있습니다.")
+    progress = _attempt_progress(assignment, _get_student_attempts(assignment_id, student_id))
+    if progress["passed"]:
+        return {"round": None, "studied": True}
+    total = len(assignment.get("vocab") or [])
+    try:
+        revealed = int(revealed)
+    except (TypeError, ValueError):
+        revealed = 0
+    if revealed < total:
+        raise ValueError("모든 단어의 뜻을 눌러서 확인해야 학습으로 인정됩니다.")
+    round = progress["nextRound"]
+    ref = DB.collection("test_studies").document(f"{assignment_id}_{student_id}_{round}")
+    prev = ref.get()
+    prev = (prev.to_dict() or {}) if prev.exists else {}
+    now = _now_iso()
+    # count — 이 회차에 모든 뜻을 끝까지 확인한 횟수(같은 회차에 다시 열어 마쳐도 늘어난다)
+    ref.set({
+        "assignment_id": assignment_id, "student_id": student_id, "round": round,
+        "words": total, "count": int(prev.get("count") or 0) + 1,
+        "first_at": prev.get("first_at") or now, "studied_at": now,
+    })
+    return {"round": round, "studied": True}
+
+
 def get_test_detail_for_student(student_id, assignment_id):
     _require_db()
     s_snap = DB.collection("students").document(student_id).get()
@@ -15480,6 +15540,8 @@ def get_test_detail_for_student(student_id, assignment_id):
     if progress["passed"]:
         raise ValueError("이미 합격한 시험입니다.")
     round = progress["nextRound"]
+    if not _study_done(assignment, assignment_id, student_id, round):
+        raise StudyRequired("단어 학습을 마쳐야 시험을 볼 수 있습니다.")
     questions = _build_student_questions(assignment_id, assignment, student_id, round)
     return {
         "title": assignment.get("title", ""),
@@ -15580,6 +15642,8 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
             "noCriterion": assignment.get("max_wrong") is None,
         }
     round = progress["nextRound"]
+    if not _study_done(assignment, assignment_id, student_id, round):
+        raise StudyRequired("단어 학습을 마쳐야 시험을 제출할 수 있습니다.")
 
     vocab = assignment.get("vocab") or []
     fmt = assignment.get("format", "saq")
@@ -15846,6 +15910,16 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
         by_student.setdefault(d.get("student_id"), []).append(d)
     for rows in by_student.values():
         rows.sort(key=lambda d: d.get("round", 1))
+    studies = {}   # 학생 → 회차별 단어 학습 기록(퀴즈 시험은 학습이 없다)
+    if assignment.get("kind") != "quiz":
+        for doc in DB.collection("test_studies").where("assignment_id", "==", assignment_id).stream():
+            d = doc.to_dict() or {}
+            studies.setdefault(d.get("student_id"), []).append({
+                "round": d.get("round", 1), "count": d.get("count") or 1,
+                "studiedAt": d.get("studied_at", ""),
+            })
+        for rows in studies.values():
+            rows.sort(key=lambda d: d["round"])
 
     # 대상 학생 — 개별 시험이면 그 학생, 아니면 지금 그 반의 학생 전부
     targets = {}
@@ -15878,6 +15952,8 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
                 "submittedAt": x.get("submitted_at", ""),
             } for x in atts],
             "lastAt": last.get("submitted_at", "") if last else "",
+            "studies": studies.get(sid, []),
+            "studyTotal": sum(x["count"] for x in studies.get(sid, [])),
             "wrongItems": [] if quiz else _wrong_items_all(atts),
             "hasDetails": any("details" in x for x in atts),
         })
@@ -15916,6 +15992,8 @@ def delete_assignment(teacher_id, assignment_id):
     if not snap.exists or snap.to_dict().get("teacher_id") != teacher_id:
         raise ValueError("시험을 찾을 수 없습니다.")
     for doc in DB.collection("test_attempts").where("assignment_id", "==", assignment_id).stream():
+        doc.reference.delete()
+    for doc in DB.collection("test_studies").where("assignment_id", "==", assignment_id).stream():
         doc.reference.delete()
     ref.delete()
 
@@ -17845,6 +17923,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 self._send_json(get_test_detail_for_student(student_id, assignment_id))
+            except StudyRequired as e:
+                self._send_json({"error": str(e), "needStudy": True}, 409)
             except ValueError as e:
                 self._send_json({"error": str(e)}, 404)
             return
@@ -18028,6 +18108,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/vocab-tests/update", "/api/vocab-tests/retake",
                         "/api/quiz-tests", "/api/quiz-tests/grade",
                         "/api/student/login", "/api/student/logout", "/api/student/tests/submit",
+                        "/api/student/tests/studied",
                         "/api/admin/approve-leveltest",
                         "/api/leveltest/links", "/api/leveltest/links/update", "/api/leveltest/links/delete",
                         "/api/leveltest/grade", "/api/leveltest/results/delete",
@@ -18960,6 +19041,19 @@ class Handler(BaseHTTPRequestHandler):
             token = _parse_cookies(self.headers.get("Cookie", "")).get("student_session")
             delete_student_session(token)
             self._send_json({"loggedIn": False}, cookies=[self._cleared_student_session_cookie()])
+            return
+
+        if path == "/api/student/tests/studied":
+            student_id = _student_session_user(self)
+            if not student_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                result = record_study_done(student_id, req.get("assignmentId"), req.get("revealed"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json(result)
             return
 
         if path == "/api/student/tests/submit":

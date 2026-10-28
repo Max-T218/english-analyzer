@@ -20,7 +20,11 @@ async function getJson(url) {
   let data = null;
   try { data = JSON.parse(text); } catch {}
   if (!data) throw new Error(`서버 오류 (HTTP ${res.status})`);
-  if (!res.ok) throw new Error(data.error || "요청에 실패했습니다.");
+  if (!res.ok) {
+    const err = new Error(data.error || "요청에 실패했습니다.");
+    if (data.needStudy) err.needStudy = true;
+    throw err;
+  }
   return data;
 }
 const esc = (s) => String(s == null ? "" : s)
@@ -228,40 +232,63 @@ $("testList").addEventListener("click", (e) => {
 
 let currentStudyAssignmentId = null;
 let currentStudyVocab = [];
+let studyRevealed = 0;
 
-async function openStudy(assignmentId) {
+// 뜻은 처음부터 가려 둔다. 모든 단어의 뜻을 눌러 확인해야 학습으로 인정하고, 그때서야
+// 서버에 알려 시험을 연다. 시험을 열려면 회차마다(재시험 포함) 이 학습을 다시 마쳐야 한다.
+async function openStudy(assignmentId, notice) {
   const errEl = $("studyError");
-  errEl.textContent = "";
+  errEl.textContent = notice || "";
   currentStudyAssignmentId = assignmentId;
   showOnly(studyWorkspaceEl);
   $("studyTitle").textContent = "불러오는 중…";
   $("studyTableBody").innerHTML = "";
-  $("studyHideMeaning").checked = false;
+  $("studyProgress").textContent = "";
+  $("studyTakeBtn").disabled = true;
+  $("studyTakeBtn").hidden = false;
+  studyRevealed = 0;
   try {
     const data = await getJson(`/api/student/tests/vocab?assignmentId=${encodeURIComponent(assignmentId)}`);
     $("studyTitle").textContent = data.title;
     currentStudyVocab = data.vocab || [];
     renderStudyTable();
+    updateStudyProgress();
   } catch (err) {
     $("studyTitle").textContent = "";
     errEl.textContent = err.message || "단어 목록을 불러오지 못했습니다.";
   }
 }
 
-// 뜻 가리기가 켜지면 눌러야 그 줄만 보이게 한다 — 카드 뒤집기 방식의 암기 확인용
 function renderStudyTable() {
-  const hide = $("studyHideMeaning").checked;
   $("studyTableBody").innerHTML = currentStudyVocab.map((v, i) => `
     <tr>
       <td>${i + 1}</td>
       <td>${esc(v.word)}</td>
-      <td class="study-meaning" data-meaning="${esc(v.meaning)}" data-revealed="${hide ? "0" : "1"}"
-          style="cursor:${hide ? "pointer" : "default"};">${hide ? "눌러서 보기" : esc(v.meaning)}</td>
+      <td class="study-meaning" data-meaning="${esc(v.meaning)}" data-revealed="0"
+          style="cursor:pointer;">눌러서 보기</td>
     </tr>
   `).join("");
 }
 
-$("studyHideMeaning").addEventListener("change", renderStudyTable);
+async function updateStudyProgress() {
+  const total = currentStudyVocab.length;
+  $("studyProgress").textContent = `뜻 확인 ${studyRevealed} / ${total}`;
+  if (studyRevealed < total) return;
+  $("studyProgress").textContent = `뜻 확인 ${total} / ${total} ✅`;
+  const assignmentId = currentStudyAssignmentId;
+  try {
+    const r = await postJson("/api/student/tests/studied", { assignmentId, revealed: studyRevealed });
+    if (assignmentId !== currentStudyAssignmentId) return;
+    if (r.round == null) {          // 이미 합격한 시험 — 복습일 뿐이라 시험 단추는 없다
+      $("studyTakeBtn").hidden = true;
+      return;
+    }
+    $("studyTakeBtn").disabled = false;
+  } catch (err) {
+    $("studyError").textContent = err.message || "학습 기록을 남기지 못했습니다. 다시 시도해 주세요.";
+  }
+}
+
 // 뜻 칸만이 아니라 줄 어디를 눌러도 연다 — 폰에서는 단어를 누르는 일이 많다
 $("studyTableBody").addEventListener("click", (e) => {
   const td = e.target.closest("tr")?.querySelector(".study-meaning");
@@ -269,6 +296,8 @@ $("studyTableBody").addEventListener("click", (e) => {
   td.dataset.revealed = "1";
   td.style.cursor = "default";
   td.textContent = td.dataset.meaning;
+  studyRevealed += 1;
+  updateStudyProgress();
 });
 $("studyTakeBtn").addEventListener("click", () => openTest(currentStudyAssignmentId));
 $("backToListBtn3").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
@@ -314,6 +343,10 @@ async function openTest(assignmentId) {
     currentIndex = 0;
     renderQuestion();
   } catch (err) {
+    if (err.needStudy) {     // 이 회차의 단어 학습을 아직 안 했다 — 학습 화면으로 보낸다
+      openStudy(assignmentId, "시험을 보기 전에 단어 학습을 먼저 마쳐 주세요.");
+      return;
+    }
     $("takeTitle").textContent = "";
     errEl.textContent = err.message || "시험을 불러오지 못했습니다.";
   }
