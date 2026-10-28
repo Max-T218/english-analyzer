@@ -1471,11 +1471,16 @@
           </div>
           <div class="hint type-order-hint" id="mcqVariationHint"></div>
 
-          <label class="group-label">긴 지문</label>
+          <label class="group-label">긴 지문 <span class="group-note">(1,000자가 넘는 지문 — 둘 다 고르면 두 벌이 나옵니다)</span></label>
           <div class="quiz-type-grid wide-grid">
-            <label><input type="checkbox" id="mcqSplitLong"> 1,000자가 넘는 지문은 문단 단위로 나눠 출제</label>
+            <label><input type="checkbox" name="mcqLong" value="whole" checked> 그대로 출제</label>
+            <label><input type="checkbox" name="mcqLong" value="split"> 나눠서 출제</label>
           </div>
-          <div class="hint type-order-hint">학교 시험처럼 긴 지문을 1,000자 안쪽 토막으로 잘라, 토막마다 지문 하나로 보고 문제를 만듭니다. 빈 줄로 문단이 나뉜 지문만 나누고, 문단 중간은 자르지 않습니다. 입력한 지문 칸은 그대로 두며, 토막 수만큼 요금이 붙습니다.</div>
+          <div class="quiz-type-grid wide-grid" id="mcqSplitModeWrap" hidden>
+            <label><input type="radio" name="mcqSplitMode" value="all" checked> 나눈 지문 모두 활용</label>
+            <label><input type="radio" name="mcqSplitMode" value="fit"> 문제 수에 맞게 자동 선택</label>
+          </div>
+          <div class="hint type-order-hint" id="mcqLongHint">나눠서 출제는 학교 시험처럼 긴 지문을 1,000자 안쪽 토막으로 잘라 문제를 만듭니다. 빈 줄로 문단이 나뉜 지문은 문단 단위로, 문단 구분이 없는 지문은 AI가 흐름이 바뀌는 문장을 찾아 자릅니다(나누기는 요금 없음, 글은 고치지 않음). 입력한 지문 칸은 그대로 둡니다.</div>
         </div>
       </div>
 

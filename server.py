@@ -6133,6 +6133,181 @@ def call_gemini_pdf_split(pages, api_key, model):
     return {"passages": out, "note": str(result.get("note") or "").strip()}
 
 
+# ── 긴 지문을 흐름이 바뀌는 곳에서 나누기(/api/passagecut, 2026-10-28 사용자) ──
+# 객관식 탭 '나눠서 출제'에서, 빈 줄 문단이 없는 긴 지문(교과서 본문을 PDF에서 꺼내면 한 덩어리다)을
+# 학교 시험처럼 1,000자 안쪽 토막으로 자를 때 쓴다. 규칙으로는 어디서 이야기가 바뀌는지 모르므로
+# Flash에게 '새 토막이 시작되는 문장 번호'만 묻고, 본문은 서버가 원문 문장을 그대로 이어 만든다
+# (AI가 글을 다시 쓰지 않는다). AI가 고른 토막이 길이를 넘으면 그 토막만 길이로 고르게 다시 자른다.
+# 값은 받지 않는다 — 지문 하나에 입력 1천 토큰 남짓·출력 수십 토큰이라 원가가 1원도 안 된다.
+PASSAGE_CUT_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "starts": {"type": "ARRAY", "items": {"type": "INTEGER"}},
+    },
+    "required": ["starts"],
+}
+PASSAGE_CUT_SYSTEM_PROMPT = """You split a long English reading passage into sections for a school English exam.
+Each section will be printed as its own exam passage, like a Korean CSAT reading passage.
+
+You get the passage as numbered sentences, each with its length in characters, and a length limit.
+Return "starts": the sentence numbers where a NEW section begins (do not include 1).
+
+Rules
+1. Cut only where the flow of ideas shifts — a new topic, a new step or tip, a new part of a list,
+   or a move from introduction to explanation. Never cut between a sentence and the sentence that
+   explains, gives an example of, or answers it.
+2. Every section must stand on its own as a readable passage: it should open with a sentence a reader
+   can understand without the previous section, and it should make one main point.
+3. Keep each section's total length at or under the limit. Use as few sections as the limit allows,
+   and keep sections roughly similar in length (avoid a very short last section).
+4. A heading-like sentence ("Here are some tips:", "Be Specific:") belongs with what follows it.
+5. Keep paired or contrasting examples together ("Don't say: ..." / "Do say: ...", "For example ..." /
+   "However ..."), and keep a tip's name with all of its explanation."""
+PASSAGE_CUT_MIN = 400
+PASSAGE_CUT_MAX = 2000
+
+
+def _split_sentences_keep(text):
+    """지문을 문장으로 나눈다 — 글자는 하나도 바꾸지 않고 자르는 자리만 정한다.
+    약어(Mr.)·이니셜(U.S.)·소수점의 마침표는 문장 끝으로 보지 않는다(rough_sentence_count와 같은 기준)."""
+    text = re.sub(r"\s+", " ", (text or "").strip())
+    masked = re.sub(r"\d\.\d", lambda m: m.group(0).replace(".", "\0"), text)
+    masked = _ABBR_RE.sub(lambda m: m.group(0)[:-1] + "\0", masked)
+    masked = _INITIAL_RE.sub(lambda m: m.group(0)[:-1] + "\0", masked)
+    out, start = [], 0
+    # 닫는 따옴표 자리에 여는 따옴표(“)가 잘못 찍히고 따옴표가 하나 더 떨어져 붙은 교재가 있어
+    # ('interesting.“ " Be Specific:') 그 따옴표들까지 앞 문장에 붙인다
+    for m in re.finditer(r'[.!?]+["\'”’“‘)\]]*(?:\s+["”“](?=\s))?(?=\s+["\'“‘(\[★●■▪•-]?\s*[A-Z0-9])', masked):
+        out.append(text[start:m.end()].strip())
+        start = m.end()
+    tail = text[start:].strip()
+    if tail:
+        out.append(tail)
+    return [s for s in out if s]
+
+
+# 새 토막이 이 문장에서 시작하면 어색한 정도 — 길이로 다시 자를 때 덜 어색한 자리를 고른다.
+# 제목처럼 생긴 문장("Be Specific:", "Use Visuals Effectively:")이나 화제를 여는 말 앞은 0,
+# 앞 문장을 받는 말(Do say·For example·This·They…) 앞은 3, 나머지는 1.
+_CUT_GOOD_RE = re.compile(r"^(?:[★●■▪•-]\s*)?(?:[A-Z][\w'’/-]*(?:[ ,]+[A-Za-z][\w'’/-]*){0,6}\s*:|"
+                          r"(?:So|Now|Finally|Remember|In addition|Here (?:are|is))\b)")
+_CUT_BAD_RE = re.compile(r"^(?:[★●■▪•-]\s*)?(?:Do say|Example|For example|For instance|Instead|However|But|"
+                         r"Then|Also|This|These|That|Those|It|They|Such)\b")
+
+
+def _cut_badness(sent):
+    s = sent.lstrip(' "“‘\'')
+    return 3 if _CUT_BAD_RE.match(s) else 0 if _CUT_GOOD_RE.match(s) else 1
+
+
+def _balanced_parts(lens, limit, bad=None):
+    """조각 길이 목록을 차례를 지켜 묶는다 — 묶음 수는 가장 적게, 그 안에서 시작 자리의 어색함(bad[i] —
+    i번째 조각에서 새 묶음이 시작할 때의 값) 합이 가장 작게, 그다음 가장 긴 묶음이 가장 짧게.
+    [(시작, 끝)] 를 돌려준다. bad가 없으면 화면 app.js의 splitLongPassage와 같은 셈이다."""
+    n = len(lens)
+    bad = bad or [0] * n
+    pre = [0]
+    for i, L in enumerate(lens):
+        pre.append(pre[-1] + L + (1 if i else 0))
+
+    def span(i, j):
+        return pre[j] - pre[i] - (1 if i else 0)
+
+    inf = (float("inf"), float("inf"))
+    best = [[inf] * (n + 1)]
+    best[0][0] = (0, 0)
+    cut = [[0] * (n + 1)]
+    for k in range(1, n + 1):
+        best.append([inf] * (n + 1))
+        cut.append([0] * (n + 1))
+        for j in range(k, n + 1):
+            for i in range(k - 1, j):
+                prev = best[k - 1][i]
+                if prev == inf:
+                    continue
+                L = span(i, j)
+                # 한도를 넘는 묶음은 조각 하나일 때만 허용한다(더 쪼갤 수 없다)
+                if L > limit and j - i > 1:
+                    continue
+                v = (prev[0] + (bad[i] if i else 0), max(prev[1], L))
+                if v < best[k][j]:
+                    best[k][j], cut[k][j] = v, i
+        if best[k][n] != inf:
+            parts, j = [], n
+            for kk in range(k, 0, -1):
+                i = cut[kk][j]
+                parts.insert(0, (i, j))
+                j = i
+            return parts
+    return [(0, n)]
+
+
+def call_gemini_passage_cut(text, limit, api_key):
+    """긴 지문을 흐름이 바뀌는 문장에서 나눈다. 토막 글자 목록을 돌려준다(못 나누면 원문 하나)."""
+    limit = max(PASSAGE_CUT_MIN, min(PASSAGE_CUT_MAX, int(limit or 1000)))
+    sents = _split_sentences_keep(text)
+    whole = " ".join(sents)
+    if len(whole) <= limit or len(sents) < 2:
+        return [whole]
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    starts = []
+    if api_key:
+        numbered = "\n".join(f"{i + 1} ({len(s)} chars): {s}" for i, s in enumerate(sents))
+        payload = {
+            "systemInstruction": {"parts": [{"text": PASSAGE_CUT_SYSTEM_PROMPT}]},
+            "contents": [{"role": "user", "parts": [{"text":
+                f"Length limit per section: {limit} characters. Whole passage: {len(whole)} characters.\n\n{numbered}"}]}],
+            "generationConfig": {
+                "temperature": 0.0,
+                # 생각도 이 한도에서 빠진다 — 생각을 낮춰도 수천 토큰을 쓸 때가 있어 넉넉히 둔다
+                "maxOutputTokens": 16384,
+                "responseMimeType": "application/json",
+                "responseSchema": PASSAGE_CUT_SCHEMA,
+                # 생각을 그냥 두면 지문 하나에 4천 토큰 가까이 생각했다(실측) — 고르는 일이라 낮춰도 된다
+                "thinkingConfig": {"thinkingLevel": "low"},
+            },
+        }
+        result = _gemini_json(payload, api_key, MODEL, "지문 나누기 응답이 잘렸습니다.", label="passagecut")
+        for v in result.get("starts") or ():
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                continue
+            if 2 <= v <= len(sents):
+                starts.append(v - 1)
+    bounds = [0] + sorted(set(starts)) + [len(sents)]
+    groups = [(bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)]
+    lens = [len(s) for s in sents]
+
+    def glen(g):
+        return sum(lens[g[0]:g[1]]) + (g[1] - g[0] - 1)
+
+    # 한도를 넘는 토막(또는 AI 답이 없을 때 통째)은 그 안에서 길이로 고르게 다시 자른다
+    fixed = []
+    for a, b in groups:
+        if glen((a, b)) <= limit or b - a < 2:
+            fixed.append((a, b))
+        else:
+            bad = [_cut_badness(s) for s in sents[a:b]]
+            fixed.extend((a + i, a + j) for i, j in _balanced_parts(lens[a:b], limit, bad))
+    # 아주 짧은 토막(한도의 4분의 1 미만)은 붙여도 한도를 안 넘는 이웃에 붙인다
+    merged = True
+    while merged and len(fixed) > 1:
+        merged = False
+        for k, g in enumerate(fixed):
+            if glen(g) >= limit // 4:
+                continue
+            for nb in ((k - 1, k) if k else ()) + ((k, k + 1) if k + 1 < len(fixed) else ()):
+                joined = (fixed[nb[0]][0], fixed[nb[1]][1])
+                if glen(joined) <= limit:
+                    fixed[nb[0]:nb[1] + 1] = [joined]
+                    merged = True
+                    break
+            if merged:
+                break
+    return [" ".join(sents[a:b]) for a, b in fixed]
+
+
 # ── 출제경향 보고서(/api/examtrend) ──
 # 화면이 이미 읽어 둔 기출 유형표를 부·유형별 개수로 집계해 보내면, 그 숫자만 보고
 # 총평과 유형별 대비 전략을 쓴다. 시험지 그림이나 지문은 다시 보내지 않으므로 Flash로
@@ -13280,6 +13455,15 @@ CHANGELOG = [
             "해석(➤)이 함께 실린 교재 PDF도 [📄 PDF에서 가져오기]로 영어 지문만 넣을 수 있습니다.",
         ],
     },
+    {
+        "version": 103,
+        "date": "2026-10-28",
+        "items": [
+            "객관식 문제 — 긴 지문 칸이 [그대로 출제]·[나눠서 출제]로 바뀌었고 둘 다 고를 수도 있습니다. 나눠서 출제는 "
+            "'나눈 지문 모두 활용'(토막마다 고른 문항을 모두)과 '문제 수에 맞게 자동 선택'(고른 문항 수 그대로 토막에 나눠 싣기) 중에 고릅니다.",
+            "문단 구분이 없는 긴 지문도 AI가 흐름이 바뀌는 문장을 찾아 나눕니다. 나누는 데는 요금이 들지 않고, 글은 원문 그대로입니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -18129,7 +18313,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/brief", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
-                        "/api/examtrend", "/api/pdfsplit", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
+                        "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/auth/reset-request", "/api/auth/reset-confirm",
@@ -18215,7 +18399,7 @@ class Handler(BaseHTTPRequestHandler):
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
-                           "/api/examtrend", "/api/pdfsplit", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
+                           "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf")
         # /api/docx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
         # 않는다(그래서 GENERATE_PATHS가 아니라 여기 따로 붙는다).
@@ -18338,6 +18522,9 @@ class Handler(BaseHTTPRequestHandler):
                     # 사진 속 문제를 AI가 푼다 — 문제 1개당. 실제 차감은 답을 받아 낸 문제 수로 다시 센다
                     cost = PRICE_PASSAGE_SOLVE_KRW * len(parse_solve_problems(req.get("problems")))
                     self._pending_label = "문제 사진 답 풀기"
+                elif path == "/api/passagecut":
+                    cost = 0   # 긴 지문 나누기 — 원가가 1원도 안 되어 받지 않는다(call_gemini_passage_cut 주석)
+                    self._pending_label = "긴 지문 나누기"
                 elif path == "/api/answerkey":
                     cost = 0   # 정답표 읽기 — 사진 옮기기(PRICE_OCR_KRW 0원)와 같은 자리라 값을 받지 않는다
                     self._pending_label = "정답표 읽기"
@@ -19777,6 +19964,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
             except ProUnavailable as e:
                 self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        if path == "/api/passagecut":
+            passage = (req.get("passage") or "").strip()
+            if len(passage) < 20:
+                self._send_json({"error": "나눌 영어 지문을 입력하세요."}, 400)
+                return
+            try:
+                parts = call_gemini_passage_cut(passage, req.get("limit"), req.get("apiKey") or "")
+                self._charge_and_send(path, req, {"parts": parts})
             except QuotaExceeded as e:
                 self._send_json({"error": str(e), "code": "quota"}, 429)
             except Exception as e:

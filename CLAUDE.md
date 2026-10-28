@@ -434,6 +434,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 `student_session` 쿠키로 인증)
 
 **POST** — `/api/analyze` `/api/quiz` `/api/grammar`(문법문제 마법사) `/api/workbook` `/api/reword` `/api/ocr` `/api/pdfsplit`
+`/api/passagecut`(객관식 탭 '긴 지문 → 나눠서 출제'에서 빈 줄 문단이 없는 지문을 흐름이 바뀌는 문장에서 자른다 — `call_gemini_passage_cut`, Flash, 0원, AI는 문장 번호만 고르고 본문은 원문 문장 그대로. 길이를 넘는 토막은 `_balanced_parts`가 `_cut_badness`로 덜 어색한 자리에서 다시 자른다. 화면 `splitLongPassage`(문단 규칙)·`spreadItemsOverPieces`('문제 수에 맞게 자동 선택')와 함께 `setupQuizTab`의 `generate`가 부른다)
 `/api/mockrestore`(학생용 모의고사 문제지 → AI가 풀어 되살린 원래 지문) `/api/examscan`(기출 시험지 → 문항 유형표) `/api/examtrend`(시험지 분석 리포트 총평 — 보고서 1건당 정액) `/api/examocr`(같은 쪽 그림 → 영어 지문. 둘 다 `_exam_approved` 확인 — 지금은 모두에게 열림)
 `/api/vocabocr` `/api/vocabpdf` `/api/models`
 `/api/auth/google` `/api/auth/signup` `/api/auth/verify` `/api/auth/login` `/api/auth/delete`

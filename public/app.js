@@ -7071,6 +7071,35 @@ function splitLongPassage(text, limit = LONG_PASSAGE_LIMIT) {
   return [raw];
 }
 
+// 이 지문으로는 못 만드는 유형이면 이유 이름("dlg" | "ins"), 만들 수 있으면 null.
+// 기준은 server.py의 fit_quiz_items와 같아야 한다(generate의 dropKind 주석 참고).
+function quizTypeDropKind(text, id) {
+  return EXAM_DIALOGUE_TYPES.has(id) && !isDialogueText(text) ? "dlg"
+    : id === "문장삽입" && roughSentenceCount(text) - 1 < 3 ? "ins"
+    : null;
+}
+
+/* '문제 수에 맞게 자동 선택' — 고른 문항(유형 × 문항 수)을 한 문항씩 풀어 토막에 나눠 싣는다.
+   유형 칸 차례대로 돌며 지금 가장 적게 받은 토막에 주되(같으면 앞 토막), 그 토막으로 못 만드는
+   유형(대화문·문장삽입)이면 만들 수 있는 토막으로 넘긴다. 같은 유형을 2문항 이상 고르면 토막마다
+   흩어진다. 한 문항도 못 받은 토막은 빠진다. 돌려주는 토막에는 items([{id, count}])가 달린다. */
+function spreadItemsOverPieces(pieces, picked) {
+  const load = pieces.map(() => 0);
+  const got = pieces.map(() => new Map());
+  picked.forEach((it) => {
+    for (let c = 0; c < it.count; c++) {
+      const order = pieces.map((_, k) => k).sort((a, b) =>
+        load[a] - load[b] || (got[a].get(it.id) || 0) - (got[b].get(it.id) || 0) || a - b);
+      const k = order.find((k) => !quizTypeDropKind(pieces[k].text, it.id)) ?? order[0];
+      load[k]++;
+      got[k].set(it.id, (got[k].get(it.id) || 0) + 1);
+    }
+  });
+  return pieces
+    .map((p, k) => ({ ...p, items: picked.filter((it) => got[k].has(it.id)).map((it) => ({ ...it, count: got[k].get(it.id) })) }))
+    .filter((p) => p.items.length);
+}
+
 function setupQuizTab({ prefix, types, footer }) {
   const gridEl = $(prefix + "TypeGrid");
   const allEl = $(prefix + "TypeAll");
@@ -7113,7 +7142,21 @@ function setupQuizTab({ prefix, types, footer }) {
   // 그 걱정이 사라져 주관식에도 붙였다(2026-09-25).
   const variationEl = checkGroup(prefix + "Variation");
   const variationHintEl = $(prefix + "VariationHint");
-  const splitLongEl = $(prefix + "SplitLong"); // 긴 지문 나눠 출제 — 지금은 객관식 탭에만 있다
+  /* 긴 지문(1,000자 넘는 지문) — 지금은 객관식 탭에만 있다. '그대로'·'나눠서'를 둘 다 고르면 두 벌.
+     나눠서 출제는 두 방식이다(2026-10-28 사용자):
+       all — 나눈 토막마다 고른 문항을 통째로 낸다(유형 10개 × 토막 2 = 20문항)
+       fit — 고른 문항 수는 그대로 두고 토막에 나눠 싣는다(10문항이 토막마다 5개씩) */
+  const longEl = checkGroup(prefix + "Long");
+  const splitModeEl = radioGroup(prefix + "SplitMode");
+  const splitModeWrap = $(prefix + "SplitModeWrap");
+  if (longEl) {
+    syncPicked(prefix + "Long");
+    if (splitModeEl) syncPicked(prefix + "SplitMode");
+    const syncLong = () => { if (splitModeWrap) splitModeWrap.hidden = !longEl.values.includes("split"); };
+    longEl.addEventListener("change", syncLong);
+    if (splitModeEl) splitModeEl.addEventListener("change", () => {});
+    syncLong();
+  }
   const VARIATION_STORE = "gemini_" + prefix + "_variation";
   const costHintEl = $(prefix + "CostHint");
   // 난이도 — 객관식·주관식 두 탭에 있다(칸이 없으면 늘 기본). 주관식은 고난도가 되는
@@ -7528,15 +7571,7 @@ function setupQuizTab({ prefix, types, footer }) {
 
   async function generate() {
     errorEl.textContent = "";
-    // 긴 지문 나눠 출제 — 입력 칸은 건드리지 않고 이번 출제에서만 토막을 지문 하나로 본다.
-    // 토막은 '지문 1 (1/2)'처럼 이름에 차례를 단다.
-    const splitLong = !!(splitLongEl && splitLongEl.checked);
-    const jobs = passageMgr.getJobs().flatMap((j) => {
-      if (!splitLong) return [j];
-      const parts = splitLongPassage(j.text);
-      return parts.length < 2 ? [j]
-        : parts.map((text, k) => ({ ...j, text, name: `${j.name} (${k + 1}/${parts.length})` }));
-    });
+    let jobs = passageMgr.getJobs();
     if (!jobs.length) {
       errorEl.textContent = "문제를 만들 영어 지문을 입력하세요.";
       return;
@@ -7555,6 +7590,51 @@ function setupQuizTab({ prefix, types, footer }) {
     if (levelEl && !levelEl.values.length) {
       errorEl.textContent = "난이도를 하나 이상 선택하세요.";
       return;
+    }
+    if (longEl && !longEl.values.length) {
+      errorEl.textContent = "긴 지문 출제 방식(그대로 / 나눠서)을 하나 이상 선택하세요.";
+      return;
+    }
+    // 긴 지문 나눠 출제 — 입력 칸은 건드리지 않고 이번 출제에서만 토막을 지문 하나로 본다.
+    // 토막은 '지문 1 (1/2)'처럼 이름에 차례를 단다. 짧은 지문은 어느 방식이든 한 번만 낸다.
+    // 'fit'이면 토막마다 낼 유형(items)을 job에 달아 둔다 — jobPlanOf가 picked 대신 그것을 쓴다.
+    const longModes = longEl ? longEl.values : ["whole"];
+    let cutNote = "";
+    if (longModes.includes("split")) {
+      const fit = splitModeEl && splitModeEl.value === "fit";
+      /* 빈 줄 문단이 없는 긴 지문(교과서 본문을 PDF에서 꺼내면 한 덩어리다)은 서버에 물어 흐름이 바뀌는
+         문장에서 자른다(/api/passagecut — Flash, 값 없음, 본문은 원문 문장 그대로). 못 받으면 그 지문은
+         나누지 않고 그대로 낸다. */
+      const aiCut = new Map();
+      const needAi = jobs.filter((j) => j.text.length > LONG_PASSAGE_LIMIT && splitLongPassage(j.text).length < 2);
+      if (needAi.length) {
+        const failed = [];
+        btn.disabled = true;
+        loadingEl.classList.add("on");
+        loadingTextEl.textContent = `긴 지문 ${needAi.length}개를 흐름에 맞춰 나누는 중…`;
+        try {
+          await Promise.all(needAi.map(async (j) => {
+            try {
+              const r = await postGenerate("/api/passagecut", { passage: j.text, limit: LONG_PASSAGE_LIMIT },
+                "긴 지문을 나누지 못했습니다.");
+              if (Array.isArray(r.parts) && r.parts.length > 1) aiCut.set(j.text, r.parts);
+            } catch (err) {
+              failed.push(j.name);
+            }
+          }));
+        } finally {
+          loadingEl.classList.remove("on");
+          btn.disabled = false;
+        }
+        if (failed.length) cutNote = `\n(${failed.join(", ")}은(는) 나누지 못해 그대로 냅니다)`;
+      }
+      jobs = jobs.flatMap((j) => {
+        const parts = aiCut.get(j.text) || splitLongPassage(j.text);
+        if (parts.length < 2) return [j];
+        let pieces = parts.map((text, k) => ({ ...j, text, name: `${j.name} (${k + 1}/${parts.length})` }));
+        if (fit) pieces = spreadItemsOverPieces(pieces, picked);
+        return longModes.includes("whole") ? [j, ...pieces] : pieces;
+      });
     }
     // 난이도 벌마다 무엇을 어떤 난이도로 만들지(levelPlan). 기본 + 고난도에서 고난도가 안
     // 되는 유형만 골랐으면 고난도 벌이 비어 빠진다 — 그 사실은 설명 칸이 이미 알린다.
@@ -7578,17 +7658,16 @@ function setupQuizTab({ prefix, types, footer }) {
       };
     };
     // 이 지문으로는 못 만드는 유형이면 이유 이름("dlg" | "ins"), 만들 수 있으면 null
-    const dropKind = (job, id) =>
-      EXAM_DIALOGUE_TYPES.has(id) && !isDialogueText(job.text) ? "dlg"
-      : id === "문장삽입" && roughSentenceCount(job.text) - 1 < 3 ? "ins"
-      : null;
-    // 뺀 유형 조합이 같은 지문끼리는 계획을 함께 쓴다(지문이 100개여도 계산은 몇 번뿐)
+    const dropKind = (job, id) => quizTypeDropKind(job.text, id);
+    // 뺀 유형 조합이 같은 지문끼리는 계획을 함께 쓴다(지문이 100개여도 계산은 몇 번뿐).
+    // '문제 수에 맞게 자동 선택'으로 나눈 토막은 고른 유형 중 제 몫(job.items)만 낸다.
     const jobInfoCache = new Map();
     const jobPlanOf = (job) => {
-      const dropped = picked.filter((it) => dropKind(job, it.id)).map((it) => it.id);
-      const key = dropped.join("|");
+      const mine = job.items || picked;
+      const dropped = mine.filter((it) => dropKind(job, it.id)).map((it) => it.id);
+      const key = (job.items ? job.items.map((it) => `${it.id}:${it.count}`).join(",") : "*") + "#" + dropped.join("|");
       if (!jobInfoCache.has(key)) {
-        const keep = picked.filter((it) => !dropped.includes(it.id));
+        const keep = mine.filter((it) => !dropped.includes(it.id));
         jobInfoCache.set(key, Object.assign(buildJobPlan(keep), { dropped }));
       }
       return jobInfoCache.get(key);
@@ -7667,14 +7746,17 @@ function setupQuizTab({ prefix, types, footer }) {
       // 이 창이 요금·잔액까지 이미 보여 줬으므로 costConfirmed로 다시 묻지는 않는다.
       // 다만 '보여 주는 것'과 '막는 것'은 다르다 — 여기가 가장 크게 나가는 자리라
       // 잔액이 모자라면 반드시 세워야 한다.
-      const bigLabel = `${docName}를 만듭니다. (지문 ${billable}개 · 총 ${runQuestions}문항)${dlgNote}`;
+      const bigLabel = `${docName}를 만듭니다. (지문 ${billable}개 · 총 ${runQuestions}문항)${dlgNote}${cutNote}`;
       if (!(await hasEnoughPoints(cost, bigLabel, jobs.length,
         reduceAdvice(jobs.length, "고른 유형 수나 유형별 문항 수를 줄이면") + setsAdvice))) return;
     } else if (PRICING) {
+      // 자동 선택으로 나눈 토막은 지문마다 문항 수가 달라 '지문 × 문항'으로 못 적는다
       const label =
         `${docName}를 만듭니다.\n` +
-        `지문 ${billable}개 × ` + setsNote.join(" × ") +
-        ` = 총 ${runQuestions}문항` + dlgNote;
+        (usableJobs.some((j) => j.items)
+          ? `지문 ${billable}개(나눈 토막 포함) · 총 ${runQuestions}문항` + (vars.length > 1 ? ` (변형 ${vars.length}세트 포함)` : "")
+          : `지문 ${billable}개 × ` + setsNote.join(" × ") + ` = 총 ${runQuestions}문항`) +
+        dlgNote + cutNote;
       if (!(await costConfirmed(cost, label, jobs.length,
         reduceAdvice(jobs.length, "고른 유형 수나 유형별 문항 수를 줄이면") + setsAdvice))) return;
     }
@@ -12969,7 +13051,7 @@ const HOWTO = {
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "(선택) <b>목표 어법</b>·<b>단어장</b>을 넣으면 그 문법·단어로 문제를 냅니다.",
       "<b>유형</b>을 체크하고 ＋ － 로 <b>문항 수</b>를 정합니다. 대화문 유형은 대화문을 넣었을 때만 만들어집니다.",
-      "<b>학교급 · 난이도 · 출제 순서 · 지문 변형</b>을 고릅니다. 난이도를 둘 다 고르면 기본·고난도 두 벌이 나옵니다. 교과서처럼 긴 지문은 <b>긴 지문</b> 체크로 문단 단위 1,000자 안쪽 토막으로 나눠 낼 수 있습니다.",
+      "<b>학교급 · 난이도 · 출제 순서 · 지문 변형</b>을 고릅니다. 난이도를 둘 다 고르면 기본·고난도 두 벌이 나옵니다. 교과서처럼 긴 지문은 <b>긴 지문 → 나눠서 출제</b>로 1,000자 안쪽 토막으로 나눠 냅니다(문단이 없으면 AI가 흐름이 바뀌는 곳을 찾아 자릅니다) — 토막마다 고른 문항을 다 내거나(<b>나눈 지문 모두 활용</b>), 고른 문항 수 그대로 토막에 나눠 싣습니다(<b>문제 수에 맞게 자동 선택</b>).",
       "<b>[문제 만들기]</b>를 누릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>[🔀 문제 섞기]</b>는 요금 없이 순서만 바꿉니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
