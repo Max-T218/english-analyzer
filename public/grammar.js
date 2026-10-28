@@ -874,7 +874,12 @@ function grApplyTitle() {
   if (head) head.textContent = grSheetName();
   const ab = res.querySelector(".qz-answerbook-head");
   if (ab) ab.textContent = `${grSheetName()} — 정답 및 해설`;
+  syncDocCovers();   // 표지도 지금 제목에 맞춘다(결과를 다시 그리면 표지가 지워지므로 그때마다 얹는다)
 }
+
+// 표지 — 다른 탭처럼 제목을 적었을 때만 맨 앞에 표지 한 장이 붙는다(app.js의 DOC_COVERS에 같은 모양으로 더한다).
+// 제목 칸이 비어 있으면 자동 이름("중등 Level 1 문법 문제")이 시험지명 띠에만 찍힌다.
+DOC_COVERS.push({ host: () => grEl("grResult"), title: () => (grState.title ? grSheetName() : "") });
 
 function grRender() {
   const res = grEl("grResult");
