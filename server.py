@@ -5547,6 +5547,32 @@ def _pdf_split_by_paragraph(pages):
     return out
 
 
+def _pdf_split_by_translation(pages):
+    """해석 병기형(디딤영상 교재 등): 영어 줄 뒤에 '➤한글 해석'이 붙는 자료.
+
+    영어 문장과 한글 해석이 번갈아 나오고, 쪽 머리 'A·B·C' 기호와 왼쪽의 낱말 목록
+    (본문보다 작은 글씨)이 섞여 있다. 본문 글자 크기의 영어 줄만 모으면 지문이 되며,
+    A·B·C 쪽은 한 지문의 이어진 부분이므로 PDF 하나를 지문 하나로 낸다."""
+    # 본문 글자 크기는 ➤ 해석 줄의 크기로 잡는다. 뒤쪽의 어휘 정리·문법 쪽은 ➤가 없는
+    # 쪽이라 통째로 뺀다(안 그러면 낱말 뜻풀이가 지문 앞에 붙는다).
+    arrow_rows = [r for lines in pages for r in lines if r["t"].lstrip().startswith("➤")]
+    if not arrow_rows:
+        return []
+    body_size = Counter(round(r["size"], 1) for r in arrow_rows).most_common(1)[0][0]
+    rows = []
+    for lines in pages:
+        if not any(r["t"].lstrip().startswith("➤") for r in lines):
+            continue
+        eng = [r for r in lines
+               if not r["t"].lstrip().startswith("➤")
+               and _ko_ratio(r["t"]) < 0.3 and re.search(r"[A-Za-z]", r["t"])]
+        rows.append(sorted(eng, key=lambda r: r["y"]))
+    body = [r["t"].strip() for page in rows for r in page
+            if abs(r["size"] - body_size) <= 1.0 and r["x0"] > 100]
+    text = _pdf_clean_passage(" ".join(body), drop_labels=False)
+    return [{"name": "", "text": text}] if len(text) >= PDF_MIN_PASSAGE_CHARS else []
+
+
 def read_pdf_pages(raw):
     """PDF 바이트에서 쪽별 줄 목록을 꺼낸다. 글자층이 없으면 빈 목록이 나온다."""
     if not PDF_READY:
@@ -5604,6 +5630,11 @@ def _pdf_doc_title(raw):
 def split_pdf_passages(pages):
     """쪽별 줄 목록을 지문 목록으로 나눈다. {mode, passages} 를 돌려준다.
     Gemini를 부르지 않는다 — 규칙만으로 나눈다."""
+    arrows = sum(1 for lines in pages for r in lines if r["t"].lstrip().startswith("➤"))
+    if arrows >= 3:
+        found = _pdf_split_by_translation(pages)
+        if found:
+            return {"mode": "translation", "passages": found}
     marks = sum(1 for lines in pages for r in lines if _pdf_is_question_line(r["t"]))
     if marks >= 2:
         found = _pdf_split_by_question(pages)
