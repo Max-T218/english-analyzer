@@ -8517,9 +8517,13 @@ function setupQuizTab({ prefix, types, footer }) {
       if (!head) {
         head = document.createElement("div");
         head.className = "qz-sheet-title";
-        resultEl.prepend(head);
       }
       head.textContent = sheetTitle;
+      // 띠는 표지(.doc-cover) 바로 뒤, 첫 문항 위에 둔다. 표지가 이미 있을 때 맨 앞에 끼우면
+      // 표지 쪽에 띠가 함께 찍히고 문항은 다음 쪽부터 시작했다(2026-10-28 사용자 PDF)
+      const cover = resultEl.querySelector(":scope > .doc-cover");
+      if (cover) { if (cover.nextElementSibling !== head) cover.after(head); }
+      else if (resultEl.firstElementChild !== head) resultEl.prepend(head);
     } else if (head) {
       head.remove();
     }
