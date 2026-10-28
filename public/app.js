@@ -7084,20 +7084,27 @@ function quizTypeDropKind(text, id) {
    유형(대화문·문장삽입)이면 만들 수 있는 토막으로 넘긴다. 같은 유형을 2문항 이상 고르면 토막마다
    흩어진다. 한 문항도 못 받은 토막은 빠진다. 돌려주는 토막에는 items([{id, count}])가 달린다. */
 function spreadItemsOverPieces(pieces, picked) {
+  const aligned = spreadItemsAligned(pieces, picked);
+  return pieces
+    .map((p, k) => ({ ...p, items: aligned[k] }))
+    .filter((p) => p.items.length);
+}
+// 같은 셈을 하되 지문 차례 그대로 [지문마다 [{id, count}]]를 돌려준다(빈 지문도 빈 배열로 남는다)
+function spreadItemsAligned(pieces, picked) {
   const load = pieces.map(() => 0);
   const got = pieces.map(() => new Map());
   picked.forEach((it) => {
     for (let c = 0; c < it.count; c++) {
       const order = pieces.map((_, k) => k).sort((a, b) =>
         load[a] - load[b] || (got[a].get(it.id) || 0) - (got[b].get(it.id) || 0) || a - b);
-      const k = order.find((k) => !quizTypeDropKind(pieces[k].text, it.id)) ?? order[0];
+      const fits = (k) => !quizTypeDropKind(pieces[k].text, it.id);
+      const roomy = (k) => (got[k].get(it.id) || 0) < (TYPE_MAX[it.id] || 1);
+      const k = order.find((k) => fits(k) && roomy(k)) ?? order.find(fits) ?? order[0];
       load[k]++;
       got[k].set(it.id, (got[k].get(it.id) || 0) + 1);
     }
   });
-  return pieces
-    .map((p, k) => ({ ...p, items: picked.filter((it) => got[k].has(it.id)).map((it) => ({ ...it, count: got[k].get(it.id) })) }))
-    .filter((p) => p.items.length);
+  return pieces.map((_, k) => picked.filter((it) => got[k].has(it.id)).map((it) => ({ ...it, count: got[k].get(it.id) })));
 }
 
 function setupQuizTab({ prefix, types, footer }) {
@@ -7152,7 +7159,11 @@ function setupQuizTab({ prefix, types, footer }) {
   if (longEl) {
     syncPicked(prefix + "Long");
     if (splitModeEl) syncPicked(prefix + "SplitMode");
-    const syncLong = () => { if (splitModeWrap) splitModeWrap.hidden = !longEl.values.includes("split"); };
+    // '문항 수로 출제'가 켜져 있으면 문항을 시험지 전체에 나눠 싣으므로 두 방식 칸이 뜻이 없다(syncCountInputs와 같은 규칙)
+    const syncLong = () => {
+      const on = $(prefix + "CountOn");
+      if (splitModeWrap) splitModeWrap.hidden = !longEl.values.includes("split") || !!(on && on.checked);
+    };
     longEl.addEventListener("change", syncLong);
     if (splitModeEl) splitModeEl.addEventListener("change", () => {});
     syncLong();
@@ -7169,7 +7180,11 @@ function setupQuizTab({ prefix, types, footer }) {
   const schoolEl = radioGroup(prefix + "School");
   const school = () => (schoolEl && schoolEl.value === "middle" ? "middle" : "high");
   // 고른 칸에 강조 표시(.picked)를 처음부터 달고, 바꿀 때마다 옮긴다(radioGroup이 change에서 맞춘다)
-  if (schoolEl) { syncPicked(prefix + "School"); schoolEl.addEventListener("change", () => {}); }
+  // 학교급을 바꾸면 원하는 유형이 달라지므로, '문항 수로 출제'일 때는 같은 문항 수로 유형을 다시 고른다
+  if (schoolEl) {
+    syncPicked(prefix + "School");
+    schoolEl.addEventListener("change", () => { if (countMode()) rollTypes(true); });
+  }
   const levelEl = checkGroup(prefix + "Level");
   const levelHintEl = $(prefix + "LevelHint");
   const LEVEL_STORE = "gemini_" + prefix + "_level";
@@ -7287,6 +7302,206 @@ function setupQuizTab({ prefix, types, footer }) {
     syncTypeChips();
   });
 
+  /* ── 출제 문항 수(2026-10-28 사용자) ──
+     유형 칸 위의 '문항 수'를 넣으면 학교급에 맞는 유형을 무작위로 골라 유형 칸을 채운다 — 어떤 유형이 나왔는지는
+     선생님이 칸을 보고 고치면 되므로 비율은 따지지 않는다. 유형 칸을 고치면 문항 수가 그 합계로 바뀐다(syncCountInputs).
+     '문항 수로 출제'가 켜져 있으면 문항 수는 **시험지 전체**의 수다 — generate가 고른 문항을 지문(나눈 토막 포함)에
+     나눠 싣는다(spreadItemsOverPieces). 끄면 예전처럼 고른 유형을 지문마다 모두 낸다.
+     혼합 탭은 객관식·주관식 수를 따로 받는다(CountN = 객관식, CountSaqN = 주관식). */
+  const countOnEl = $(prefix + "CountOn");
+  const countNEl = $(prefix + "CountN");
+  const countSaqEl = $(prefix + "CountSaqN");
+  const countRollEl = $(prefix + "CountRoll");
+  const countHintEl = $(prefix + "CountHint");
+  const countMode = () => !!(countOnEl && countOnEl.checked);
+  const kindOf = (id) => (isMix ? (MCQ_ID_SET.has(id) ? "mcq" : "saq") : prefix);
+  const countInputOf = (kind) => (isMix && kind === "saq" ? countSaqEl : countNEl);
+  const countKinds = () => (isMix ? ["mcq", "saq"] : [prefix]);
+  // 문항 수는 **최종** 문항 수다 — 난이도·지문 변형을 여럿 고르면 같은 유형 묶음이 그 벌 수만큼 되풀이되므로,
+  // 유형 칸에는 '한 벌'의 몫(문항 수 ÷ 벌 수)을 채운다. 안 나눠떨어지면 가장 가까운 배수로 맞춘다.
+  const setsMul = () => {
+    try { return Math.max(1, levels().length) * Math.max(1, variations().length); } catch (_) { return 1; }
+  };
+  // 문항 수로 출제할 때 한 유형에 담을 수 있는 수 — 시험지 전체에 나눠 실으므로 한 지문 상한 × 지문 수
+  const passCount = () => Math.max(1, passageMgr.getJobs().filter((j) => j.text && j.text.length >= 20).length);
+  const typeCap = (id) => (TYPE_MAX[id] || 1) * (countMode() ? passCount() : 1);
+  const want = {};       // 선생님이 원한 최종 문항 수(kind별) — 난이도·변형·학교급이 바뀌면 이 수로 다시 고른다
+  const gridSum = {};    // 마지막으로 맞춘 때의 유형 칸 합계(kind별) — 달라졌으면 선생님이 칸을 직접 고친 것
+  let lastMul = null;
+  let inRoll = false;
+  // 중학교 객관식은 중학교 내신형을 먼저 고르고, 모자라면 중학교에서도 흔히 내는 이 유형들에서 고른다
+  const MIDDLE_SHARED = ["주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입", "무관한 문장",
+    "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)", "목적", "심경", "지칭 추론", "영영풀이"];
+  const shuffled = (arr) => {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+  // 이 유형을 지금 고를 수 있는가 — 칸에 있고, '고난도만'에서 막히지 않고, 넣은 지문 중 하나라도 만들 수 있다
+  const pickable = (id) => {
+    if (!chipOf(id)) return false;
+    if (hardOnly() && !hardOk(id)) return false;
+    const texts = passageMgr.getJobs().map((j) => j.text).filter((t) => t && t.length >= 20);
+    return !texts.length || texts.some((t) => !quizTypeDropKind(t, id));
+  };
+  function autoPools(kind) {
+    if (kind === "saq") return [SAQ_TYPES.map((t) => t.id), []];
+    const high = MCQ_TYPES.filter((t) => !MCQ_MIDDLE_IDS.has(t.id)).map((t) => t.id);
+    return school() === "middle" ? [[...MCQ_MIDDLE_IDS], MIDDLE_SHARED] : [high, []];
+  }
+  // kind 쪽 유형 칸을 비우고 n문항을 무작위로 채운다. 실제로 채운 문항 수를 돌려준다.
+  function autoFill(kind, n) {
+    gridEl.querySelectorAll(".type-chip").forEach((chip) => {
+      if (kindOf(chip.dataset.id) === kind) chip.querySelector("input").checked = false;
+    });
+    const [first, second] = autoPools(kind).map((ids) => shuffled(ids.filter(pickable)));
+    const order = [...first, ...second.filter((id) => !first.includes(id))];
+    const got = new Map(order.slice(0, Math.max(0, n)).map((id) => [id, 1]));
+    // 유형 수보다 많으면 2문항 이상 낼 수 있는 유형(typeCap — 한 지문 상한 TYPE_MAX × 지문 수)에 무작위로 더한다
+    let left = n - got.size;
+    while (left > 0) {
+      const room = [...got.keys()].filter((id) => got.get(id) < typeCap(id));
+      if (!room.length) break;
+      const id = room[Math.floor(Math.random() * room.length)];
+      got.set(id, got.get(id) + 1);
+      left--;
+    }
+    got.forEach((c, id) => {
+      const chip = chipOf(id);
+      chip.querySelector("input").checked = true;
+      chip.querySelector(".type-n").dataset.max = typeCap(id);
+      setCount(chip, c);
+    });
+    return n - left;
+  }
+  // useWant: 칸의 숫자 대신 앞서 원한 최종 문항 수로 다시 고른다(난이도·변형·학교급을 바꿨을 때)
+  function rollTypes(useWant) {
+    if (!countNEl) return;
+    const mul = setsMul();
+    const notes = [];
+    countKinds().forEach((kind) => {
+      const el = countInputOf(kind);
+      const raw = useWant === true && want[kind] != null ? want[kind] : Number(el.value);
+      const n = Math.max(0, Math.min(5000, Math.floor(raw || 0)));
+      /* 넣은 수 그대로 만든다(2026-10-28 사용자) — 벌마다 같은 수일 필요는 없다. 유형 칸에는 가장 많은 벌(첫 벌)의
+         몫(올림)을 채우고, 안 나눠떨어지면 뒤쪽 벌에서 한 문항씩 덜어 낸다 — 남는 문항은 기본 벌부터 얹힌다
+         (generate의 setTrim). 예: 61문항 · 4벌 → 16 · 15 · 15 · 15 */
+      const per = Math.ceil(n / mul);
+      const made = autoFill(kind, per);
+      const label = isMix ? (kind === "saq" ? "주관식 " : "객관식 ") : "";
+      if (made < per) {
+        want[kind] = made * mul;
+        notes.push(`${label}고를 수 있는 유형으로는 ${made * mul}문항까지만 채울 수 있습니다. 학교급·지문을 바꾸거나 유형 칸에서 직접 더해 주세요.`);
+      } else {
+        want[kind] = n;
+        if (mul > 1 && n) notes.push(per * mul === n
+          ? `${label}난이도·지문 변형 ${mul}벌에 ${per}문항씩, 모두 ${n}문항입니다.`
+          : `${label}난이도·지문 변형 ${mul}벌에 나눠 모두 ${n}문항입니다 — 기본 벌부터 ${per}문항, 나머지는 ${per - 1}문항입니다(유형 칸은 ${per}문항 벌).`);
+      }
+    });
+    inRoll = true;
+    try {
+      syncAll();
+      syncTypeChips();
+    } finally {
+      inRoll = false;
+    }
+    if (countHintEl && notes.length) countHintEl.textContent = notes.join(" ");
+  }
+  /* [최소]·[최대] 단추(2026-10-28 사용자) — 지금 넣은 지문·학교급·난이도·변형으로 셈한다.
+       최소 = 모든 지문이 벌마다 한 문항씩 들어가는 수(지문 수 × 벌 수)
+       최대 = 지문마다 만들 수 있는 유형(학교급 묶음, 못 만드는 유형 빼고)을 한 문항씩 다 낸 수 × 벌 수.
+              한 지문에 같은 유형을 여러 문항(TYPE_MAX)까지 쌓는 것은 넣지 않는다 — 넣으면 지문 18개에 3천 문항이 나와
+              누를 일이 없는 숫자가 된다. 더 많이 내려면 칸에 직접 적으면 된다. */
+  function countBounds(kind) {
+    const mul = setsMul();
+    const texts = passageMgr.getJobs().map((j) => j.text).filter((t) => t && t.length >= 20);
+    const pool = [...new Set(autoPools(kind).flat())].filter((id) => chipOf(id) && !(hardOnly() && !hardOk(id)));
+    const perSet = texts.length
+      ? texts.reduce((a, t) => a + pool.filter((id) => !quizTypeDropKind(t, id)).length, 0)
+      : pool.length;
+    return { min: Math.max(1, texts.length) * mul, max: perSet * mul };
+  }
+  function syncCountBounds() {
+    if (!countNEl) return;
+    const box = $(prefix + "CountBox");
+    if (!box) return;
+    const on = countMode();
+    box.querySelectorAll(".qcount-mm").forEach((b) => {
+      const el = $(b.dataset.for);
+      const kind = el === countSaqEl ? "saq" : isMix ? "mcq" : prefix;
+      const bd = countBounds(kind);
+      const v = b.dataset.mm === "min" ? Math.min(bd.min, bd.max) : bd.max;
+      b.dataset.n = String(v);
+      b.textContent = `${b.dataset.mm === "min" ? "최소" : "최대"} ${v}`;
+      b.disabled = !on || !v;
+    });
+  }
+  // 유형 칸 → 문항 수 칸. 칸을 고치는 중(포커스)이어도 덮어쓴다 — change 때만 다시 고르므로 겹치지 않는다
+  function syncCountInputs() {
+    if (!countNEl) return;
+    const on = countMode();
+    const mul = on ? setsMul() : 1;
+    // 난이도·변형 벌 수가 바뀌었으면 같은 최종 문항 수로 유형을 다시 고른다
+    if (on && !inRoll && lastMul !== null && mul !== lastMul) {
+      lastMul = mul;
+      rollTypes(true);
+      return;
+    }
+    lastMul = mul;
+    const items = pickedItems();
+    countKinds().forEach((kind) => {
+      const el = countInputOf(kind);
+      if (!el) return;
+      const sum = items.filter((it) => kindOf(it.id) === kind).reduce((s, it) => s + it.count, 0);
+      // 유형 칸을 직접 고쳤으면(합계가 바뀌었으면) 그 합계 × 벌 수가 새 목표다. 아니면 원한 수를 그대로 보인다
+      if (!inRoll && (gridSum[kind] !== sum || want[kind] == null || Math.ceil(want[kind] / mul) !== sum)) want[kind] = sum * mul;
+      gridSum[kind] = sum;
+      el.value = String(want[kind]);
+    });
+    // 문항 수로 출제하는 동안에는 유형마다 '한 지문 상한 × 지문 수'까지 늘릴 수 있다
+    gridEl.querySelectorAll(".type-chip").forEach((chip) => {
+      chip.querySelector(".type-n").dataset.max = typeCap(chip.dataset.id);
+    });
+    [countNEl, countSaqEl, countRollEl].forEach((el) => el && (el.disabled = !on));
+    syncCountBounds();
+    if (countHintEl && !on) countHintEl.textContent = "꺼져 있으면 아래에서 고른 유형을 지문마다 모두 출제합니다(지문이 5개면 문항도 5배).";
+    else if (countHintEl && !inRoll)
+      countHintEl.textContent = (mul > 1 ? `난이도·지문 변형 ${mul}벌을 합친 최종 문항 수입니다(유형 칸은 한 벌 몫). ` : "") +
+        "아래 유형 칸에서 유형을 더하거나 빼면 이 숫자가 그 합계로 바뀝니다. 문항은 넣은 지문에 고르게 나눠 싣습니다.";
+    // 시험지 전체로 나눠 싣는 동안에는 '나눈 지문 모두 활용/자동 선택'이 뜻이 없다 — 숨긴다
+    if (splitModeWrap && longEl) splitModeWrap.hidden = on || !longEl.values.includes("split");
+  }
+  if (countNEl) {
+    [countNEl, countSaqEl].forEach((el) => el && el.addEventListener("change", () => rollTypes(false)));
+    [countNEl, countSaqEl].forEach((el) => el && el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); rollTypes(false); }
+    }));
+    if (countRollEl) countRollEl.addEventListener("click", () => rollTypes(true));
+    const box = $(prefix + "CountBox");
+    if (box) box.addEventListener("click", (e) => {
+      const b = e.target.closest(".qcount-mm");
+      if (!b || b.disabled) return;
+      syncCountBounds();   // 지문을 바꾼 뒤 처음 누를 때도 지금 지문으로 센다
+      const el = $(b.dataset.for);
+      el.value = b.dataset.n;
+      rollTypes(false);
+    });
+    // 지문이 바뀌면 최소·최대가 달라진다 — 지문칸을 고칠 때, 이 탭을 열 때, 칸에 손을 댈 때 다시 센다
+    // (저장함에서 불러오기처럼 입력 이벤트 없이 지문이 바뀌는 길이 있어 탭을 열 때도 센다)
+    document.addEventListener("input", (e) => {
+      if (e.target && e.target.classList && e.target.classList.contains("passage-input")) syncCountBounds();
+    });
+    document.addEventListener("click", (e) => {
+      if (e.target && e.target.closest && e.target.closest(".tab-btn")) setTimeout(syncCountBounds, 0);
+    });
+    if (box) ["mouseenter", "focusin"].forEach((ev) => box.addEventListener(ev, syncCountBounds));
+    if (countOnEl) countOnEl.addEventListener("change", () => { syncCountInputs(); syncTypeChips(); });
+  }
+
   /* 출제 순서 세 가지
        type    — 유형 칸에 놓인 순서 그대로
        passage — 지문 안에서만 유형을 섞는다(지문 묶음은 유지)
@@ -7334,6 +7549,7 @@ function setupQuizTab({ prefix, types, footer }) {
         ? "이 유형은 고난도로 만들 수 없습니다. 이미 골랐다면 기본으로 만듭니다."
         : "이 유형은 고난도로 만들 수 없어 기본 벌에만 들어갑니다.";
     });
+    syncCountInputs();
     updateCostHint();
     updateLevelHint();
   }
@@ -7372,6 +7588,22 @@ function setupQuizTab({ prefix, types, footer }) {
     const plan = levelPlan(items);
     const perVar = plan.reduce((s, p) => s + planCount(p), 0);
     const perVarCost = plan.reduce((s, p) => s + costPerSet(planItems(p)), 0);
+    if (countMode()) {
+      // 시험지 전체 문항 수 — 지금 넣은 지문에 나눠 실은 모양으로 값을 어림한다(나눠서 출제는 누를 때 반영)
+      const jobsNow = passageMgr.getJobs().filter((j) => j.text && j.text.length >= 20);
+      const spread = jobsNow.length ? spreadItemsOverPieces(jobsNow, items) : [{ items }];
+      const lvN = plan.length;
+      const est = spread.reduce((s, j) => s + levelPlan(j.items).reduce((a, p) => a + costPerSet(planItems(p)), 0), 0) * varSets;
+      // 원한 수가 벌 수로 안 나눠떨어지면 뒤쪽 벌이 한 문항씩 적다 — 값은 그 비율로 어림한다
+      const goal = countKinds().reduce((s, k) => s + (want[k] != null ? want[k] : 0), 0) || perVar * varSets;
+      const ratio = perVar * varSets ? Math.min(1, goal / (perVar * varSets)) : 1;
+      costHintEl.innerHTML =
+        `선택 <b>${items.length}유형</b> · 시험지 전체 <b>${goal}문항</b>` +
+        (lvN > 1 || varSets > 1 ? ` (난이도·지문 변형 ${lvN * varSets}벌에 나눔 — 유형 칸은 한 벌 몫 ${total}문항)` : "") +
+        (jobsNow.length ? ` — 지문 ${jobsNow.length}개에 나눠 실음` : "") +
+        (PRICING ? ` · 예상 <b>${pt(Math.round(est * ratio))}</b>` : "");
+      return;
+    }
     const parts = [`선택 <b>${items.length}유형</b> · <b>${total}문항</b>`];
     if (plan.length > 1) {
       parts.push(`→ ${plan.map((p) => `${LEVEL_LABELS[p.lv]} ${planCount(p)}문항`).join(" + ")}`);
@@ -7534,6 +7766,7 @@ function setupQuizTab({ prefix, types, footer }) {
     variationEl.addEventListener("change", () => {
       saveVariations();
       updateVariationHint();
+      syncCountInputs(); // 문항 수로 출제면 최종 문항 수에 맞춰 유형을 다시 고른다
       updateCostHint(); // 세트 수가 바뀌면 총 문항 수·금액도 바뀐다
     });
   }
@@ -7632,9 +7865,42 @@ function setupQuizTab({ prefix, types, footer }) {
         const parts = aiCut.get(j.text) || splitLongPassage(j.text);
         if (parts.length < 2) return [j];
         let pieces = parts.map((text, k) => ({ ...j, text, name: `${j.name} (${k + 1}/${parts.length})` }));
-        if (fit) pieces = spreadItemsOverPieces(pieces, picked);
+        if (fit && !countMode()) pieces = spreadItemsOverPieces(pieces, picked);
         return longModes.includes("whole") ? [j, ...pieces] : pieces;
       });
+    }
+    // 문항 수로 출제 — 고른 문항은 시험지 전체의 수다. 지문(나눈 토막 포함)마다 제 몫만 낸다.
+    // '그대로 + 나눠서'를 둘 다 골랐으면 원문과 토막이 모두 한 지문씩으로 세어져 함께 나눠 갖는다.
+    if (countMode()) {
+      /* 벌(난이도 × 지문 변형)마다 따로 나눠 싣는다. 유형 칸은 가장 많은 첫 벌의 몫이고, 원한 수(want)가 벌 수로
+         안 나눠떨어지면 뒤쪽 벌에서 한 문항씩 덜어 낸다 — 기본 벌부터 많다(사용자 2026-10-28). */
+      const base = jobs.filter((j) => j.text && j.text.length >= 20);
+      const setKeys = [];
+      levels().forEach((lv) => vars.forEach((_, vi) => setKeys.push(`${lv}|${vi}`)));
+      const mul = setKeys.length;
+      const setTrim = (i) => {
+        let items = picked.map((it) => ({ ...it }));
+        countKinds().forEach((kind) => {
+          const first = items.filter((it) => kindOf(it.id) === kind).reduce((a, it) => a + it.count, 0);
+          const w = want[kind];
+          if (w == null || !first || Math.ceil(w / mul) !== first) return;
+          const full = w - (first - 1) * mul;   // 첫 몫을 다 받는 벌 수(앞에서부터)
+          if (i < full) return;
+          // 가장 많이 담은 유형에서 하나 덜어 낸다(같으면 뒤쪽 유형)
+          const mine = items.filter((it) => kindOf(it.id) === kind);
+          const top = mine.reduce((m, it) => (it.count >= m.count ? it : m), mine[0]);
+          top.count--;
+        });
+        return items.filter((it) => it.count > 0);
+      };
+      const aligned = setKeys.map((_, i) => spreadItemsAligned(base, setTrim(i)));
+      jobs = base
+        .map((j, k) => ({ ...j, itemsBySet: Object.fromEntries(setKeys.map((key, i) => [key, aligned[i][k]])) }))
+        .filter((j) => Object.values(j.itemsBySet).some((a) => a.length));
+      if (!jobs.length) {
+        errorEl.textContent = "지문이 너무 짧습니다 (20자 이상 입력).";
+        return;
+      }
     }
     // 난이도 벌마다 무엇을 어떤 난이도로 만들지(levelPlan). 기본 + 고난도에서 고난도가 안
     // 되는 유형만 골랐으면 고난도 벌이 비어 빠진다 — 그 사실은 설명 칸이 이미 알린다.
@@ -7662,13 +7928,55 @@ function setupQuizTab({ prefix, types, footer }) {
     // 뺀 유형 조합이 같은 지문끼리는 계획을 함께 쓴다(지문이 100개여도 계산은 몇 번뿐).
     // '문제 수에 맞게 자동 선택'으로 나눈 토막은 고른 유형 중 제 몫(job.items)만 낸다.
     const jobInfoCache = new Map();
-    const jobPlanOf = (job) => {
+    const rewordVars = vars.filter((x) => x !== "verbatim").length;
+    // 벌마다 유형 묶음이 다른 지문(문항 수로 출제) — v번째 변형의 난이도 벌들. 빈 벌도 자리는 남긴다(이름표 차례)
+    const setPlanOf = (job, v) => {
+      const dropped = new Set();
+      const plan = levels().map((lv) => {
+        const its = (job.itemsBySet[`${lv}|${v}`] || []).filter((it) => {
+          if (dropKind(job, it.id)) { dropped.add(it.id); return false; }
+          return true;
+        });
+        const p = levelPlan(its).find((x) => x.lv === lv) || { lv, runs: [], dropped: [], asNormal: [] };
+        return { ...p, runs: p.runs.filter((r) => r.items.length).map((r) => ({ ...r, chunks: chunkTypes(r.items) })) };
+      });
+      return {
+        plan,
+        chunksPerVar: plan.reduce((s, p) => s + p.runs.reduce((a, r) => a + r.chunks.length, 0), 0),
+        perVarQuestions: plan.reduce((s, p) => s + planCount(p), 0),
+        perVarCost: plan.reduce((s, p) => s + costPerSet(planItems(p)), 0),
+        dropped: [...dropped],
+      };
+    };
+    /* 지문 하나의 출제 계획. v를 주면 그 변형 세트의 것(벌마다 다른 지문에서만 달라진다).
+       all* 값은 모든 변형 세트를 더한 것 — 문항 수·호출 수·값 셈에 쓴다. any는 만들 것이 하나라도 있는가. */
+    const jobPlanOf = (job, v = 0) => {
+      if (job.itemsBySet) {
+        const per = vars.map((_, vi) => setPlanOf(job, vi));
+        return {
+          ...per[v],
+          dropped: [...new Set(per.flatMap((x) => x.dropped))],
+          any: per.some((x) => x.perVarQuestions > 0),
+          allQuestions: per.reduce((a, x) => a + x.perVarQuestions, 0),
+          allChunks: per.reduce((a, x) => a + x.chunksPerVar, 0),
+          allCost: per.reduce((a, x) => a + x.perVarCost, 0),
+          rewordCalls: vars.filter((x, vi) => x !== "verbatim" && per[vi].perVarQuestions > 0).length,
+        };
+      }
       const mine = job.items || picked;
       const dropped = mine.filter((it) => dropKind(job, it.id)).map((it) => it.id);
       const key = (job.items ? job.items.map((it) => `${it.id}:${it.count}`).join(",") : "*") + "#" + dropped.join("|");
       if (!jobInfoCache.has(key)) {
         const keep = mine.filter((it) => !dropped.includes(it.id));
-        jobInfoCache.set(key, Object.assign(buildJobPlan(keep), { dropped }));
+        const b = buildJobPlan(keep);
+        jobInfoCache.set(key, Object.assign(b, {
+          dropped,
+          any: b.plan.length > 0,
+          allQuestions: b.perVarQuestions * vars.length,
+          allChunks: b.chunksPerVar * vars.length,
+          allCost: b.perVarCost * vars.length,
+          rewordCalls: rewordVars,
+        }));
       }
       return jobInfoCache.get(key);
     };
@@ -7686,7 +7994,7 @@ function setupQuizTab({ prefix, types, footer }) {
     };
     const plan = buildJobPlan(picked).plan; // 안내 문구용 — 고른 유형 전부를 만든다고 가정한 난이도 벌
     const billJobs = jobs.filter((j) => j.text && j.text.length >= 20);
-    const usableJobs = billJobs.filter((j) => jobPlanOf(j).plan.length);
+    const usableJobs = billJobs.filter((j) => jobPlanOf(j).any);
     if (!usableJobs.length) {
       const all = [...new Set(billJobs.flatMap((j) => jobPlanOf(j).dropped))];
       errorEl.textContent = billJobs.length
@@ -7710,9 +8018,9 @@ function setupQuizTab({ prefix, types, footer }) {
     // 지문 수까지 곱한 실제 총량을 여기서 확인한다 — 지문은 이 탭 밖에서 바뀌므로
     // 유형 칸의 실시간 요약만으로는 잡히지 않는다.
     const billable = usableJobs.length;
-    const runQuestions = usableJobs.reduce((s, j) => s + jobPlanOf(j).perVarQuestions * vars.length, 0);
+    const runQuestions = usableJobs.reduce((s, j) => s + jobPlanOf(j).allQuestions, 0);
     const perJobQuestions = Math.max(1, Math.round(runQuestions / billable)); // 지문 1개당 평균 문항 수
-    const runQuizCalls = usableJobs.reduce((s, j) => s + jobPlanOf(j).chunksPerVar * vars.length, 0);
+    const runQuizCalls = usableJobs.reduce((s, j) => s + jobPlanOf(j).allChunks, 0);
     // 유형마다 단가가 갈리고 추가 문항은 따로 매겨진다(costPerSet). 지문변형 세트를
     // 여러 개 고르면 세트 수만큼 문제 생성이 통째로 반복된다.
     const rewordSets = vars.filter((v) => v !== "verbatim").length;
@@ -7722,7 +8030,7 @@ function setupQuizTab({ prefix, types, footer }) {
       ? usableJobs.filter((j) => quizVocab.swapBody(j.text, vocabTexts)).length
       : 0;
     const cost = PRICING
-      ? usableJobs.reduce((s, j) => s + vars.length * jobPlanOf(j).perVarCost + rewordSets * PRICING.reword, 0) +
+      ? usableJobs.reduce((s, j) => s + jobPlanOf(j).allCost + jobPlanOf(j).rewordCalls * PRICING.reword, 0) +
         vocabSwapJobs * (PRICING.reword || 0)
       : 0;
     // 한 묶음에 담을 지문 수. 0이면 나누지 않고 지금까지대로 한 번에 간다.
@@ -7753,8 +8061,9 @@ function setupQuizTab({ prefix, types, footer }) {
       // 자동 선택으로 나눈 토막은 지문마다 문항 수가 달라 '지문 × 문항'으로 못 적는다
       const label =
         `${docName}를 만듭니다.\n` +
-        (usableJobs.some((j) => j.items)
-          ? `지문 ${billable}개(나눈 토막 포함) · 총 ${runQuestions}문항` + (vars.length > 1 ? ` (변형 ${vars.length}세트 포함)` : "")
+        (usableJobs.some((j) => j.items || j.itemsBySet)
+          ? `지문 ${billable}개에 나눠 · 총 ${runQuestions}문항` +
+            (plan.length * vars.length > 1 ? ` (난이도·지문 변형 ${plan.length * vars.length}벌 포함)` : "")
           : `지문 ${billable}개 × ` + setsNote.join(" × ") + ` = 총 ${runQuestions}문항`) +
         dlgNote + cutNote;
       if (!(await costConfirmed(cost, label, jobs.length,
@@ -7863,7 +8172,7 @@ function setupQuizTab({ prefix, types, footer }) {
               isQuotaError(err) ? "" : makeRetry(unit));
             return;
           }
-          const plan = jobPlanOf(job).plan;
+          const plan = jobPlanOf(job, v).plan;
           groups = plan.map((p, l) => ({
             lv: p.lv, l, planLen: plan.length,
             label: [varLabel, plan.length > 1 ? LEVEL_LABELS[p.lv] : ""].filter(Boolean).join(" · "),
@@ -8007,14 +8316,17 @@ function setupQuizTab({ prefix, types, footer }) {
         }
 
         // 이 지문에서 만들 유형 묶음 — 대화문이 아니면 대화문 유형이 빠진 쪽이다
-        const jp = jobPlanOf(job);
-        const plan = jp.plan;
-        if (jp.dropped.length) {
-          append(buildNoticeHtml(job, total, dropSentence(jp.dropped), ""));
+        const jpAll = jobPlanOf(job);
+        if (jpAll.dropped.length) {
+          append(buildNoticeHtml(job, total, dropSentence(jpAll.dropped), ""));
         }
-        if (!plan.length) return;
+        if (!jpAll.any) return;
 
         for (let v = 0; v < vars.length && !stopped; v++) {
+          // 벌마다 유형 묶음이 다를 수 있다(문항 수로 출제) — 이 변형 세트에 만들 것이 없으면 변형본도 만들지 않는다
+          const jp = jobPlanOf(job, v);
+          const plan = jp.plan;
+          if (!jp.perVarQuestions) continue;
           const variation = vars[v];
           const varLabel = vars.length > 1 ? VARIATION_LABELS[variation] : "";
           const who = total > 1 || job.named ? job.name : "지문";
@@ -8082,6 +8394,7 @@ function setupQuizTab({ prefix, types, footer }) {
           // ② 난이도마다 한 벌씩 — 기본·고난도를 둘 다 골랐으면 같은 지문(같은 변형본)으로
           //    두 벌을 차례로 만든다. 이름표는 '변형 · 난이도'를 이어 붙여 벌마다 갈라 둔다.
           for (let l = 0; l < plan.length && !stopped; l++) {
+            if (!plan[l].runs.length) continue;
             const lv = plan[l].lv;
             const label = [varLabel, plan.length > 1 ? LEVEL_LABELS[lv] : ""].filter(Boolean).join(" · ");
             const lvTag = plan.length > 1 ? `${tag} · ${LEVEL_LABELS[lv]}` : tag;
@@ -13054,7 +13367,7 @@ const HOWTO = {
     steps: [
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "(선택) <b>목표 어법</b>·<b>단어장</b>을 넣으면 그 문법·단어로 문제를 냅니다.",
-      "<b>유형</b>을 체크하고 ＋ － 로 <b>문항 수</b>를 정합니다. 대화문 유형은 대화문을 넣었을 때만 만들어집니다.",
+      "<b>출제 문항 수</b>(시험지 전체)를 넣으면 학교급에 맞는 <b>유형</b>이 무작위로 채워집니다. 유형 칸에서 더하거나 빼면 문항 수가 따라 바뀝니다([🎲 유형 다시 고르기]로 새로 고를 수 있습니다). 대화문 유형은 대화문을 넣었을 때만 만들어집니다.",
       "<b>학교급 · 난이도 · 출제 순서 · 지문 변형</b>을 고릅니다. 난이도를 둘 다 고르면 기본·고난도 두 벌이 나옵니다. 교과서처럼 긴 지문은 <b>긴 지문 → 나눠서 출제</b>로 1,000자 안쪽 토막으로 나눠 냅니다(문단이 없으면 AI가 흐름이 바뀌는 곳을 찾아 자릅니다) — 토막마다 고른 문항을 다 내거나(<b>나눈 지문 모두 활용</b>), 고른 문항 수 그대로 토막에 나눠 싣습니다(<b>문제 수에 맞게 자동 선택</b>).",
       "<b>[문제 만들기]</b>를 누릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>[🔀 문제 섞기]</b>는 요금 없이 순서만 바꿉니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
@@ -13078,7 +13391,7 @@ const HOWTO = {
     steps: [
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
       "(선택) <b>목표 어법</b>·<b>단어장</b>을 넣으면 그 문법·단어로 문제를 냅니다.",
-      "<b>유형</b>을 체크하고 ＋ － 로 <b>문항 수</b>를 정합니다.",
+      "<b>출제 문항 수</b>(시험지 전체)를 넣으면 학교급에 맞는 <b>유형</b>이 무작위로 채워집니다. 유형 칸에서 더하거나 빼면 문항 수가 따라 바뀝니다([🎲 유형 다시 고르기]로 새로 고를 수 있습니다).",
       "<b>학교급 · 난이도 · 출제 순서 · 지문 변형</b>을 고릅니다.",
       "<b>[문제 만들기]</b>를 누릅니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[🔑 답지만]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>[🔀 문제 섞기]</b>는 요금 없이 순서만 바꿉니다. <b>🎨 시험지 꾸미기</b>로 색·글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",

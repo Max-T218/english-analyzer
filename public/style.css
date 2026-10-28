@@ -881,6 +881,22 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .opt-sub{font-weight:500; font-size:11.5px; color:var(--ink-soft);}
 /* 라디오 그리드 위에 붙는 소제목 — 그 위 유형 선택 칸과 시각적으로 구분되도록 여백만 더 준다 */
 .group-label{margin-top:14px !important;}
+/* 문제 탭 '출제 문항 수' — 유형 칸 위, 먼저 정하는 자리 */
+.qcount-box{margin-bottom:16px; padding:10px 14px 12px; border:1px solid var(--line); border-radius:10px; background:var(--accent-soft);}
+.qcount-box .group-label{margin-top:0 !important;}
+.qcount-row{display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin-top:6px;}
+.qcount-field{font-weight:700;}
+.qcount-field input{width:76px; padding:6px 8px; font-size:16px; font-weight:700; text-align:center;
+  border:1px solid var(--line); border-radius:8px; background:var(--card, #fff); color:inherit;}
+.qcount-field input:disabled{opacity:.45;}
+.qcount-mm{margin-left:6px; padding:5px 9px; font-size:12px; font-weight:700; border:1px solid var(--line);
+  border-radius:999px; background:var(--card, #fff); color:var(--accent); cursor:pointer;}
+.qcount-mm:hover:not(:disabled){border-color:var(--accent);}
+.qcount-mm:disabled{opacity:.45; cursor:default;}
+/* display:grid가 hidden 속성을 이겨 '나눈 지문 모두 활용' 칸이 숨겨지지 않았다 */
+.quiz-type-grid[hidden]{display:none !important;}
+/* 학교급·난이도… 설정이 유형 칸 위로 올라와, 유형 칸 머리와 사이를 띄운다 */
+.qcount-box ~ .field-head{margin-top:18px;}
 .group-note{font-weight:400; font-size:11.5px; color:var(--ink-soft);}
 
 /* ── 문제 카드 ── */

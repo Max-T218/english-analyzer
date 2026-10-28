@@ -1436,14 +1436,16 @@
     <section class="panel">
       <div class="row" style="margin-top:0">
         <div class="field" style="flex:1 1 100%">
-          <div class="field-head">
-            <label>출제 유형 (5지선다)</label>
-            <label class="chk toggle-all"><input type="checkbox" id="mcqTypeAll"> 전체 선택 / 해제</label>
+          <div class="qcount-box" id="mcqCountBox">
+            <label class="group-label">출제 문항 수 <span class="group-note">(시험지 전체 문항 수 — 넣으면 학교급에 맞는 유형을 무작위로 채웁니다)</span></label>
+            <div class="qcount-row">
+              <label class="chk"><input type="checkbox" id="mcqCountOn" checked> 문항 수로 출제</label>
+              <span class="qcount-field"><input type="number" id="mcqCountN" min="0" inputmode="numeric"> 문항<button type="button" class="qcount-mm" data-for="mcqCountN" data-mm="min" title="모든 지문이 빠짐없이 한 문항씩 들어가는 가장 적은 수">최소</button><button type="button" class="qcount-mm" data-for="mcqCountN" data-mm="max" title="넣은 지문마다 학교급에 맞는 유형을 한 문항씩 모두 낸 수 — 더 많이 내려면 칸에 직접 적으세요">최대</button></span>
+              <button type="button" class="btn ghost small" id="mcqCountRoll">🎲 유형 다시 고르기</button>
+            </div>
+            <div class="hint" id="mcqCountHint"></div>
           </div>
-          <div class="quiz-type-grid" id="mcqTypeGrid"></div>
-          <div class="hint cost-hint" id="mcqCostHint" role="status" aria-live="polite"></div>
-
-<label class="group-label">학교급 <span class="group-note">(중학교를 고르면 보기·오답·문법 포인트를 중학생 수준으로 만듭니다)</span></label>
+          <label class="group-label">학교급 <span class="group-note">(중학교를 고르면 보기·오답·문법 포인트를 중학생 수준으로 만듭니다)</span></label>
           <div class="quiz-type-grid radio-grid">
             <label><input type="radio" name="mcqSchool" value="high" checked> 고등학교</label>
             <label><input type="radio" name="mcqSchool" value="middle"> 중학교</label>
@@ -1481,6 +1483,14 @@
             <label><input type="radio" name="mcqSplitMode" value="fit"> 문제 수에 맞게 자동 선택</label>
           </div>
           <div class="hint type-order-hint" id="mcqLongHint">나눠서 출제는 학교 시험처럼 긴 지문을 1,000자 안쪽 토막으로 잘라 문제를 만듭니다. 빈 줄로 문단이 나뉜 지문은 문단 단위로, 문단 구분이 없는 지문은 AI가 흐름이 바뀌는 문장을 찾아 자릅니다(나누기는 요금 없음, 글은 고치지 않음). 입력한 지문 칸은 그대로 둡니다.</div>
+
+          <div class="field-head">
+            <label>출제 유형 (5지선다)</label>
+            <label class="chk toggle-all"><input type="checkbox" id="mcqTypeAll"> 전체 선택 / 해제</label>
+          </div>
+          <div class="quiz-type-grid" id="mcqTypeGrid"></div>
+          <div class="hint cost-hint" id="mcqCostHint" role="status" aria-live="polite"></div>
+
         </div>
       </div>
 
@@ -1534,14 +1544,16 @@
     <section class="panel">
       <div class="row" style="margin-top:0">
         <div class="field" style="flex:1 1 100%">
-          <div class="field-head">
-            <label>출제 유형 (서술형·단답형)</label>
-            <label class="chk toggle-all"><input type="checkbox" id="saqTypeAll"> 전체 선택 / 해제</label>
+          <div class="qcount-box" id="saqCountBox">
+            <label class="group-label">출제 문항 수 <span class="group-note">(시험지 전체 문항 수 — 넣으면 학교급에 맞는 유형을 무작위로 채웁니다)</span></label>
+            <div class="qcount-row">
+              <label class="chk"><input type="checkbox" id="saqCountOn" checked> 문항 수로 출제</label>
+              <span class="qcount-field"><input type="number" id="saqCountN" min="0" inputmode="numeric"> 문항<button type="button" class="qcount-mm" data-for="saqCountN" data-mm="min" title="모든 지문이 빠짐없이 한 문항씩 들어가는 가장 적은 수">최소</button><button type="button" class="qcount-mm" data-for="saqCountN" data-mm="max" title="넣은 지문마다 학교급에 맞는 유형을 한 문항씩 모두 낸 수 — 더 많이 내려면 칸에 직접 적으세요">최대</button></span>
+              <button type="button" class="btn ghost small" id="saqCountRoll">🎲 유형 다시 고르기</button>
+            </div>
+            <div class="hint" id="saqCountHint"></div>
           </div>
-          <div class="quiz-type-grid" id="saqTypeGrid"></div>
-          <div class="hint cost-hint" id="saqCostHint" role="status" aria-live="polite"></div>
-
-<label class="group-label">학교급 <span class="group-note">(중학교를 고르면 묻는 말·문법 포인트를 중학생 수준으로 만듭니다)</span></label>
+          <label class="group-label">학교급 <span class="group-note">(중학교를 고르면 묻는 말·문법 포인트를 중학생 수준으로 만듭니다)</span></label>
           <div class="quiz-type-grid radio-grid">
             <label><input type="radio" name="saqSchool" value="high" checked> 고등학교</label>
             <label><input type="radio" name="saqSchool" value="middle"> 중학교</label>
@@ -1568,6 +1580,14 @@
             <label><input type="checkbox" name="saqVariation" value="light"> 단어 변형</label>
           </div>
           <div class="hint type-order-hint" id="saqVariationHint"></div>
+
+          <div class="field-head">
+            <label>출제 유형 (서술형·단답형)</label>
+            <label class="chk toggle-all"><input type="checkbox" id="saqTypeAll"> 전체 선택 / 해제</label>
+          </div>
+          <div class="quiz-type-grid" id="saqTypeGrid"></div>
+          <div class="hint cost-hint" id="saqCostHint" role="status" aria-live="polite"></div>
+
         </div>
       </div>
 
@@ -1617,14 +1637,17 @@
     <section class="panel">
       <div class="row" style="margin-top:0">
         <div class="field" style="flex:1 1 100%">
-          <div class="field-head">
-            <label>출제 유형 (객관식 + 주관식 — 한 시험지에 섞입니다)</label>
-            <label class="chk toggle-all"><input type="checkbox" id="mixTypeAll"> 전체 선택 / 해제</label>
+          <div class="qcount-box" id="mixCountBox">
+            <label class="group-label">출제 문항 수 <span class="group-note">(시험지 전체 문항 수 — 넣으면 학교급에 맞는 유형을 무작위로 채웁니다)</span></label>
+            <div class="qcount-row">
+              <label class="chk"><input type="checkbox" id="mixCountOn" checked> 문항 수로 출제</label>
+              <span class="qcount-field">객관식 <input type="number" id="mixCountN" min="0" inputmode="numeric"> 문항<button type="button" class="qcount-mm" data-for="mixCountN" data-mm="min" title="모든 지문이 빠짐없이 한 문항씩 들어가는 가장 적은 수">최소</button><button type="button" class="qcount-mm" data-for="mixCountN" data-mm="max" title="넣은 지문마다 학교급에 맞는 유형을 한 문항씩 모두 낸 수 — 더 많이 내려면 칸에 직접 적으세요">최대</button></span>
+              <span class="qcount-field">주관식 <input type="number" id="mixCountSaqN" min="0" inputmode="numeric"> 문항<button type="button" class="qcount-mm" data-for="mixCountSaqN" data-mm="min" title="모든 지문이 빠짐없이 한 문항씩 들어가는 가장 적은 수">최소</button><button type="button" class="qcount-mm" data-for="mixCountSaqN" data-mm="max" title="넣은 지문마다 학교급에 맞는 유형을 한 문항씩 모두 낸 수 — 더 많이 내려면 칸에 직접 적으세요">최대</button></span>
+              <button type="button" class="btn ghost small" id="mixCountRoll">🎲 유형 다시 고르기</button>
+            </div>
+            <div class="hint" id="mixCountHint"></div>
           </div>
-          <div class="quiz-type-grid" id="mixTypeGrid"></div>
-          <div class="hint cost-hint" id="mixCostHint" role="status" aria-live="polite"></div>
-
-<label class="group-label">학교급 <span class="group-note">(중학교를 고르면 보기·오답·문법 포인트를 중학생 수준으로 만듭니다)</span></label>
+          <label class="group-label">학교급 <span class="group-note">(중학교를 고르면 보기·오답·문법 포인트를 중학생 수준으로 만듭니다)</span></label>
           <div class="quiz-type-grid radio-grid">
             <label><input type="radio" name="mixSchool" value="high" checked> 고등학교</label>
             <label><input type="radio" name="mixSchool" value="middle"> 중학교</label>
@@ -1651,6 +1674,14 @@
             <label><input type="checkbox" name="mixVariation" value="light"> 단어 변형</label>
           </div>
           <div class="hint type-order-hint" id="mixVariationHint"></div>
+
+          <div class="field-head">
+            <label>출제 유형 (객관식 + 주관식 — 한 시험지에 섞입니다)</label>
+            <label class="chk toggle-all"><input type="checkbox" id="mixTypeAll"> 전체 선택 / 해제</label>
+          </div>
+          <div class="quiz-type-grid" id="mixTypeGrid"></div>
+          <div class="hint cost-hint" id="mixCostHint" role="status" aria-live="polite"></div>
+
         </div>
       </div>
 
