@@ -448,7 +448,8 @@ PRICE_VOCAB_PDF_KRW = int(os.environ.get("PRICE_VOCAB_PDF_KRW", "0"))
 # 유형 이름은 서로 겹치지 않는다 — "영영풀이"(객관식)와 "영영풀이 쓰기"(주관식)처럼
 # 이름 끝을 달리해 구분한다).
 MCQ_ONLY_TYPES = {
-    "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입",
+    "주제", "제목", "요지", "빈칸", "빈칸(단어)", "빈칸(구)", "빈칸(문장)",
+    "어휘", "어법", "순서", "문장삽입",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
     "함축의미", "무관한 문장", "요약문", "영영풀이",
     "목적", "심경", "지칭 추론",
@@ -1635,7 +1636,8 @@ QUIZ_SCHEMA = {
 }
 
 QUIZ_TYPE_LABELS = [
-    "주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입", "함축의미",
+    "주제", "제목", "요지", "빈칸", "빈칸(단어)", "빈칸(구)", "빈칸(문장)",
+    "어휘", "어법", "순서", "문장삽입", "함축의미",
     "무관한 문장", "요약문", "영영풀이",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
     "서술형배열", "OX진위(영)", "OX진위(한)",
@@ -1699,7 +1701,7 @@ QUIZ_GRAMMAR_SPOT_TYPES = {"어법", "어법 선택형", "틀린 어법 찾기"}
 # 낱말과 무관한 유형에는 지시를 아예 보내지 않는다. 화면이 지문에 실제로 나오는 단어만
 # 골라 보내지만, 없는 단어를 지문에 끼워 넣지 말라는 것도 지시에 못 박는다.
 QUIZ_VOCAB_TYPES = {"어휘", "어휘 선택형", "틀린 어휘 찾기", "영영풀이", "영영풀이 쓰기",
-                    "영영풀이 오류 찾기", "빈칸", "빈칸 쓰기", "표현 찾아 쓰기",
+                    "영영풀이 오류 찾기", "빈칸", "빈칸(단어)", "빈칸(구)", "빈칸(문장)", "빈칸 쓰기", "표현 찾아 쓰기",
                     "다의어 같은 뜻", "다의어 문맥의미 매칭형", "대화 어법·어휘 선택"}
 QUIZ_TARGET_WORDS_MAX = 30   # 지문 하나에 싣는 단어 수 — 화면도 같은 수로 자른다
 _TARGET_WORD_RE = re.compile(r"[^A-Za-z0-9 '’~().,/-]")
@@ -1761,7 +1763,7 @@ QUIZ_TYPE_MAX = {
     # 객관식
     "주제": 5, "제목": 5, "요지": 5,
     "내용일치(영)": 5, "내용일치(한)": 5, "내용불일치(영)": 5, "내용불일치(한)": 5,
-    "빈칸": 6, "어휘": 6, "어법": 4,
+    "빈칸": 6, "빈칸(단어)": 6, "빈칸(구)": 6, "빈칸(문장)": 4, "어휘": 6, "어법": 4,
     "순서": 2, "문장삽입": 2,
     # 지문에 실제로 든 비유·반어 표현의 수가 한계다. 그보다 많이 시키면 평범한 사실
     # 문장에 밑줄을 긋고 '의미하는 바'를 묻게 되어, 정답과 오답이 갈리지 않는다.
@@ -2011,6 +2013,18 @@ the passage in full.
 - "빈칸" — instruction "다음 빈칸에 들어갈 말로 가장 적절한 것은?". passageHtml = the
   passage with ONE key phrase replaced by "_______________". choices = 5 candidate English
   phrases that fit the blank grammatically, one clearly the best fit.
+- "빈칸(단어)", "빈칸(구)", "빈칸(문장)" — same mechanics as "빈칸" (instruction "다음 빈칸에 들어갈
+  말로 가장 적절한 것은?", ONE blank "_______________", 5 English choices, one clearly best),
+  but the SIZE of the blanked part is fixed by the type:
+  · 빈칸(단어): blank ONE single word (a key noun/verb/adjective/adverb carrying the passage's
+    central idea; 수능 31번 style). All 5 choices are single words of the same part of speech.
+  · 빈칸(구): blank ONE phrase of about 3~8 words (수능 32~34번 style). All 5 choices are
+    phrases of similar length and the same grammatical form (e.g. all to-infinitives or all
+    noun phrases).
+  · 빈칸(문장): blank ONE whole sentence or a full clause (a topic/concluding sentence or the
+    logical turn; 수능 문장형 빈칸). All 5 choices are complete sentences of similar length.
+  Never blank a different size than the type says, and never let a choice be a different size
+  from the others.
 - "어휘" — instruction "다음 글의 밑줄 친 부분 중, 문맥상 낱말의 쓰임이 적절하지 않은
   것은?". passageHtml = full passage with EXACTLY 5 words/short phrases each wrapped in <u>
   and preceded by a circled number (①<u>word</u>, ②<u>word</u> … ⑤<u>word</u>), spread
@@ -2860,7 +2874,7 @@ Any type not named below keeps exactly the rules above.
    · reversed — flips a cause→effect, contrast, or the author's evaluation
    · opposing view — the belief the passage argues AGAINST, stated as if it were the point
    · overstatement — adds always/only/never/must that the passage does not support
-4. "빈칸" — blank the phrase carrying the passage's central claim or its logical turn, not
+4. "빈칸"·"빈칸(단어)"·"빈칸(구)"·"빈칸(문장)" — blank the word/phrase/sentence carrying the passage's central claim or its logical turn, not
    a detail recoverable from its own sentence. The correct choice is a PARAPHRASE of the
    removed phrase (rule 1), never the original wording. Include one distractor that reuses
    the original phrase's words with a twisted meaning (rule 2).
@@ -2929,7 +2943,8 @@ def plan_ox_false_counts(items):
 # 밑줄의 위치라 번호를 정하면 어느 낱말을 고를지까지 묶인다), 문장삽입(정답이 빠진
 # 문장의 원래 자리로 정해진다), 무관한 문장(③·④에 두라는 규칙이 따로 있다).
 QUIZ_ANSWER_PLAN_TYPES = {
-    "주제", "제목", "요지", "목적", "심경", "빈칸", "순서", "함축의미", "영영풀이",
+    "주제", "제목", "요지", "목적", "심경", "빈칸", "빈칸(단어)", "빈칸(구)", "빈칸(문장)",
+    "순서", "함축의미", "영영풀이",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
     "요약문", "연결어 2빈칸 추론", "어법 분석",
     "대화 순서", "대화 빈칸", "대화 내용 일치", "대화 내용 불일치", "답할 수 없는 질문",

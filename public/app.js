@@ -6091,7 +6091,8 @@ const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", 
 // 객관식(5지선다) 유형
 const MCQ_TYPES = [
   { id: "주제", def: true }, { id: "제목", def: true }, { id: "요지", def: true },
-  { id: "빈칸", def: true }, { id: "어휘", def: false }, { id: "어법", def: false },
+  { id: "빈칸(단어)", def: true }, { id: "빈칸(구)", def: true }, { id: "빈칸(문장)", def: false },
+  { id: "어휘", def: false }, { id: "어법", def: false },
   { id: "순서", def: false }, { id: "문장삽입", def: false }, { id: "함축의미", def: false },
   { id: "무관한 문장", def: false }, { id: "요약문", def: false }, { id: "영영풀이", def: false },
   { id: "내용일치(영)", def: false }, { id: "내용일치(한)", def: false },
@@ -6235,7 +6236,7 @@ const TYPE_MAX = {
   // 객관식
   주제: 5, 제목: 5, 요지: 5,
   "내용일치(영)": 5, "내용일치(한)": 5, "내용불일치(영)": 5, "내용불일치(한)": 5,
-  빈칸: 6, 어휘: 6, 어법: 4,
+  빈칸: 6, "빈칸(단어)": 6, "빈칸(구)": 6, "빈칸(문장)": 4, 어휘: 6, 어법: 4,
   순서: 2, 문장삽입: 2, 함축의미: 2, 영영풀이: 5,
   "무관한 문장": 1, 요약문: 1,
   // 주관식
@@ -6424,7 +6425,7 @@ function askBigRun(info) {
    두 자리를 빈칸으로 뚫는다.
    목적·심경은 반대로 지문을 그대로 읽고 판단만 하므로 여기 들지 않는다(지문유지형). */
 const MCQ_TRANSFORM_TYPES = new Set([
-  "빈칸", "어휘", "어법", "순서", "문장삽입", "무관한 문장", "요약문", "함축의미",
+  "빈칸", "빈칸(단어)", "빈칸(구)", "빈칸(문장)", "어휘", "어법", "순서", "문장삽입", "무관한 문장", "요약문", "함축의미",
   "지칭 추론", "어법 분석", "옳은 문장 찾기", "영영풀이 오류 찾기", "연결어 2빈칸 추론",
   // 대화문을 뒤섞고(순서)·고쳐 쓰고(어색한 응답)·빈칸을 뚫는다(대화 빈칸)
   "대화 순서", "어색한 응답", "대화 빈칸",
@@ -6468,7 +6469,7 @@ const SAQ_HARD_TYPES = new Set([
    처음 켜 둘 것은 객관식·주관식 하나씩만 — 8개가 한꺼번에 켜져 있으면 섞는 맛을 보기 전에
    요금부터 부풀어 보인다. */
 const MCQ_ID_SET = new Set(MCQ_TYPES.map((t) => t.id));
-const MIX_DEFAULT_ON = new Set(["빈칸", "서술형배열"]);
+const MIX_DEFAULT_ON = new Set(["빈칸(구)", "서술형배열"]);
 const MIX_TYPES = [
   ...MCQ_TYPES.map((t) => ({ id: t.id, def: MIX_DEFAULT_ON.has(t.id),
     group: "객관식 (5지선다) — " + (MCQ_MIDDLE_IDS.has(t.id) ? MCQ_GROUP_MIDDLE : MCQ_GROUP_HIGH) })),
@@ -7330,7 +7331,7 @@ function setupQuizTab({ prefix, types, footer }) {
   let lastMul = null;
   let inRoll = false;
   // 중학교 객관식은 중학교 내신형을 먼저 고르고, 모자라면 중학교에서도 흔히 내는 이 유형들에서 고른다
-  const MIDDLE_SHARED = ["주제", "제목", "요지", "빈칸", "어휘", "어법", "순서", "문장삽입", "무관한 문장",
+  const MIDDLE_SHARED = ["주제", "제목", "요지", "빈칸(단어)", "빈칸(구)", "빈칸(문장)", "어휘", "어법", "순서", "문장삽입", "무관한 문장",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)", "목적", "심경", "지칭 추론", "영영풀이"];
   const shuffled = (arr) => {
     const a = arr.slice();
@@ -15292,6 +15293,9 @@ const EXAM_FIT_RULES = {
   "주제": { minSent: 3 },
   "제목": { minSent: 3 },
   "빈칸": { minSent: 3 },
+  "빈칸(단어)": { minSent: 3 },
+  "빈칸(구)": { minSent: 3 },
+  "빈칸(문장)": { minSent: 4 },
   "빈칸 쓰기": { minSent: 3, repeatWord: true },
   "동사형 쓰기": { minSent: 3 },
   "표현 찾아 쓰기": { minSent: 3 },
