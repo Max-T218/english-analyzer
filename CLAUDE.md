@@ -113,6 +113,8 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 
 **단어 학습 필수**(2026-10-28 사용자): 단어시험(`kind != quiz`)은 이번 회차의 학습을 마쳐야 열린다. 학생 학습 화면(`openStudy`)은 뜻을 처음부터 가려 두고, 모든 단어의 뜻을 눌러 보면 `/api/student/tests/studied`(`record_study_done`)가 `test_studies/{시험}_{학생}_{회차}`에 기록한다. `get_test_detail_for_student`는 기록이 없으면 `StudyRequired`(409 + `needStudy`)로 막고 화면이 학습 화면으로 보내며, `grade_and_submit_attempt`도 같은 확인을 한다(화면을 거치지 않는 제출 방지). 기록이 회차별이라 재시험은 다시 학습해야 한다. 이미 합격한 시험의 학습 화면은 복습 전용(시험 단추 없음). `delete_assignment`가 `test_studies`도 함께 지운다. 눌러 본 개수는 화면이 알려 주는 값이라 서버가 실제 클릭을 검증하지는 못한다. 기록 문서에는 회차별 `count`(끝까지 마친 횟수)·`first_at`·`studied_at`이 있고, `list_attempts_for_assignment`가 `studies`/`studyTotal`로 실어 시험별 성적표의 '단어 학습' 칸(`studyText`, 인쇄에는 안 나옴)이 "총 3번 (1회차 2번 · 2회차 1번) · 마지막 …"으로 보여 준다. 이 기능 전에 만든 기록은 `count`가 없어 1번으로 본다.
 
+**단어장 탭 [💾 사이트 저장]**(2026-10-28 사용자): 저장창에 '넣을 단어장' 칸(`saveFolderSelect`)이 떠 이미 있는 단어장(저장본의 `folder`, 또는 ' · ' 앞부분이 같은 것끼리 자동 묶음)을 고르거나 새 단어장 이름을 적어 저장한다. 저장본은 그대로 만들고 `/api/saved/folder`로 폴더만 붙이므로 서버는 그대로다. 불러온 저장본을 덮어쓸 때는 그 저장본의 폴더가 기본이고, 바뀌었을 때만 폴더 API를 부른다.
+
 **성적표**(2026-10-12): 채점할 때(`grade_and_submit_attempt`) 문제마다 번호·문제·내 답·정답·맞음을
 `test_attempts` 문서의 `details`에 함께 저장한다(이 값이 없는 옛 답안은 `hasDetails:false`로 표시).
 그걸로 ① 학생 결과 화면의 '틀린 단어'(`wrongItems`, `get_result_for_student` —

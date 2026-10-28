@@ -1838,7 +1838,7 @@
           <span class="hint" id="vocabEditHint">단어·뜻을 채운 줄만 저장됩니다. 고치는 즉시 반영됩니다.</span>
         </div>
         <div class="actions">
-          <button type="button" class="btn" id="vocabCancelEditBtn">✅ 완료</button>
+          <button type="button" class="btn" id="vocabCancelEditBtn">✅ 완료 · 단어장 만들기</button>
         </div>
       </div>
 
@@ -2757,6 +2757,12 @@
     <div class="field">
       <label for="saveTitleInput">제목</label>
       <input type="text" id="saveTitleInput" placeholder="예: 3월 모의고사 1번 지문 분석">
+    </div>
+    <!-- 단어장 탭 저장일 때만 뜬다 (app.js의 openSaveDialog) — 저장본을 어느 단어장(폴더) 안에 넣을지 -->
+    <div class="field" id="saveFolderField" hidden>
+      <label for="saveFolderSelect">넣을 단어장 <span class="hint" style="font-weight:400;">(저장한 단어장 묶음)</span></label>
+      <select id="saveFolderSelect"></select>
+      <input type="text" id="saveFolderNew" maxlength="60" placeholder="새 단어장 이름 (예: 토익 단어)" hidden style="margin-top:6px;">
     </div>
     <div class="error" id="saveDialogError"></div>
     <div class="print-guide-actions">

@@ -11481,7 +11481,15 @@ function vocabEditorClose() {
 vocabAddRowBtn.addEventListener("click", () => {
   vocabEditRowsEl.appendChild(vocabRowEl(null));
 });
-vocabCancelEditBtn.addEventListener("click", vocabEditorClose);
+// [완료]는 표를 닫고 곧바로 단어장까지 만든다(아래 [단어장 만들기]를 또 누르지 않게). 단어를 하나도
+// 못 채운 채 닫으면 빈 세트만 지우고 만들지 않는다. 다른 데서 표를 닫는 길(vocabEditorClose)은 그대로다.
+vocabCancelEditBtn.addEventListener("click", () => {
+  vocabEditorSync();
+  const mine = getVocabSets().find((s) => s._id === vocabEditorSetId);
+  const hasWords = !!(mine && mine.vocab && mine.vocab.length);
+  vocabEditorClose();
+  if (hasWords) buildVocab(true);
+});
 // 표 안(줄 값이든 이름칸이든) 어디를 고쳐도 그 즉시 저장한다.
 vocabEditorEl.addEventListener("input", vocabEditorSync);
 // 줄 삭제(✕)는 vocabRowEl 안에서 DOM만 지우므로, 그 지운 결과도 반영되게 여기서 한 번 더 듣는다.
@@ -11897,6 +11905,48 @@ const savedListCloseBtn = $("savedListClose");
 
 let pendingSaveTab = null;
 
+/* 단어장 탭 저장 — 저장본을 어느 '단어장'(저장함의 폴더) 안에 넣을지 고른다. 이미 있는 단어장 목록을
+   띄우고, 새 단어장을 만들어 넣을 수도 있다. 단어장 없이 저장하면 예전과 같다. 폴더는 저장본의 folder
+   (/api/saved/folder)라 반에 시험 내기의 폴더 묶음과 같은 것이다. */
+const saveFolderFieldEl = $("saveFolderField");
+const saveFolderSelectEl = $("saveFolderSelect");
+const saveFolderNewEl = $("saveFolderNew");
+const SAVE_FOLDER_NEW = "__new__";
+let saveFolderInitial = "";   // 저장창을 열 때의 폴더 — 바뀌었을 때만 폴더 API를 부른다
+let saveFolderSeq = 0;
+
+async function fillSaveFolders(selected) {
+  const seq = ++saveFolderSeq;
+  let items = [];
+  try {
+    const data = await getJson("/api/saved", "");
+    items = (data.items || []).filter((it) => it.tab === "vocab");
+  } catch (_) { /* 목록을 못 받아도 '없이 저장'과 '새 단어장'은 쓸 수 있다 */ }
+  if (seq !== saveFolderSeq) return;
+  const names = new Set();
+  const prefixCount = new Map();
+  items.forEach((it) => {
+    if (it.folder) names.add(it.folder);
+    else if (String(it.title || "").includes(" · ")) {
+      const g = String(it.title).split(" · ")[0].trim();
+      if (g) prefixCount.set(g, (prefixCount.get(g) || 0) + 1);
+    }
+  });
+  prefixCount.forEach((n, g) => { if (n >= 2) names.add(g); });
+  if (selected) names.add(selected);
+  const list = [...names].sort((a, b) => a.localeCompare(b, "ko", { numeric: true }));
+  saveFolderSelectEl.innerHTML =
+    `<option value="">단어장 없이 저장</option>` +
+    list.map((n) => `<option value="${esc(n)}">📁 ${esc(n)}</option>`).join("") +
+    `<option value="${SAVE_FOLDER_NEW}">＋ 새 단어장 만들기…</option>`;
+  saveFolderSelectEl.value = selected || "";
+  saveFolderNewEl.hidden = true;
+}
+saveFolderSelectEl.addEventListener("change", () => {
+  saveFolderNewEl.hidden = saveFolderSelectEl.value !== SAVE_FOLDER_NEW;
+  if (!saveFolderNewEl.hidden) saveFolderNewEl.focus();
+});
+
 /* 탭마다 '지금 화면에 있는 것이 저장함의 어느 자료에서 온 것인가'를 기억한다.
    저장할 때 그 자료를 덮어쓸 수 있게 하기 위한 것이다 — 서버는 처음부터 덮어쓰기를
    할 줄 알았는데(save_item) 화면이 id를 안 보내, 고쳐 저장할 때마다 사본만 쌓였다.
@@ -11978,6 +12028,20 @@ function openSaveDialog(tab) {
     saveDialogConfirmBtn.textContent = "저장";
     saveDialogConfirmBtn.classList.remove("ghost");
   }
+  // 단어장 탭은 저장본을 넣을 단어장(폴더)을 고르게 한다 — 불러온 자료를 덮어쓰는 중이면 그 자료의 단어장이 기본
+  const showFolder = tab === "vocab" && isLoggedIn && !saveDialogConfirmBtn.disabled;
+  saveFolderFieldEl.hidden = !showFolder;
+  saveFolderInitial = "";
+  if (showFolder) {
+    saveFolderSelectEl.innerHTML = `<option value="">불러오는 중…</option>`;
+    saveFolderNewEl.hidden = true;
+    saveFolderNewEl.value = "";
+    getJson("/api/saved", "").then((data) => {
+      const mine = from ? (data.items || []).find((it) => it.id === from.id) : null;
+      saveFolderInitial = (mine && mine.folder) || "";
+      return fillSaveFolders(saveFolderInitial);
+    }).catch(() => fillSaveFolders(""));
+  }
   saveDialogEl.hidden = false;
   saveTitleInputEl.focus();
 }
@@ -12003,6 +12067,17 @@ async function doSaveDialog(overwriteId) {
     QUIZ_SHEET_TITLE[tab].set(saveTitleInputEl.value.trim());
   }
   saveDialogErrorEl.textContent = "";
+  // 넣을 단어장 — 새 단어장이면 이름을 먼저 확인한다(저장이 끝난 뒤에 알면 늦다)
+  let wantFolder = null;   // null = 폴더를 건드리지 않는다
+  if (tab === "vocab" && !saveFolderFieldEl.hidden) {
+    wantFolder = saveFolderSelectEl.value === SAVE_FOLDER_NEW ? saveFolderNewEl.value.trim() : saveFolderSelectEl.value;
+    if (saveFolderSelectEl.value === SAVE_FOLDER_NEW && !wantFolder) {
+      saveDialogErrorEl.textContent = "새 단어장 이름을 적어 주세요.";
+      saveFolderNewEl.focus();
+      return;
+    }
+    if (wantFolder === saveFolderInitial) wantFolder = null;
+  }
   saveDialogConfirmBtn.disabled = true;
   saveDialogOverwriteBtn.disabled = true;
   // 그림을 올리는 동안 누른 단추에 몇 장째인지 보여 준다 — 안 보이면 멈춘 줄 안다
@@ -12025,7 +12100,18 @@ async function doSaveDialog(overwriteId) {
         busyBtn.textContent = `요약 이미지 저장 중… ${done}/${total}`;
       });
     }
+    // 저장은 끝났다 — 단어장에 넣는 일이 실패해도 저장본은 남으므로, 창은 닫고 안내만 한다
+    let folderFail = "";
+    if (wantFolder !== null && res && res.id) {
+      try {
+        await postJson("/api/saved/folder", { ids: [res.id], folder: wantFolder }, "단어장에 넣지 못했습니다.");
+      } catch (err) {
+        folderFail = err.message || "단어장에 넣지 못했습니다.";
+      }
+    }
     closeSaveDialog();
+    if (folderFail) alert(`저장은 됐지만 단어장에 넣지 못했습니다. (${folderFail})
+저장함에서 다시 넣어 주세요.`);
   } catch (err) {
     saveDialogErrorEl.textContent = err.message || "저장에 실패했습니다.";
   } finally {
@@ -12906,7 +12992,7 @@ const HOWTO = {
       "<b>형식</b>을 고릅니다 — 단어장, 또는 시험지(뜻 쓰기 · 영어 쓰기 · 섞어서).",
       "<b>[단어장 만들기]</b>를 누르고 <b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑습니다. <b>🎨 시험지 꾸미기</b>로 색·단어/뜻 글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
-    tip: "사진·PDF로 읽은 단어는 편집 표에서 확인한 뒤 [이 단어장에 추가]를 눌러야 들어갑니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 온라인 단어시험을 낼 수 있습니다(요금 없음). 저장한 단어장을 여러 개 체크하면 한 시험으로 합치거나 단어장마다 따로 낼 수 있습니다. 단어장 책 PDF를 단원별로 나눠 읽었으면 '📚 쓸 단어장 고르기'의 <b>[💾 고른 단원 따로 저장]</b>으로 단원마다 저장해 두세요 — 다음엔 PDF를 다시 올리지 않아도 됩니다.",
+    tip: "사진·PDF로 읽은 단어는 편집 표에서 확인한 뒤 [이 단어장에 추가]를 눌러야 들어갑니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 온라인 단어시험을 낼 수 있습니다(요금 없음). 저장한 단어장을 여러 개 체크하면 한 시험으로 합치거나 단어장마다 따로 낼 수 있습니다. [💾 사이트 저장]을 누르면 저장본을 넣을 <b>단어장</b>(저장한 단어장 묶음)을 목록에서 고르거나 새로 만들 수 있습니다. 단어장 책 PDF를 단원별로 나눠 읽었으면 '📚 쓸 단어장 고르기'의 <b>[💾 고른 단원 따로 저장]</b>으로 단원마다 저장해 두세요 — 다음엔 PDF를 다시 올리지 않아도 됩니다.",
     shots: {
       0: [{ img: "howto-step-vocab-1.jpg", cap: "직접 입력 · 사진 · PDF로 단어 넣기" }],
       1: [{ img: "howto-step-vocab-2.jpg", cap: "형식 고르기" }],
