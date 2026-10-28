@@ -893,6 +893,29 @@ label.chk-lg{gap:8px; font-size:14.5px;}
   border-radius:999px; background:var(--card, #fff); color:var(--accent); cursor:pointer;}
 .qcount-mm:hover:not(:disabled){border-color:var(--accent);}
 .qcount-mm:disabled{opacity:.45; cursor:default;}
+/* 문항 수 칸이 화면 밖으로 나가면 오른쪽에 떠서 지금 몇 문항인지 보인다(누르면 그 칸으로) — 2026-10-28 사용자 */
+.qcount-float{
+  position:fixed; right:22px; top:50%; transform:translateY(-50%); z-index:50;
+  font:inherit; font-size:13px; line-height:1.35; text-align:center;
+  color:var(--ink); background:var(--card, #fff); border:2px solid var(--accent); border-radius:14px;
+  padding:10px 14px; box-shadow:0 6px 20px rgba(20,30,45,.22); min-width:84px;
+}
+.qcount-float b{display:block; font-size:24px; color:var(--accent); line-height:1.15;}
+.qcount-float small{display:block; color:var(--ink-soft); font-size:11px;}
+.qcount-float.narrow{padding:8px 4px; border-radius:12px;}
+.qcount-float .qf-part + .qf-part{margin-top:6px; padding-top:6px; border-top:1px solid var(--line);}
+.qcount-float .qf-mm{display:block; width:100%; font:inherit; font-size:11px; font-weight:700; padding:3px 0;
+  border:1px solid var(--line); border-radius:999px; background:var(--card, #fff); color:var(--accent); cursor:pointer;}
+.qcount-float .qf-mm:hover{border-color:var(--accent);}
+.qcount-float .qf-mm[data-mm="max"]{margin-bottom:4px;}
+.qcount-float .qf-mm[data-mm="min"]{margin-top:4px;}
+.qcount-float .qf-step{display:block; width:100%; font:inherit; font-size:16px; font-weight:800; line-height:1;
+  padding:4px 0; border:1px solid var(--line); border-radius:8px; background:var(--accent-soft); color:var(--accent); cursor:pointer;}
+.qcount-float .qf-step:hover{border-color:var(--accent);}
+.qcount-float .qf-num{margin:4px 0;}
+.qcount-float.narrow b{font-size:20px;}
+.qcount-float[hidden]{display:none;}
+@media print{.qcount-float{display:none !important;}}
 /* display:grid가 hidden 속성을 이겨 '나눈 지문 모두 활용' 칸이 숨겨지지 않았다 */
 .quiz-type-grid[hidden]{display:none !important;}
 /* 학교급·난이도… 설정이 유형 칸 위로 올라와, 유형 칸 머리와 사이를 띄운다 */

@@ -7377,8 +7377,50 @@ function setupQuizTab({ prefix, types, footer }) {
     });
     return n - left;
   }
+  /* 고른 유형은 그대로 두고 per문항이 되게 더하거나 뺀다(2026-10-28 사용자 — 문항 수를 1 바꿀 때마다 유형이 통째로 다시
+     뽑히면 손봐 둔 것이 사라진다). 더할 때는 아직 안 고른 유형(학교급 묶음, 무작위)을 먼저, 다 고른 뒤에는 더 담을 수
+     있는 유형에 한 문항씩. 뺄 때는 가장 많이 담은 유형부터 하나씩, 모두 1이면 무작위로 하나를 끈다. 실제로 맞춘 수를 돌려준다. */
+  function adjustFill(kind, per) {
+    const mine = () => [...gridEl.querySelectorAll(".type-chip")]
+      .filter((c) => kindOf(c.dataset.id) === kind && c.querySelector("input").checked);
+    const total = () => mine().reduce((a, c) => a + countOf(c.dataset.id), 0);
+    let cur = total();
+    while (cur < per) {
+      const on = new Set(mine().map((c) => c.dataset.id));
+      const [first, second] = autoPools(kind).map((ids) => shuffled(ids.filter((id) => !on.has(id) && pickable(id))));
+      const fresh = first[0] || second[0];
+      if (fresh) {
+        const chip = chipOf(fresh);
+        chip.querySelector("input").checked = true;
+        chip.querySelector(".type-n").dataset.max = typeCap(fresh);
+        setCount(chip, 1);
+      } else {
+        const room = mine().filter((c) => countOf(c.dataset.id) < typeCap(c.dataset.id));
+        if (!room.length) break;
+        const chip = room[Math.floor(Math.random() * room.length)];
+        chip.querySelector(".type-n").dataset.max = typeCap(chip.dataset.id);
+        setCount(chip, countOf(chip.dataset.id) + 1);
+      }
+      cur++;
+    }
+    while (cur > per) {
+      const list = mine();
+      if (!list.length) break;
+      const top = Math.max(...list.map((c) => countOf(c.dataset.id)));
+      if (top > 1) {
+        const many = list.filter((c) => countOf(c.dataset.id) === top);
+        const chip = many[Math.floor(Math.random() * many.length)];
+        setCount(chip, top - 1);
+      } else {
+        list[Math.floor(Math.random() * list.length)].querySelector("input").checked = false;
+      }
+      cur--;
+    }
+    return cur;
+  }
   // useWant: 칸의 숫자 대신 앞서 원한 최종 문항 수로 다시 고른다(난이도·변형·학교급을 바꿨을 때)
-  function rollTypes(useWant) {
+  // keep: 고른 유형을 두고 모자란 만큼만 더하거나 뺀다(문항 수 칸·오른쪽 ＋－). 아니면 유형을 통째로 다시 뽑는다(🎲·학교급)
+  function rollTypes(useWant, keep) {
     if (!countNEl) return;
     const mul = setsMul();
     const notes = [];
@@ -7390,7 +7432,7 @@ function setupQuizTab({ prefix, types, footer }) {
          몫(올림)을 채우고, 안 나눠떨어지면 뒤쪽 벌에서 한 문항씩 덜어 낸다 — 남는 문항은 기본 벌부터 얹힌다
          (generate의 setTrim). 예: 61문항 · 4벌 → 16 · 15 · 15 · 15 */
       const per = Math.ceil(n / mul);
-      const made = autoFill(kind, per);
+      const made = keep ? adjustFill(kind, per) : autoFill(kind, per);
       const label = isMix ? (kind === "saq" ? "주관식 " : "객관식 ") : "";
       if (made < per) {
         want[kind] = made * mul;
@@ -7440,6 +7482,75 @@ function setupQuizTab({ prefix, types, footer }) {
       b.disabled = !on || !v;
     });
   }
+  /* 오른쪽에 뜨는 문항 수(2026-10-28 사용자) — 유형 칸을 보려고 내리면 문항 수 칸이 화면 밖으로 나가, 유형을 더하고 빼는
+     동안 몇 문항인지 알 수 없었다. 문항 수 칸이 안 보이고 설정·유형 칸은 보일 때만 오른쪽 가운데에 띄운다. 누르면 그 칸으로 간다. */
+  const countFloat = countNEl ? (() => {
+    const b = document.createElement("div");
+    b.className = "qcount-float";
+    b.hidden = true;
+    // ＋ － 는 그 자리에서 문항 수를 하나씩, [최소]·[최대]는 문항 수 칸의 같은 단추와 같은 수로 바꾼다
+    // (고른 유형은 두고 더하거나 뺀다). 숫자 자체는 누를 일이 없다 — 화면을 올리지 않는다(사용자).
+    b.addEventListener("click", (e) => {
+      const step = e.target.closest("[data-d], [data-mm]");
+      if (!step || step.disabled) return;
+      const el = countInputOf(step.dataset.kind);
+      if (step.dataset.mm) {
+        const bd = countBounds(step.dataset.kind);
+        el.value = String(step.dataset.mm === "min" ? Math.min(bd.min, bd.max) : bd.max);
+      } else {
+        el.value = String(Math.max(0, (Number(el.value) || 0) + Number(step.dataset.d)));
+      }
+      rollTypes(false, true);
+    });
+    document.body.appendChild(b);
+    return b;
+  })() : null;
+  function syncCountFloat() {
+    if (!countFloat) return;
+    const box = $(prefix + "CountBox");
+    const page = $("tab-" + prefix);
+    const inView = (el) => {
+      const r = el.getBoundingClientRect();
+      return r.height > 0 && r.bottom > 0 && r.top < window.innerHeight;
+    };
+    const show = countMode() && !!page && page.offsetParent !== null && !inView(box) && inView(box.parentElement);
+    countFloat.hidden = !show;
+    if (!show) return;
+    // 유형 칸을 가리지 않게 본문 오른쪽 빈자리 가운데에 둔다. 자리가 좁으면 폭을 줄이고, 그래도 모자라면(휴대폰) 화면 끝에
+    const pr = box.parentElement.getBoundingClientRect().right;
+    const room = window.innerWidth - pr - 14;   // 세로 스크롤 막대 몫을 뺀다
+    const w = Math.max(56, Math.min(92, room - 10));
+    countFloat.style.minWidth = `${w}px`;
+    countFloat.style.maxWidth = `${w}px`;
+    countFloat.style.left = room >= 56 ? `${Math.round(pr + (room - w) / 2)}px` : "";
+    countFloat.style.right = room >= 56 ? "auto" : "";
+    countFloat.classList.toggle("narrow", w < 80);
+    const part = (kind, label, el) => {
+      const bd = countBounds(kind);
+      return `<div class="qf-part">` +
+        `<button type="button" class="qf-mm" data-kind="${kind}" data-mm="max" title="${label} 최대 ${bd.max}문항">최대</button>` +
+        `<button type="button" class="qf-step" data-kind="${kind}" data-d="1" title="${label} 한 문항 더">＋</button>` +
+        `<div class="qf-num"><small>${label}</small><b>${esc(el.value || "0")}</b></div>` +
+        `<button type="button" class="qf-step" data-kind="${kind}" data-d="-1" title="${label} 한 문항 빼기">−</button>` +
+        `<button type="button" class="qf-mm" data-kind="${kind}" data-mm="min" title="${label} 최소 ${Math.min(bd.min, bd.max)}문항">최소</button>` +
+        `</div>`;
+    };
+    const html = (isMix
+      ? part("mcq", "객관식", countNEl) + part("saq", "주관식", countSaqEl)
+      : part(prefix, "전체", countNEl)) + `<small>문항</small>`;
+    // 내릴 때마다 다시 그리면 누르는 사이에 단추가 바뀌어 눌림이 사라진다 — 숫자가 바뀔 때만 그린다
+    if (countFloat.dataset.html !== html) {
+      countFloat.dataset.html = html;
+      countFloat.innerHTML = html;
+    }
+  }
+  if (countFloat) {
+    window.addEventListener("scroll", syncCountFloat, { passive: true });
+    window.addEventListener("resize", syncCountFloat);
+    document.addEventListener("click", (e) => {
+      if (e.target && e.target.closest && e.target.closest(".tab-btn")) setTimeout(syncCountFloat, 0);
+    });
+  }
   // 유형 칸 → 문항 수 칸. 칸을 고치는 중(포커스)이어도 덮어쓴다 — change 때만 다시 고르므로 겹치지 않는다
   function syncCountInputs() {
     if (!countNEl) return;
@@ -7448,7 +7559,7 @@ function setupQuizTab({ prefix, types, footer }) {
     // 난이도·변형 벌 수가 바뀌었으면 같은 최종 문항 수로 유형을 다시 고른다
     if (on && !inRoll && lastMul !== null && mul !== lastMul) {
       lastMul = mul;
-      rollTypes(true);
+      rollTypes(true, true);
       return;
     }
     lastMul = mul;
@@ -7468,6 +7579,7 @@ function setupQuizTab({ prefix, types, footer }) {
     });
     [countNEl, countSaqEl, countRollEl].forEach((el) => el && (el.disabled = !on));
     syncCountBounds();
+    syncCountFloat();
     if (countHintEl && !on) countHintEl.textContent = "꺼져 있으면 아래에서 고른 유형을 지문마다 모두 출제합니다(지문이 5개면 문항도 5배).";
     else if (countHintEl && !inRoll)
       countHintEl.textContent = (mul > 1 ? `난이도·지문 변형 ${mul}벌을 합친 최종 문항 수입니다(유형 칸은 한 벌 몫). ` : "") +
@@ -7476,9 +7588,9 @@ function setupQuizTab({ prefix, types, footer }) {
     if (splitModeWrap && longEl) splitModeWrap.hidden = on || !longEl.values.includes("split");
   }
   if (countNEl) {
-    [countNEl, countSaqEl].forEach((el) => el && el.addEventListener("change", () => rollTypes(false)));
+    [countNEl, countSaqEl].forEach((el) => el && el.addEventListener("change", () => rollTypes(false, true)));
     [countNEl, countSaqEl].forEach((el) => el && el.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); rollTypes(false); }
+      if (e.key === "Enter") { e.preventDefault(); rollTypes(false, true); }
     }));
     if (countRollEl) countRollEl.addEventListener("click", () => rollTypes(true));
     const box = $(prefix + "CountBox");
@@ -7488,7 +7600,7 @@ function setupQuizTab({ prefix, types, footer }) {
       syncCountBounds();   // 지문을 바꾼 뒤 처음 누를 때도 지금 지문으로 센다
       const el = $(b.dataset.for);
       el.value = b.dataset.n;
-      rollTypes(false);
+      rollTypes(false, true);
     });
     // 지문이 바뀌면 최소·최대가 달라진다 — 지문칸을 고칠 때, 이 탭을 열 때, 칸에 손을 댈 때 다시 센다
     // (저장함에서 불러오기처럼 입력 이벤트 없이 지문이 바뀌는 길이 있어 탭을 열 때도 센다)
