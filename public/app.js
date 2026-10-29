@@ -7080,6 +7080,32 @@ function quizTypeDropKind(text, id) {
     : null;
 }
 
+/* 만들 수는 있지만 이 지문에 잘 맞지 않는 유형인가 — 문항 수로 출제할 때 유형을 무작위로 고르거나 지문에
+   나눠 실을 때 피한다(서버의 fit_quiz_items와 짝이 아니다 — 선생님이 직접 고르면 그대로 낸다).
+   2026-10-29 실사이트 100문항: 설명문에 심경을 걸었더니 AI가 주제로 바꿔 내 그 지문에 주제·요지가 겹쳤고,
+   대명사가 거의 없는 글의 지칭 추론은 처음 나오는 명사구에 밑줄을 그었다. */
+function quizTypeSuits(text, id) {
+  if (quizTypeDropKind(text, id)) return false;
+  const count = (re) => (String(text || "").match(re) || []).length;
+  // 심경 — 이야기(1인칭 I, 또는 he/she가 거듭 나오는 글)
+  if (id === "심경") return count(/\b(I|[Mm]e|[Mm]y)\b/g) >= 3 || count(/\b(he|she|him|her|his)\b/gi) >= 3;
+  // 지칭 추론 — 같은 대상을 되받는 대명사가 넷은 있어야 한다
+  if (id === "지칭 추론") return count(/\b(he|she|it|they|him|her|them|his|its|their)\b/gi) >= 4;
+  return true;
+}
+
+/* 같은 지문에 이미 실린 문항(got: id → 수)에 id를 더하면 답이 얼마나 비치는가. 한 지문의 문항은 저마다 지문을
+   싣는데, 어느 한쪽이 지문을 고치는 유형(빈칸·어휘·순서…)이면 다른 문항의 지문이 그 답을 보여 준다(1번에 원문,
+   2번에 같은 낱말을 비운 빈칸). 주제·제목·요지처럼 사실상 같은 문제(EXAM_FAMILY)는 더 무겁게 센다. */
+function quizRevealClash(got, id) {
+  let s = 0;
+  got.forEach((n, other) => {
+    if (EXAM_FAMILY[other] && EXAM_FAMILY[other] === EXAM_FAMILY[id]) s += 2 * n;
+    if (!(examIsPlainType(other) && examIsPlainType(id))) s += n;
+  });
+  return s;
+}
+
 /* '문제 수에 맞게 자동 선택' — 고른 문항(유형 × 문항 수)을 한 문항씩 풀어 토막에 나눠 싣는다.
    유형 칸 차례대로 돌며 지금 가장 적게 받은 토막에 주되(같으면 앞 토막), 그 토막으로 못 만드는
    유형(대화문·문장삽입)이면 만들 수 있는 토막으로 넘긴다. 같은 유형을 2문항 이상 고르면 토막마다
@@ -7096,11 +7122,15 @@ function spreadItemsAligned(pieces, picked) {
   const got = pieces.map(() => new Map());
   picked.forEach((it) => {
     for (let c = 0; c < it.count; c++) {
+      // 받은 수가 같으면 답이 덜 비치는 지문(quizRevealClash), 그다음 이 유형을 덜 받은 지문, 앞 지문 차례
       const order = pieces.map((_, k) => k).sort((a, b) =>
-        load[a] - load[b] || (got[a].get(it.id) || 0) - (got[b].get(it.id) || 0) || a - b);
+        load[a] - load[b] || quizRevealClash(got[a], it.id) - quizRevealClash(got[b], it.id)
+        || (got[a].get(it.id) || 0) - (got[b].get(it.id) || 0) || a - b);
       const fits = (k) => !quizTypeDropKind(pieces[k].text, it.id);
+      const suits = (k) => quizTypeSuits(pieces[k].text, it.id);
       const roomy = (k) => (got[k].get(it.id) || 0) < (TYPE_MAX[it.id] || 1);
-      const k = order.find((k) => fits(k) && roomy(k)) ?? order.find(fits) ?? order[0];
+      const k = order.find((k) => suits(k) && roomy(k)) ?? order.find((k) => fits(k) && roomy(k))
+        ?? order.find(fits) ?? order[0];
       load[k]++;
       got[k].set(it.id, (got[k].get(it.id) || 0) + 1);
     }
@@ -7346,7 +7376,7 @@ function setupQuizTab({ prefix, types, footer }) {
     if (!chipOf(id)) return false;
     if (hardOnly() && !hardOk(id)) return false;
     const texts = passageMgr.getJobs().map((j) => j.text).filter((t) => t && t.length >= 20);
-    return !texts.length || texts.some((t) => !quizTypeDropKind(t, id));
+    return !texts.length || texts.some((t) => quizTypeSuits(t, id));
   };
   function autoPools(kind) {
     if (kind === "saq") return [SAQ_TYPES.map((t) => t.id), []];
@@ -7464,7 +7494,7 @@ function setupQuizTab({ prefix, types, footer }) {
     const texts = passageMgr.getJobs().map((j) => j.text).filter((t) => t && t.length >= 20);
     const pool = [...new Set(autoPools(kind).flat())].filter((id) => chipOf(id) && !(hardOnly() && !hardOk(id)));
     const perSet = texts.length
-      ? texts.reduce((a, t) => a + pool.filter((id) => !quizTypeDropKind(t, id)).length, 0)
+      ? texts.reduce((a, t) => a + pool.filter((id) => quizTypeSuits(t, id)).length, 0)
       : pool.length;
     return { min: Math.max(1, texts.length) * mul, max: perSet * mul };
   }

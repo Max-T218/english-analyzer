@@ -2005,7 +2005,9 @@ the passage in full.
   passageHtml = 지문 전문.
   ⚠️ 이 유형은 **서사(이야기)** 지문에만 성립한다. 감정을 겪는 인물이 뚜렷하지 않은
   순수 설명문·논설문에는 억지로 심경을 지어내지 마라 — 그런 지문이면 이 유형을 건너뛰고
-  대신 다른 유형의 문항을 하나 더 만들어 문항 수를 채워라.
+  대신 다른 유형의 문항을 하나 더 만들어 문항 수를 채워라. 그때 같은 요청에 이미 든 유형
+  (특히 주제·제목·요지)과 겹치지 않는 유형을 고르고, 해설에는 유형을 바꾼 사정이나 출제
+  지침을 쓰지 마라 — 해설은 학생이 읽는다.
   choices: 변화형이면 5개의 "형용사 → 형용사" 쌍(예: "anxious → relieved"), 단일형이면
   5개의 단일 형용사. 전부 영어로 쓴다. 오답은 지문의 감정과 반대이거나, 방향이 틀렸거나
   (변화 순서를 뒤바꾸거나), 지문에 없는 감정(예: 지문에 두려움이 없는데 "fear")이어야
@@ -2050,6 +2052,9 @@ the passage in full.
     수(단수/복수)가 겹쳐 헷갈릴 만한 자리를 고르되, 실제로는 답이 하나로 정해져야
     한다 — 두 가지로 읽힐 수 있으면 그 지문은 이 유형에 맞지 않으니 다른 자리를
     찾아라.
+  · 밑줄 다섯은 **모두 앞에 나온 것을 되받는 말**이어야 한다. "new facts", "long-term
+    memory", "what we learn"처럼 처음 나오는 내용어·명사구는 지칭어가 아니니 밑줄 치지
+    마라 — 그러면 '가리키는 대상'을 묻는 문제가 성립하지 않는다(2026-10-29 실례).
   choices = ["①","②","③","④","⑤"] in that literal order; answer = 다른 대상을
   가리키는 것의 위치.
 - "어법 분석" — instruction "다음 글의 밑줄 친 부분에 대한 설명으로 가장 적절한 것은?".
@@ -2161,6 +2166,9 @@ the passage in full.
   `passageHtml` = the passage verbatim, with exactly TWO sentence-initial connectives
   replaced by "(A)_______" and "(B)_______" — pick two spots where the passage's own
   logic genuinely turns (역접·인과·예시·첨가 등), not two random sentence starts.
+  Prefer connectives the passage ALREADY has (also mid-sentence ones like but / so / yet).
+  Only when it has fewer than two may you add one at a real turn — and then only inside THIS
+  item's passageHtml; every other item keeps the original wording.
   ⚠️ The two blanks must sit at two DIFFERENT kinds of transition (e.g. one 역접 + one
   인과) — if both blanks want the same relationship, the item has only one real decision
   disguised as two.
@@ -2940,9 +2948,13 @@ def plan_ox_false_counts(items):
 # ① 8 · ② 1 · ③ 7 · ④ 0 · ⑤ 0이었고, 한 벌 네 문항이 전부 ①인 것도 있었다. 정답
 # 자리를 외우거나 찍는 요령이 생기므로 OX의 X 개수처럼 서버가 뽑아 못 박는다.
 # 넣지 않은 것: 어휘·어법·지칭 추론·옳은 문장 찾기·영영풀이 오류 찾기(정답이 지문 속
-# 밑줄의 위치라 번호를 정하면 어느 낱말을 고를지까지 묶인다), 문장삽입(정답이 빠진
-# 문장의 원래 자리로 정해진다), 무관한 문장(③·④에 두라는 규칙이 따로 있다).
+# 밑줄의 위치라 번호를 정하면 어느 낱말을 고를지까지 묶인다), 무관한 문장(③·④에 두라는
+# 규칙이 따로 있고, 받은 뒤 서버가 심은 문장을 옮겨 ③·④를 고르게 한다 — _rebalance_irrelevant).
+# 문장삽입은 정답이 빠진 문장의 원래 자리로 정해지지만, 어느 문장을 뺄지를 번호로 정해 준다 —
+# 맡겨 두었더니 7문항 중 6문항이 ③이었다(2026-10-29 실사이트 100문항). 보기 수(K)가 지문마다
+# 달라 plan_answer_positions가 1~K에서 뽑는다.
 QUIZ_ANSWER_PLAN_TYPES = {
+    "문장삽입",
     "주제", "제목", "요지", "목적", "심경", "빈칸", "빈칸(단어)", "빈칸(구)", "빈칸(문장)",
     "순서", "함축의미", "영영풀이",
     "내용일치(영)", "내용일치(한)", "내용불일치(영)", "내용불일치(한)",
@@ -2955,17 +2967,21 @@ QUIZ_ANSWER_PLAN_TYPES = {
 QUIZ_ANSWER_NOT_FIRST = {"요약문", "연결어 2빈칸 추론"}
 
 
-def plan_answer_positions(items):
+def plan_answer_positions(items, insert_k=None):
     """정답 번호를 정해 줄 문항마다 번호를 뽑는다 — 유형 순서·문항 순서 그대로의 [(유형, 번호)].
 
     다섯 번호를 섞은 주머니에서 하나씩 꺼내, 한 번의 호출 안에서는 번호가 겹치지 않다가
     다섯을 다 쓰면 주머니를 새로 채운다. 그냥 무작위로 뽑으면 네 문항이 우연히 같은
-    번호로 몰리는 일이 생각보다 잦다."""
+    번호로 몰리는 일이 생각보다 잦다.
+    insert_k = 이 지문의 문장삽입 보기 수(insertion_choice_count) — 문장삽입은 1~K에서만 뽑는다."""
     plan, bag = [], []
     for t, n in items:
         if t not in QUIZ_ANSWER_PLAN_TYPES:
             continue
-        allowed = (2, 3, 4, 5) if t in QUIZ_ANSWER_NOT_FIRST else (1, 2, 3, 4, 5)
+        if t == "문장삽입":
+            allowed = tuple(range(1, (insert_k or INSERTION_MIN_CHOICES) + 1))
+        else:
+            allowed = (2, 3, 4, 5) if t in QUIZ_ANSWER_NOT_FIRST else (1, 2, 3, 4, 5)
         for _ in range(n):
             pick = [p for p in bag if p in allowed]
             if not pick:
@@ -3029,6 +3045,13 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
             "나머지 자리에 채우세요(answer도 그 번호). 해설이 짚는 보기 번호도 이 배치를 따르세요: "
             + "; ".join(desc)
         )
+        if any(t == "문장삽입" for t, _ in answer_plan):
+            lines.append(
+                "⚠️ 문장삽입은 보기를 옮길 수 없으므로, 정해진 번호가 정답이 되도록 **주어진 문장으로 뺄 문장을 "
+                "고르세요** — 번호 ①이 첫 문장 뒤라면 정답 ④는 '남은 문장 넷째 뒤', 즉 원래 다섯째 문장을 빼는 "
+                "것입니다. 그 자리의 문장이 앞뒤와 지시어·연결어로 이어지지 않아 단서가 약하면, 번호를 찍는 "
+                "자리(어느 문장 뒤에 ①을 둘지)를 옮겨서라도 정해진 번호를 지키세요."
+            )
     # 지문 재사용(passageHtml 생략)은 '원문 그대로'일 때만 켠다.
     # light/heavy는 모델이 응답 안에서 즉석으로 리워딩하므로 서버가 가진 원문으로
     # 채우면 학생이 읽는 지문과 어긋난다 — 그때는 지금까지처럼 모델이 직접 싣는다.
@@ -3040,6 +3063,13 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
         )
     else:
         lines.append("지문 재사용: 끔 — 모든 문항에 passageHtml을 직접 채우세요.")
+    if variation == "verbatim" and len(items) > 1:
+        # 연결어 2빈칸을 만들려고 원문에 없던 In addition·However를 넣고, 같은 호출의 빈칸·어법·삽입
+        # 문항까지 그 고친 글로 실은 일이 있었다(2026-10-29 실사이트 — '원문 그대로'인데 지문이 바뀌었다).
+        lines.append(
+            "⚠️ 문항마다 passageHtml은 원문에서 **그 문항 유형이 요구하는 표시·변경만** 다르게 하세요. "
+            "한 문항을 만들려고 고친 글(넣은 연결어·바꾼 낱말 등)을 다른 문항의 지문에 옮기지 마세요."
+        )
     lines += [
         # 화면은 유형 선택 칸에 놓인 순서가 곧 출제 순서라고 안내하고 그 순서대로
         # 보내므로, 받은 순서와 실제 출제 순서가 반드시 일치해야 한다.
@@ -3200,11 +3230,74 @@ _CIRCLED_NUMS = "①②③④⑤⑥⑦⑧⑨⑩"
 def _strip_own_marker(text, idx):
     """보기 i번 글이 자기 번호와 같은 동그라미 숫자로 시작하면 뗀다 — 화면이 번호를 붙이므로
     "①①how often…"처럼 겹쳐 찍힌다(2026-10-02 어법 분석). 다른 번호나 ["①","②"…]처럼
-    번호만 있는 보기는 건드리지 않는다."""
-    m = re.match(r"^\s*([①-⑩])\s*(\S.*)$", text or "", re.S)
-    if m and _CIRCLED_NUMS.index(m.group(1)) == idx:
-        return m.group(2)
-    return text
+    번호만 있는 보기는 건드리지 않는다.
+    같은 번호가 두 번 붙어 오기도 해서("① ①admired는…" — 2026-10-29 어법 분석) 남지 않을 때까지 뗀다."""
+    while True:
+        m = re.match(r"^\s*([①-⑩])\s*(\S.*)$", text or "", re.S)
+        if not (m and _CIRCLED_NUMS.index(m.group(1)) == idx):
+            return text
+        text = m.group(2)
+
+
+# 무관한 문장의 정답 자리. 지시문은 ③·④에 두라고 하는데 모델은 거의 늘 ③에 두었다 —
+# 2026-10-29 실사이트 100문항에서 5문항 모두 ③이었다. 정답이 심은 문장 하나이고 나머지 넷은
+# 원문 차례 그대로이므로, 심은 문장만 옮기면 원문 차례는 지키면서 정답 번호를 바꿀 수 있다.
+_IRRELEVANT_TARGETS = (3, 4)
+_CIRCLED5_RE = re.compile(r"[①-⑤]")
+
+
+def _rebalance_irrelevant(q, target):
+    """무관한 문장 문항의 심은 문장을 target 번호 자리로 옮긴다. 해설 속 번호도 같은 짝으로 바꾼다.
+    번호가 ①~⑤ 한 벌로 찍혀 있지 않거나 정답을 못 읽으면 손대지 않는다."""
+    html = q.get("passageHtml") or ""
+    marks = list(_CIRCLED5_RE.finditer(html))
+    if [m.group() for m in marks] != list("①②③④⑤"):
+        return
+    try:
+        ans = int(q.get("answer"))
+    except (TypeError, ValueError):
+        return
+    if not 1 <= ans <= 5 or ans == target:
+        return
+    cores, tails = [], []
+    for i, m in enumerate(marks):
+        body = html[m.end(): marks[i + 1].start() if i < 4 else len(html)]
+        core, tail = re.match(r"(.*?)((?:\s|<br\s*/?>)*)$", body, re.S).groups()
+        cores.append(core)
+        tails.append(tail)
+    order = list(range(5))
+    order.insert(target - 1, order.pop(ans - 1))
+    new_pos = {old: new for new, old in enumerate(order)}
+    q["passageHtml"] = html[:marks[0].start()] + "".join(
+        _CIRCLED_NUMS[i] + cores[old] + tails[i] for i, old in enumerate(order))
+    q["answer"] = target
+    if q.get("explanation"):
+        text = _CIRCLED5_RE.sub(
+            lambda m: _CIRCLED_NUMS[new_pos[_CIRCLED_NUMS.index(m.group())]], q["explanation"])
+        text = re.sub(r"(?<![0-9])([1-5])번(?!째)", lambda m: f"{new_pos[int(m.group(1)) - 1] + 1}번", text)
+        # 번호를 바꾸면 뒤의 조사가 어긋난다(③은 → ④은). ①·③만 받침이 있다(일·삼).
+        q["explanation"] = re.sub(
+            r"([①-⑤])(은|는|이|가|을|를|과|와)(?![가-힣])",
+            lambda m: m.group(1) + ("은는이가을를과와"[
+                "은는이가을를과와".index(m.group(2)) // 2 * 2 + (0 if m.group(1) in "①③" else 1)]),
+            text)
+
+
+# 해설에 섞여 나온 출제 사정 — 설명문에 심경을 걸었더니 모델이 주제로 바꿔 내면서 "출제 지침(…)에 따라
+# 주제 문항으로 대체되었습니다"를 학생용 해설에 적었다(2026-10-29 실사이트). 같은 날 "심경 유형 대신 제목 유형으로
+# 대체하여 출제하였습니다"도 나왔다 — 말투가 매번 달라, '유형·출제·지침'과 '대체·대신·건너뛰'가 한 문장에
+# 함께 있으면 그 문장만 걷어 낸다('which로 대체할 수 있다' 같은 어법 해설은 남는다).
+_META_TOPIC_RE = re.compile(r"유형|출제|지침")
+_META_SWAP_RE = re.compile(r"대체|대신|건너뛰|지침")
+
+
+def _strip_meta_explanation(text):
+    is_meta = lambda s: _META_TOPIC_RE.search(s) and _META_SWAP_RE.search(s)
+    if not text or not is_meta(text):
+        return text
+    parts = re.split(r"(?<=[.!?。])\s+", text)
+    kept = [p for p in parts if not is_meta(p)]
+    return " ".join(kept) if kept else text
 
 
 # 순서 문항의 보기 다섯 — 수능·내신이 쓰는 그 다섯이다. (A)-(B)-(C)는 없다(읽은 순서가 곧 답이 되므로).
@@ -3356,7 +3449,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
         )
 
     ox_plan = plan_ox_false_counts(items)
-    answer_plan = plan_answer_positions(items)
+    answer_plan = plan_answer_positions(items, insertion_choice_count(passage or ""))
     payload = {
         "systemInstruction": {"parts": [{"text": QUIZ_SYSTEM_PROMPT + (
             QUIZ_HARD_RULES if difficulty == "hard" else ""
@@ -3398,12 +3491,20 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
             if q.get("type") in QUIZ_PLAIN_PASSAGE_TYPES and not str(q.get("passageHtml") or "").strip():
                 q["passageHtml"] = plain_html
 
+    # 무관한 문장의 정답 자리 — ③·④를 섞은 차례대로 돌려 준다(한 호출에 여럿이면 번갈아)
+    irr_targets = random.sample(_IRRELEVANT_TARGETS, len(_IRRELEVANT_TARGETS))
+    irr_seen = 0
     for q in result.get("questions", []):
         if not isinstance(q, dict):
             continue
         for f in ("passageHtml", "instruction", "explanation", "answerText"):
             if q.get(f):
                 q[f] = sanitize_quiz_html(q[f])
+        if q.get("explanation"):
+            q["explanation"] = _strip_meta_explanation(q["explanation"])
+        if q.get("type") == "무관한 문장":
+            _rebalance_irrelevant(q, irr_targets[irr_seen % len(irr_targets)])
+            irr_seen += 1
         # 어법·어휘의 밑줄이 낱말을 자르고 끝나면 낱말 전체로 넓힌다
         if q.get("passageHtml"):
             q["passageHtml"] = fix_underline_bounds(q["passageHtml"])
