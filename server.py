@@ -7786,7 +7786,7 @@ def _grammar_finish(raw, slot):
     return clean
 
 
-def _grammar_call(plan, slots, api_key, model, theme=None, avoid=None, cache="reuse"):
+def _grammar_call(plan, slots, api_key, model, theme=None, avoid=None, cache="reuse", low_think=False):
     # 한 묶음은 난이도가 하나다 — 난이도는 지시문(systemInstruction)에 실리므로 묶음 단위로만 바꿀 수 있다
     diff = (slots[0].get("diff") if slots else None) or plan["difficulty"]
     # 레벨도 묶음 단위다 — 항목마다 레벨이 다를 수 있어 레벨이 같은 문항끼리 묶는다(chunks)
@@ -7801,6 +7801,8 @@ def _grammar_call(plan, slots, api_key, model, theme=None, avoid=None, cache="re
             "responseSchema": GRAMMAR_SCHEMA,
         },
     }
+    if low_think:   # 보충 문제처럼 한두 문항만 만들 때 — 생각 토큰 9천여 개로 80초를 넘기던 것을 줄인다(2026-10-29)
+        payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
     result = _gemini_json(payload, api_key, model, "문항이 너무 길어 잘렸습니다. 문항 수를 줄여 다시 시도해 주세요.",
                           salvage=True, label="grammar", cache_system=cache)
     by_slot = {s["slot"]: s for s in slots}
@@ -7817,7 +7819,7 @@ def _grammar_call(plan, slots, api_key, model, theme=None, avoid=None, cache="re
     return out
 
 
-def call_gemini_grammar(plan, api_key, model=None):
+def call_gemini_grammar(plan, api_key, model=None, low_think=False):
     """문항 자리를 GRAMMAR_CHUNK개씩 나눠 동시에 만들고, 빠진 자리는 한 번 더 채운다.
     돌려주는 값: {"questions": [...], "missing": 못 만든 수}. 하나도 못 만들면 예외."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -7846,7 +7848,7 @@ def call_gemini_grammar(plan, api_key, model=None):
                 many = same[(group[0]["diff"], group[0]["grade"])] >= 2
                 got.update(_grammar_call(plan, group, api_key, model,
                                          theme=themes[k % len(themes)], avoid=avoid,
-                                         cache=True if many else "reuse"))
+                                         cache=True if many else "reuse", low_think=low_think))
                 done.add(k)
             except Exception as e:   # 한 묶음 실패가 전체를 막지 않게 — 아래에서 모아 판단한다
                 errors.append(e)
@@ -17570,7 +17572,7 @@ def _qr_make_grammar(rows, diff):
         "mc_shapes": shapes, "sa_shapes": list(GRAMMAR_SA_SHAPES), "ai_pick": True, "passage": "",
     }
     made = []
-    for q in call_gemini_grammar(plan, "")["questions"]:
+    for q in call_gemini_grammar(plan, "", low_think=True)["questions"]:
         if q.get("format") != "mc":
             continue
         q["src"] = {"k": "g", "item": q.get("gitem") or "", "grade": q.get("ggrade") or "",
