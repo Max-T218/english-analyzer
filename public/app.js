@@ -18001,7 +18001,9 @@ function studentReportPrintableHtml(data, period, commentHtml) {
   const done = tests.filter((t) => t.status !== "none" && t.bestPercent != null);
   const top = done.reduce((a, t) => (!a || t.bestPercent > a.bestPercent ? t : a), null);
   const missing = sm.tests - sm.done;
-  const testRows = tests.length ? tests.map((t) => `<tr><td class="tk">${esc(t.title)}</td>
+  // 표는 낸 순서가 아니라 시험 이름순(Day 2 다음 Day 10 — 숫자는 크기로)으로 보인다. 그래프·코멘트 추이는 시간순 그대로 쓴다.
+  const byName = [...tests].sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "ko", { numeric: true }));
+  const testRows = tests.length ? byName.map((t) => `<tr><td class="tk">${esc(t.title)}</td>
       <td>${statusTagHtml(t.status, t.passedRound, t.kind !== "quiz" && t.maxWrong == null)}</td>
       <td class="tk">${t.kind === "quiz"
         ? (t.qc ? `📝 ${QT.countsText(t.qc)}` : "—")
