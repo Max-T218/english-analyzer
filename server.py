@@ -4467,22 +4467,99 @@ QUIZ_VERIFY_SYSTEM_PROMPT = """당신은 한국 수능·내신 영어 시험 검
 3. 어법·어휘·지칭처럼 '틀린 것/다른 것'을 고르는 문제는 다섯 밑줄을 모두 따져, 틀린(다른) 것이 정확히 하나인지 봅니다. 둘 이상이면 나머지를 alsoValid에 넣습니다. 하나도 없으면 answer를 빈 글자로 둡니다.
 4. 지문에 근거가 없어 답을 정할 수 없으면 answer를 빈 글자로 둡니다.
 reason은 결정적 근거를 한국어 한두 문장으로 씁니다."""
-QUIZ_VERIFY_FORMATS = {"mc"}
+# 정답을 보여 주고 문제·정답·해설을 함께 검토한다 — 객관식은 해설 검사, 주관식은 모범답안·문제 성립·해설 검사
+# (주관식은 답 모양이 여럿이라 가리고 다시 풀게 하면 비교할 수 없다). 2026-10-29 사용자: 주관식·해설도 잡을 것.
+QUIZ_REVIEW_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {"ok": {"type": "BOOLEAN"}, "problems": {"type": "ARRAY", "items": {"type": "STRING"}}},
+    "required": ["ok", "problems"],
+}
+QUIZ_REVIEW_SYSTEM_PROMPT = """당신은 한국 수능·내신 영어 시험 검토위원입니다. 입력은 다른 사람이 낸 문제 하나와 출제자의 정답(모범답안)·해설입니다. 시험지에 실어도 되는지 봅니다.
+1. 정답(모범답안)이 지문과 조건에 비추어 옳은가 — 뜻·어법·철자까지.
+2. 문제가 성립하는가 — 학생이 지문과 조건만 보고 정답에 이를 수 있는가, 정답이 사실상 하나로 정해지는가. 조건(낱말 수·<보기> 낱말·문법 조건)과 모범답안이 서로 맞는가.
+   단, 학생이 문장을 직접 쓰는 문제(배열·영작·문장 전환·질문에 답하기·요약문 쓰기)는 선생님이 답안을 보고 채점하므로, 모범답안과 표현이 다른 정답이 더 있을 수 있다는 것은 문제가 아니다. 모범답안이 틀렸거나 조건과 어긋날 때만 문제로 본다. 고르는·찾아 쓰는·고쳐 쓰는 문제는 뜻이 다른 답이 똑같이 옳으면 문제다. '빈칸 쓰기'는 지문에 같은 낱말이 다른 꼴(단수·복수·시제)로만 있어도 찾아 쓸 수 있는 것으로 본다(출제 규칙이 그렇다).
+3. 해설이 정답의 근거를 옳게 설명하는가 — 해설 속 지문 내용·문법 설명·다른 보기에 대한 설명에 틀린 사실이 없는가, 해설이 가리키는 번호·낱말이 정답과 맞는가.
+표현 다듬기 수준은 문제로 치지 않는다. 학생이 틀리게 배우거나 채점이 갈릴 만한 것만 problems에 한국어 한 문장씩 적고 ok를 false로 한다. 없으면 ok는 true, problems는 빈 배열.
+표기: [ ]는 밑줄, [정답|오답]은 네모 안에서 고르는 자리(왼쪽이 출제자 정답), (힌트|정답)은 괄호 속 말을 고쳐 쓰는 자리(오른쪽이 정답), (|정답)은 빈칸(오른쪽이 정답)."""
+
+
+def _quiz_plain(h):
+    s = re.sub(r"<u>(.*?)</u>", r"[\1]", str(h or ""), flags=re.S)
+    s = re.sub(r"<br\s*/?>", "\n", s)
+    return html.unescape(re.sub(r"<[^>]*>", "", s)).strip()
 
 
 def _quiz_problem_text(q):
     """검산용 문제 글 — 밑줄은 [ ]로, 줄바꿈은 그대로, 정답·해설은 뺀다."""
-    def plain(h):
-        s = re.sub(r"<u>(.*?)</u>", r"[\1]", str(h or ""), flags=re.S)
-        s = re.sub(r"<br\s*/?>", "\n", s)
-        return html.unescape(re.sub(r"<[^>]*>", "", s)).strip()
+    plain = _quiz_plain
     choices = [plain(c) for c in (q.get("choices") or [])]
     lines = [plain(q.get("instruction")), "", plain(q.get("passageHtml")), ""]
+    conds = [plain(c) for c in (q.get("conditions") or []) if isinstance(c, str) and c.strip()]
+    bank = [plain(w) for w in (q.get("wordBank") or []) if isinstance(w, str) and w.strip()]
+    if q.get("format") == "write" and q.get("answerText"):
+        # 서술형배열의 낱말 보기는 화면이 모범답안을 흩어 만든다 — 검토에도 똑같이 보여 줘야 '보기가 없다'고 걸지 않는다
+        bank = sorted(re.findall(r"[A-Za-z'’-]+", plain(q["answerText"])), key=str.lower)
+    if bank:
+        lines.append("<보기> " + " / ".join(bank))
+    if conds:
+        lines += ["<조건>"] + [f"- {c}" for c in conds]
     if choices and all(re.fullmatch(f"[{_CIRCLED_ALL}]", c) for c in choices):
         lines.append(f"보기: 지문 속 {choices[0]}~{choices[-1]}")
     else:
         lines += [f"{_CIRCLED_ALL[i]} {c}" for i, c in enumerate(choices)]
+    if q.get("format") == "tf":
+        lines += [f"({k + 1}) {plain(it.get('text'))}" for k, it in enumerate(q.get("tfItems") or []) if isinstance(it, dict)]
+    if q.get("format") == "find":
+        lines += [f"- {plain(it.get('ko'))}" for it in (q.get("findItems") or []) if isinstance(it, dict)]
+    if q.get("format") == "gloss":
+        lines += [f"- {plain(it.get('def'))}" for it in (q.get("glossItems") or []) if isinstance(it, dict)]
     return "\n".join(lines)
+
+
+def _quiz_answer_text(q):
+    """출제자 정답·모범답안을 글로."""
+    plain, out = _quiz_plain, []
+    try:
+        a = int(q.get("answer") or 0)
+    except (TypeError, ValueError):
+        a = 0
+    if q.get("choices") and 1 <= a <= len(_CIRCLED_ALL):
+        out.append(f"정답: {_CIRCLED_ALL[a - 1]}")
+    if q.get("answerText"):
+        out.append("모범답안: " + plain(q["answerText"]))
+    alts = [plain(x) for x in (q.get("alts") or []) if isinstance(x, str) and x.strip()]
+    if alts:
+        out.append("다른 정답으로 인정: " + " / ".join(alts))
+    out += [f"고칠 곳: {plain(x.get('wrong'))} → {plain(x.get('right'))}" for x in (q.get("fixes") or []) if isinstance(x, dict)]
+    out += [f"({k + 1}) {'O' if x.get('isTrue') else 'X'}" for k, x in enumerate(q.get("tfItems") or []) if isinstance(x, dict)]
+    out += [f"{plain(x.get('ko'))} → {plain(x.get('en'))}" for x in (q.get("findItems") or []) if isinstance(x, dict)]
+    out += [f"{plain(x.get('def'))} → {plain(x.get('en'))}" for x in (q.get("glossItems") or []) if isinstance(x, dict)]
+    if q.get("format") in ("pick", "verb", "fill"):
+        out.append("정답은 지문 속 괄호 표기에 들어 있습니다.")
+    return "\n".join(out) or "(정답 표기 없음)"
+
+
+def review_quiz_question(q, api_key, model=None):
+    """정답을 보여 주고 문제·정답·해설을 검토한다. 문제가 있으면 설명 글, 없으면 '', 호출 실패면 None."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    text = (_quiz_problem_text(q) + "\n\n[출제자 정답]\n" + _quiz_answer_text(q)
+            + "\n\n[해설]\n" + (_quiz_plain(q.get("explanation")) or "(해설 없음)"))
+    payload = {
+        "systemInstruction": {"parts": [{"text": QUIZ_REVIEW_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": text}]}],
+        "generationConfig": {"temperature": 1.0, "maxOutputTokens": 16384,
+                             "responseMimeType": "application/json", "responseSchema": QUIZ_REVIEW_SCHEMA},
+    }
+    try:
+        r = _gemini_json(payload, api_key, model or MODEL_PRO, "검토가 잘렸습니다.", label="quizreview")
+    except QuotaExceeded:
+        raise
+    except Exception:
+        return None
+    probs = [_norm_text(str(p))[:160] for p in (r.get("problems") or []) if str(p).strip()]
+    if r.get("ok") is True and not probs:
+        return ""
+    return "검토에서 걸림 — " + (" / ".join(probs[:3]) or "문제·정답·해설 중 고칠 곳이 있음")
 
 
 def verify_quiz_question(q, api_key, model=None):
@@ -4518,17 +4595,47 @@ def verify_quiz_question(q, api_key, model=None):
     return ""
 
 
-def verify_quiz_result(result, api_key, model=None):
-    """객관식 문항을 모두 동시에 검산한다. {문항 차례: 문제 설명} — 문제없는 문항은 빠진다."""
+# 검산 호출이 두 번 다 실패한 문항 — 조용히 통과시키면 검산한 줄 알고 넘어가므로 따로 표시한다(2026-10-29 사용자)
+QUIZ_CHECK_FAILED = "검산을 하지 못했습니다(검토 호출 실패) — 정답과 해설을 직접 확인해 주세요"
+
+
+def check_quiz_question(q, api_key, model=None):
+    """문항 하나를 검사한다. 객관식은 '가리고 다시 풀기'와 '정답·해설 검토'를 함께, 그 밖은 검토만.
+    호출은 실패하면 한 번 더 한다. ''(통과) / 문제 설명 / None(두 번 다 실패)."""
     labels = _vertex_get_labels()
-    qs = [(i, q) for i, q in enumerate(result.get("questions", []) or [])
-          if isinstance(q, dict) and q.get("format", "mc") in QUIZ_VERIFY_FORMATS and len(q.get("choices") or []) >= 3]
+    jobs = [review_quiz_question]
+    if len(q.get("choices") or []) >= 3 and (q.get("format") or "mc") == "mc":
+        jobs.insert(0, verify_quiz_question)
+    out = [None] * len(jobs)
+
+    def work(k, fn):
+        _vertex_set_labels(labels)
+        for _ in range(2):
+            out[k] = fn(q, api_key, model)
+            if out[k] is not None:
+                return
+    threads = [threading.Thread(target=work, args=(k, fn), daemon=True) for k, fn in enumerate(jobs)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if any(x is None for x in out):
+        return None
+    return " / ".join(x for x in out if x)
+
+
+def verify_quiz_result(result, api_key, model=None):
+    """문항을 모두 동시에 검사한다. {문항 차례: 문제 설명 또는 QUIZ_CHECK_FAILED} — 통과한 문항은 빠진다."""
+    labels = _vertex_get_labels()
+    qs = [(i, q) for i, q in enumerate(result.get("questions", []) or []) if isinstance(q, dict)]
     found = {}
 
     def work(i, q):
         _vertex_set_labels(labels)
-        why = verify_quiz_question(q, api_key, model)
-        if why:
+        why = check_quiz_question(q, api_key, model)
+        if why is None:
+            found[i] = QUIZ_CHECK_FAILED
+        elif why:
             found[i] = why
     threads = [threading.Thread(target=work, args=(i, q), daemon=True) for i, q in qs]
     for t in threads:
@@ -4539,7 +4646,7 @@ def verify_quiz_result(result, api_key, model=None):
 
 
 def repair_verified_items(result, remake, api_key, stop=lambda: False):
-    """검산에 걸린 문항을 한 번씩 다시 만들어 다시 검산하고, 통과한 것만 갈아 끼운다.
+    """검사(check_quiz_question)에 걸린 문항을 한 번씩 다시 만들어 다시 검사하고, 통과한 것만 갈아 끼운다.
     remake(유형, 문제 설명) → 그 유형 1문항 결과. 끝내 못 고친 문항에는 review(선생님 확인용 설명)를 단다.
     (고친 수, 남은 수)."""
     bad = verify_quiz_result(result, api_key)
@@ -4557,11 +4664,13 @@ def repair_verified_items(result, remake, api_key, stop=lambda: False):
                      if isinstance(q, dict) and q.get("type") == qs[i].get("type")]
         except Exception:
             return
-        if fresh and verify_quiz_question(fresh[0], api_key) == "":
+        if fresh and check_quiz_question(fresh[0], api_key) == "":
             with lock:
                 qs[i] = fresh[0]
                 replaced.add(i)
-    threads = [threading.Thread(target=work, args=(i, why), daemon=True) for i, why in bad.items()]
+    # 검산 호출이 실패한 문항은 다시 만들어도 검산할 수 없으니 표시만 단다
+    threads = [threading.Thread(target=work, args=(i, why), daemon=True)
+               for i, why in bad.items() if why != QUIZ_CHECK_FAILED]
     for t in threads:
         t.start()
     for t in threads:
@@ -20617,8 +20726,9 @@ class Handler(BaseHTTPRequestHandler):
                     skipped.append(
                         f"심경은 이야기 글이 아니라 {'·'.join(mood_kept)}(으)로 바꿔 냈습니다."
                     )
-                # 정답 검산 — 객관식마다 정답을 가린 채 Pro가 다시 풀어, 표시된 정답과 다르거나 정답이 둘로 갈리면
-                # 그 문항만 다시 만들어 다시 검산한다. 끝내 안 되면 빼지 않고 '확인 필요'를 달아 선생님이 보게 한다
+                # 정답 검산 — 객관식은 정답을 가린 채 Pro가 다시 풀고, 모든 문항(주관식 포함)은 정답을 보여 주고
+                # 정답·문제 성립·해설을 검토한다(check_quiz_question). 걸리면 그 문항만 다시 만들어 다시 검사한다.
+                # 끝내 안 되거나 검사 호출이 두 번 실패하면 빼지 않고 '확인 필요'를 달아 선생님이 보게 한다
                 # (뺄지 고칠지는 선생님 판단이고, 검산하는 쪽이 틀렸을 수도 있다). 검산 호출 값은 받지 않는다.
                 if QUIZ_VERIFY_ON and result.get("questions"):
                     fixed, left = repair_verified_items(
@@ -20634,9 +20744,12 @@ class Handler(BaseHTTPRequestHandler):
                     if fixed or left:
                         print(f"[quizverify] 검산에 걸린 {fixed + left}문항 — 다시 만들어 고침 {fixed} · 확인 필요 {left}", flush=True)
                     if left:
+                        failed = sum(1 for q in result.get("questions", []) or []
+                                     if isinstance(q, dict) and q.get("review") == QUIZ_CHECK_FAILED)
                         skipped.append(
-                            f"{left}문항은 AI가 다시 풀어 본 답이 표시된 정답과 달라 '확인 필요' 표시를 달았습니다. "
-                            "인쇄하기 전에 그 문항을 꼭 확인해 주세요."
+                            f"{left}문항에 '확인 필요' 표시를 달았습니다"
+                            + (f"(그중 {failed}문항은 검산 호출이 실패해 검사하지 못했습니다)" if failed else "")
+                            + ". 정답·해설 검토에서 문제가 남은 문항이니 인쇄하기 전에 꼭 확인해 주세요."
                         )
                 if not result.get("questions"):
                     self._send_json(
