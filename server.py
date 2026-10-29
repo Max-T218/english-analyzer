@@ -4552,9 +4552,7 @@ def review_quiz_question(q, api_key, model=None):
     }
     try:
         r = _gemini_json(payload, api_key, model or MODEL_PRO, "검토가 잘렸습니다.", label="quizreview")
-    except QuotaExceeded:
-        raise
-    except Exception:
+    except Exception:   # 사용 한도(QuotaExceeded)도 여기서 받는다 — 검사 때문에 다 만든 문제를 잃으면 안 된다
         return None
     probs = [_norm_text(str(p))[:160] for p in (r.get("problems") or []) if str(p).strip()]
     if r.get("ok") is True and not probs:
@@ -4578,9 +4576,7 @@ def verify_quiz_question(q, api_key, model=None):
     }
     try:
         r = _gemini_json(payload, api_key, model or MODEL_PRO, "검산이 잘렸습니다.", label="quizverify")
-    except QuotaExceeded:
-        raise
-    except Exception:
+    except Exception:   # 사용 한도도 '검산 못 함'으로 — 출제 요청 전체를 실패시키지 않는다
         return None
     num = lambda s: (_CIRCLED_ALL.index(m.group()) + 1) if (m := re.search(f"[{_CIRCLED_ALL}]", str(s or ""))) else 0
     got = num(r.get("answer"))
