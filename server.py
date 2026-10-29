@@ -2757,6 +2757,41 @@ def reference_issue(q):
     return [f"'{s}'는 앞의 것을 되받는 말(대명사·the+명사)이 아님" for s in spans if not _is_referring(s, text)]
 
 
+# 사실상 같은 문제를 묻는 유형 묶음(화면 EXAM_FAMILY와 같은 생각)
+_QUIZ_FAMILY = {
+    "주제": "주제", "제목": "주제", "요지": "주제", "목적": "주제",
+    "내용일치(영)": "일치", "내용일치(한)": "일치", "내용불일치(영)": "일치", "내용불일치(한)": "일치",
+}
+
+
+def settle_mood_substitute(result, items):
+    """심경을 시켰는데 심경이 안 나왔으면 AI가 설명문이라 다른 유형으로 바꿔 낸 것이다(지시문이 그렇게 시킨다).
+    바꿔 낸 문항이 같은 요청의 다른 문항과 같은 유형·같은 묶음(주제·제목·요지…)이면 빼고, 아니면 둔다 —
+    한 지문에 주제·요지가 겹친 일이 있었다(2026-10-29 실사이트). (뺀 수, 대신 남긴 유형 목록)."""
+    want = dict(items)
+    if not want.get("심경"):
+        return 0, []
+    qs = result.get("questions", []) or []
+    got = Counter(q.get("type") for q in qs if isinstance(q, dict))
+    missing = want["심경"] - got.get("심경", 0)
+    if missing <= 0:
+        return 0, []
+    asked = {_QUIZ_FAMILY.get(t, t) for t in want if t != "심경"}
+    dropped, kept = 0, []
+    for t in [t for t in got if t != "심경" and got[t] > want.get(t, 0)]:
+        extra = min(got[t] - want.get(t, 0), missing - dropped)
+        if extra <= 0:
+            break
+        if t in want or _QUIZ_FAMILY.get(t, t) in asked:
+            for _ in range(extra):    # 뒤에서부터 뺀다 — 앞쪽은 시킨 유형의 문항일 가능성이 크다
+                i = max(i for i, q in enumerate(qs) if isinstance(q, dict) and q.get("type") == t)
+                qs.pop(i)
+            dropped += extra
+        else:
+            kept.append(t)
+    return dropped, kept
+
+
 def repair_reference_items(result, remake, stop=lambda: False, tries=2):
     """지칭 추론 중 밑줄이 잘못된 문항만 다시 만들어 갈아 끼운다 — 전체를 다시 부르면 시간도 원가도 몇 배다.
     remake(개수, 결함 목록) → 그 개수의 지칭 추론만 담은 새 결과. 끝내 못 고친 문항 수를 돌려준다."""
@@ -3365,6 +3400,35 @@ def _strip_meta_explanation(text):
     return " ".join(kept) if kept else text
 
 
+# 연결어 2빈칸을 만들려고 원문에 없던 연결어를 넣은 글이 같은 호출의 다른 문항 지문에도 실렸다(2026-10-29).
+# 지시문으로 막아도 다시 생길 수 있어, '원문 그대로'일 때 다른 문항의 지문에서 원문에 없는 문장 첫머리
+# 연결어를 서버가 걷어 낸다. 연결어 뒤 낱말 몇 개가 원문에서 같은 연결어 뒤에 오지 않으면 넣은 것으로 본다.
+_CONNECTIVES = (
+    "However", "In addition", "For example", "For instance", "Therefore", "As a result", "In contrast",
+    "Moreover", "Furthermore", "Thus", "Similarly", "Nevertheless", "Consequently", "Besides", "Also",
+    "In other words", "Instead", "Meanwhile", "On the other hand", "In fact", "Likewise", "Hence",
+)
+_ADDED_CONN_RE = re.compile(
+    r"(^|[.!?][\"'”’)]?\s+|<br\s*/?>\s*|[①-⑤]\s*|:\s*|<b>\s*\([A-C]\)\s*</b>\s*)(" + "|".join(re.escape(c) for c in _CONNECTIVES)
+    + r"),\s+([A-Za-z<][^.!?]{0,40})")
+_CONN_KEEP_TYPES = {"연결어 2빈칸 추론", "무관한 문장"}   # 연결어가 곧 문제이거나, 심은 문장이 연결어로 시작해도 되는 유형
+
+
+def _strip_added_connectives(html, original):
+    norm = lambda s: re.sub(r"\s+", " ", re.sub(r"<[^>]*>", "", s)).strip().lower()
+    orig = norm(original)
+
+    def fix(m):
+        lead, conn, rest = m.groups()
+        probe = norm(rest).split(" ")[:4]
+        if f"{conn.lower()}, {' '.join(probe)}" in orig:
+            return m.group(0)                       # 원문에 있던 연결어
+        if " ".join(probe) not in orig:
+            return m.group(0)                       # 뒤 문장부터 원문과 달라 판단할 수 없다 — 그대로 둔다
+        return lead + re.sub(r"^((?:<[^>]*>)*)([a-z])", lambda x: x.group(1) + x.group(2).upper(), rest, count=1)
+    return _ADDED_CONN_RE.sub(fix, html)
+
+
 # 순서 문항의 보기 다섯 — 수능·내신이 쓰는 그 다섯이다. (A)-(B)-(C)는 없다(읽은 순서가 곧 답이 되므로).
 _ORDER_CHOICES = ("(A)-(C)-(B)", "(B)-(A)-(C)", "(B)-(C)-(A)", "(C)-(A)-(B)", "(C)-(B)-(A)")
 _ORDER_BLOCK_RE = re.compile(r"<b>\s*\(([ABC])\)\s*</b>")
@@ -3567,6 +3631,10 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
                 q[f] = sanitize_quiz_html(q[f])
         if q.get("explanation"):
             q["explanation"] = _strip_meta_explanation(q["explanation"])
+        if variation == "verbatim" and q.get("type") not in _CONN_KEEP_TYPES:
+            for f in ("passageHtml", "instruction"):
+                if q.get(f):
+                    q[f] = _strip_added_connectives(q[f], passage)
         if q.get("type") == "무관한 문장":
             _rebalance_irrelevant(q, irr_targets[irr_seen % len(irr_targets)])
             irr_seen += 1
@@ -20394,6 +20462,21 @@ class Handler(BaseHTTPRequestHandler):
                             f"지칭 추론 {left}문항은 밑줄이 대명사가 아닌 말에 걸려 끝내 바르게 나오지 않아 뺐습니다. "
                             "뺀 문항 요금은 나가지 않았습니다. 대명사(he·she·they…)가 여럿 나오는 지문으로 다시 만들어 보세요."
                         )
+                # 심경을 설명문에 걸면 AI가 다른 유형으로 바꿔 낸다 — 겹치는 문제면 빼고, 아니면 바꿨다고 알린다
+                mood_dropped, mood_kept = settle_mood_substitute(result, items)
+                if mood_dropped:
+                    items = [(t, n - mood_dropped if t == "심경" else n) for t, n in items]
+                    items = [(t, n) for t, n in items if n > 0]
+                    self._pending_charge = _quiz_action_cost(items)
+                    self._pending_label = f"문제 제작 · {sum(n for _t, n in items)}문항"
+                    skipped.append(
+                        f"심경 {mood_dropped}문항은 인물의 감정이 드러나는 이야기 글에서만 만들 수 있어 뺐습니다. "
+                        "뺀 문항 요금은 나가지 않았습니다."
+                    )
+                if mood_kept:
+                    skipped.append(
+                        f"심경은 이야기 글이 아니라 {'·'.join(mood_kept)}(으)로 바꿔 냈습니다."
+                    )
                 if not result.get("questions"):
                     self._send_json(
                         {"error": " ".join(skipped) or "문항이 만들어지지 않았습니다."}, 502
