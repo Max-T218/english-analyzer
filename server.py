@@ -4566,10 +4566,12 @@ def repair_verified_items(result, remake, api_key, stop=lambda: False):
         t.start()
     for t in threads:
         t.join()
-    # 갈아 끼우지 못한 문항에는 선생님이 볼 확인 표시를 단다(갈아 끼운 문항은 검산을 통과한 새 문항이다)
+    # 갈아 끼우지 못한 문항에는 선생님이 볼 확인 표시를 단다(갈아 끼운 문항은 검산을 통과한 새 문항이다).
+    # 걸린 문항마다 유형·까닭을 로그에 남긴다 — 실제로 어떤 출제 오류가 얼마나 나는지 셀 수 있게.
     for i, why in bad.items():
         if i not in replaced:
             qs[i]["review"] = why
+        print(f"[quizverify] 걸림 · {qs[i].get('type')} · {'고침' if i in replaced else '확인 필요'} · {why}", flush=True)
     return len(replaced), len(bad) - len(replaced)
 
 
