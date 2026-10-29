@@ -1293,6 +1293,13 @@ class NeedsPro(RuntimeError):
     모델을 바꾸기 전에는 몇 번을 시도해도 같으므로 남은 작업까지 즉시 중단한다."""
 
 
+# 객관식 정답 검산(verify_quiz_result) — 끄려면 QUIZ_VERIFY=0. 검산은 늘 돌리고, 걸린 문항을 다시 만드는 일은
+# 요청을 받은 뒤 이 시간(초) 안에서만 시작한다. 보정 예산(REFINE_BUDGET 55초)보다 길게 잡은 까닭: 출제 오류가
+# 가장 심각하고(2026-10-29 사용자), 프록시가 연결을 끊어도 화면이 같은 요청번호로 다시 받아 간다(_inflight_claim).
+QUIZ_VERIFY_ON = _env("QUIZ_VERIFY", "1") not in ("0", "false", "off")
+QUIZ_VERIFY_FIX_BUDGET = _env("QUIZ_VERIFY_FIX_BUDGET", 150.0 if os.environ.get("RENDER") else 86400.0, float)
+
+
 def _over_budget(t0):
     """이번 요청에 이미 REFINE_BUDGET 이상을 썼으면 True.
     (품질 보정 재요청을 한 번 더 시작할 여유가 없다는 뜻)"""
@@ -3103,7 +3110,7 @@ def _check_answer_plan(result, answer_plan):
 def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
                            variation="verbatim", target_grammar="", ox_plan=(),
                            insert_hint=None, answer_plan=(), target_words=(), target_defs=(),
-                           ref_hint=None):
+                           ref_hint=None, verify_hint=None):
     """items = [(유형, 문항수)] — 유형마다 몇 문항인지가 요청에 그대로 들어 있다.
     target_words = 시험 범위 단어장 중 이 지문에 나오는 단어(parse_target_words가 다듬은 것).
     target_defs = 그중 단어장에 영영풀이까지 적힌 것 [(낱말, 정의)] (parse_target_defs).
@@ -3304,6 +3311,12 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
             "⚠️ 이전 시도의 지칭 추론 밑줄이 잘못됐습니다: " + "; ".join(ref_hint)
             + ". 밑줄 다섯은 모두 대명사(he/she/it/they/this…)나 'the + 명사'처럼 앞에 나온 대상을 "
             "되받는 말이어야 합니다 — 처음 나오는 명사·명사구에는 밑줄을 긋지 마세요."
+        )
+    if verify_hint:
+        lines.append(
+            "⚠️ 이전 시도의 이 유형 문항은 검토위원이 다시 풀어 보니 문제가 있었습니다: " + verify_hint
+            + ". 정답이 지문 근거로 하나로만 정해지고, 오답 넷은 지문과 분명히 어긋나게 다시 만드세요. "
+            "고르는 자리(밑줄·빈칸·보기)도 새로 잡으세요."
         )
     if explain_hint:
         lines.append(
@@ -3556,7 +3569,7 @@ def _check_ox_plan(result, ox_plan):
 def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
                       explain_hint=None, variation="verbatim", target_grammar="",
                       insert_hint=None, difficulty="normal", level="high", target_words=(),
-                      target_defs=(), ref_hint=None):
+                      target_defs=(), ref_hint=None, verify_hint=None):
     """items = [(유형, 문항수)]. 개수 상한은 parse_quiz_items가 이미 적용해 둔다.
     difficulty="hard"면 QUIZ_HARD_RULES를 지시문 뒤에 덧붙인다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -3587,7 +3600,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
             {"role": "user", "parts": [
                 {"text": build_quiz_user_prompt(
                     passage, items, short_hint, explain_hint, variation, target_grammar,
-                    ox_plan, insert_hint, answer_plan, target_words, target_defs, ref_hint,
+                    ox_plan, insert_hint, answer_plan, target_words, target_defs, ref_hint, verify_hint,
                 )}
             ]}
         ],
@@ -4433,6 +4446,131 @@ def solve_passage_problems(problems, api_key, model=None):
     for t in threads:
         t.join()
     return [o or {"answer": "", "reason": ""} for o in out]
+
+
+# ── 만든 객관식 문제의 정답 검산 ──
+# 출제 오류(표시된 정답이 틀리거나, 정답이 둘이거나, 없는 문항)가 가장 심각하다(2026-10-29 사용자). 모델이
+# 만든 문제를 정답을 가린 채 다른 호출의 Pro에게 학생처럼 풀게 해, 표시된 정답과 다르거나 정답이 둘로
+# 갈리면 그 문항만 다시 만든다. 한 문제씩 따로 부른다(solve_passage_problems와 같은 까닭).
+QUIZ_VERIFY_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "answer": {"type": "STRING"},
+        "alsoValid": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "reason": {"type": "STRING"},
+    },
+    "required": ["answer", "alsoValid", "reason"],
+}
+QUIZ_VERIFY_SYSTEM_PROMPT = """당신은 한국 수능·내신 영어 시험 검토위원입니다. 입력은 다른 사람이 낸 객관식 문제 하나입니다(정답은 가려져 있습니다).
+1. 학생처럼 꼼꼼히 풀어 가장 적절한 답 하나를 answer에 보기 번호(①~⑤)로 적습니다.
+2. 그 밖에 이의 제기가 들어오면 정답으로 인정해야 할 보기가 있으면 alsoValid에 적습니다. 엄격하게 봅니다 — '조금 그럴듯한' 오답은 넣지 말고, 지문 근거로 정답과 똑같이 옳다고 변호할 수 있는 것만 넣습니다. 없으면 빈 배열.
+3. 어법·어휘·지칭처럼 '틀린 것/다른 것'을 고르는 문제는 다섯 밑줄을 모두 따져, 틀린(다른) 것이 정확히 하나인지 봅니다. 둘 이상이면 나머지를 alsoValid에 넣습니다. 하나도 없으면 answer를 빈 글자로 둡니다.
+4. 지문에 근거가 없어 답을 정할 수 없으면 answer를 빈 글자로 둡니다.
+reason은 결정적 근거를 한국어 한두 문장으로 씁니다."""
+QUIZ_VERIFY_FORMATS = {"mc"}
+
+
+def _quiz_problem_text(q):
+    """검산용 문제 글 — 밑줄은 [ ]로, 줄바꿈은 그대로, 정답·해설은 뺀다."""
+    def plain(h):
+        s = re.sub(r"<u>(.*?)</u>", r"[\1]", str(h or ""), flags=re.S)
+        s = re.sub(r"<br\s*/?>", "\n", s)
+        return html.unescape(re.sub(r"<[^>]*>", "", s)).strip()
+    choices = [plain(c) for c in (q.get("choices") or [])]
+    lines = [plain(q.get("instruction")), "", plain(q.get("passageHtml")), ""]
+    if choices and all(re.fullmatch(f"[{_CIRCLED_ALL}]", c) for c in choices):
+        lines.append(f"보기: 지문 속 {choices[0]}~{choices[-1]}")
+    else:
+        lines += [f"{_CIRCLED_ALL[i]} {c}" for i, c in enumerate(choices)]
+    return "\n".join(lines)
+
+
+def verify_quiz_question(q, api_key, model=None):
+    """문항 하나를 풀어 본다. 문제가 있으면 설명 글, 없으면 ''. 풀지 못했으면(호출 실패) None."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    n = len(q.get("choices") or [])
+    try:
+        want = int(q.get("answer"))
+    except (TypeError, ValueError):
+        return "표시된 정답이 없음"
+    payload = {
+        "systemInstruction": {"parts": [{"text": QUIZ_VERIFY_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": _quiz_problem_text(q)}]}],
+        "generationConfig": {"temperature": 1.0, "maxOutputTokens": 16384,
+                             "responseMimeType": "application/json", "responseSchema": QUIZ_VERIFY_SCHEMA},
+    }
+    try:
+        r = _gemini_json(payload, api_key, model or MODEL_PRO, "검산이 잘렸습니다.", label="quizverify")
+    except QuotaExceeded:
+        raise
+    except Exception:
+        return None
+    num = lambda s: (_CIRCLED_ALL.index(m.group()) + 1) if (m := re.search(f"[{_CIRCLED_ALL}]", str(s or ""))) else 0
+    got = num(r.get("answer"))
+    also = sorted({num(x) for x in (r.get("alsoValid") or [])} - {0, got})
+    reason = _norm_text(str(r.get("reason") or ""))[:240]
+    if not got:
+        return f"다시 풀어 보니 정답을 하나로 정할 수 없음 — {reason}"
+    if got != want:
+        return f"다시 풀어 보니 정답이 {_CIRCLED_ALL[got - 1]}(표시된 정답 {_CIRCLED_ALL[want - 1] if 1 <= want <= n else want}) — {reason}"
+    if also:
+        return f"다시 풀어 보니 {'·'.join(_CIRCLED_ALL[a - 1] for a in also)}도 정답이 될 수 있음 — {reason}"
+    return ""
+
+
+def verify_quiz_result(result, api_key, model=None):
+    """객관식 문항을 모두 동시에 검산한다. {문항 차례: 문제 설명} — 문제없는 문항은 빠진다."""
+    labels = _vertex_get_labels()
+    qs = [(i, q) for i, q in enumerate(result.get("questions", []) or [])
+          if isinstance(q, dict) and q.get("format", "mc") in QUIZ_VERIFY_FORMATS and len(q.get("choices") or []) >= 3]
+    found = {}
+
+    def work(i, q):
+        _vertex_set_labels(labels)
+        why = verify_quiz_question(q, api_key, model)
+        if why:
+            found[i] = why
+    threads = [threading.Thread(target=work, args=(i, q), daemon=True) for i, q in qs]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return found
+
+
+def repair_verified_items(result, remake, api_key, stop=lambda: False):
+    """검산에 걸린 문항을 한 번씩 다시 만들어 다시 검산하고, 통과한 것만 갈아 끼운다.
+    remake(유형, 문제 설명) → 그 유형 1문항 결과. 끝내 못 고친 문항에는 review(선생님 확인용 설명)를 단다.
+    (고친 수, 남은 수)."""
+    bad = verify_quiz_result(result, api_key)
+    qs = result.get("questions", []) or []
+    replaced = set()
+    lock = threading.Lock()
+    labels = _vertex_get_labels()
+
+    def work(i, why):
+        _vertex_set_labels(labels)
+        if stop():
+            return
+        try:
+            fresh = [q for q in (remake(qs[i].get("type"), why).get("questions") or [])
+                     if isinstance(q, dict) and q.get("type") == qs[i].get("type")]
+        except Exception:
+            return
+        if fresh and verify_quiz_question(fresh[0], api_key) == "":
+            with lock:
+                qs[i] = fresh[0]
+                replaced.add(i)
+    threads = [threading.Thread(target=work, args=(i, why), daemon=True) for i, why in bad.items()]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    # 갈아 끼우지 못한 문항에는 선생님이 볼 확인 표시를 단다(갈아 끼운 문항은 검산을 통과한 새 문항이다)
+    for i, why in bad.items():
+        if i not in replaced:
+            qs[i]["review"] = why
+    return len(replaced), len(bad) - len(replaced)
 
 
 def parse_solve_problems(raw):
@@ -20477,6 +20615,27 @@ class Handler(BaseHTTPRequestHandler):
                     skipped.append(
                         f"심경은 이야기 글이 아니라 {'·'.join(mood_kept)}(으)로 바꿔 냈습니다."
                     )
+                # 정답 검산 — 객관식마다 정답을 가린 채 Pro가 다시 풀어, 표시된 정답과 다르거나 정답이 둘로 갈리면
+                # 그 문항만 다시 만들어 다시 검산한다. 끝내 안 되면 빼지 않고 '확인 필요'를 달아 선생님이 보게 한다
+                # (뺄지 고칠지는 선생님 판단이고, 검산하는 쪽이 틀렸을 수도 있다). 검산 호출 값은 받지 않는다.
+                if QUIZ_VERIFY_ON and result.get("questions"):
+                    fixed, left = repair_verified_items(
+                        result,
+                        lambda t, why: call_gemini_quiz(
+                            passage, [(t, 1)], api_key, model, variation=variation,
+                            target_grammar=quiz_grammar, difficulty=difficulty, level=level,
+                            target_words=quiz_words, target_defs=quiz_defs, verify_hint=why,
+                        ),
+                        api_key,
+                        stop=lambda: (time.monotonic() - t0) >= QUIZ_VERIFY_FIX_BUDGET,
+                    )
+                    if fixed or left:
+                        print(f"[quizverify] 검산에 걸린 {fixed + left}문항 — 다시 만들어 고침 {fixed} · 확인 필요 {left}", flush=True)
+                    if left:
+                        skipped.append(
+                            f"{left}문항은 AI가 다시 풀어 본 답이 표시된 정답과 달라 '확인 필요' 표시를 달았습니다. "
+                            "인쇄하기 전에 그 문항을 꼭 확인해 주세요."
+                        )
                 if not result.get("questions"):
                     self._send_json(
                         {"error": " ".join(skipped) or "문항이 만들어지지 않았습니다."}, 502

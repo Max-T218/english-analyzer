@@ -9440,6 +9440,7 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true, st
     (q, i) => `
       <div class="qz-card">
         <div class="qz-head"><span class="qz-no">${startNo + i + 1}</span><span class="qz-type">${esc(q.type)}</span></div>
+        ${q.review ? `<div class="qz-review">⚠️ 확인 필요 — ${esc(q.review)}</div>` : ""}
         <div class="qz-instruction">${QT.emStem(safeHTML(q.instruction))}</div>
         ${markVariations(quizBodyHtml(q), q.__variations || d.variations)}
         <button type="button" class="qz-reveal-btn">정답·해설 보기</button>

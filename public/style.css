@@ -999,6 +999,11 @@ label.chk-lg{gap:8px; font-size:14.5px;}
   background:var(--accent-soft); font-size:13px; line-height:1.7;
 }
 .qz-answer-box.show{display:block;}
+/* 정답 검산에 걸려 고치지 못한 문항(서버 verify_quiz_result) — 화면 전용, 인쇄에는 안 나온다 */
+.qz-review{
+  margin:6px 0 8px; padding:8px 11px; border-radius:8px; font-size:12.5px; line-height:1.6;
+  background:#fff4e5; color:#8a4b00; border:1px solid #f0c27a;
+}
 .qz-answer-box b{color:var(--accent);}
 /* 번호·정답 두 열 (3열째는 해설) */
 table.answerkey td:nth-child(1),table.answerkey td:nth-child(2){font-weight:700; color:var(--accent); white-space:nowrap;}
@@ -1135,7 +1140,7 @@ v{
   border-radius:2px; padding:0 .1em; cursor:help;
 }
 @media print{
-  .qz-reveal-btn, .qz-answer-box{display:none !important;}
+  .qz-reveal-btn, .qz-answer-box, .qz-review{display:none !important;}
 
   /* 변형 표시 지우기 — 낱말은 남기고 형광펜 자국만 없앤다 */
   v{background:none !important; border-bottom:none !important; padding:0 !important;}
