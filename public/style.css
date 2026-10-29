@@ -2932,3 +2932,7 @@ input.st-in{width:100%; box-sizing:border-box;}
 #ltListView .panel{overflow-x:auto;}
 .lt-table td:nth-child(2) b, .lt-wait{white-space:nowrap;}
 .lt-done{color:#2f855a; font-weight:700;}
+
+/* 시험 내기 창의 '틀린 문제 다시 풀기(보충 학습)' 칸 */
+.retry-opt { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid var(--line, #dde3ee); border-radius: 10px; }
+.retry-opt input[type="number"] { width: 80px; }

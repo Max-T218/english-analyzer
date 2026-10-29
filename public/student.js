@@ -38,10 +38,12 @@ const resultWorkspaceEl = $("resultWorkspace");
 const pwWorkspaceEl = $("pwWorkspace");
 const quizWorkspaceEl = $("quizWorkspace");
 const quizResultWorkspaceEl = $("quizResultWorkspace");
+const quizStudyWorkspaceEl = $("quizStudyWorkspace");
+const quizConceptWorkspaceEl = $("quizConceptWorkspace");
 
 function showOnly(el) {
   [codeGateEl, listWorkspaceEl, studyWorkspaceEl, takeWorkspaceEl, resultWorkspaceEl, pwWorkspaceEl,
-   quizWorkspaceEl, quizResultWorkspaceEl].forEach((s) => {
+   quizWorkspaceEl, quizResultWorkspaceEl, quizStudyWorkspaceEl, quizConceptWorkspaceEl].forEach((s) => {
     s.hidden = s !== el;
   });
   window.scrollTo(0, 0);
@@ -555,7 +557,7 @@ function quizListRowHtml(t) {
 
 let quizQuestions = [];
 let quizDraftTimer = null;
-const quizDraftKey = () => `qt_draft_${currentAssignmentId}`;
+const quizDraftKey = () => `qt_draft_${currentAssignmentId}${quizRetryRound ? `_r${quizRetryRound}` : ""}`;
 
 function saveQuizDraft() {
   clearTimeout(quizDraftTimer);
@@ -590,8 +592,10 @@ $("quizNextBtn").addEventListener("click", () => { clearTimeout(quizAutoTimer); 
 // 객관식도 보기를 눌러도 자동으로 넘어가지 않는다 — 보기를 하나씩 지워 가며(✕) 검토하고
 // 직접 [다음]을 누르게 한다(2026-10-27 사용자: 자동으로 넘어가면 검토가 안 된다)
 
+let quizRetryRound = 0;   // 0이면 일반 시험, 1·2면 보충 학습 회차
 function openQuiz(assignmentId, data) {
   currentAssignmentId = assignmentId;
+  quizRetryRound = data.retry ? Number(data.retryRound) || 0 : 0;
   quizQuestions = data.questions || [];
   $("quizTitle").textContent = data.title || "문제 시험";
   $("quizError").textContent = "";
@@ -624,9 +628,10 @@ async function submitQuiz() {
   btn.disabled = true;
   $("quizSubmitStatus").textContent = "채점 중…";
   try {
-    const r = await postJson("/api/student/tests/submit", {
-      assignmentId: currentAssignmentId, answers: QT.collect($("quizBody"), quizQuestions),
-    });
+    const answers = QT.collect($("quizBody"), quizQuestions);
+    const r = quizRetryRound
+      ? await postJson("/api/student/retry/submit", { assignmentId: currentAssignmentId, round: quizRetryRound, answers })
+      : await postJson("/api/student/tests/submit", { assignmentId: currentAssignmentId, answers });
     try { localStorage.removeItem(quizDraftKey()); } catch (_) {}
     showQuizResult(r);
   } catch (err) {
@@ -648,8 +653,93 @@ function showQuizResult(r) {
     (qc.pending ? ` 선생님이 확인할 문항이 ${qc.pending}개 있어요.` : "");
   $("quizWrongOnly").checked = false;
   $("quizResultBody").innerHTML = items.map((q, i) => QT.questionHtml(q, i, "review")).join("");
+  quizResultData = r;
+  renderQuizRetryBox(r);
   showOnly(quizResultWorkspaceEl);
 }
+
+/* ══════ 보충 학습 — 선생님이 '다시 풀기'를 켠 시험 ══════
+   결과 화면 → [틀린 문제 다시 학습하기](틀린 문제만 정답·해설과 함께 다시 읽기) → [다음]을 누르면 서버가
+   같은 내용의 새 객관식 문제를 만들어 주고(선생님 포인트 차감), 그 문제를 풀면 같은 결과 화면으로 돌아온다. */
+let quizResultData = null;
+const quizItemWrong = (q) => (q.units || []).some((u) => u.ok === false);
+
+function renderQuizRetryBox(r) {
+  const box = $("quizRetryBox");
+  const st = r.retry;
+  $("quizRetryError").textContent = "";
+  if (!st || !st.enabled) { box.hidden = true; return; }
+  const rounds = (st.rounds || []).filter((x) => x.status === "done");
+  $("quizRetryRounds").innerHTML = rounds.length
+    ? "보충 학습 기록: " + rounds.map((x) => `${x.round}회차 ${QT.countsText(x.qc || { right: 0, wrong: 0, pending: 0 }, true)}`).join(" · ")
+    : "";
+  const btn = $("quizRetryStartBtn");
+  btn.hidden = false;
+  if (st.open) {
+    $("quizRetryText").textContent = `풀던 보충 ${st.open}회차 문제가 있어요.`;
+    btn.textContent = "▶ 이어서 풀기";
+    btn.dataset.mode = "resume";
+    box.hidden = false;
+  } else if (st.canStart) {
+    $("quizRetryText").textContent = `틀린 문제 ${st.wrongCount}개를 다시 학습하고, 같은 내용의 새 문제로 다시 풀어 볼 수 있어요 (보충 ${st.nextRound}/${st.maxRounds}회).`;
+    btn.textContent = "🔁 틀린 문제 다시 학습하기";
+    btn.dataset.mode = "study";
+    box.hidden = false;
+  } else {
+    btn.hidden = true;
+    $("quizRetryText").textContent = rounds.length
+      ? (st.wrongCount ? `보충 학습 ${st.maxRounds}회를 모두 마쳤어요.` : "보충 학습에서 모두 맞혔어요! 🎉")
+      : "";
+    box.hidden = !rounds.length;
+  }
+}
+
+async function startQuizRetry(statusEl, errEl, btn) {
+  errEl.textContent = "";
+  btn.disabled = true;
+  statusEl.textContent = "새 문제를 만드는 중이에요… (최대 1분 정도 걸려요)";
+  try {
+    const data = await postJson("/api/student/retry/start", { assignmentId: currentAssignmentId });
+    if ((data.concepts || []).length) showQuizConcepts(data);   // 개념 정리를 읽어야 새 문제로 넘어간다
+    else openQuiz(currentAssignmentId, data);
+  } catch (err) {
+    errEl.textContent = err.message || "새 문제를 만들지 못했어요.";
+  } finally {
+    btn.disabled = false;
+    statusEl.textContent = "";
+  }
+}
+
+let quizConceptPending = null;
+function showQuizConcepts(data) {
+  quizConceptPending = data;
+  $("quizConceptBody").innerHTML = data.concepts.map((c) => `<div class="panel" style="margin-bottom:12px;">
+      <div style="font-weight:800; font-size:16px; margin-bottom:6px;">${esc(c.topic)}</div>
+      <p style="margin:0 0 8px;">${esc(c.summary)}</p>
+      ${(c.points || []).length ? `<ul style="margin:0 0 8px; padding-left:20px;">${c.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+      ${(c.examples || []).length ? `<div class="hint" style="background:var(--bg-soft,#f3f6fb); padding:8px 10px; border-radius:8px;">${c.examples.map((x) => `<div>${esc(x)}</div>`).join("")}</div>` : ""}
+    </div>`).join("");
+  showOnly(quizConceptWorkspaceEl);
+}
+$("quizConceptNextBtn").addEventListener("click", () => {
+  if (quizConceptPending) openQuiz(currentAssignmentId, quizConceptPending);
+});
+
+$("quizRetryStartBtn").addEventListener("click", (e) => {
+  if (e.currentTarget.dataset.mode === "resume") {
+    startQuizRetry($("quizRetryText"), $("quizRetryError"), e.currentTarget);
+    return;
+  }
+  const wrong = ((quizResultData && quizResultData.items) || [])
+    .map((q, i) => ({ q, i })).filter(({ q }) => quizItemWrong(q));
+  $("quizStudyTitle").textContent = `틀린 문제 다시 학습 (${wrong.length}개)`;
+  $("quizStudyBody").innerHTML = wrong.map(({ q, i }) => QT.questionHtml(q, i, "review")).join("");
+  $("quizStudyError").textContent = "";
+  showOnly(quizStudyWorkspaceEl);
+});
+$("quizStudyBackBtn").addEventListener("click", () => showOnly(quizResultWorkspaceEl));
+$("quizStudyNextBtn").addEventListener("click", (e) =>
+  startQuizRetry($("quizStudyStatus"), $("quizStudyError"), e.currentTarget));
 
 $("quizWrongOnly").addEventListener("change", (e) => {
   const only = e.target.checked;

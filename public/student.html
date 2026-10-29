@@ -134,9 +134,42 @@
         <input type="checkbox" id="quizWrongOnly"> 틀린 문항만 보기
       </label>
     </div>
+    <div class="panel" id="quizRetryBox" hidden style="text-align:center;">
+      <div id="quizRetryText" style="font-size:15px; margin-bottom:10px;"></div>
+      <div id="quizRetryRounds" class="hint" style="margin-bottom:10px;"></div>
+      <button type="button" class="btn" id="quizRetryStartBtn">🔁 틀린 문제 다시 학습하기</button>
+      <div class="error" id="quizRetryError" style="margin-top:8px;"></div>
+    </div>
     <div id="quizResultBody"></div>
     <div style="margin:16px 0; text-align:center;">
       <button type="button" class="btn ghost" id="quizResultBackBtn">← 목록으로</button>
+    </div>
+  </section>
+
+  <!-- ══════════ 보충 학습 개념 정리 — 새 문제를 풀기 전에 반드시 거친다(건너뛰기 없음, 2026-10-29 사용자) ══════════ -->
+  <section id="quizConceptWorkspace" hidden>
+    <div class="panel">
+      <h3 style="margin:0 0 4px;">📖 개념 정리</h3>
+      <p class="hint">틀린 내용의 핵심 개념이에요. 천천히 읽고 아래 [새 문제 풀기]를 눌러 주세요.</p>
+    </div>
+    <div id="quizConceptBody"></div>
+    <div class="panel" style="text-align:center;">
+      <button type="button" class="btn" id="quizConceptNextBtn">새 문제 풀기 →</button>
+    </div>
+  </section>
+
+  <!-- ══════════ 보충 학습 — 틀린 문제를 해설과 함께 다시 읽고, 다음을 누르면 비슷한 새 문제를 푼다 ══════════ -->
+  <section id="quizStudyWorkspace" hidden>
+    <div class="panel">
+      <button type="button" class="btn ghost small" id="quizStudyBackBtn">← 결과로</button>
+      <h3 style="margin:12px 0 4px;" id="quizStudyTitle">틀린 문제 다시 학습</h3>
+      <p class="hint">틀린 문제를 정답·해설과 함께 천천히 다시 읽어 보세요. 다 읽었으면 아래 [다음]을 누르면 같은 내용으로 새 문제가 나와요.</p>
+    </div>
+    <div id="quizStudyBody"></div>
+    <div class="panel" style="text-align:center;">
+      <button type="button" class="btn" id="quizStudyNextBtn">다음 → 비슷한 새 문제 풀기</button>
+      <div class="gate-status" id="quizStudyStatus"></div>
+      <div class="error" id="quizStudyError"></div>
     </div>
   </section>
 

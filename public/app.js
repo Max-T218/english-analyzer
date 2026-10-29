@@ -18636,6 +18636,16 @@ assignedTestListEl.addEventListener("click", async (e) => {
     loadQuizAnswers(row, ansBtn.closest("[data-aid]").dataset.aid, ansBtn.dataset.sid);
     return;
   }
+  const retryBtn = e.target.closest(".quiz-retry-btn");
+  if (retryBtn) {
+    const row = retryBtn.closest("tr").nextElementSibling.nextElementSibling;
+    const key = `${retryBtn.dataset.sid}:${retryBtn.dataset.round}`;
+    if (!row.hidden && row.dataset.key === key) { row.hidden = true; return; }
+    row.hidden = false;
+    row.dataset.key = key;
+    loadQuizRetry(row, retryBtn.closest("[data-aid]").dataset.aid, retryBtn.dataset.sid, retryBtn.dataset.round);
+    return;
+  }
   const gradeBtn = e.target.closest(".qt-grade");
   if (gradeBtn) { gradeQuizUnit(gradeBtn); return; }
   const toggleBtn = e.target.closest(".toggle-wrong-btn");
@@ -18950,6 +18960,7 @@ async function refreshAssignVocabSourceSelect(preIds) {
 async function renderAssignSourceList(pre, keepCurrent) {
   const vocabMode = assignKind === "vocab";
   $("assignVocabOnly").hidden = !vocabMode;
+  $("assignRetryWrap").hidden = vocabMode || assignKind === "workbook";   // 보충 학습은 문제 시험만(워크북 제외)
   $("assignFolderBar").hidden = !vocabMode;
   assignVocabModeWrapEl.hidden = true;
   assignErrorEl.textContent = "";
@@ -19222,7 +19233,8 @@ function quizQuestionsFromSaved(tab, item) {
   const p = item.payload || {};
   if (tab === "grammar") {
     // 문법 탭의 [🏫 반에 시험 내기]와 같다 — 값 셈용 표시는 빼고, 배열 영작은 어순만 다르면 확인 대기
-    return { source: "quiz", questions: (p.questions || []).map(({ gitem, gkind, gshape, ...rest }) =>
+    // gitem·ggrade·gdiff는 남긴다 — 보충 학습이 같은 항목·레벨·난이도로 새 문제를 만드는 재료다
+    return { source: "quiz", questions: (p.questions || []).map(({ gkind, gshape, ...rest }) =>
       rest.format === "write" ? { ...rest, looseOrder: true } : rest) };
   }
   if (tab === "workbook") {
@@ -19232,6 +19244,19 @@ function quizQuestionsFromSaved(tab, item) {
   }
   return { source: "quiz", questions: quizQuestionsFromEntries(p.entries || []) };
 }
+
+// 시험 내기 창의 '다시 풀기(보충 학습)' 칸 → 요청에 실을 값. 꺼져 있으면 null(재료인 srcPassage도 보내지 않는다)
+function retryOption(chkId, perId) {
+  if (!$(chkId).checked) return null;
+  const n = parseInt($(perId).value, 10);
+  return { enabled: true, perWrong: Number.isFinite(n) ? Math.max(1, Math.min(5, n)) : 1 };
+}
+function withoutRetrySource(questions, retry) {
+  return retry ? questions : questions.map(({ srcPassage, ...rest }) => rest);
+}
+[["assignRetryChk", "assignRetryField"], ["quizAssignRetryChk", "quizAssignRetryField"]].forEach(([c, f]) => {
+  $(c).addEventListener("change", () => { $(f).hidden = !$(c).checked; });
+});
 
 async function submitAssignQuiz(classId) {
   const picked = assignVocabSourceListEl.querySelector('input[name="assignQuizPick"]:checked');
@@ -19247,13 +19272,15 @@ async function submitAssignQuiz(classId) {
     if (questions.length > QUIZ_TEST_MAX_QUESTIONS) {
       throw new Error(`문항이 ${questions.length}개라 한 번에 낼 수 없습니다(${QUIZ_TEST_MAX_QUESTIONS}문항까지).`);
     }
+    const retry = source === "workbook" ? null : retryOption("assignRetryChk", "assignRetryPer");
     const r = await postJson("/api/quiz-tests", {
       classId, studentId: target === "class" ? null : target,
-      title: $("assignTitle").value, questions, source,
+      title: $("assignTitle").value, questions: withoutRetrySource(questions, retry), source, retry,
     }, "시험 내기에 실패했습니다.");
     closeModal(assignModalEl);
     alert(`${r.questions}${source === "workbook" ? "단계" : "문항"}을 냈습니다.` +
       (r.skipped ? ` (학생 화면에서 풀 수 없는 모양의 문항 ${r.skipped}개는 뺐습니다.)` : "") +
+      (retry ? ` 다시 풀기는 ${r.retryQuestions}문항에 켜졌습니다.${r.retryQuestions < r.questions ? " (나머지는 새 문제를 만들 재료가 없어 빠집니다.)" : ""}` : "") +
       " '학생 관리' 탭의 시험 목록에서 결과를 확인할 수 있습니다.");
   } catch (err) {
     assignErrorEl.textContent = err.message || "시험 내기에 실패했습니다.";
@@ -19283,6 +19310,8 @@ function quizQuestionsFromEntries(entries) {
       const c = {};
       Object.keys(q).forEach((k) => { if (!k.startsWith("__")) c[k] = q[k]; });
       c.passageName = name;
+      // 보충 학습이 같은 지문으로 새 문제를 만드는 재료 — 다시 풀기를 안 켜면 보내기 전에 뺀다(retryQuestions)
+      if (job && job.text) c.srcPassage = String(job.text).slice(0, 8000);
       out.push(c);
     });
   });
@@ -19305,6 +19334,9 @@ quizAssignClassEl.addEventListener("change", refreshQuizAssignTargets);
 async function openQuizAssign(questions, title, source) {
   quizAssignQuestions = questions || [];
   quizAssignSource = source === "workbook" ? "workbook" : "quiz";
+  $("quizAssignRetryWrap").hidden = quizAssignSource === "workbook";
+  $("quizAssignRetryChk").checked = false;
+  $("quizAssignRetryField").hidden = true;
   $("quizAssignHeading").textContent = quizAssignSource === "workbook" ? "반에 워크북 내기" : "반에 문제 시험 내기";
   $("quizAssignError").textContent = "";
   $("quizAssignStatus").textContent = "";
@@ -19342,13 +19374,16 @@ $("quizAssignForm").addEventListener("submit", async (e) => {
   btn.disabled = true;
   $("quizAssignStatus").textContent = "내는 중…";
   try {
+    const retry = quizAssignSource === "workbook" ? null : retryOption("quizAssignRetryChk", "quizAssignRetryPer");
     const r = await postJson("/api/quiz-tests", {
       classId, studentId: target === "class" ? null : target,
-      title: $("quizAssignTitle").value, questions: quizAssignQuestions, source: quizAssignSource,
+      title: $("quizAssignTitle").value, questions: withoutRetrySource(quizAssignQuestions, retry),
+      source: quizAssignSource, retry,
     }, "시험 내기에 실패했습니다.");
     closeModal(quizAssignModalEl);
     alert(`${r.questions}${quizAssignSource === "workbook" ? "단계" : "문항"}을 냈습니다.` +
       (r.skipped ? ` (학생 화면에서 풀 수 없는 모양의 문항 ${r.skipped}개는 뺐습니다.)` : "") +
+      (retry ? ` 다시 풀기는 ${r.retryQuestions}문항에 켜졌습니다.${r.retryQuestions < r.questions ? " (나머지는 새 문제를 만들 재료가 없어 빠집니다.)" : ""}` : "") +
       " '학생 관리' 탭의 시험 목록에서 결과를 확인할 수 있습니다.");
     if (classId === selectedClassId && typeof loadAssignedTests === "function") loadAssignedTests();
   } catch (err) {
@@ -19370,14 +19405,23 @@ function renderQuizTestResults(data, title) {
     const pend = r.qc && r.qc.pending ? ` <span class="tag fail">채점 필요</span>` : "";
     const btn = r.status === "none" ? "" :
       `<button type="button" class="btn ghost small quiz-answers-btn no-print" data-sid="${esc(r.studentId)}">답안 보기${r.pending ? " · 채점" : ""}</button>`;
+    // 보충 학습(다시 풀기) — 회차마다 맞음·틀림과 [보기]. 기록은 원래 시험과 따로 쌓인다.
+    const retryCell = data.retryOn
+      ? `<td class="tk">${(r.retries || []).map((x) => x.status === "done"
+          ? `<div>${x.round}회차 ${QT.countsText(x.qc || { right: 0, wrong: 0, pending: 0 }, true)} <button type="button" class="btn ghost small quiz-retry-btn no-print" data-sid="${esc(r.studentId)}" data-round="${x.round}">보기</button></div>`
+          : `<div>${x.round}회차 <span class="hint">푸는 중</span></div>`).join("") || '<span class="hint">—</span>'}</td>`
+      : "";
+    const span = data.retryOn ? 6 : 5;
     return `<tr>
         <td class="tk">${esc(r.studentName)}${r.removed ? ' <span class="hint">(삭제된 학생)</span>' : ""}</td>
         <td>${statusTagHtml(r.status)}</td>
         <td class="tk qt-score-cell">${score}${pend}</td>
+        ${retryCell}
         <td>${esc(fmtDateTime(r.lastAt))}</td>
         <td class="no-print">${btn}</td>
       </tr>
-      <tr class="quiz-answer-row no-print" hidden><td colspan="5" class="tk"></td></tr>`;
+      <tr class="quiz-answer-row no-print" hidden><td colspan="${span}" class="tk"></td></tr>
+      <tr class="quiz-retry-row no-print" hidden><td colspan="${span}" class="tk"></td></tr>`;
   }).join("");
   const stats = data.questionStats || [];
   // 문항마다 맞힌 학생·틀린 학생 수 — 반 전체가 많이 틀린 문항이 눈에 띄게 틀림 칸을 굵게
@@ -19396,7 +19440,7 @@ function renderQuizTestResults(data, title) {
     ])}
     <h4 class="sec">학생별 결과</h4>
     <table>
-      <thead><tr><th>학생</th><th>결과</th><th>맞음 · 틀림</th><th>제출</th><th class="no-print"></th></tr></thead>
+      <thead><tr><th>학생</th><th>결과</th><th>맞음 · 틀림</th>${data.retryOn ? "<th>보충 학습</th>" : ""}<th>제출</th><th class="no-print"></th></tr></thead>
       <tbody>${body}</tbody></table>
     ${stats.length ? `<h4 class="sec">문항별 결과</h4>
     <table><thead><tr><th>번호</th><th>유형</th><th>맞힌 학생</th><th>틀린 학생</th><th>확인 대기</th></tr></thead>
@@ -19423,6 +19467,22 @@ async function loadQuizAnswers(row, assignmentId, studentId) {
       <div class="quiz-answers-list">${(r.items || []).map((q, i) => QT.questionHtml(q, i, "review", { grading: true })).join("")}</div>`;
   } catch (err) {
     cell.innerHTML = `<p class="error">${esc(err.message || "답안을 불러오지 못했습니다.")}</p>`;
+  }
+}
+
+// 학생 한 명의 보충 학습 한 회차 — 새로 만든 문제와 학생 답·정답·해설(채점할 칸은 없다: 모두 객관식)
+async function loadQuizRetry(row, assignmentId, studentId, round) {
+  const cell = row.querySelector("td");
+  cell.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  try {
+    const r = await getJson(
+      `/api/quiz-tests/retry?assignmentId=${encodeURIComponent(assignmentId)}&studentId=${encodeURIComponent(studentId)}&round=${encodeURIComponent(round)}`,
+      "보충 학습 기록을 불러오지 못했습니다.");
+    cell.innerHTML = `<div style="margin:6px 0 10px;"><b>${esc(r.studentName)} · 보충 ${esc(round)}회차</b>
+        <span class="hint">${QT.countsText(r.qc)}</span></div>
+      <div class="quiz-answers-list">${(r.items || []).map((q, i) => QT.questionHtml(q, i, "review")).join("")}</div>`;
+  } catch (err) {
+    cell.innerHTML = `<p class="error">${esc(err.message || "보충 학습 기록을 불러오지 못했습니다.")}</p>`;
   }
 }
 
