@@ -2718,6 +2718,64 @@ def insertion_issue(q, k):
     return why
 
 
+# 지칭 추론의 밑줄은 앞에 나온 것을 되받는 말이어야 한다. 지시문으로 못 박아도 "Reviews"·"negative
+# reviews"·"customers"처럼 처음 나오는 명사에 밑줄을 긋는 일이 남아(2026-10-29 실사이트 재검토) 서버가 본다.
+_REF_PRONOUNS = {
+    "he", "she", "it", "they", "him", "her", "them", "his", "hers", "its", "their", "theirs",
+    "himself", "herself", "itself", "themselves", "this", "that", "these", "those", "one", "ones",
+    "who", "whom", "which", "we", "us", "our", "ours", "ourselves", "you", "your", "yours",
+    "yourself", "i", "me", "my", "mine", "myself", "former", "latter", "both", "each", "another",
+}
+# 'the boy'·'this idea'·'his father'처럼 한정사로 시작하는 짧은 명사구
+_REF_DETERMINERS = {"the", "this", "that", "these", "those", "his", "her", "their", "its",
+                    "my", "our", "your", "such"}
+_U_SPAN_RE = re.compile(r"<u>(.*?)</u>", re.S)
+
+
+def _is_referring(span, text):
+    words = re.findall(r"[A-Za-z']+", span)
+    if not words or len(words) > 4:
+        return False
+    low = [w.lower() for w in words]
+    if len(words) == 1:
+        if low[0] in _REF_PRONOUNS:
+            return True
+        # 사람 이름(Tom·Ms. Lee의 Lee) — 지문의 문장 가운데에서도 대문자로 쓰인 낱말이면 이름으로 본다
+        return words[0][0].isupper() and bool(re.search(r"[a-z,]\s+" + re.escape(words[0]) + r"\b", text))
+    return low[0] in _REF_DETERMINERS
+
+
+def reference_issue(q):
+    """지칭 추론 문항 하나의 결함 목록(없으면 빈 목록). 다른 유형은 늘 빈 목록."""
+    if not isinstance(q, dict) or q.get("type") != "지칭 추론":
+        return []
+    html = str(q.get("passageHtml") or "")
+    text = re.sub(r"<[^>]*>", " ", html)
+    spans = [_CIRCLED5_RE.sub("", re.sub(r"<[^>]*>", "", s)).strip() for s in _U_SPAN_RE.findall(html)]
+    if len(spans) != 5:
+        return [f"밑줄이 {len(spans)}개 — 정확히 5개여야 함"]
+    return [f"'{s}'는 앞의 것을 되받는 말(대명사·the+명사)이 아님" for s in spans if not _is_referring(s, text)]
+
+
+def repair_reference_items(result, remake, stop=lambda: False, tries=2):
+    """지칭 추론 중 밑줄이 잘못된 문항만 다시 만들어 갈아 끼운다 — 전체를 다시 부르면 시간도 원가도 몇 배다.
+    remake(개수, 결함 목록) → 그 개수의 지칭 추론만 담은 새 결과. 끝내 못 고친 문항 수를 돌려준다."""
+    for _ in range(tries):
+        qs = result.get("questions", []) or []
+        bad = [i for i, q in enumerate(qs) if reference_issue(q)]
+        if not bad or stop():
+            break
+        try:
+            retry = remake(len(bad), [w for i in bad for w in reference_issue(qs[i])])
+        except Exception:
+            break
+        fresh = [q for q in retry.get("questions", []) or []
+                 if isinstance(q, dict) and q.get("type") == "지칭 추론" and not reference_issue(q)]
+        for i, q in zip(bad, fresh):
+            qs[i] = q
+    return sum(1 for q in result.get("questions", []) or [] if reference_issue(q))
+
+
 QUIZ_DIALOGUE_TYPES = {"대화 순서", "어색한 응답", "대화 빈칸", "대화 내용 일치",
                        "대화 내용 불일치", "답할 수 없는 질문", "짝지어진 대화",
                        "대화 어법·어휘 선택", "짝지어진 대화 어법", "대화 상황 파악"}
@@ -3009,7 +3067,8 @@ def _check_answer_plan(result, answer_plan):
 
 def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
                            variation="verbatim", target_grammar="", ox_plan=(),
-                           insert_hint=None, answer_plan=(), target_words=(), target_defs=()):
+                           insert_hint=None, answer_plan=(), target_words=(), target_defs=(),
+                           ref_hint=None):
     """items = [(유형, 문항수)] — 유형마다 몇 문항인지가 요청에 그대로 들어 있다.
     target_words = 시험 범위 단어장 중 이 지문에 나오는 단어(parse_target_words가 다듬은 것).
     target_defs = 그중 단어장에 영영풀이까지 적힌 것 [(낱말, 정의)] (parse_target_defs).
@@ -3204,6 +3263,12 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
         lines.append(
             "⚠️ 이전 시도의 문장삽입 번호 위치가 잘못됐습니다: " + "; ".join(insert_hint)
             + ". 번호 앞·번호 사이마다 실제 문장이 오도록 다시 만드세요."
+        )
+    if ref_hint:
+        lines.append(
+            "⚠️ 이전 시도의 지칭 추론 밑줄이 잘못됐습니다: " + "; ".join(ref_hint)
+            + ". 밑줄 다섯은 모두 대명사(he/she/it/they/this…)나 'the + 명사'처럼 앞에 나온 대상을 "
+            "되받는 말이어야 합니다 — 처음 나오는 명사·명사구에는 밑줄을 긋지 마세요."
         )
     if explain_hint:
         lines.append(
@@ -3427,7 +3492,7 @@ def _check_ox_plan(result, ox_plan):
 def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
                       explain_hint=None, variation="verbatim", target_grammar="",
                       insert_hint=None, difficulty="normal", level="high", target_words=(),
-                      target_defs=()):
+                      target_defs=(), ref_hint=None):
     """items = [(유형, 문항수)]. 개수 상한은 parse_quiz_items가 이미 적용해 둔다.
     difficulty="hard"면 QUIZ_HARD_RULES를 지시문 뒤에 덧붙인다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -3458,7 +3523,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
             {"role": "user", "parts": [
                 {"text": build_quiz_user_prompt(
                     passage, items, short_hint, explain_hint, variation, target_grammar,
-                    ox_plan, insert_hint, answer_plan, target_words, target_defs,
+                    ox_plan, insert_hint, answer_plan, target_words, target_defs, ref_hint,
                 )}
             ]}
         ],
@@ -20307,6 +20372,27 @@ class Handler(BaseHTTPRequestHandler):
                         skipped.append(
                             f"문장삽입 {dropped}문항은 번호 위치가 끝내 바르게 나오지 않아 뺐습니다. "
                             "뺀 문항 요금은 나가지 않았습니다. 다시 만들어 보세요."
+                        )
+                # 지칭 추론 밑줄 방어 — 대명사가 아닌 명사에 밑줄을 그은 문항은 그 문항만 다시 만들고,
+                # 끝내 못 고치면 빼고 값도 뺀다(문장삽입과 같은 원칙).
+                if any(t == "지칭 추론" for t, _ in items):
+                    left = repair_reference_items(
+                        result,
+                        lambda n, hints: call_gemini_quiz(
+                            passage, [("지칭 추론", n)], api_key, model, variation=variation,
+                            difficulty=difficulty, level=level, ref_hint=hints,
+                        ),
+                        stop=lambda: _over_budget(t0),
+                    )
+                    if left:
+                        result["questions"] = [x for x in result.get("questions", []) or [] if not reference_issue(x)]
+                        items = [(t, n - left if t == "지칭 추론" else n) for t, n in items]
+                        items = [(t, n) for t, n in items if n > 0]
+                        self._pending_charge = _quiz_action_cost(items)
+                        self._pending_label = f"문제 제작 · {sum(n for _t, n in items)}문항"
+                        skipped.append(
+                            f"지칭 추론 {left}문항은 밑줄이 대명사가 아닌 말에 걸려 끝내 바르게 나오지 않아 뺐습니다. "
+                            "뺀 문항 요금은 나가지 않았습니다. 대명사(he·she·they…)가 여럿 나오는 지문으로 다시 만들어 보세요."
                         )
                 if not result.get("questions"):
                     self._send_json(
