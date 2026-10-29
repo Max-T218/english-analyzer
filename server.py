@@ -17433,7 +17433,8 @@ def _qt_question_stats(assignment, attempts):
 #   · 객관식 탭 문제: 같은 지문·같은 유형(객관식 유형만 — 주관식 문항은 일단 보충 대상에서 뺀다)
 # 새 문제를 만드는 값은 선생님 잔액에서 나가고(학생에게는 포인트가 없다), 틀린 문제 하나당 몇 개를 낼지도 선생님이
 # 정한다. 원래 시험의 기록(test_attempts)은 건드리지 않고 회차마다 quiz_retries에 따로 쌓아 선생님이 따로 본다.
-QUIZ_RETRY_MAX_ROUNDS = 2
+QUIZ_RETRY_MAX_ROUNDS = 3          # 선생님이 고를 수 있는 회차의 상한(시험마다 1~이 값, 기본 QUIZ_RETRY_DEFAULT_ROUNDS)
+QUIZ_RETRY_DEFAULT_ROUNDS = 2
 QUIZ_RETRY_PER_WRONG_MAX = 5
 QUIZ_RETRY_MAX_QUESTIONS = 30      # 한 회차에 만드는 새 문제 상한
 QUIZ_RETRY_PASSAGE_CHARS = 120_000  # 시험 문서에 함께 담는 원래 지문 글자 수 상한
@@ -17448,8 +17449,20 @@ def _qr_clean_cfg(retry):
         n = int(retry.get("perWrong") or 1)
     except (TypeError, ValueError):
         n = 1
+    try:
+        r = int(retry.get("rounds") or QUIZ_RETRY_DEFAULT_ROUNDS)
+    except (TypeError, ValueError):
+        r = QUIZ_RETRY_DEFAULT_ROUNDS
     return {"enabled": True, "per_wrong": max(1, min(QUIZ_RETRY_PER_WRONG_MAX, n)),
-            "max_rounds": QUIZ_RETRY_MAX_ROUNDS}
+            "max_rounds": max(1, min(QUIZ_RETRY_MAX_ROUNDS, r))}
+
+
+def _qr_max_rounds(cfg):
+    """이 시험에서 선생님이 정한 보충 회차 수(옛 시험은 저장된 값이 2였다)."""
+    try:
+        return max(1, min(QUIZ_RETRY_MAX_ROUNDS, int((cfg or {}).get("max_rounds") or QUIZ_RETRY_DEFAULT_ROUNDS)))
+    except (TypeError, ValueError):
+        return QUIZ_RETRY_DEFAULT_ROUNDS
 
 
 def _qt_src_of(raw, passages):
@@ -17514,7 +17527,7 @@ def _qr_state(assignment_id, assignment, student_id):
     if not atts:
         return None
     docs = [d for d in _qr_docs(assignment_id, student_id) if d.get("status") in ("open", "done")]
-    out = {"enabled": True, "perWrong": cfg.get("per_wrong") or 1, "maxRounds": QUIZ_RETRY_MAX_ROUNDS,
+    out = {"enabled": True, "perWrong": cfg.get("per_wrong") or 1, "maxRounds": _qr_max_rounds(cfg),
            "rounds": [_qr_summary(d) for d in docs], "open": None, "canStart": False,
            "required": True, "todo": False,   # 선생님이 켠 보충 학습은 필수 — todo면 학생이 아직 마쳐야 한다
            "nextRound": len(docs) + 1, "wrongCount": 0, "skipped": 0}
@@ -17527,7 +17540,7 @@ def _qr_state(assignment_id, assignment, student_id):
         (assignment.get("questions") or [], atts[0].get("qdetails"))
     wrong, skipped = _qr_wrong_idx(base_q, base_d)
     out["wrongCount"], out["skipped"] = len(wrong), skipped
-    out["canStart"] = bool(wrong) and out["nextRound"] <= QUIZ_RETRY_MAX_ROUNDS
+    out["canStart"] = bool(wrong) and out["nextRound"] <= out["maxRounds"]
     out["todo"] = out["canStart"]   # 틀린 게 남아 있고 회차가 남았으면 계속해야 한다(모두 맞히거나 2회를 마치면 끝)
     return out
 
@@ -17736,8 +17749,8 @@ def start_quiz_retry(assignment_id, student_id):
         docs.pop()
         last = docs[-1] if docs else None
     rnd = len(docs) + 1
-    if rnd > QUIZ_RETRY_MAX_ROUNDS:
-        raise ValueError(f"보충 학습은 {QUIZ_RETRY_MAX_ROUNDS}회까지 할 수 있어요.")
+    if rnd > _qr_max_rounds(cfg):
+        raise ValueError(f"보충 학습은 {_qr_max_rounds(cfg)}회까지 할 수 있어요.")
     base_q, base_d = (last.get("questions"), last.get("qdetails")) if last else \
         (assignment.get("questions") or [], atts[0].get("qdetails"))
     wrong, _skipped = _qr_wrong_idx(base_q, base_d)

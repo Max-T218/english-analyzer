@@ -1043,7 +1043,9 @@
           <div id="assignRetryField" hidden>
             <label for="assignRetryPer">틀린 문제 하나당 새로 낼 문제 수</label>
             <input type="number" id="assignRetryPer" min="1" max="5" step="1" value="1">
-            <p class="hint">켜면 학생은 제출한 뒤 <b>반드시</b> 틀린 문제를 다시 학습하고 개념을 읽은 뒤, 같은 내용(문법은 같은 항목·레벨, 객관식은 같은 지문·유형)의 새 객관식 문제를 풉니다. 모두 맞히거나 2회를 마칠 때까지 이어지며(건너뛸 수 없습니다), 새 문제는 학생이 이어서 진행할 때 만들어지고 <b>선생님 포인트</b>에서 차감됩니다(회차마다 개념 설명 50P가 더해집니다). 새 문제 전에 학생은 개념 정리를 반드시 읽습니다. 기록은 성적표에서 따로 봅니다.</p>
+            <label for="assignRetryRounds">보충 학습 횟수 (틀린 문제가 남아 있으면 이 횟수까지 반복)</label>
+            <select id="assignRetryRounds"><option value="1">1회</option><option value="2" selected>2회</option><option value="3">3회</option></select>
+            <p class="hint">켜면 학생은 제출한 뒤 <b>반드시</b> 틀린 문제를 다시 학습하고 개념을 읽은 뒤, 같은 내용(문법은 같은 항목·레벨, 객관식은 같은 지문·유형)의 새 객관식 문제를 풉니다. 모두 맞히거나 정한 횟수를 마칠 때까지 이어지며(건너뛸 수 없습니다), 새 문제는 학생이 이어서 진행할 때 만들어지고 <b>선생님 포인트</b>에서 차감됩니다(회차마다 개념 설명 50P가 더해집니다). 새 문제 전에 학생은 개념 정리를 반드시 읽습니다. 기록은 성적표에서 따로 봅니다.</p>
           </div>
         </div>
         <div class="gate-actions">
@@ -1076,7 +1078,9 @@
           <div id="quizAssignRetryField" hidden>
             <label for="quizAssignRetryPer">틀린 문제 하나당 새로 낼 문제 수</label>
             <input type="number" id="quizAssignRetryPer" min="1" max="5" step="1" value="1">
-            <p class="hint">켜면 학생은 제출한 뒤 <b>반드시</b> 틀린 문제를 다시 학습하고 개념을 읽은 뒤, 같은 내용(문법은 같은 항목·레벨, 객관식은 같은 지문·유형)의 새 객관식 문제를 풉니다. 모두 맞히거나 2회를 마칠 때까지 이어지며(건너뛸 수 없습니다), 새 문제는 학생이 이어서 진행할 때 만들어지고 <b>선생님 포인트</b>에서 차감됩니다(회차마다 개념 설명 50P가 더해집니다). 새 문제 전에 학생은 개념 정리를 반드시 읽습니다. 주관식 문항은 보충 대상에서 빠집니다. 기록은 성적표에서 따로 봅니다.</p>
+            <label for="quizAssignRetryRounds">보충 학습 횟수 (틀린 문제가 남아 있으면 이 횟수까지 반복)</label>
+            <select id="quizAssignRetryRounds"><option value="1">1회</option><option value="2" selected>2회</option><option value="3">3회</option></select>
+            <p class="hint">켜면 학생은 제출한 뒤 <b>반드시</b> 틀린 문제를 다시 학습하고 개념을 읽은 뒤, 같은 내용(문법은 같은 항목·레벨, 객관식은 같은 지문·유형)의 새 객관식 문제를 풉니다. 모두 맞히거나 정한 횟수를 마칠 때까지 이어지며(건너뛸 수 없습니다), 새 문제는 학생이 이어서 진행할 때 만들어지고 <b>선생님 포인트</b>에서 차감됩니다(회차마다 개념 설명 50P가 더해집니다). 새 문제 전에 학생은 개념 정리를 반드시 읽습니다. 주관식 문항은 보충 대상에서 빠집니다. 기록은 성적표에서 따로 봅니다.</p>
           </div>
         </div>
         <div class="gate-actions">

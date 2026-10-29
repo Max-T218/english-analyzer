@@ -19254,7 +19254,9 @@ function quizQuestionsFromSaved(tab, item) {
 function retryOption(chkId, perId) {
   if (!$(chkId).checked) return null;
   const n = parseInt($(perId).value, 10);
-  return { enabled: true, perWrong: Number.isFinite(n) ? Math.max(1, Math.min(5, n)) : 1 };
+  const r = parseInt($(perId.replace(/Per$/, "Rounds")).value, 10);
+  return { enabled: true, perWrong: Number.isFinite(n) ? Math.max(1, Math.min(5, n)) : 1,
+           rounds: Number.isFinite(r) ? Math.max(1, Math.min(3, r)) : 2 };
 }
 function withoutRetrySource(questions, retry) {
   return retry ? questions : questions.map(({ srcPassage, ...rest }) => rest);
