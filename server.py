@@ -13,6 +13,7 @@ Gemini API 키는 관리자(운영자)가 환경변수 GEMINI_API_KEY 하나로�
 """
 
 import base64
+import calendar
 import copy
 import csv
 import difflib
@@ -160,6 +161,11 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30일
 # 사용자에게 더 주고 싶으면 관리자 페이지(/admin.html)에서 충전하거나 Firestore
 # 콘솔에서 users/<id> 문서의 krw_remaining 값을 직접 고치면 된다.
 DEFAULT_USER_KRW = int(os.environ.get("DEFAULT_USER_KRW", "10000"))
+# 가입 축하금을 바꾸는 날 — DEFAULT_USER_KRW_FROM(KST 날짜, 그날 포함)부터 DEFAULT_USER_KRW_NEXT를 준다
+# (2026-10-29 사용자: 11월부터 5,000). 손으로 바꾸면 잊기 쉬워 날짜를 코드가 안다(아래 배수 이벤트와 같은 생각).
+# 이미 가입한 회원의 잔액은 건드리지 않는다. 비워 두면(DEFAULT_USER_KRW_FROM="") 바꾸지 않는다.
+DEFAULT_USER_KRW_NEXT = int(os.environ.get("DEFAULT_USER_KRW_NEXT", "5000"))
+DEFAULT_USER_KRW_FROM = os.environ.get("DEFAULT_USER_KRW_FROM", "2026-11-01").strip()
 # 가입 축하금 배수 이벤트. SIGNUP_BONUS_UNTIL(KST 날짜, 그날까지 포함)이 지나면 저절로
 # 원래 금액으로 돌아간다.
 #
@@ -187,7 +193,7 @@ _EXAM_RUN_RE = re.compile(r"^[A-Za-z0-9]{8,40}$")
 # 함께 적어 둬야, 나중에 약관을 고쳤을 때 "누가 어느 판에 동의했는지"를 가릴 수 있다.
 # ⚠️ terms.html을 고치면 이 값도 함께 올릴 것 — 안 올리면 옛 판에 동의한 사람과
 #    새 판에 동의한 사람이 기록상 구분되지 않는다.
-TERMS_VERSION = "2026-11-04"
+TERMS_VERSION = "2026-11-05"
 
 # --- 결제(포트원) -----------------------------------------------------------
 # 셋 다 비어 있으면 "충전하기"가 결제창을 못 띄운다(503) — 결제사가 아직
@@ -219,10 +225,12 @@ POINT_LEDGER = "point_ledger"
 # 보관 기간(개월). 지난 것은 지우되, 지우기 전에 '이월' 한 줄로 접어 둔다 — 그래야
 # 포인트에 유효기간이 없는 지금 구조에서도 (지급+충전-사용=잔액) 검산이 유지된다.
 LEDGER_KEEP_MONTHS = int(os.environ.get("LEDGER_KEEP_MONTHS", "18"))
-# 무상 포인트 유효기간(일). 0이면 만료 없음 — 지금은 꺼 둔다.
-# 켜기 전에 반드시 가입 화면과 이용 내역에 소멸 예정일을 먼저 안내해야 한다
-# (고지 없이 소멸시키면 그것 자체가 분쟁이 된다).
-FREE_POINT_EXPIRE_DAYS = int(os.environ.get("FREE_POINT_EXPIRE_DAYS", "0"))
+# 가입 축하 포인트의 유효기간(개월) — SIGNUP_POINT_EXPIRE_FROM(KST 날짜, 그날 포함)부터 **새로 가입해 받는**
+# 가입 축하 포인트에만 붙는다(2026-10-29 사용자). 그 전에 받은 가입 포인트, 관리자가 넣어 준 무상 포인트는
+# 앞으로도 소멸하지 않는다 — 예전의 FREE_POINT_EXPIRE_DAYS(무상 전체에 걸리는 기간)는 그래서 없앴다.
+# 시작일은 약관 제7조 개정 시행일이다(약관 제4조: 시행 7일 전 공지). 0이면 기간 없음.
+SIGNUP_POINT_EXPIRE_MONTHS = int(os.environ.get("SIGNUP_POINT_EXPIRE_MONTHS", "1"))
+SIGNUP_POINT_EXPIRE_FROM = os.environ.get("SIGNUP_POINT_EXPIRE_FROM", "2026-11-05").strip()
 # 유상(충전) 포인트 소진기한(년). 기본 5년.
 #
 # 5년인 이유: 원래 약관에 1년으로 적혀 있었는데, 유상분을 1년 만에 전부 소멸시키는 것은
@@ -761,6 +769,7 @@ def complete_signup(email, code):
     user_id = _user_doc_id(email)
     grant_krw, grant_label = _signup_grant()
     starting_krw = 0 if _was_previously_deleted(email) else grant_krw
+    lot_fields, grant_expires = _signup_account_fields(starting_krw)
     DB.collection("users").document(user_id).set({
         "email": email,
         "name": d.get("name") or "",
@@ -777,9 +786,10 @@ def complete_signup(email, code):
         # 1단계에서 받아 둔 동의를 그대로 옮겨 적는다. 옛 계정에는 이 값이 없는데,
         # 동의 절차가 생기기 전에 가입한 사람이라는 뜻이다(지우거나 막지 않는다).
         **{k: v for k, v in (d.get("consent") or {}).items()},
+        **lot_fields,
     })
     ref.delete()
-    _log_signup_grant(user_id, starting_krw, grant_label)
+    _log_signup_grant(user_id, starting_krw, grant_label, grant_expires)
     return user_id
 
 
@@ -12771,15 +12781,59 @@ def _exam_run_record(user_id, run_id, amount):
         })
 
 
+def _kst_reached(day):
+    """오늘(KST)이 day(YYYY-MM-DD) 이후인가(그날 포함). 비었거나 못 읽으면 False."""
+    if not day:
+        return False
+    try:
+        start = datetime.strptime(day, "%Y-%m-%d").date()
+    except ValueError:
+        print(f"[설정] 날짜를 읽을 수 없다: {day!r}", flush=True)
+        return False
+    return datetime.now(timezone.utc).astimezone(KST).date() >= start
+
+
+def _signup_base_krw():
+    """지금 가입하면 받는 기본 축하금(배수 이벤트 전) — 바꾸는 날이 지났으면 새 금액."""
+    return DEFAULT_USER_KRW_NEXT if _kst_reached(DEFAULT_USER_KRW_FROM) else DEFAULT_USER_KRW
+
+
+def _plus_months(dt, months):
+    """달력상 n개월 뒤의 같은 날짜·같은 시각. 그 달에 없는 날(1월 31일 + 1개월)은 그 달 끝날로 당긴다."""
+    y, m = divmod(dt.month - 1 + months, 12)
+    year, month = dt.year + y, m + 1
+    last = calendar.monthrange(year, month)[1]
+    return dt.replace(year=year, month=month, day=min(dt.day, last))
+
+
+def _signup_expiry():
+    """지금 지급하는 가입 축하 포인트의 소멸 시각(UTC ISO). 기간이 없으면 None.
+    KST 날짜로 셈한다 — 11월 5일 오후 가입이면 12월 5일 같은 시각까지 쓸 수 있다."""
+    if SIGNUP_POINT_EXPIRE_MONTHS <= 0 or not _kst_reached(SIGNUP_POINT_EXPIRE_FROM):
+        return None
+    now_kst = datetime.now(timezone.utc).astimezone(KST)
+    return _plus_months(now_kst, SIGNUP_POINT_EXPIRE_MONTHS).astimezone(timezone.utc).isoformat()
+
+
 def _signup_grant():
     """새 회원에게 넣어 줄 축하금과 원장에 적을 이름. (금액, 이름)을 돌려준다.
 
     이름을 나눠 두는 이유: 이벤트로 두 배를 받은 사람과 평상시에 받은 사람이 원장에서
     구분되어야 한다. 나중에 "왜 이 사람만 2만원이냐"는 물음이 나왔을 때 답할 근거다."""
+    base = _signup_base_krw()
     if _signup_bonus_active():
-        return (DEFAULT_USER_KRW * SIGNUP_BONUS_MULTIPLIER,
+        return (base * SIGNUP_BONUS_MULTIPLIER,
                 f"가입 축하 지급 ({SIGNUP_BONUS_MULTIPLIER}배 이벤트)")
-    return DEFAULT_USER_KRW, "가입 축하 지급"
+    return base, "가입 축하 지급"
+
+
+def _signup_account_fields(starting_krw):
+    """새 계정 문서에 함께 적을 가입 축하 포인트 묶음 — 기간이 있을 때만(signup_lots).
+    (필드 dict, 소멸 시각 또는 None)."""
+    expires_at = _signup_expiry() if starting_krw > 0 else None
+    if not expires_at:
+        return {}, None
+    return {"signup_lots": [{"at": _now_iso(), "expires_at": expires_at, "remaining": int(starting_krw)}]}, expires_at
 
 
 def _kst_date(iso):
@@ -12841,6 +12895,7 @@ def upsert_user(sub, email, name, agree=None):
         consent = _consent_record(agree)
         grant_krw, grant_label = _signup_grant()
         starting_krw = 0 if _was_previously_deleted(email) else grant_krw
+        lot_fields, grant_expires = _signup_account_fields(starting_krw)
         ref.set({
             "email": email, "name": name, "created_at": _now_iso(),
             "krw_remaining": starting_krw,
@@ -12850,8 +12905,9 @@ def upsert_user(sub, email, name, agree=None):
             # 첫 로그인부터 지난 소식이 쏟아지지 않게 최신 번호로 맞춰 둔다.
             "last_seen_changelog": CHANGELOG_LATEST,
             **consent,
+            **lot_fields,
         })
-        _log_signup_grant(sub, starting_krw, grant_label)
+        _log_signup_grant(sub, starting_krw, grant_label, grant_expires)
     else:
         ref.set({"email": email, "name": name}, merge=True)
 
@@ -12915,6 +12971,9 @@ def get_user_krw(user_id):
     snap = DB.collection("users").document(user_id).get()
     if not snap.exists:
         return 0
+    # 생성 전 잔액 확인도 이 함수를 거친다 — 기간이 지난 가입 축하 포인트로 만들지 못하게 먼저 걷어 낸다
+    if expire_due_signup(user_id, snap.to_dict() or {}):
+        snap = DB.collection("users").document(user_id).get()
     try:
         return int(snap.to_dict().get("krw_remaining", 0))
     except (TypeError, ValueError):
@@ -13967,6 +14026,14 @@ CHANGELOG = [
             "학교급·난이도·지문 변형 같은 설정이 유형 칸 위로 올라왔습니다. 끄면('문항 수로 출제' 체크 해제) 예전처럼 고른 유형을 지문마다 모두 냅니다.",
         ],
     },
+    {
+        "version": 105,
+        "date": "2026-10-29",
+        "items": [
+            "이용약관·환불정책 개정 안내 — 2026년 11월 5일부터 적용됩니다. 그날 이후 새로 가입해 받는 가입 축하 포인트는 지급일로부터 1개월 동안 쓸 수 있고, "
+            "기간이 지나면 남은 만큼 소멸합니다. 이미 받으신 포인트와 관리자가 지급한 포인트는 지금처럼 소멸하지 않습니다. 내용은 이용약관 제7조에서 볼 수 있습니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -14005,7 +14072,8 @@ def _account_payload(user_id):
     info = DB.collection("users").document(user_id).get().to_dict() or {}
     # 정기 실행 장치가 없어 소멸을 훑을 자리가 여기뿐이다(로그인·새로고침·/api/me).
     # 만료된 묶음이 없으면 아무것도 쓰지 않고, 걷어냈으면 그 뒤 잔액을 다시 읽는다.
-    if expire_due_paid(user_id, info):
+    # 가입 축하 포인트(기간 1개월)도 같은 자리에서 걷어 낸다
+    if expire_due_paid(user_id, info) + expire_due_signup(user_id, info):
         info = DB.collection("users").document(user_id).get().to_dict() or {}
     # 휴면계정 훑기도 같은 이유로 여기 붙는다. 다만 소멸과 달리 '이 사람'이 아니라
     # 회원 전체가 대상이라, 하루에 한 번만 돌도록 _sweep_due가 막는다.
@@ -14019,6 +14087,8 @@ def _account_payload(user_id):
         # 유상/무상 구분 — 환불 대상은 유상분뿐이라 화면에서도 나눠 보여 준다
         "krwFree": free,
         "krwPaid": paid,
+        # 무상분 중 기간이 있는 가입 축하 포인트 — 화면이 '언제 소멸하는지'를 잔액 옆에 보여 준다
+        "freeExpiring": [{"amount": x["remaining"], "expiresAt": x["expires_at"]} for x in _signup_lots(info)],
         # 반/학생 관리 탭을 보여줄지 — 관리자가 켜 준 선생님만 True
         "classroomApproved": bool(info.get("classroom_approved")),
         # 레벨테스트 탭 — 특정 학원 자료라 관리자가 켜 준 선생님만(_leveltest_approved)
@@ -14067,16 +14137,10 @@ def _ledger_row(user_id, kind, label, amount, paid_delta, free_delta, balance_af
         "created_at": now.isoformat(),
         "date_kst": now.astimezone(KST).strftime("%Y-%m-%d %H:%M"),
         # 이 줄로 들어온 포인트의 소멸 예정일. 유상 충전은 PAID_POINT_EXPIRE_YEARS(5년),
-        # 무상 지급은 FREE_POINT_EXPIRE_DAYS(지금 0이라 항상 None)를 따른다.
-        # 실제로 깎는 근거는 회원 문서의 paid_lots이고, 이 값은 이용 내역에 보여 주는 용도다.
+        # 가입 축하 지급은 SIGNUP_POINT_EXPIRE_MONTHS(시행일 이후 가입분만), 관리자 무상 지급은 늘 None.
+        # 실제로 깎는 근거는 회원 문서의 paid_lots·signup_lots이고, 이 값은 이용 내역에 보여 주는 용도다.
         "expires_at": expires_at,
     }
-
-
-def _free_expiry():
-    if FREE_POINT_EXPIRE_DAYS <= 0:
-        return None
-    return (datetime.now(timezone.utc) + timedelta(days=FREE_POINT_EXPIRE_DAYS)).isoformat()
 
 
 def _plus_years(dt, years):
@@ -14172,6 +14236,82 @@ def _due_paid_lots(lots, now_iso=None):
         else:
             alive.append(lot)
     return dead, alive, amount
+
+
+def _signup_lots(d):
+    """회원 문서에서 '기간이 있는 가입 축하 포인트 묶음'을 꺼낸다(기한 이른 것부터).
+
+    무상 잔액(krw_free) 가운데 이 묶음으로 설명되는 부분만 소멸 대상이다. 나머지 무상분 — 시행일 전에 받은
+    가입 포인트, 관리자가 넣어 준 포인트 — 은 묶음이 없어 소멸하지 않는다. 묶음 합계가 무상 잔액보다 크게
+    남는 일(이상 상태)이 있으면 무상 잔액까지만 인정한다 — 없는 돈을 소멸 원장에 적으면 안 된다."""
+    lots = d.get("signup_lots")
+    if not isinstance(lots, list):
+        return []
+    out = []
+    for lot in lots:
+        if not isinstance(lot, dict) or not lot.get("expires_at"):
+            continue
+        try:
+            remaining = int(lot.get("remaining", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if remaining > 0:
+            out.append({"at": lot.get("at") or "", "expires_at": lot["expires_at"], "remaining": remaining})
+    out.sort(key=lambda x: x["expires_at"])
+    _total, free, _paid = _split_balance(d)
+    left, capped = free, []
+    for lot in out:
+        take = min(lot["remaining"], left)
+        if take > 0:
+            capped.append({**lot, "remaining": take})
+        left -= take
+    return capped
+
+
+def expire_due_signup(user_id, info=None):
+    """유효기간이 지난 가입 축하 포인트를 걷어낸다. 걷어낸 금액(없으면 0).
+    expire_due_paid와 같은 원칙 — 정기 실행이 없어 잔액을 읽는 길목에서 보고, 원장에 '소멸' 한 줄을 남긴다."""
+    _require_db()
+    user_ref = DB.collection("users").document(user_id)
+    if info is None:
+        snap = user_ref.get()
+        if not snap.exists:
+            return 0
+        info = snap.to_dict() or {}
+    if not info.get("signup_lots"):
+        return 0
+    _dead, _alive, due = _due_paid_lots(_signup_lots(info))
+    if due <= 0:
+        return 0
+    row_ref = DB.collection(POINT_LEDGER).document()
+
+    @firestore.transactional
+    def _apply(tx):
+        snap = user_ref.get(transaction=tx)
+        if not snap.exists:
+            return 0
+        d = snap.to_dict() or {}
+        _total, free, paid = _split_balance(d)
+        _dead, alive, amount = _due_paid_lots(_signup_lots(d))
+        amount = min(amount, free)
+        if amount <= 0:
+            return 0
+        new_free = free - amount
+        tx.update(user_ref, {
+            "krw_remaining": new_free + paid,
+            "krw_free": new_free,
+            "signup_lots": alive,
+        })
+        tx.set(row_ref, _ledger_row(
+            user_id, "expire", "가입 축하 포인트 유효기간 경과로 소멸", -amount, 0, -amount, new_free + paid
+        ))
+        return amount
+
+    try:
+        return _apply(DB.transaction())
+    except Exception:
+        traceback.print_exc()   # 소멸에 실패해도 로그인·조회는 계속되어야 한다
+        return 0
 
 
 def expire_due_paid(user_id, info=None):
@@ -14376,7 +14516,7 @@ def sweep_dormant_accounts():
     return notified, turned
 
 
-def _log_signup_grant(user_id, amount, label="가입 축하 지급"):
+def _log_signup_grant(user_id, amount, label="가입 축하 지급", expires_at=None):
     """가입 축하금을 원장에 남긴다. 잔액은 계정 문서를 만들 때 이미 넣었으므로 여기서는
     기록만 한다. 기록이 실패했다고 가입까지 막을 이유는 없으므로 예외는 삼킨다.
 
@@ -14387,7 +14527,7 @@ def _log_signup_grant(user_id, amount, label="가입 축하 지급"):
     try:
         DB.collection(POINT_LEDGER).document().set(_ledger_row(
             user_id, "grant", label, amount, 0, amount, amount,
-            expires_at=_free_expiry(),
+            expires_at=expires_at,
         ))
     except Exception:
         traceback.print_exc()
@@ -14425,6 +14565,9 @@ def charge_krw(user_id, amount, label="사용", kind="use"):
         }
         if use_paid > 0:
             update["paid_lots"], _took = _draw_paid_lots(_paid_lots(d), use_paid)
+        # 무상분은 기간이 있는 가입 축하 포인트부터 쓴다 — 그냥 두면 소멸할 것이 먼저 쓰여야 한다
+        if use_free > 0 and d.get("signup_lots"):
+            update["signup_lots"], _took = _draw_paid_lots(_signup_lots(d), use_free)
         tx.update(user_ref, update)
         tx.set(row_ref, _ledger_row(
             user_id, kind, label, -amount, -use_paid, -use_free, new_free + new_paid
@@ -14439,8 +14582,9 @@ def add_krw(user_id, amount, kind, label):
     _require_db()
     user_ref = DB.collection("users").document(user_id)
     row_ref = DB.collection(POINT_LEDGER).document()
-    # 무상분은 FREE_POINT_EXPIRE_DAYS(지금 0=만료 없음), 유상분은 PAID_POINT_EXPIRE_YEARS(5년)
-    expires_at = _free_expiry() if kind == "grant" else _paid_expiry()
+    # 유상분은 PAID_POINT_EXPIRE_YEARS(5년). 관리자 무상 지급은 소멸하지 않는다(2026-10-29 사용자 —
+    # 기간이 붙는 무상분은 가입 축하 포인트뿐이고, 그건 계정을 만들 때 signup_lots로 따로 넣는다)
+    expires_at = None if kind == "grant" else _paid_expiry()
 
     @firestore.transactional
     def _apply(tx):
@@ -18312,7 +18456,9 @@ class Handler(BaseHTTPRequestHandler):
                 # 끝나는 날이 지나면 서버가 event=False를 내려주므로 띠도 저절로 사라진다
                 # — 이벤트를 내리려고 사람이 화면을 고칠 일이 없어야 한다.
                 "signupBonus": _signup_grant()[0],
-                "signupBonusBase": DEFAULT_USER_KRW,
+                "signupBonusBase": _signup_base_krw(),
+                # 가입 축하 포인트의 유효기간(개월) — 시행일 전이면 0(가입 창 안내 문구가 쓴다)
+                "signupExpireMonths": SIGNUP_POINT_EXPIRE_MONTHS if _kst_reached(SIGNUP_POINT_EXPIRE_FROM) else 0,
                 "signupBonusEvent": _signup_bonus_active(),
                 "signupBonusUntil": SIGNUP_BONUS_UNTIL if _signup_bonus_active() else "",
                 "analyze": PRICE_ANALYZE_KRW,

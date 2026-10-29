@@ -795,6 +795,23 @@ function renderSignupBonus() {
 }
 onPricingReady(renderSignupBonus);
 
+/* 가입 축하 포인트의 유효기간 안내 — 기간도 서버가 정한다(시행일 전에는 0이라 안 보인다). 소멸시키고 나서
+   알리면 분쟁이 되므로 가입 창에서 먼저 알린다(2026-10-29 사용자: 가입 축하 포인트만 1개월). */
+onPricingReady(() => {
+  const el = $("signupExpireNote");
+  const months = Number(PRICING && PRICING.signupExpireMonths) || 0;
+  if (!el) return;
+  el.textContent = months ? ` (가입 후 ${months}개월 동안 쓸 수 있어요)` : "";
+  el.hidden = !months;
+});
+
+// "2026-12-05T…Z" → "12월 5일"(KST). 못 읽으면 빈 글자.
+function kstMonthDay(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  return d.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", month: "long", day: "numeric" });
+}
+
 // 지금 입력된 지문 중 실제로 과금 대상이 될 만큼 긴 것만 센다(20자 미만은 서버가
 // 애초에 거부하므로 비용 예측에서도 빼는 게 맞다).
 function billableJobCount() {
@@ -933,7 +950,12 @@ function renderAccount(info) {
   updateVocabAssignBtnVisibility();
   syncQuizAssignBtns();
   const krwText = currentKrw !== null ? ` · 잔액 ${pt(currentKrw)}` : "";
-  accountNameEl.textContent = `${lastAccountLabel || "로그인됨"}님${krwText}`;
+  // 기간이 있는 가입 축하 포인트가 남아 있으면 가장 이른 소멸일을 잔액 옆에 함께 적는다
+  const exp = (Array.isArray(info.freeExpiring) ? info.freeExpiring : []).filter((x) => Number(x.amount) > 0);
+  const expText = exp.length
+    ? ` (가입 축하 ${pt(exp.reduce((a, x) => a + Number(x.amount), 0))} ${kstMonthDay(exp[0].expiresAt)}까지)`
+    : "";
+  accountNameEl.textContent = `${lastAccountLabel || "로그인됨"}님${krwText}${expText}`;
   // 서버가 이 계정이 아직 못 본 업데이트를 함께 내려준다(/api/me·로그인 응답 공통).
   // refreshTokenDisplay()도 같은 info 모양으로 renderAccount를 부르므로, 만들기를
   // 한 번 눌렀다고 또 뜨는 일이 없게 이번 페이지가 열린 뒤 한 번만 띄운다 —
