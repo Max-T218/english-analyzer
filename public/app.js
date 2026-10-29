@@ -18595,6 +18595,8 @@ async function loadAssignedTests() {
   }
 }
 
+$("refreshAssignedBtn").addEventListener("click", loadAssignedTests);
+
 function renderAssignedTests(tests) {
   if (!tests.length) {
     assignedTestListEl.innerHTML = `<p class="hint">아직 낸 시험이 없습니다.</p>`;
@@ -19205,6 +19207,7 @@ assignFormEl.addEventListener("submit", async (e) => {
       sent++;
     }
     closeModal(assignModalEl);
+    if (classId === selectedClassId) loadAssignedTests();   // 낸 시험이 바로 목록에 뜨게
     alert(`${tests.length > 1 ? `시험 ${sent}개를` : "시험을"} 냈습니다. '학생 관리' 탭에서 결과를 확인할 수 있습니다.`);
   } catch (err) {
     assignErrorEl.textContent = (err.message || "시험 내기에 실패했습니다.") +
@@ -19280,6 +19283,7 @@ async function submitAssignQuiz(classId) {
       title: $("assignTitle").value, questions: withoutRetrySource(questions, retry), source, retry,
     }, "시험 내기에 실패했습니다.");
     closeModal(assignModalEl);
+    if (classId === selectedClassId) loadAssignedTests();   // 낸 시험이 바로 목록에 뜨게
     alert(`${r.questions}${source === "workbook" ? "단계" : "문항"}을 냈습니다.` +
       (r.skipped ? ` (학생 화면에서 풀 수 없는 모양의 문항 ${r.skipped}개는 뺐습니다.)` : "") +
       (retry ? ` 다시 풀기는 ${r.retryQuestions}문항에 켜졌습니다.${r.retryQuestions < r.questions ? " (나머지는 새 문제를 만들 재료가 없어 빠집니다.)" : ""}` : "") +

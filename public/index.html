@@ -2536,7 +2536,10 @@
     <section class="panel" id="assignedTestsPanel" hidden>
       <div class="field-head">
         <label>단어시험 리스트</label>
-        <button type="button" class="btn small" id="goVocabTabBtn">＋ 시험 출제</button>
+        <span style="display:inline-flex; gap:8px;">
+          <button type="button" class="btn ghost small" id="refreshAssignedBtn">🔄 새로고침</button>
+          <button type="button" class="btn small" id="goVocabTabBtn">＋ 시험 출제</button>
+        </span>
       </div>
       <p class="hint">[＋ 시험 출제]로 저장해 둔 단어장·문제·워크북을 골라 바로 낼 수 있습니다. 각 탭의 "🏫 반에 시험 내기"로 낸 시험도 여기에 나타납니다.</p>
       <div id="assignedTestList"></div>
