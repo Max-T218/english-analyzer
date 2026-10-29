@@ -546,9 +546,13 @@ $("takeForm").addEventListener("click", (e) => {
    문항은 모범답안과 다르면 '선생님 확인 중'으로 남는다). */
 function quizListRowHtml(t) {
   const id = esc(t.id);
-  const status = t.submitted ? `<div class="st-card-status">${QT.countsText(t.qc, true)}</div>` : "";
+  const todo = t.submitted && t.retryTodo;   // 선생님이 켠 보충 학습을 아직 마치지 못했다
+  const status = t.submitted
+    ? `<div class="st-card-status">${QT.countsText(t.qc, true)}${todo ? ' <span class="tag fail">보충 학습 해야 해요</span>' : ""}</div>` : "";
   const buttons = t.submitted
-    ? `<button type="button" class="btn ghost result-btn" data-id="${id}">정답·해설 보기</button>`
+    ? (todo
+      ? `<button type="button" class="btn result-btn" data-id="${id}">🔁 보충 학습 하기</button>`
+      : `<button type="button" class="btn ghost result-btn" data-id="${id}">정답·해설 보기</button>`)
     : `<button type="button" class="btn take-btn" data-id="${id}">문제 풀기</button>`;
   return testCardHtml(t.title || (t.source === "workbook" ? "워크북" : "문제 시험"),
     t.source === "workbook" ? `📚 워크북 · ${t.questionCount}단계` : `📝 문제 시험 · ${t.questionCount}문항`,
@@ -668,6 +672,7 @@ function renderQuizRetryBox(r) {
   const box = $("quizRetryBox");
   const st = r.retry;
   $("quizRetryError").textContent = "";
+  $("quizResultBackBtn").hidden = false;
   if (!st || !st.enabled) { box.hidden = true; return; }
   const rounds = (st.rounds || []).filter((x) => x.status === "done");
   $("quizRetryRounds").innerHTML = rounds.length
@@ -675,13 +680,15 @@ function renderQuizRetryBox(r) {
     : "";
   const btn = $("quizRetryStartBtn");
   btn.hidden = false;
+  // 선생님이 켠 보충 학습은 필수 — 마칠 때까지 목록으로 못 나간다(다시 들어와도 목록에서 '보충 학습 해야 해요'가 붙는다)
+  $("quizResultBackBtn").hidden = !!st.todo;
   if (st.open) {
-    $("quizRetryText").textContent = `풀던 보충 ${st.open}회차 문제가 있어요.`;
+    $("quizRetryText").textContent = `풀던 보충 ${st.open}회차 문제가 있어요. 꼭 마쳐야 해요.`;
     btn.textContent = "▶ 이어서 풀기";
     btn.dataset.mode = "resume";
     box.hidden = false;
   } else if (st.canStart) {
-    $("quizRetryText").textContent = `틀린 문제 ${st.wrongCount}개를 다시 학습하고, 같은 내용의 새 문제로 다시 풀어 볼 수 있어요 (보충 ${st.nextRound}/${st.maxRounds}회).`;
+    $("quizRetryText").textContent = `선생님이 정한 보충 학습이에요. 틀린 문제 ${st.wrongCount}개를 다시 학습하고, 개념을 읽은 뒤, 같은 내용의 새 문제를 꼭 풀어야 해요 (보충 ${st.nextRound}/${st.maxRounds}회).`;
     btn.textContent = "🔁 틀린 문제 다시 학습하기";
     btn.dataset.mode = "study";
     box.hidden = false;

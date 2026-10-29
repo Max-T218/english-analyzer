@@ -19409,7 +19409,7 @@ function renderQuizTestResults(data, title) {
       `<button type="button" class="btn ghost small quiz-answers-btn no-print" data-sid="${esc(r.studentId)}">답안 보기${r.pending ? " · 채점" : ""}</button>`;
     // 보충 학습(다시 풀기) — 회차마다 맞음·틀림과 [보기]. 기록은 원래 시험과 따로 쌓인다.
     const retryCell = data.retryOn
-      ? `<td class="tk">${(r.retries || []).map((x) => x.status === "done"
+      ? `<td class="tk">${r.retryTodo ? `<div><span class="tag fail">미완료</span></div>` : ""}${(r.retries || []).map((x) => x.status === "done"
           ? `<div>${x.round}회차 ${QT.countsText(x.qc || { right: 0, wrong: 0, pending: 0 }, true)} <button type="button" class="btn ghost small quiz-retry-btn no-print" data-sid="${esc(r.studentId)}" data-round="${x.round}">보기</button></div>`
           : `<div>${x.round}회차 <span class="hint">푸는 중</span></div>`).join("") || '<span class="hint">—</span>'}</td>`
       : "";

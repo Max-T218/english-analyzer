@@ -14038,7 +14038,7 @@ CHANGELOG = [
         "version": 106,
         "date": "2026-10-29",
         "items": [
-            "학생 관리 — 객관식·주관식·혼합·문법 시험에도 '틀린 문제 다시 풀기(보충 학습)'를 켤 수 있습니다. 시험 내기 창에서 체크하고, "
+            "학생 관리 — 객관식·주관식·혼합·문법 시험에 '틀린 문제 보충 학습'을 필수로 걸 수 있습니다. 켜면 학생은 제출한 뒤 보충 학습을 마쳐야 목록으로 나갈 수 있고, 마치지 못한 시험은 학생 목록과 성적표에 '미완료'로 보입니다. 시험 내기 창에서 체크하고, "
             "틀린 문제 하나당 새로 낼 문제 수(1~5개)를 정하세요. 학생은 제출한 뒤 틀린 문제를 다시 학습하고, 같은 내용(문법은 같은 항목·레벨, "
             "객관식은 같은 지문·유형)의 새 객관식 문제를 최대 2회까지 풉니다. 새 문제 전에 개념 정리를 읽고, 새 문제는 학생이 누를 때 만들어져 선생님 포인트에서 차감되며(개념 설명 50P 추가), "
             "보충 학습 기록은 시험 성적표에서 원래 결과와 따로 볼 수 있습니다.",
@@ -16491,6 +16491,9 @@ def list_tests_for_student(student_id):
             "attemptCount": len(attempts),
             "score": last.get("score") if last else None,
             "total": last.get("total") if last else None,
+            # 보충 학습이 필수인 시험에서 아직 마치지 못했는가 — 목록에 표시한다
+            "retryTodo": bool(attempts and d.get("kind") == "quiz" and (d.get("retry") or {}).get("enabled")
+                              and (_qr_state(doc.id, d, student_id) or {}).get("todo")),
         })
     rows.sort(key=lambda r: r["createdAt"], reverse=True)
     return rows
@@ -16818,7 +16821,8 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
 
     quiz = assignment.get("kind") == "quiz"
     retries = {}   # 학생 → 보충 학습 회차들(문제 시험에서 다시 풀기를 켠 경우)
-    if quiz and (assignment.get("retry") or {}).get("enabled"):
+    retries_on = bool(quiz and (assignment.get("retry") or {}).get("enabled"))
+    if retries_on:
         for doc in DB.collection("quiz_retries").where("assignment_id", "==", assignment_id).stream():
             d = doc.to_dict() or {}
             if d.get("status") in ("open", "done"):
@@ -16848,6 +16852,7 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
             "studies": studies.get(sid, []),
             "studyTotal": sum(x["count"] for x in studies.get(sid, [])),
             "retries": retries.get(sid, []),
+            "retryTodo": bool(retries_on and atts and (_qr_state(assignment_id, assignment, sid) or {}).get("todo")),
             "wrongItems": [] if quiz else _wrong_items_all(atts),
             "hasDetails": any("details" in x for x in atts),
         })
@@ -17509,16 +17514,19 @@ def _qr_state(assignment_id, assignment, student_id):
     docs = [d for d in _qr_docs(assignment_id, student_id) if d.get("status") in ("open", "done")]
     out = {"enabled": True, "perWrong": cfg.get("per_wrong") or 1, "maxRounds": QUIZ_RETRY_MAX_ROUNDS,
            "rounds": [_qr_summary(d) for d in docs], "open": None, "canStart": False,
+           "required": True, "todo": False,   # 선생님이 켠 보충 학습은 필수 — todo면 학생이 아직 마쳐야 한다
            "nextRound": len(docs) + 1, "wrongCount": 0, "skipped": 0}
     last = docs[-1] if docs else None
     if last and last.get("status") == "open":
         out["open"] = last.get("round")
+        out["todo"] = True
         return out
     base_q, base_d = (last.get("questions"), last.get("qdetails")) if last else \
         (assignment.get("questions") or [], atts[0].get("qdetails"))
     wrong, skipped = _qr_wrong_idx(base_q, base_d)
     out["wrongCount"], out["skipped"] = len(wrong), skipped
     out["canStart"] = bool(wrong) and out["nextRound"] <= QUIZ_RETRY_MAX_ROUNDS
+    out["todo"] = out["canStart"]   # 틀린 게 남아 있고 회차가 남았으면 계속해야 한다(모두 맞히거나 2회를 마치면 끝)
     return out
 
 
