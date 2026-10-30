@@ -12933,6 +12933,32 @@ function refreshPickBadges() {
   updatePickBar();
 }
 
+/* 단어장 저장본은 폴더(저장본의 folder, 없으면 이름의 ' · ' 앞부분이 같은 둘 이상)별로 접어서 보인다 —
+   시험 내기 창의 폴더 묶음(assignFolderOf)과 같은 기준이다. 다른 종류는 그대로 늘어놓는다. */
+function savedRowsHtml(list) {
+  const vocab = list.filter((it) => it.tab === "vocab");
+  if (!vocab.length) return list.map(savedItemRowHtml).join("");
+  const groups = new Map();
+  vocab.forEach((it) => {
+    const g = assignFolderOf(it);
+    if (!g) return;
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(it);
+  });
+  const folded = new Set();
+  groups.forEach((l) => { if (l.length >= 2 || l[0].folder) l.forEach((it) => folded.add(it.id)); });
+  if (!folded.size) return list.map(savedItemRowHtml).join("");
+  const byTitle = (a, b) => String(a.title || "").localeCompare(String(b.title || ""), "ko", { numeric: true });
+  let html = "";
+  groups.forEach((l, name) => {
+    if (!(l.length >= 2 || l[0].folder)) return;
+    html += `<details class="saved-folder" style="margin:4px 0;"><summary style="cursor:pointer;font-weight:700;padding:6px 0;">` +
+      `📁 ${esc(name)} <span class="hint">(${l.length}개)</span></summary>` +
+      `<div style="margin-left:14px;">${l.slice().sort(byTitle).map(savedItemRowHtml).join("")}</div></details>`;
+  });
+  return html + list.filter((it) => !folded.has(it.id)).map(savedItemRowHtml).join("");
+}
+
 function renderSavedList() {
   const lib = LIBRARY[openLibrary];
   const all = savedItemsCache.filter(lib.match);
@@ -12984,12 +13010,12 @@ function renderSavedList() {
       .map(
         (t) =>
           `<div class="saved-group-head">${esc(TAB_LABELS[t] || t)}<span>${groups.get(t).length}개</span></div>` +
-          groups.get(t).map(savedItemRowHtml).join("")
+          savedRowsHtml(groups.get(t))
       )
       .join("");
   } else {
     savedListBodyEl.classList.remove("is-grouped");
-    savedListBodyEl.innerHTML = items.map(savedItemRowHtml).join("");
+    savedListBodyEl.innerHTML = savedRowsHtml(items);
   }
   savedListCountEl.textContent =
     items.length === all.length ? `${all.length}개` : `${all.length}개 중 ${items.length}개`;
