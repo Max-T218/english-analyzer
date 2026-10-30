@@ -12232,6 +12232,7 @@ async function runVocabPdf(fileList) {
   const rows = [];
   let docTitle = "";   // 첫 PDF 머리의 큰 제목(예: 'Day 27') — 서버가 찾았을 때만
   const bookSections = [];
+  const perFile = [];   // PDF마다 {items, name} — 둘 이상이면 파일마다 단어장을 따로 만든다
   const notes = [];
   const fails = [];
   for (let i = 0; i < files.length; i++) {
@@ -12268,6 +12269,7 @@ async function runVocabPdf(fileList) {
         continue;
       }
       rows.push(...res.items);
+      perFile.push({ items: res.items, name: String(res.title || "").trim() || (file.name || `PDF ${i + 1}`).replace(/\.pdf$/i, "").trim() });
       if (!docTitle && res.title) docTitle = String(res.title).trim();
       if (res.note) notes.push(`${who}: ${res.note}`);
     } catch (err) {
@@ -12316,7 +12318,16 @@ async function runVocabPdf(fileList) {
       if (vocabPickEl) vocabPickEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }
-  if (rows.length) {
+  if (perFile.length > 1) {
+    // 파일 하나 = 단어장 하나. 편집 표를 거치지 않고 바로 저장한다(고칠 것은 단어장 목록에서)
+    const stamp = Date.now();
+    const made = perFile.map((f, i) => ({
+      name: f.name, vocab: f.items, src: "pdf", _id: `v${stamp}${i}${Math.floor(Math.random() * 1e6)}`,
+    }));
+    saveVocabSets([...getVocabSets(), ...made]);
+    parts.push(`<b>${made.length}개 단어장</b>(${made.map((s) => esc(s.name)).join(", ")}) · ${rows.length}단어를 파일마다 따로 저장했습니다. PDF와 대조해 확인하세요.`);
+    vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
+  } else if (rows.length) {
     parts.push(`<b>${rows.length}단어</b>를 단어장에 저장했습니다. PDF와 대조해 확인하세요.`);
     vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
     vocabEditorAdd(rows, docTitle || `${files[0].name.replace(/\.pdf$/i, "")} · ${todayStr()}`, "pdf");
