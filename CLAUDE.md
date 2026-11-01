@@ -88,7 +88,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 정하고(`create_student`), 이후 `update_student`(`/api/students/update`)로 셋 모두
 고칠 수 있다 — 비밀번호를 잊은 학생은 선생님이 새로 정해 주는 것이 '초기화'다.
 학생도 직접 바꿀 수 있고(`change_student_password`, `/api/student/password`) 그러면
-`pw_set_by`가 `student`가 되어 선생님도 모르는 비밀번호가 된다. 비밀번호는 `_hash_password`
+`pw_set_by`가 `student`가 되어 선생님도 모르는 비밀번호가 된다. 비밀번호를 정할 때마다 그 값이 초기 비밀번호인지를 `pw_default`에 함께 적어 선생님 학생 표에 `⚠️ 1234 그대로`를 띄운다(`_pw_is_default_key`, 옛 문서는 `_student_pw_default`가 한 번 해시로 맞춰 채운다 — 2026-11-02 사용자: 바꾸게 강제하지는 않는다). 비밀번호는 `_hash_password`
 해시로만 저장해 **선생님도 현재 값을 볼 수 없다**(등록 때 따로 적어 두라고 화면이 안내한다).
 아이디는 **앱 전체에서 유일**하다 — `student_login_ids` 컬렉션(문서 ID = 아이디)에
 `create()`로 선점해 동시 요청에도 한쪽만 통과한다(`_claim_login_id`/`_release_login_id`).

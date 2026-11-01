@@ -15713,6 +15713,28 @@ STUDENT_PW_MAX = 64
 STUDENT_PW_DEFAULT = "1234"   # 등록 때 선생님이 비워 두면 들어가는 초기 비밀번호
 
 
+def _pw_is_default_key(key):
+    """정한 비밀번호(_pw_key를 거친 값)가 초기 비밀번호 1234인가 — 회원 문서의 pw_default로 적어 둔다.
+    해시는 거꾸로 풀 수 없으므로 정할 때마다 함께 적어야 선생님 학생 표가 '아직 1234'를 보일 수 있다."""
+    return key == _pw_key(STUDENT_PW_DEFAULT)
+
+
+def _student_pw_default(ref, d):
+    """학생 표에 보일 '초기 비밀번호 그대로' 여부. pw_default가 없는 옛 문서(2026-11-02 전)는
+    한 번만 해시로 맞춰 보고 결과를 문서에 적어 둔다 — 해시 대조가 느려(PBKDF2) 표를 열 때마다 하면 안 된다."""
+    if "pw_default" in d:
+        return bool(d["pw_default"])
+    if not d.get("pw_hash"):
+        return False
+    val = d.get("pw_set_by") != "student" and _verify_password_hash(
+        _pw_key(STUDENT_PW_DEFAULT), d.get("pw_salt", ""), d["pw_hash"])
+    try:
+        ref.update({"pw_default": val})
+    except Exception:
+        pass
+    return val
+
+
 def _pw_key(password):
     """비밀번호는 영문 대소문자를 구분하지 않는다(2026-10-12 사용자 결정) — 해시하기
     전과 맞춰 보기 전에 모두 소문자로 바꿔 같은 값으로 취급한다. 학생이 Caps Lock이나
@@ -15786,6 +15808,7 @@ def create_student(teacher_id, class_id, name, login_id, password):
             "teacher_id": teacher_id, "class_id": class_id, "name": name,
             "login_id": login_id, "pw_salt": salt, "pw_hash": digest,
             "pw_set_by": "teacher", "pw_updated_at": _now_iso(),
+            "pw_default": _pw_is_default_key(_pw_key(password)),
             "created_at": _now_iso(),
         })
     except Exception:
@@ -15810,7 +15833,8 @@ def update_student(teacher_id, student_id, name=None, login_id=None, password=No
         _check_student_pw(password)
         salt, digest = _hash_password(_pw_key(password))
         upd.update({"pw_salt": salt, "pw_hash": digest,
-                    "pw_set_by": "teacher", "pw_updated_at": _now_iso()})
+                    "pw_set_by": "teacher", "pw_updated_at": _now_iso(),
+                    "pw_default": _pw_is_default_key(_pw_key(password))})
     if class_id and class_id != cur.get("class_id"):
         _own_class(teacher_id, class_id)   # 옮겨 갈 반도 내 반이어야 한다
         upd["class_id"] = class_id
@@ -15855,7 +15879,8 @@ def change_student_password(student_id, current, new):
     _check_student_pw(new)
     salt, digest = _hash_password(_pw_key(new))
     ref.update({"pw_salt": salt, "pw_hash": digest,
-                "pw_set_by": "student", "pw_updated_at": _now_iso()})
+                "pw_set_by": "student", "pw_updated_at": _now_iso(),
+                "pw_default": _pw_is_default_key(_pw_key(new))})
 
 
 def list_students(teacher_id, class_id):
@@ -15873,6 +15898,7 @@ def list_students(teacher_id, class_id):
         rows.append({
             "id": doc.id, "name": d.get("name", ""), "loginId": d.get("login_id", ""),
             "pwSetBy": d.get("pw_set_by", ""), "pwUpdatedAt": d.get("pw_updated_at", ""),
+            "pwDefault": _student_pw_default(doc.reference, d),
             "createdAt": d.get("created_at", ""),
             # 학생 표에 보일 성적 한 줄 요약
             "tests": len(tests), "done": len(done),

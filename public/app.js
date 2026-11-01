@@ -13686,7 +13686,7 @@ const HOWTO = {
       "<b>🔗 학생에게 알려 줄 주소</b> 칸의 주소를 <b>[복사]</b>해 학생에게 보냅니다. 학생은 아이디·비밀번호로 로그인해 풉니다.",
       "결과는 시험의 <b>[결과 보기]</b>, 학생 한 명은 <b>[성적표]</b>에서 봅니다.",
     ],
-    tip: "합격 기준을 두면 못 미친 학생은 재시험을 봅니다. 비밀번호를 잊은 학생은 <b>[🔑 비번 초기화]</b>. 시험 삼아 넣을 때는 실제 학생 이름을 쓰지 마세요.",
+    tip: "학생 표의 비밀번호 칸에 <b>⚠️ 1234 그대로</b>가 보이는 학생에게는 처음 로그인하면 비밀번호를 바꾸라고 알려 주세요 — 안 바꾸면 아이디만 아는 친구도 들어올 수 있습니다. 합격 기준을 두면 못 미친 학생은 재시험을 봅니다. 비밀번호를 잊은 학생은 <b>[🔑 비번 초기화]</b>. 시험 삼아 넣을 때는 실제 학생 이름을 쓰지 마세요.",
   },
 
   leveltest: {
@@ -18121,7 +18121,11 @@ function renderStudents(students) {
       <tr data-sid="${esc(s.id)}" data-name="${esc(s.name)}" data-login-id="${esc(s.loginId)}">
         <td>${esc(s.name)}</td>
         <td>${s.loginId ? `<code>${esc(s.loginId)}</code>` : `<span class="error">미발급</span>`}</td>
-        <td class="hint">${s.pwSetBy === "student" ? "학생이 변경함" : s.pwSetBy === "teacher" ? "선생님이 정함" : "—"}</td>
+        <td class="hint">${s.pwDefault
+          // 초기 비밀번호를 안 바꾼 학생 — 안내창을 건너뛸 수 있어(2026-10-27) 반 친구가 아이디만 알아도 들어올 수 있다.
+          // 바꾸게 막지는 않기로 했으므로(2026-11-02 사용자) 선생님이 알아보고 말해 주게 표에만 띄운다
+          ? `<span style="color:#b45309;font-weight:700;" title="학생에게 처음 로그인하면 비밀번호를 바꾸라고 알려 주세요">⚠️ 1234 그대로</span>`
+          : s.pwSetBy === "student" ? "학생이 변경함" : s.pwSetBy === "teacher" ? "선생님이 정함" : "—"}</td>
         <td>${studentLastScoreHtml(s)}</td>
         <td>${esc(fmtClassroomDate(s.createdAt))}</td>
         <td style="white-space:nowrap;">
