@@ -204,7 +204,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 
 `/* ══════ 제목 ══════ */` 주석이 섹션 구분입니다. 주요 앵커:
 
-`createPassageManager`(지문 입력칸 관리) · `TAB_SAVE`(탭별 저장 배선) · `runActiveTab` ·
+`createPassageManager`(지문 입력칸 관리 — 2026-11-02부터 지문 칸마다 `⠿` 손잡이(끌기)와 `▲▼`로 자리를 옮긴다(`moveRow`, 합치기처럼 직전 목록을 `_opUndo`에 담아 '되돌리기'). 공용 칸에서 옮기면 안내줄에 **[결과물도 이 순서로]**(`passageMgr.onMoved`)가 붙어, 누르면 결과물이 있는 탭을 새 순서로 바꾼다(AI 안 부름) — 탭마다 `RESULT_REORDER[탭]`(`has`/`apply`): 상세·요약분석은 지문 덩어리(`section.passage-block`) 자리만 옮겨 직접 고친 글·요약 그림·쪽 나눔이 따라가고(`data-entry`·`lastAnalyzeEntries`·`briefShown`을 새 차례로), 워크북은 받아 둔 결과로 다시 그리되 쪽 나눔 표식 `data-key`의 `p{차례}`를 먼저 새 번호로 바꾸고, 문제 탭은 변형 세트(label)마다 차지한 자리는 두고 그 안에서 지문 차례만 바꿔 `renderQuizEntries(…, {noScroll})`로 다시 그린다 — 섞어 만든 시험지(job.text 없음)는 그대로. 짝짓기는 글(`passageIndexOf` — 같거나, 나눈 토막이면 품은 지문), 이름을 비워 둔 지문은 `renamedJob`이 '지문 N'을 새 자리로) · `TAB_SAVE`(탭별 저장 배선) · `runActiveTab` ·
 `runOcr`(사진) · `runPdfImport`(PDF — 공용 칸과 시험 범위 칸 양쪽을 채운다) ·
 `formatPassageBundle` / `parsePassageBundle` / `BUNDLE_LINE_RE`(지문 묶음을 텍스트로
 주고받기 — 선생님끼리 카톡·메일로 나누는 길이다. '📋 지문 전체 복사'(입력칸에 있다 —

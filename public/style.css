@@ -1528,6 +1528,17 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 .passage-merge-down:hover,
 .passage-add-here:hover,
 .passage-split:hover{color:var(--ink);}
+/* 자리 옮기기 — ⠿ 손잡이(끌기)와 ▲▼(한 칸씩). 이름 옆에 작게 둬 머리줄이 붐비지 않게 한다 */
+.passage-grip{flex:0 0 auto; cursor:grab; color:var(--ink-soft); font-size:16px; line-height:1; padding:2px 2px; user-select:none;}
+.passage-grip:hover{color:var(--accent);}
+.passage-grip:active{cursor:grabbing;}
+.passage-move-up,
+.passage-move-down{padding:4px 7px; font-size:10px; line-height:1; color:var(--ink-soft);}
+.passage-move-up:hover,
+.passage-move-down:hover{color:var(--ink);}
+.passage-item.dragging{opacity:.45;}
+.passage-item.drop-before{box-shadow:0 -4px 0 var(--accent);}
+.passage-item.drop-after{box-shadow:0 4px 0 var(--accent);}
 /* 붙여넣기 정리 안내 — 무엇을 지웠는지 알리고 되돌릴 수 있게 한다 */
 .passage-note{
   margin-top:6px; font-size:11.5px; color:var(--ink-soft);

@@ -1927,6 +1927,10 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
       // 첫 칸에 '위와 합치기', 마지막 칸에 '아래와 합치기'는 누를 데가 없다.
       it.querySelector(".passage-merge-up").hidden = i === 0;
       it.querySelector(".passage-merge-down").hidden = i === items.length - 1;
+      // 자리 옮기기도 같다 — 옮길 데가 없으면 감춘다(지문이 하나면 손잡이까지)
+      it.querySelector(".passage-move-up").hidden = i === 0;
+      it.querySelector(".passage-move-down").hidden = i === items.length - 1;
+      it.querySelector(".passage-grip").hidden = items.length < 2;
       // '나누기'는 실제로 나뉠 게 있을 때만 나타난다(평소엔 숨어 있어 머리줄이 붐비지 않는다)
       syncSplitBtn(it);
     });
@@ -1964,7 +1968,10 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
     item.className = "passage-item";
     item.innerHTML = `
       <div class="passage-item-head">
+        <span class="passage-grip" draggable="true" title="끌어서 이 지문의 자리를 옮기기" aria-hidden="true">⠿</span>
         <input type="text" class="passage-name" placeholder="지문 1" title="지문 이름 (비워두면 지문 1, 지문 2 …)">
+        <button type="button" class="btn ghost small passage-move-up" title="이 지문을 한 칸 위로" aria-label="한 칸 위로">▲</button>
+        <button type="button" class="btn ghost small passage-move-down" title="이 지문을 한 칸 아래로" aria-label="한 칸 아래로">▼</button>
         <span class="passage-count" aria-live="polite"></span>
         <button type="button" class="btn ghost small passage-merge-up" title="바로 위 지문과 하나로 합치기">↑ 위와 합치기</button>
         <button type="button" class="btn ghost small passage-merge-down" title="바로 아래 지문과 하나로 합치기">↓ 아래와 합치기</button>
@@ -2113,11 +2120,33 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
 
     item.querySelector(".passage-merge-up").addEventListener("click", () => mergeRows(item, -1));
     item.querySelector(".passage-merge-down").addEventListener("click", () => mergeRows(item, 1));
+    item.querySelector(".passage-move-up").addEventListener("click", (e) => {
+      moveRow(item, item.previousElementSibling, "before");
+      refocus(e.currentTarget, ".passage-move-down");
+    });
+    item.querySelector(".passage-move-down").addEventListener("click", (e) => {
+      moveRow(item, item.nextElementSibling, "after");
+      refocus(e.currentTarget, ".passage-move-up");
+    });
+    const grip = item.querySelector(".passage-grip");
+    grip.addEventListener("dragstart", (e) => {
+      if (addBtn.dataset.locked === "1") { e.preventDefault(); return; }
+      dragItem = item;
+      item.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", "");   // 파이어폭스는 데이터가 있어야 끌기가 시작된다
+      try { e.dataTransfer.setDragImage(item, 24, 18); } catch (_) {}
+    });
+    grip.addEventListener("dragend", () => {
+      dragItem = null;
+      item.classList.remove("dragging");
+      clearDropMark();
+    });
     splitBtn.addEventListener("click", () => splitRow(item));
 
     /* 지문을 '중간에' 넣는 길. 목록 맨 아래에 붙는 '지문 추가'와 달리, 이 칸 바로
-       뒤에 새 칸을 끼운다 — 순서를 나중에 바꾸는 기능이 없어서, 3번과 4번 사이에
-       지문을 넣고 싶으면 이 길밖에 없다. 번호는 renumber가 화면 순서대로 다시
+       뒤에 새 칸을 끼운다 — 맨 아래에 추가한 뒤 ▲▼·⠿로 옮겨도 되지만, 3번과 4번 사이에
+       넣을 줄 알면 이쪽이 한 번에 끝난다. 번호는 renumber가 화면 순서대로 다시
        매기므로 뒷 지문들이 알아서 한 칸씩 밀린다.
        (나누기가 쓰던 addRow의 '이 칸 뒤에' 인자를 그대로 쓴다) */
     item.querySelector(".passage-add-here").addEventListener("click", () => addRow(true, item));
@@ -2190,6 +2219,64 @@ function createPassageManager(listEl, addBtn, countEl, onEnter, maxNoteEl, max) 
     showOpNote(top, "지문 2개를 합쳤습니다.", snap);
     topTa.focus();
   }
+
+  /* ══════ 자리 옮기기 (2026-11-02 사용자) ══════
+     ▲▼는 한 칸씩, ⠿ 손잡이는 끌어서 아무 자리로. 순서가 곧 인쇄물 순서라, PDF에서 한꺼번에
+     꺼냈거나 저장본을 이어 붙여 차례가 어긋났을 때 잘라 붙이지 않고 고치게 한다.
+     이미 만든 결과물은 건드리지 않는다(사용자 결정 — 지우기·합치기와 같다). 새 순서는 다음에
+     만들 때부터 쓰인다. 직접 지은 이름은 지문을 따라가고, 비워 둔 이름(지문 1·2…)은 renumber가
+     새 자리에 맞춰 다시 매긴다. 합치기처럼 옮긴 칸 아래에 '되돌리기'가 뜬다. */
+  let dragItem = null;
+
+  // target 칸의 앞(before)이나 뒤(after)로 옮긴다. 같은 자리면 아무 일도 하지 않는다.
+  function moveRow(item, target, where) {
+    if (!target || target === item || !target.classList.contains("passage-item")) return;
+    if (addBtn.dataset.locked === "1") return;   // 만드는 중에는 순서를 바꾸지 않는다
+    const ref = where === "before" ? target : target.nextElementSibling;
+    if (ref === item || ref === item.nextElementSibling) return;
+    const snap = snapshotRows();
+    listEl.insertBefore(item, ref);
+    renumber();
+    const pos = [...listEl.querySelectorAll(".passage-item")].indexOf(item) + 1;
+    showOpNote(item, `${pos}번째 자리로 옮겼습니다.`, snap);
+    if (self.onMoved) self.onMoved(item);   // 공용 칸이면 '결과물도 이 순서로'를 붙인다
+  }
+
+  // 옮기면 칸이 DOM에서 빠졌다 들어가 누른 단추의 포커스가 풀린다 — 연달아 누를 수 있게 되돌린다.
+  // 맨 위·맨 아래에 닿아 그 단추가 숨으면 반대쪽 단추로.
+  function refocus(btn, otherSel) {
+    const el = btn.hidden ? btn.closest(".passage-item").querySelector(otherSel) : btn;
+    if (el && !el.hidden) el.focus({ preventScroll: false });
+    btn.closest(".passage-item").scrollIntoView({ block: "nearest" });
+  }
+
+  function clearDropMark() {
+    listEl.querySelectorAll(".drop-before, .drop-after").forEach((el) =>
+      el.classList.remove("drop-before", "drop-after"));
+  }
+  // 끌고 있는 칸이 마우스 아래 칸의 위쪽 절반이면 그 앞, 아래쪽 절반이면 그 뒤에 들어간다
+  function dropSpot(e) {
+    const over = e.target.closest && e.target.closest(".passage-item");
+    if (!over || over.parentNode !== listEl || over === dragItem) return null;
+    const r = over.getBoundingClientRect();
+    return { over, where: e.clientY < r.top + r.height / 2 ? "before" : "after" };
+  }
+  listEl.addEventListener("dragover", (e) => {
+    if (!dragItem) return;   // 다른 목록의 칸이나 바깥 글을 끌어온 것은 받지 않는다
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const spot = dropSpot(e);
+    clearDropMark();
+    if (spot) spot.over.classList.add(spot.where === "before" ? "drop-before" : "drop-after");
+  });
+  listEl.addEventListener("drop", (e) => {
+    if (!dragItem) return;
+    e.preventDefault();      // 지문 칸(textarea) 위에 놓아도 글이 끼어들지 않게
+    const spot = dropSpot(e);
+    const item = dragItem;
+    clearDropMark();
+    if (spot) moveRow(item, spot.over, spot.where);
+  });
 
   // 문단마다 칸을 나눈다. 새 칸은 원래 칸 바로 뒤에 들어간다.
   function splitRow(item) {
@@ -2361,6 +2448,120 @@ const passageMgr = createPassageManager(
   () => runActiveTab(),
   $("passageMaxNote")
 );
+/* ══════ 결과물도 지문 순서대로 (2026-11-02 사용자) ══════
+   지문 칸에서 자리를 옮기면(moveRow) 옮긴 칸 아래 안내에 [결과물도 이 순서로]가 붙는다. 누르면 이 지문칸을
+   쓰는 탭(SHARED_PASSAGE_TABS) 가운데 결과물이 있는 탭을 모두 새 지문 순서로 바꾼다 — AI를 다시 부르지 않는다.
+   탭마다 RESULT_REORDER[탭] = { has(), apply(jobs) → {changed, msg} }를 둔다(상세·요약분석은 아래, 워크북은
+   drawWorkbook 뒤, 문제 탭은 setupQuizTab 안). 결과물의 지문은 글(job.text)로 지문칸과 짝짓는다 — 긴 지문을 나눈
+   토막은 그 글을 품은 지문으로. 짝을 못 찾은 것(지문을 지웠거나 고쳤다)은 맨 뒤에 원래 차례대로 둔다. */
+const RESULT_REORDER = {};
+const RESULT_TAB_LABEL = { analyze: "상세분석", brief: "요약분석", mcq: "객관식", saq: "주관식", mix: "객관식+주관식", workbook: "워크북" };
+
+function passageIndexOf(jobs, job) {
+  const t = String((job && job.text) || "").trim();
+  if (!t) return -1;
+  const i = jobs.findIndex((j) => j.text === t);
+  return i >= 0 ? i : jobs.findIndex((j) => j.text.includes(t));
+}
+// 지문 순서(idx)대로 안정 정렬 — 짝이 없는 것(-1)은 원래 차례대로 맨 뒤
+function sortByPassage(items) {
+  const known = items.filter((it) => it.idx >= 0).sort((a, b) => a.idx - b.idx);
+  return known.concat(items.filter((it) => it.idx < 0));
+}
+// 이름을 비워 둔 지문은 '지문 N'이 자리를 따라 바뀐다(토막의 ' (1/3)' 꼬리는 남긴다)
+function renamedJob(job, idx) {
+  if (!job || job.named || idx < 0) return job;
+  const tail = /( \(\d+\/\d+\))$/.exec(job.name || "");
+  return { ...job, no: idx + 1, name: `지문 ${idx + 1}${tail ? tail[1] : ""}` };
+}
+function setBannerName(block, name) {
+  const b = block.querySelector(".passage-banner");
+  if (b && b.firstChild && b.firstChild.nodeType === 3) b.firstChild.nodeValue = name;
+}
+const sameOrder = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/* 상세분석·요약분석은 다시 그리지 않고 지문 덩어리(section.passage-block)의 자리만 옮긴다 —
+   직접 고친 글·요약 그림·쪽 나눔(data-brk)이 덩어리에 붙어 있어 그대로 따라온다. 다시 그리면
+   요약 그림(blob URL)을 놓아 버리고(revokeInfographics) 쪽 나눔도 덩어리 번호로만 되살릴 수 있다. */
+function reorderPassageBlocks(host, items, anchorAfter) {
+  const anchor = anchorAfter ? anchorAfter.nextSibling : null;
+  items.forEach((it) => host.insertBefore(it.block, anchor));
+}
+RESULT_REORDER.analyze = {
+  has: () => lastAnalyzeEntries.length > 0,
+  apply(jobs) {
+    const blocks = [...resultEl.children].filter((el) => el.matches("section.passage-block"));
+    if (!blocks.length) return { changed: false };
+    const items = blocks.map((block) => {
+      const e = block.dataset.entry;
+      const entry = e != null ? lastAnalyzeEntries[+e] : null;
+      return { block, entry, idx: entry ? passageIndexOf(jobs, entry.job) : -1 };
+    });
+    const sorted = sortByPassage(items);
+    if (sameOrder(sorted, items)) return { changed: false };
+    if (resultEl.classList.contains("paging")) setPagingMode(false);
+    reorderPassageBlocks(resultEl, sorted, blocks[blocks.length - 1]);
+    const entries = [];
+    sorted.forEach((it) => {
+      if (!it.entry) return;
+      const job = renamedJob(it.entry.job, it.idx);
+      if (job !== it.entry.job) setBannerName(it.block, job.name);
+      it.block.dataset.entry = String(entries.length);
+      entries.push({ ...it.entry, job });
+    });
+    lastAnalyzeEntries = entries;
+    resetUndo();   // 되돌리기 스택은 화면을 통째로 찍어 둔 것이라 옛 순서로 돌아가 버린다
+    return { changed: true };
+  },
+};
+RESULT_REORDER.brief = {
+  has: () => lastBriefEntries.length > 0,
+  apply(jobs) {
+    const blocks = [...briefDocEl.children].filter((el) => el.matches("section.passage-block"));
+    if (!blocks.length || blocks.length !== briefShown.length) return { changed: false };
+    const items = blocks.map((block, i) => ({ block, entry: briefShown[i], idx: passageIndexOf(jobs, briefShown[i].job) }));
+    const sorted = sortByPassage(items);
+    if (sameOrder(sorted, items)) return { changed: false };
+    if (pgHost === briefDocEl && briefDocEl.classList.contains("paging")) setPagingMode(false);
+    reorderPassageBlocks(briefDocEl, sorted, blocks[blocks.length - 1]);
+    briefShown = sorted.map((it) => {
+      const job = renamedJob(it.entry.job, it.idx);
+      if (job !== it.entry.job) setBannerName(it.block, job.name);
+      return { ...it.entry, job };
+    });
+    lastBriefEntries = briefShown.filter((e) => !e.error);
+    return { changed: true };
+  },
+};
+
+// 지문을 옮긴 안내줄에 단추를 붙인다 — 결과물이 있는 탭이 하나라도 있을 때만
+passageMgr.onMoved = (item) => {
+  const tabs = SHARED_PASSAGE_TABS.filter((t) => RESULT_REORDER[t] && RESULT_REORDER[t].has());
+  if (!tabs.length) return;
+  const note = item.querySelector(".passage-note");
+  note.insertAdjacentHTML("beforeend",
+    ` · <button type="button" class="linkish passage-reorder-results">결과물도 이 순서로</button>`);
+};
+passageListEl.addEventListener("click", (e) => {
+  const btn = e.target.closest(".passage-reorder-results");
+  if (!btn) return;
+  const jobs = passageMgr.getJobs();
+  const done = [], kept = [];
+  SHARED_PASSAGE_TABS.forEach((t) => {
+    const r = RESULT_REORDER[t];
+    if (!r || !r.has()) return;
+    const out = r.apply(jobs) || {};
+    if (out.changed) done.push(RESULT_TAB_LABEL[t]);
+    else if (out.msg) kept.push(`${RESULT_TAB_LABEL[t]}은 ${out.msg}`);
+  });
+  const parts = [];
+  parts.push(done.length ? `결과물 순서를 맞췄습니다 — ${done.join("·")}.` : "결과물은 이미 이 순서입니다.");
+  if (kept.length) parts.push(kept.join(" / "));
+  const span = document.createElement("span");
+  span.textContent = parts.join(" ");
+  btn.replaceWith(span);
+});
+
 // Ctrl+Enter는 현재 열려 있는 탭의 실행 버튼을 누른다
 function runActiveTab() {
   const active = document.querySelector(".tab-page.active");
@@ -8836,7 +9037,7 @@ function setupQuizTab({ prefix, types, footer }) {
   // "내 저장함"에서 불러온 문제 세트를 다시 그린다 — API를 다시 부르지 않고
   // 저장해 둔 원본 set(질문·변형 정보)을 그때와 같은 buildQuizHtml로 재사용한다.
 
-  function renderQuizEntries(entries) {
+  function renderQuizEntries(entries, opts = {}) {
     resultEl.innerHTML = "";
     const answerParts = [];
     let expCol = false;
@@ -8877,8 +9078,40 @@ function setupQuizTab({ prefix, types, footer }) {
     syncShuffleBtns();
     syncFloatPrint();
     // 비우는 호출일 때는 스크롤하지 않는다 — 빈 자리로 끌려가지 않게
-    if (entries.length) resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (entries.length && !opts.noScroll) resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
+  /* 결과물도 지문 순서대로(RESULT_REORDER 참고). 변형 세트(label)마다 그 세트가 차지한 자리는 그대로 두고
+     자리 안에서 지문 차례만 바꾼다 — 원문판·변형판이 번갈아 있든 묶여 있든 그 모양이 남는다. 번호는 다시 그릴 때
+     처음부터 이어 매겨진다. '전체 문항 섞기'나 [🔀 문제 섞기]로 한 벌로 합친 시험지는 지문 구분이 없어(job.text가
+     없다) 그대로 둔다. */
+  RESULT_REORDER[prefix] = {
+    has: () => (lastEntries || []).length > 0,
+    apply(jobs) {
+      if (lastEntries.some((e) => !e.job || !e.job.text)) {
+        return { changed: false, msg: "문항을 섞어 만든 시험지라 그대로 둡니다" };
+      }
+      const next = lastEntries.slice();
+      const byLabel = new Map();
+      lastEntries.forEach((e, pos) => {
+        const k = e.label || "";
+        if (!byLabel.has(k)) byLabel.set(k, []);
+        byLabel.get(k).push({ e, pos, idx: passageIndexOf(jobs, e.job) });
+      });
+      let changed = false;
+      byLabel.forEach((items) => {
+        const sorted = sortByPassage(items);
+        if (!sameOrder(sorted, items)) changed = true;
+        items.forEach((slot, i) => {
+          const it = sorted[i];
+          next[slot.pos] = { ...it.e, job: renamedJob(it.e.job, it.idx) };
+        });
+      });
+      if (!changed) return { changed: false };
+      renderQuizEntries(next, { noScroll: true });
+      return { changed: true };
+    },
+  };
 
   function getQuizSettings() {
     const items = pickedItems();
@@ -10550,6 +10783,25 @@ function drawWorkbook(results, opts = {}) {
   else if (results.length && !opts.noScroll) workbookDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
   return total;
 }
+
+// 결과물도 지문 순서대로(RESULT_REORDER 참고) — 받아 둔 결과를 새 차례로 다시 그린다.
+// 쪽 나눔은 data-key(p{지문 차례}…)로 되찾으므로, 그리기 전에 화면의 표식을 새 차례 번호로 바꿔 둔다.
+RESULT_REORDER.workbook = {
+  has: () => lastWorkbookEntries.length > 0,
+  apply(jobs) {
+    const items = lastWorkbookResults.map((r) => ({ r, idx: r.data ? passageIndexOf(jobs, r.job) : -1 }));
+    const sorted = sortByPassage(items);
+    if (sameOrder(sorted, items)) return { changed: false };
+    const oldData = lastWorkbookResults.filter((r) => r.data);
+    const newData = sorted.filter((it) => it.r.data).map((it) => it.r);
+    const map = oldData.map((r) => newData.indexOf(r));
+    wbPageUnits().forEach((el) => {
+      if (el.dataset.key) el.dataset.key = el.dataset.key.replace(/p(\d+)/, (m, n) => (map[n] >= 0 ? `p${map[n]}` : m));
+    });
+    drawWorkbook(sorted.map((it) => (it.r.data ? { ...it.r, job: renamedJob(it.r.job, it.idx) } : it.r)), { noScroll: true });
+    return { changed: true };
+  },
+};
 
 /* ── 만든 워크북이 화면에 있을 때 단추 잠그기 + 안내 한 줄 ──
    단계 체크를 바꾸면 drawWorkbook이 받아 둔 결과로 다시 그리므로 AI를 부르지 않는다 — 불러온 자료에서 필요한 단계만
@@ -13704,6 +13956,7 @@ const HOWTO = {
 // 공용 지문칸을 쓰는 탭마다 같은 안내 — 지문칸의 [🆕 새로 만들기](newWorkBtn)
 SHARED_PASSAGE_TABS.forEach((t) => {
   if (HOWTO[t]) HOWTO[t].tip = (HOWTO[t].tip || "") +
+    " 지문 순서는 지문 칸 이름 옆의 <b>▲▼</b>로 한 칸씩, <b>⠿</b>를 끌어 원하는 자리로 옮길 수 있고, 옮긴 칸 아래 <b>[결과물도 이 순서로]</b>를 누르면 만들어 둔 결과물도 새 순서로 바뀝니다(요금 없음)." +
     " 다른 지문으로 넘어갈 때는 지문 칸의 <b>[🆕 새로 만들기]</b>를 누르세요.";
 });
 
