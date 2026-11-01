@@ -2947,3 +2947,10 @@ input.st-in{width:100%; box-sizing:border-box;}
 /* 시험 내기 창의 '틀린 문제 다시 풀기(보충 학습)' 칸 */
 .retry-opt { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid var(--line, #dde3ee); border-radius: 10px; }
 .retry-opt input[type="number"] { width: 80px; }
+
+/* 분석본 '인쇄 크기'(app.js SHEET_PRINT_SCALES) — 인쇄할 때만 지문 덩어리를 줄여 쪽 수를 아낀다. 화면은 그대로.
+   값을 더하면 app.js의 SHEET_PRINT_SCALES에도 같은 id를 더할 것(쪽 구성 layoutPages가 그 숫자로 쪽 높이를 잰다) */
+@media print{
+  [data-print-scale="92"] .passage-block{zoom:.92;}
+  [data-print-scale="88"] .passage-block{zoom:.88;}
+}

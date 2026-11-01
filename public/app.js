@@ -4171,7 +4171,9 @@ function layoutPages() {
   const tops = rects.map((r) => r.top - base);
   const boxH = rects.map((r) => r.height);
   const hs = boxH.map((h) => Math.max(0, h - HANDLE_PAD_PX));
-  const pageH = PAGE_H_MM * PX_PER_MM;
+  // 분석본 꾸미기의 '인쇄 크기'(SHEET_PRINT_SCALES) — 인쇄에서 덩어리가 그만큼 작아지므로 화면 기준 쪽 높이를 늘려 잰다
+  const printScale = (Number(pgHost.dataset.printScale) || 100) / 100;
+  const pageH = (PAGE_H_MM * PX_PER_MM) / printScale;
 
   // 쪽 나누기 — 브라우저가 인쇄할 때 하는 일을 그대로 흉내낸다
   const pages = [];
@@ -7034,12 +7036,20 @@ function loadSheetFont(font) {
   document.head.appendChild(link);
 }
 // kind: "quiz"(문제 탭·문법문제·동형 모의고사) | "wb"(워크북) | "vocab"(단어장) — 글자 크기 묶음이 다르다(SHEET_FS)
-//       | "doc"(지문 분석·요약분석 — 테마 색·글꼴만, 글자 크기 칸 없음)
+//       | "doc"(지문 분석·요약분석 — 테마 색·글꼴 + 인쇄 크기(SHEET_PRINT_SCALES), 글자 크기 칸 없음)
+/* 분석본 인쇄 크기(2026-11-02 사용자) — 인쇄할 때만 지문 덩어리를 이 비율로 줄여 쪽 수를 아낀다(화면은 그대로).
+   같은 지문 3개 실측: 보통 21쪽 → 92% 20쪽 → 88% 19쪽. 배치(새 쪽 강제)를 풀어서는 줄지 않았다 — TODO 참고.
+   값은 style.css의 [data-print-scale] 규칙과 짝이고, 쪽 구성(layoutPages)이 같은 비율로 쪽 높이를 잰다. */
+const SHEET_PRINT_SCALES = [
+  { id: "", name: "보통 (100%)" },
+  { id: "92", name: "조금 작게 (92%)" },
+  { id: "88", name: "작게 (88%)" },
+];
 function createSheetStyle(boxId, resultEl, kind) {
   const box = $(boxId);
   const fsList = SHEET_FS[kind];
   const noFs = () => Object.fromEntries(fsList.map(({ k }) => [k, null]));
-  let cur = { tone: "", font: "", fs: noFs() };
+  let cur = { tone: "", font: "", fs: noFs(), scale: "" };
   const fsDef = (k) => fsList.find((x) => x.k === k).def;
   const pick = (list, id) => list.find((x) => x.id === id) || list.find((x) => x.id === "");
   // group이 있는 항목은 <optgroup>으로 묶는다(글꼴 — 고딕·명조·제목용)
@@ -7076,6 +7086,9 @@ function createSheetStyle(boxId, resultEl, kind) {
       if (on) st.setProperty("--fs-" + k, v + "px");
       else st.removeProperty("--fs-" + k);
     });
+    // 인쇄 크기 — 인쇄 CSS만 읽는다(화면 글씨는 그대로)
+    if (kind === "doc" && cur.scale) resultEl.dataset.printScale = cur.scale;
+    else delete resultEl.dataset.printScale;
     loadSheetFont(font);
     if (font.family) {
       // 제목류는 var(--font)를, 본문은 물려받은 font-family를 읽으므로 둘 다 바꾼다
@@ -7151,7 +7164,8 @@ function createSheetStyle(boxId, resultEl, kind) {
         <button type="button" class="btn ghost small sheet-fs-reset">처음 크기로</button>
       </div>` : ""}
       <label>글꼴 <select data-k="font">${opts(SHEET_FONTS, "")}</select></label>
-      ${isDoc ? `<div class="hint">테마 색은 표지·지문 머리·문장 번호·소제목·흐름도·배경지식 카드 같은 꾸밈 자리에만 들어가고, 어법(빨강)·어휘(파랑)·병렬구조 표시 색은 뜻을 담고 있어 그대로입니다. 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다 — 자주 쓰는 색 동그라미는 문제 탭의 시험지 꾸미기와 같이 씁니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글꼴마다 글자 폭이 달라 쪽 수가 조금 달라질 수 있으니 인쇄 전에 <b>[📄 쪽 구성]</b>으로 확인하세요. 워드 다운로드에는 들어가지 않습니다.</div>` : `<div class="hint">색은 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다. 자주 쓰는 색은 네모를 눌러 연 색 판의 <b>＋ 색 추가</b>로 동그라미에 더하고 <b>－ 빼기</b>로 뺍니다 — 계정에 저장되어 모든 탭과 다음 로그인에도 남습니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 글자 크기는 숫자를 적거나 칸의 ▲▼(또는 키보드 ↑↓)로 1px씩 바꿉니다 — 처음 숫자는 인쇄되는 크기이고, 바꾸면 화면도 그 크기로 보입니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글자를 키우면 쪽 수가 늘어납니다. 워드 다운로드에는 들어가지 않습니다.</div>`}`;
+      ${isDoc ? `<label>인쇄 크기 <select data-k="scale">${opts(SHEET_PRINT_SCALES, "")}</select></label>` : ""}
+      ${isDoc ? `<div class="hint"><b>인쇄 크기</b>를 줄이면 인쇄할 때만 글씨와 칸이 함께 작아져 쪽 수가 줄어듭니다(화면은 그대로 — 지문 3개 기준 92%는 약 5%, 88%는 약 10% 적게). 테마 색은 표지·지문 머리·문장 번호·소제목·흐름도·배경지식 카드 같은 꾸밈 자리에만 들어가고, 어법(빨강)·어휘(파랑)·병렬구조 표시 색은 뜻을 담고 있어 그대로입니다. 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다 — 자주 쓰는 색 동그라미는 문제 탭의 시험지 꾸미기와 같이 씁니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글꼴마다 글자 폭이 달라 쪽 수가 조금 달라질 수 있으니 인쇄 전에 <b>[📄 쪽 구성]</b>으로 확인하세요. 워드 다운로드에는 들어가지 않습니다.</div>` : `<div class="hint">색은 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다. 자주 쓰는 색은 네모를 눌러 연 색 판의 <b>＋ 색 추가</b>로 동그라미에 더하고 <b>－ 빼기</b>로 뺍니다 — 계정에 저장되어 모든 탭과 다음 로그인에도 남습니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 글자 크기는 숫자를 적거나 칸의 ▲▼(또는 키보드 ↑↓)로 1px씩 바꿉니다 — 처음 숫자는 인쇄되는 크기이고, 바꾸면 화면도 그 크기로 보입니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글자를 키우면 쪽 수가 늘어납니다. 워드 다운로드에는 들어가지 않습니다.</div>`}`;
     const changed = () => { if (box.onSheetStyle) box.onSheetStyle(); };
     box.addEventListener("change", (e) => {
       const k = e.target && e.target.dataset && e.target.dataset.k;
@@ -7216,7 +7230,8 @@ function createSheetStyle(boxId, resultEl, kind) {
     const o = v && typeof v === "object" ? v : {};
     const fs = noFs();
     if (o.fs && typeof o.fs === "object") fsList.forEach(({ k }) => { fs[k] = sheetFsOf(o.fs[k]); });
-    cur = { tone: sheetToneOf(o.tone), font: pick(SHEET_FONTS, o.font).id, fs };
+    cur = { tone: sheetToneOf(o.tone), font: pick(SHEET_FONTS, o.font).id, fs,
+            scale: SHEET_PRINT_SCALES.some((x) => x.id && x.id === o.scale) ? o.scale : "" };
     if (box) box.querySelectorAll("select[data-k]").forEach((s) => { s.value = cur[s.dataset.k]; });
     apply();
   }

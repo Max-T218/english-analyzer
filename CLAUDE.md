@@ -216,6 +216,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 `renderAccount`(잔액 표시) · `setEditMode`(결과물 직접 수정) · `printDoc` ·
 `undoOnce` / `pushUndo`(되돌리기 — 결과 화면 HTML을 통째로 찍어 쌓는다. 글자 수정과 쪽 구성이
 같은 스택을 쓴다) ·
+`SHEET_PRINT_SCALES`(상세·요약분석 꾸미기의 '인쇄 크기' 보통/92%/88% — 인쇄 CSS `[data-print-scale]`이 `.passage-block`을 zoom으로 줄이고 `layoutPages`가 쪽 높이를 같은 비율로 잰다. 2026-11-02 실측: 같은 지문 3개 21 → 20 → 19쪽. 배치를 바꿔서는 쪽이 줄지 않아 이 길을 택했다) ·
 `setPagingMode` / `layoutPages` / `raiseAllPages`(지문 분석 '쪽 구성' — 덩어리 `.pg-blk`
 단위로 쪽 경계를 옮긴다. 인쇄에 남는 건 `data-brk`뿐이고, 쪽 높이는 `PAGE_H_MM`이
 `@page`·`.print-foot` 값을 그대로 따른다. `raiseAllPages`는 '⤴ 전체 올리기' — `data-brk="page"`를
