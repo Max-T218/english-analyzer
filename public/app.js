@@ -5275,8 +5275,15 @@ TAB_SAVE.analyze = {
     images: collectInfographicMeta(),
     sheetStyle: analyzeSheetStyle.get(),
   }),
-  afterSave: (itemId, payload, onProgress) => uploadInfographics(itemId, payload.images || [], onProgress),
+  afterSave: async (itemId, payload, onProgress, title) => {
+    await uploadInfographics(itemId, payload.images || [], onProgress);
+    await saveAnalyzeVocab(title, payload);
+  },
   afterLoad: (itemId, payload) => loadInfographics(itemId, payload),
+  saveLead: () => analyzeVocabSets(lastAnalyzeEntries).length
+    ? "지문과 만든 결과를 함께 저장합니다. 나중에 \"📦 제작 자료 저장함\"에서 이 제목으로 다시 찾을 수 있습니다. " +
+      "분석에 나온 핵심 어휘는 '제목_단어'라는 단어장으로도 함께 저장됩니다."
+    : "",
   applyPayload: (payload) => {
     passageMgr.setJobs(payload.passages || []);
     grammarEl.value = (payload.settings && payload.settings.targetGrammar) || "";
@@ -5289,6 +5296,36 @@ TAB_SAVE.analyze = {
   },
   clearResults: () => renderAnalyzeEntries([]),
 };
+
+/* 상세분석을 사이트에 저장하면 그 분석의 핵심 어휘도 '제목_단어' 단어장 저장본으로 함께 저장한다(2026-11-02 사용자).
+   이름만 보고 어느 지문의 단어인지 알 수 있게 분석본 제목 뒤에 _단어를 붙인다. 자동 저장이 아니라 [💾 사이트 저장]을
+   누를 때만이고, 단어장 저장본 중 같은 이름이 있으면 새로 만들지 않고 덮어쓴다 — 같은 분석을 다시 저장해도 저장함에
+   겹쳐 쌓이지 않게(2026-08-10 자동 저장을 기각한 까닭이 중복이었다). AI를 부르지 않아 요금이 없다.
+   단어장 저장이 실패해도 분석본은 이미 저장됐으므로 저장창은 그대로 닫고 알리기만 한다. */
+function analyzeVocabSets(entries) {
+  return (entries || [])
+    .filter((e) => e && e.data && Array.isArray(e.data.vocab) && e.data.vocab.length)
+    .map((e) => ({ name: (e.job && e.job.name) || "지문", vocab: e.data.vocab, src: "analyze" }));
+}
+async function saveAnalyzeVocab(title, payload) {
+  const sets = analyzeVocabSets(payload && payload.entries);
+  if (!sets.length) return;
+  const vtitle = `${String(title || "제목 없음").trim()}_단어`.slice(0, 200);
+  try {
+    const list = await getJson("/api/saved", "저장 목록을 불러오지 못했습니다.");
+    const same = (list.items || []).find((it) => it.tab === "vocab" && it.title === vtitle);
+    const body = {
+      tab: "vocab",
+      title: vtitle,
+      payload: { vocabSets: sets, settings: { ...TAB_SAVE.vocab.getPayload().settings, title: vtitle } },
+    };
+    if (same) body.id = same.id;
+    await postJson("/api/saved", body, "단어장 저장에 실패했습니다.");
+  } catch (err) {
+    alert(`분석본은 저장했지만 단어장('${vtitle}')은 저장하지 못했습니다. (${err.message || err})\n` +
+      "단어장 탭에서 [💾 사이트 저장]으로 직접 저장해 주세요.");
+  }
+}
 
 function esc(s) {
   return String(s == null ? "" : s)
@@ -13094,7 +13131,7 @@ async function doSaveDialog(overwriteId) {
     if (res && res.id && TAB_SAVE[tab].afterSave) {
       await TAB_SAVE[tab].afterSave(res.id, payload, (done, total) => {
         busyBtn.textContent = `요약 이미지 저장 중… ${done}/${total}`;
-      });
+      }, title);
     }
     // 저장은 끝났다 — 단어장에 넣는 일이 실패해도 저장본은 남으므로, 창은 닫고 안내만 한다
     let folderFail = "";
@@ -13899,7 +13936,7 @@ const HOWTO = {
       "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 요약 이미지는 <b>추가 요청</b> 칸에 원하는 강조·색을 적을 수 있고, 비우면 기본 방식으로 만듭니다. 목표 어법을 적으면 그 구조가 주황색으로 표시됩니다.",
       "<b>[분석하기]</b>를 누릅니다. 요약 이미지가 안 만들어졌거나 나중에 필요하면 분석은 그대로 두고 <b>[🖼 요약 이미지만 만들기]</b>로 없는 그림만 따로 만듭니다.",
       "<b>[✏️ 직접 수정]</b>으로 글자를, <b>[📄 쪽 구성]</b>으로 인쇄될 쪽 경계를 고칩니다.",
-      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 분석본 꾸미기</b>로 테마 색·글씨체를 바꿀 수 있습니다(요금 없음).",
+      "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. 사이트에 저장하면 핵심 어휘도 <b>'제목_단어'</b> 단어장으로 함께 저장됩니다. <b>🎨 분석본 꾸미기</b>로 테마 색·글씨체를 바꿀 수 있습니다(요금 없음).",
     ],
     tip: "요약 이미지는 사이트에 저장해야 다음에 불러올 때 남습니다. 학생용 모의고사 문제지를 <b>[📄 PDF에서 가져오기]</b>로 올리면 빈칸·순서·문장 삽입 문항을 AI가 풀어 채울지 묻습니다(채우면 지문당 포인트). 그 창에 정답표를 붙여 넣거나 올리면 정답표의 답대로 채웁니다. 순서·삽입·무관한 문장·빈칸 <b>문제를 캡처해 넣으면</b> 답을 정하는 창이 떠, 답을 고르거나 정답표를 넣거나 AI에게 풀게 하면(문제당 포인트) 원래 지문으로 바꿔 넣습니다. 문제 모양 그대로 쓰려면 <b>[📷 캡처본 그대로 두기]</b>를 누르세요." + HOWTO_PAUSE_TIP,
     shots: {
