@@ -2565,7 +2565,7 @@ passageListEl.addEventListener("click", (e) => {
 // Ctrl+Enter는 현재 열려 있는 탭의 실행 버튼을 누른다
 function runActiveTab() {
   const active = document.querySelector(".tab-page.active");
-  const btn = active && active.querySelector("#analyzeBtn, #mcqBtn, #saqBtn, #mixBtn, #wbBtn");
+  const btn = active && active.querySelector("#analyzeBtn, #mcqBtn, #saqBtn, #mixBtn, #wbBtn, #vocabExtractRunBtn");
   if (btn && !btn.disabled) btn.click();
 }
 
@@ -3859,9 +3859,10 @@ syncPager();
      · 기출(시험지 제작)은 자기 입력칸(examPaperMgr)을 쓴다. 상한이 달라서다
        (공용 40개 / 시험지 100개). 두 칸이 동시에 보이면 어디에 넣어야 하는지 알 수
        없고, 잘못 넣으면 아무 일도 일어나지 않는다.
-     · 단어장은 지문칸을 아예 읽지 않는다 — 지문 분석 결과(이미 저장된 값)나
-       직접 입력·사진·PDF로만 채운다. 지문칸이 떠 있으면 '여기다 지문을 넣어야
-       하나' 하고 헷갈리게 되므로, 쓰지도 않는 칸을 보여줄 이유가 없다.
+     · 단어장은 [🤖 지문에서 뽑기]를 열었을 때만 지문칸을 읽는다(vocabWantsPassage) — 그 밖에는
+       지문 분석 결과나 직접 입력·사진·PDF로 채우므로, 지문칸이 떠 있으면 '여기다 지문을 넣어야
+       하나' 하고 헷갈린다. 뽑기는 다른 탭과 같은 지문칸을 써야 저장함·PDF·사진 가져오기가
+       그대로 된다(2026-11-02 사용자 — 처음엔 뽑기 칸 안에 따로 글상자를 두었다).
    학원 마크는 탭마다 '만들기 직전' 자리(실행 단추 위)로 옮겨 보여 준다 — 칸은 하나뿐이고
    자리만 옮긴다. 탭을 고르기 전에는 원래 자리(#brandHome 앞)에서 감춰 둔다. */
 const sharedPassagePanel = document.querySelector(".passage-panel");
@@ -3881,7 +3882,8 @@ function syncTabChrome(tab) {
   const onTrend = tab === "trend";
   // 문법문제 마법사는 '넣은 지문으로'를 골랐을 때만 지문칸을 쓴다(grammar.js grammarWantsPassage)
   const grammarNoPassage = tab === "grammar" && !(typeof grammarWantsPassage === "function" && grammarWantsPassage());
-  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || grammarNoPassage || tab === "vocab" || tab === "students" || tab === "leveltest";
+  const vocabNoPassage = tab === "vocab" && !(typeof vocabWantsPassage === "function" && vocabWantsPassage());
+  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || grammarNoPassage || vocabNoPassage || tab === "students" || tab === "leveltest";
   // 공용 지문칸 아래 단어장은 문제 탭에서만 쓰인다(분석·워크북은 단어장을 보지 않는다)
   const quizVocabWrap = $("quizVocabWrap");
   if (quizVocabWrap) quizVocabWrap.hidden = !["mcq", "saq", "mix"].includes(tab);
@@ -12396,10 +12398,11 @@ vocabManualBtn.addEventListener("click", () => {
    되, 서버가 지문의 낱말 중 2022 개정 교육과정 목록(중학교·공통 / 고등 선택)에 있는 것을 후보로 보여 주고
    그 단어 위주로 고르게 한다(학교급 선택은 없다). 초등 단어는 서버가 빼고 목록 밖 단어·숙어는 일부만 허용한다.
    지문이 여럿이면 한 번에 하나씩 부르고, 앞에서 뽑은 낱말은 `exclude`로 넘겨 뒤 지문에서 겹쳐 뽑지 않게 한다.
-   결과는 다른 통로와 같이 편집 표(vocabEditorAdd)로 들어가므로 뜻을 한 번 보고 고칠 수 있다. */
+   결과는 다른 통로와 같이 편집 표(vocabEditorAdd)로 들어가므로 뜻을 한 번 보고 고칠 수 있다.
+   지문은 다른 탭과 같은 공용 지문칸(passageMgr)에서 읽는다 — 이 칸을 열면 단어장 탭에서도 지문칸이 뜬다
+   (syncTabChrome이 vocabWantsPassage를 본다). */
 const vocabExtractBtn = $("vocabExtractBtn");
 const vocabExtractPanel = $("vocabExtractPanel");
-const vocabExtractTextEl = $("vocabExtractText");
 const vocabExtractCountEl = $("vocabExtractCount");
 const vocabExtractRunBtn = $("vocabExtractRunBtn");
 const VOCAB_EXTRACT_COUNT_MAX = 60; // server.py의 VOCAB_EXTRACT_COUNT_MAX와 같은 값
@@ -12409,26 +12412,27 @@ function syncVocabExtractUI() {
   const price = PRICING && PRICING.vocabExtract > 0 ? ` (지문당 ${pt(PRICING.vocabExtract)})` : "";
   $("vocabExtractPrice").textContent = price;
 }
-vocabExtractBtn.addEventListener("click", () => {
-  vocabExtractPanel.hidden = !vocabExtractPanel.hidden;
-  if (!vocabExtractPanel.hidden) {
-    syncVocabExtractUI();
-    vocabExtractTextEl.focus();
-  }
-});
-$("vocabExtractCloseBtn").addEventListener("click", () => {
-  vocabExtractPanel.hidden = true;
-});
+function vocabWantsPassage() {
+  return !vocabExtractPanel.hidden;
+}
+function setVocabExtractOpen(on) {
+  vocabExtractPanel.hidden = !on;
+  if (on) syncVocabExtractUI();
+  syncTabChrome("vocab");
+  // 지문칸은 탭 위쪽에 있다 — 열 때 눈에 들어오게 그리로 올린다
+  if (on && sharedPassagePanel) sharedPassagePanel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+vocabExtractBtn.addEventListener("click", () => setVocabExtractOpen(vocabExtractPanel.hidden));
+$("vocabExtractCloseBtn").addEventListener("click", () => setVocabExtractOpen(false));
 
 vocabExtractRunBtn.addEventListener("click", async () => {
   if (vocabExtractBusy) return;
-  const raw = vocabExtractTextEl.value.trim();
-  if (raw.length < 20) {
-    vocabBuildStatus("단어를 뽑을 영어 지문을 넣어 주세요.", "warn");
+  const passages = passageMgr.getJobs().filter((j) => j.text.length >= 20);
+  if (!passages.length) {
+    vocabBuildStatus("위 지문칸에 단어를 뽑을 영어 지문을 넣어 주세요.", "warn");
+    if (sharedPassagePanel) sharedPassagePanel.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
-  const bundle = parsePassageBundle(raw);
-  const passages = bundle.length ? bundle : [{ name: "", text: raw }];
   const pos = [...document.querySelectorAll('input[name="vocabExtractPos"]:checked')].map((c) => c.value);
   if (!pos.length) {
     vocabBuildStatus("품사를 하나 이상 고르세요.", "warn");
@@ -12447,7 +12451,7 @@ vocabExtractRunBtn.addEventListener("click", async () => {
   const fails = [];
   const taken = [];   // 앞 지문에서 이미 뽑은 낱말 — 뒤 지문에서 겹쳐 뽑지 않는다
   for (let i = 0; i < passages.length; i++) {
-    const who = passages[i].name || (passages.length > 1 ? `지문 ${i + 1}` : "지문");
+    const who = passages.length > 1 || passages[i].named ? passages[i].name : "지문";
     vocabBuildStatus(`<span class="spinner"></span> ${esc(who)}에서 단어를 뽑는 중… (${i + 1}/${passages.length})`);
     try {
       const data = await postGenerate(
@@ -14007,7 +14011,7 @@ const HOWTO = {
     title: "📒 단어장 만드는 법",
     lead: "지문 분석·지문에서 뽑기·직접 입력·사진·PDF로 모은 단어로 단어장과 단어 시험지를 만듭니다.",
     steps: [
-      "<b>지문 상세분석</b>을 돌리면 핵심 어휘가 저절로 모입니다. <b>[✏️ 직접 입력]</b>이나 사진·PDF를 끌어다 놓아도 됩니다. 지문만 있으면 <b>[🤖 지문에서 뽑기]</b>로 개수·품사를 고르고 단어를 뽑을 수 있습니다.",
+      "<b>지문 상세분석</b>을 돌리면 핵심 어휘가 저절로 모입니다. <b>[✏️ 직접 입력]</b>이나 사진·PDF를 끌어다 놓아도 됩니다. 지문만 있으면 <b>[🤖 지문에서 뽑기]</b>를 누르세요 — 다른 탭과 같은 지문 입력 칸이 위에 뜨고, 개수·품사를 골라 단어를 뽑습니다.",
       "<b>형식</b>을 고릅니다 — 단어장, 또는 시험지(뜻 쓰기 · 영어 쓰기 · 섞어서).",
       "<b>[단어장 만들기]</b>를 누르고 <b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑습니다. <b>🎨 시험지 꾸미기</b>로 색·단어/뜻 글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
