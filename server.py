@@ -300,6 +300,9 @@ PRICE_BRIEF_KRW = int(os.environ.get("PRICE_BRIEF_KRW", "200"))
 # 리딩노트(/api/decode), 지문 1개당 — 전체 해석·핵심 정리·주요 어휘·끊어 읽기 한 줄 해석.
 # 색·루비·해설이 없어 요약분석보다 가볍다. 150은 원가 실측 전 임시값 — Render 로그 [usage] decode로 맞출 것
 PRICE_DECODE_KRW = int(os.environ.get("PRICE_DECODE_KRW", "150"))
+# 리딩노트 4컷 그림(/api/decodepic), 지문 1개당 그림 한 장(정사각형 2×2 네 컷). 원가는 그림 모델(MODEL_IMAGE)
+# 약 90원 + 장면 정하기(Flash) 1원 남짓(2026-11-03 실측 3장). 요약 이미지(500P)보다 싸게 둔다
+PRICE_DECODE_PIC_KRW = int(os.environ.get("PRICE_DECODE_PIC_KRW", "300"))
 PRICE_MCQ_PLAIN_KRW = int(os.environ.get("PRICE_MCQ_PLAIN_KRW", "250"))    # 객관식·지문유지, (지문×유형) 1개당
 PRICE_MCQ_TRANSFORM_KRW = int(os.environ.get("PRICE_MCQ_TRANSFORM_KRW", "250"))  # 객관식·지문변형, (지문×유형) 1개당
 # 주관식, (지문×유형) 1개당. 객관식과 같은 250원으로 맞춘다 — 주관식도 열다섯 유형 중
@@ -911,7 +914,7 @@ _HOLD_LOCK = threading.Lock()
 
 
 def _hold_bin(path):
-    return "image" if path == "/api/infographic" else "text"
+    return "image" if path in ("/api/infographic", "/api/decodepic") else "text"
 
 
 def _hold_key(user_id, path, req_id):
@@ -10775,6 +10778,126 @@ def call_gemini_decode(passage, api_key, model, complete_hint=None):
     return _finish_decode(_gemini_json(payload, api_key, model, _DECODE_TRUNC_MSG, label="decode"))
 
 
+# ── 리딩노트 4컷 그림(/api/decodepic, 2026-11-03 사용자) ──
+# 지문 흐름을 네 장면으로 — ① Flash가 장면(영어, 그릴 것만)과 컷 설명(쉬운 우리말 한 줄)을 정하고 ② 그림 모델이
+# 정사각형 한 장에 2×2로 네 컷을 그린다(한 번만 부르므로 네 컷이어도 한 장 값). 그림 속에는 글자를 넣지 않는다 —
+# 그림이 그린 한글은 오탈자가 잘 생겨서(요약 이미지), 컷 설명은 화면(decode.js)이 그림 아래에 글자로 붙인다.
+# 화면이 네 칸으로 잘라 2쪽 아래에 한 줄로 놓는다. 그림 느낌은 선생님이 고른다(DECODE_PIC_STYLES).
+DECODE_PIC_STYLES = {
+    "illust": "clean flat vector illustration, soft pastel colors, simple shapes, educational textbook style",
+    "webtoon": "Korean webtoon comic style, expressive cute characters, bold clean outlines, bright cel shading",
+    # 2026-11-03 코코넛 지문으로 넷을 더 그려 보고 수채화만 남겼다 — 연필 스케치·흑백 만화·3D 캐릭터는 별로라 뺐다(사용자)
+    "watercolor": "soft watercolor painting, gentle warm colors, picture-book illustration with visible paper texture",
+}
+DECODE_PIC_CAPTION_MAX = 40
+
+DECODE_PIC_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "cast": {"type": "STRING"},
+        "panels": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {"caption": {"type": "STRING"}, "scene": {"type": "STRING"}},
+                "required": ["caption", "scene"],
+                "propertyOrdering": ["caption", "scene"],
+            },
+        },
+    },
+    "required": ["cast", "panels"],
+    "propertyOrdering": ["cast", "panels"],
+}
+
+DECODE_PIC_PLAN_PROMPT = """You plan a 4-panel picture strip that helps Korean high-school students remember an English passage.
+Return exactly 4 panels that follow the passage's flow in order (opening -> development -> turn/evidence -> conclusion).
+- caption: ONE short, easy Korean sentence (max 28 Korean characters) saying what the panel shows. No English.
+- scene: an English description of WHAT TO DRAW in that panel — concrete objects, people, actions, setting.
+  Visual only. Never ask for any written words, labels, numbers, signs, charts with text, or speech bubbles.
+- cast: an English description of the recurring characters/objects (appearance, clothes, colors) so all 4 panels match.
+Stay faithful to the passage; do not add facts that are not in it. Keep every scene suitable for school students."""
+
+_DECODE_PIC_POS = ("top-left", "top-right", "bottom-left", "bottom-right")
+
+
+def _decode_pic_prompt(plan, style):
+    lines = [
+        "Draw ONE square image divided into a 2x2 grid of four equal square comic panels, "
+        "separated by thin white gutters, read left-to-right then top-to-bottom.",
+        f"Style: {DECODE_PIC_STYLES[style]}.",
+        f"Recurring characters/objects (keep identical in every panel): {plan['cast']}",
+    ]
+    for i, p in enumerate(plan["panels"]):
+        lines.append(f"Panel {i + 1} ({_DECODE_PIC_POS[i]}): {p['scene']}")
+    lines.append("ABSOLUTELY NO TEXT anywhere: no letters, words, numbers, captions, labels, signs, "
+                 "speech bubbles or panel numbers. Pictures only.")
+    return "\n".join(lines)
+
+
+def call_gemini_decode_pic(passage, style, api_key):
+    """지문 1개 → {image(base64), mime, captions[4], style}. 요금 차감은 라우트가 성공한 뒤에 한다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    text = (passage or "").strip()
+    if len(text) < 40:
+        raise RuntimeError("지문이 너무 짧습니다.")
+    style = style if style in DECODE_PIC_STYLES else "illust"
+
+    raw = _gemini_json({
+        "systemInstruction": {"parts": [{"text": DECODE_PIC_PLAN_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": text}]}],
+        "generationConfig": {"temperature": 0.4, "maxOutputTokens": 8192,
+                             "responseMimeType": "application/json", "responseSchema": DECODE_PIC_SCHEMA},
+    }, api_key, MODEL, "그림 장면을 정하다가 잘렸습니다. 다시 시도해 주세요.", label="decodepic-plan")
+    panels = []
+    for p in (raw.get("panels") or [])[:4]:
+        if isinstance(p, dict) and str(p.get("scene") or "").strip():
+            panels.append({"scene": _decode_plain(p.get("scene"), 600),
+                           "caption": _decode_plain(p.get("caption"), DECODE_PIC_CAPTION_MAX)})
+    if len(panels) < 4:
+        raise RuntimeError("그림 장면을 네 개 정하지 못했습니다. 다시 시도해 주세요.")
+    plan = {"cast": _decode_plain(raw.get("cast"), 600), "panels": panels}
+
+    prompt = _decode_pic_prompt(plan, style)
+    data = json.dumps({
+        "model": MODEL_IMAGE,
+        "input": [{"type": "text", "text": prompt}],
+        "response_format": {"type": "image", "mime_type": "image/jpeg",
+                            "aspect_ratio": "1:1", "image_size": IMAGE_SIZE},
+    }, ensure_ascii=False).encode("utf-8")
+    vertex_data = json.dumps({   # 요약 이미지와 같은 까닭으로 :generateContent 모양을 따로 둔다
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["IMAGE"], "maxOutputTokens": 7168,
+                             "imageConfig": {"aspectRatio": "1:1", "imageSize": IMAGE_SIZE,
+                                             "imageOutputOptions": {"mimeType": "image/jpeg"}}},
+    }, ensure_ascii=False).encode("utf-8")
+    image = mime = reason = None
+    started = time.monotonic()
+    for attempt in (1, 2):   # 그림이 안 오면 한 번 더(요약 이미지와 같다). 오래 걸렸으면 다시 그리지 않는다
+        if attempt == 2 and time.monotonic() - started > 45:
+            break
+        try:
+            body = _gemini_call_with_retry(data, api_key, MODEL_IMAGE, url=GEMINI_IMAGE_URL,
+                                           vertex_data=vertex_data, allow_fallback=False)
+            _log_usage(body, MODEL_IMAGE, label="decodepic-image")
+        except ProUnavailable:
+            raise ProUnavailable(f"이 API 키로는 그림 모델({MODEL_IMAGE})을 사용할 수 없습니다. 관리자에게 문의하세요.")
+        image, mime = _image_from_interaction(body)
+        if image:
+            break
+        reason, said = _image_refusal(body)
+        print(f"[리딩노트 그림] 이미지 없음 ({attempt}회째) · 사유 {reason or '없음'} · 글 {said!r}", flush=True)
+    if not image:
+        raise RuntimeError("그림 모델이 그림을 그리지 못했습니다. 잠시 뒤 다시 눌러 보세요 — "
+                           f"실패한 것은 값이 나가지 않았습니다. (사유: {reason or '알 수 없음'})")
+    return {"image": image, "mime": mime or "image/jpeg", "style": style,
+            "captions": [p["caption"] for p in panels]}
+
+
 _RT_RE = re.compile(r"<rt[^>]*>.*?</rt>", re.S)
 _RUBY_RE = re.compile(r"</?ruby[^>]*>")
 _ROLE_SPAN_RE = re.compile(r'<span class="(?:g|v|gv|hl|ref|conj-hl)"[^>]*>(.*?)</span>', re.S)
@@ -14534,6 +14657,15 @@ CHANGELOG = [
             "새 탭 '📘 리딩노트'가 생겼습니다. 지문을 넣고 [리딩노트 만들기]를 누르면 지문 하나에 A4 두 쪽짜리 복습 자료가 나옵니다 — "
             "1쪽은 본문과 전체 해석·핵심 정리(제목·주제·글의 목적·흐름 세 줄)·주요 어휘, 2쪽은 문장마다 '/'로 끊어 읽는 해석입니다. "
             "🎨 꾸미기로 색·글자 크기·글꼴을 바꾸고, ✏️ 직접 수정으로 해석을 고칠 수 있습니다. 지문 하나당 포인트가 듭니다.",
+        ],
+    },
+    {
+        "version": 114,
+        "date": "2026-11-03",
+        "items": [
+            "📘 리딩노트에 '🖼️ 4컷 그림'이 생겼습니다. 지문 흐름을 네 장면으로 그린 그림이 컷마다 우리말 설명 한 줄과 함께 들어갑니다 — "
+            "그림 느낌은 일러스트·웹툰·수채화 중에서 고르고, 만들 때 함께 넣거나 만든 뒤 지문마다 넣기·다시 그리기·빼기를 할 수 있습니다(그림 한 장마다 포인트가 듭니다). "
+            "또 지문마다 인쇄 높이를 미리 재서, 넘칠 때는 글씨를 조금 줄이거나 주요 어휘·그림 자리를 옮겨 한 지문이 A4 두 쪽에 들어가게 맞춥니다.",
         ],
     },
 ]
@@ -19488,8 +19620,9 @@ class Handler(BaseHTTPRequestHandler):
                 "vocabPdf": PRICE_VOCAB_PDF_KRW,
                 # 단어장 탭 — 지문 하나에서 단어를 뽑을 때마다
                 "vocabExtract": PRICE_VOCAB_EXTRACT_KRW,
-                # 리딩노트 — 지문 1개당
+                # 리딩노트 — 지문 1개당, 4컷 그림은 그림 한 장(지문 1개)당
                 "decode": PRICE_DECODE_KRW,
+                "decodePic": PRICE_DECODE_PIC_KRW,
             })
             return
 
@@ -19962,7 +20095,7 @@ class Handler(BaseHTTPRequestHandler):
         self._exam_run = None
 
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
+        if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                         "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
@@ -20048,7 +20181,7 @@ class Handler(BaseHTTPRequestHandler):
         # 로그인이 곧 '누가 관리자 키를 쓰는지' 구분하는 유일한 장치다.
         # 그중 실제로 콘텐츠를 생성하는 여섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
-        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/decode", "/api/quiz", "/api/workbook", "/api/grammar",
+        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                            "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract")
@@ -20103,6 +20236,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/decode":
                     cost = PRICE_DECODE_KRW
                     self._pending_label = "리딩노트"
+                elif path == "/api/decodepic":
+                    cost = PRICE_DECODE_PIC_KRW
+                    self._pending_label = "리딩노트 4컷 그림"
                 elif path == "/api/infographic":
                     # 지문 1개에 그림 1장. 분석과 달리 한 번에 여러 장을 받지 않는다 —
                     # 1장에 8~12초가 걸려서 여러 장을 한 요청에 묶으면 프록시가 끊는다.
@@ -21187,6 +21323,25 @@ class Handler(BaseHTTPRequestHandler):
             model = MODEL  # 항상 Flash — 사용자가 모델을 고르지 않는다
             try:
                 result = call_gemini_vocab_ocr(file, api_key, model)
+                self._charge_and_send(path, req, result)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        # 리딩노트 4컷 그림 — 지문 하나에 그림 한 장
+        if path == "/api/decodepic":
+            passage = req.get("passage")
+            if not isinstance(passage, str) or not passage.strip():
+                self._send_json({"error": "그림으로 그릴 지문을 넣어 주세요."}, 400)
+                return
+            try:
+                result = call_gemini_decode_pic(passage, req.get("style"), req.get("apiKey") or "")
                 self._charge_and_send(path, req, result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)

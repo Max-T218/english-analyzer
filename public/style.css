@@ -3027,11 +3027,30 @@ input.st-in{width:100%; box-sizing:border-box;}
   .dc-step,.dc-step:first-child{clip-path:none; padding-left:10px;}
   .dc-words{grid-template-columns:1fr 1fr;}
 }
+/* 인쇄 크기 — 1쪽(본문·해석 + 핵심 정리 + 어휘)이 A4 한 장에 들도록 화면보다 좁힌다.
+   같은 규칙을 두 번 적는다: @media print(실제 인쇄)와 .dc-measure(decode.js dcFit이 화면에서 인쇄 폭으로 쪽 높이를 잴 때).
+   한쪽만 고치면 잰 높이와 실제 인쇄가 어긋나 지문이 3쪽으로 넘치니 반드시 함께 고칠 것 */
+.dc-measure{width:186mm; max-width:none !important;}
+.dc-measure .dc-sheet{max-width:none; margin:0;}
+.dc-measure .dc-page{border:none; box-shadow:none; padding:0; margin:0 0 4mm; font-size:9.5pt;}
+.dc-measure .dc-head{margin-bottom:10px; box-shadow:none; border-bottom-width:1.5pt;}
+.dc-measure .dc-head-title{font-size:13pt;}
+.dc-measure .dc-h{margin:10px 0 5px;}
+.dc-measure .dc-passage{font-size:9.5pt; line-height:1.65;}
+.dc-measure .dc-trans{font-size:9pt; line-height:1.6; padding:7px 10px; margin-top:6px;}
+.dc-measure .dc-card,.dc-measure .dc-flow,.dc-measure .dc-words{font-size:8.8pt;}
+.dc-measure .dc-tc-en{font-size:10.5pt;}
+.dc-measure .dc-w{padding:3px 0;}
+.dc-measure .dc-s{padding:6px 0;}
+.dc-measure .dc-s-en{font-size:9.5pt;}
+.dc-measure .dc-s-ko{font-size:9pt;}
+.dc-measure .dc-fitnote{display:none;}
+/* 그 지문만 글씨를 줄인다(dcFit이 정한다) — 쪽 전체를 zoom으로 줄여 폭은 그대로 쓴다 */
+.dc-measure .dc-sheet[data-fit="94"] .dc-page{zoom:.94;}
+.dc-measure .dc-sheet[data-fit="88"] .dc-page{zoom:.88;}
 @media print{
   #dcResult{margin:0;}
   .dc-sheet{max-width:none; margin:0;}
-  /* 1쪽(본문·해석 + 핵심 정리 + 어휘)이 A4 한 장에 들도록 화면보다 좁힌다.
-     150단어 안팎 지문에서 한 장에 드는 것을 헤드리스 크롬 PDF로 확인했다 — 칸을 더하면 다시 잴 것 */
   .dc-page{border:none; box-shadow:none; padding:0; margin:0; font-size:9.5pt;}
   /* 끊어 읽기는 늘 새 쪽에서 — 지문마다 새 쪽은 .passage-block 규칙이 맡는다 */
   .dc-page2{break-before:page; page-break-before:always;}
@@ -3046,11 +3065,40 @@ input.st-in{width:100%; box-sizing:border-box;}
   .dc-s{padding:6px 0;}
   .dc-s-en{font-size:9.5pt;}
   .dc-s-ko{font-size:9pt;}
+  .dc-fitnote{display:none !important;}
+  .dc-sheet[data-fit="94"] .dc-page{zoom:.94;}
+  .dc-sheet[data-fit="88"] .dc-page{zoom:.88;}
   /* 소제목과 그 내용을 한 덩어리로 — 소제목만 앞 쪽에 남지 않게(break-after:avoid는 크로미움이 무시한다) */
   .dc-sec{break-inside:avoid; page-break-inside:avoid;}
   .dc-editing .dc-ed{outline:none !important; background:none !important;}
 }
+/* 쪽 맞춤 안내(dcFit) — 화면 전용 */
+.dc-fitnote{max-width:820px; margin:0 auto 6px; font-size:12.5px; color:var(--ink-soft);}
 /* 리딩노트 꾸미기의 글자 크기(app.js SHEET_FS.reading) — 고른 때만 class가 붙는다. 화면·인쇄 둘 다 이 크기 */
 .fs-e .dc-passage, .fs-e .dc-s-en{font-size:var(--fs-e);}
 .fs-k .dc-trans, .fs-k .dc-s-ko{font-size:var(--fs-k);}
 .fs-v .dc-card, .fs-v .dc-flow, .fs-v .dc-words{font-size:var(--fs-v);}
+
+/* 리딩노트 4컷 그림(decode.js) — 2×2 한 장을 칸마다 잘라 늘 가로 한 줄로. 자리가 모자라면 dcFit이 data-pic으로 줄인다 */
+.dc-picopt{display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; margin:12px 0 4px; padding:10px 12px;
+  border:1px solid var(--line); border-radius:8px; background:var(--card);}
+.dc-picopt-title{font-weight:700; font-size:14px;}
+.dc-picopt-sep{font-size:13px; color:var(--ink-soft); margin-left:6px;}
+.dc-picopt .hint{flex-basis:100%; margin:0;}
+.dc-tools{max-width:820px; margin:0 auto 6px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;}
+.dc-tools-err{font-size:12.5px; color:var(--g);}
+.dc-cuts{display:grid; grid-template-columns:repeat(4, 1fr); gap:3mm;}
+.dc-cut{margin:0; break-inside:avoid; page-break-inside:avoid;}
+.dc-cut-img{position:relative; aspect-ratio:1/1; overflow:hidden; border:1px solid var(--line);}
+.dc-cut-img img{position:absolute; width:206%; height:206%; max-width:none;}
+.dc-cut figcaption{font-size:12px; line-height:1.4; margin-top:4px;}
+.dc-cut figcaption b{color:var(--accent); margin-right:4px;}
+.dc-sheet[data-pic="80"] .dc-cuts{width:80%; margin:0 auto;}
+.dc-sheet[data-pic="65"] .dc-cuts{width:65%; margin:0 auto;}
+.dc-measure .dc-tools{display:none;}
+.dc-measure .dc-cut figcaption{font-size:8.3pt;}
+@media print{
+  .dc-tools{display:none !important;}
+  .dc-page3{break-before:page; page-break-before:always;}
+  .dc-cut figcaption{font-size:8.3pt;}
+}
