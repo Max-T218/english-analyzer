@@ -19448,7 +19448,7 @@ async function refreshClassSelectForModal(preClassId) {
 async function refreshAssignTargetSelect() {
   const classId = assignClassSelectEl.value;
   if (!classId) {
-    assignTargetSelectEl.innerHTML = `<option value="class">반 전체</option>`;
+    fillTargetList(assignTargetSelectEl, []);
     return;
   }
   let students = [];
@@ -19458,12 +19458,48 @@ async function refreshAssignTargetSelect() {
   } catch (_) {
     students = [];
   }
-  const perStudent = students
-    .map((s) => `<option value="${esc(s.id)}">👤 ${esc(s.name)}</option>`)
-    .join("");
-  assignTargetSelectEl.innerHTML = `<option value="class">반 전체</option>` + perStudent;
+  fillTargetList(assignTargetSelectEl, students);
 }
 assignClassSelectEl.addEventListener("change", refreshAssignTargetSelect);
+
+/* 낼 대상 체크 목록 — '반 전체' 하나 또는 학생 여러 명. 학생을 하나라도 고르면 '반 전체'가 꺼지고,
+   '반 전체'를 켜면 학생 체크가 모두 꺼진다. 서버는 시험 하나에 학생 한 명(또는 반 전체)만 받으므로
+   여러 명을 고르면 낼 때 학생마다 시험을 하나씩 낸다(targetIdsOf → postForTargets). */
+function fillTargetList(el, students) {
+  el.innerHTML = `<label class="target-all"><input type="checkbox" data-all checked> 반 전체</label>` +
+    students.map((s) => `<label><input type="checkbox" value="${esc(s.id)}"> 👤 ${esc(s.name)}</label>`).join("");
+}
+document.addEventListener("change", (e) => {
+  const box = e.target;
+  const list = box.closest && box.closest(".target-list");
+  if (!list || box.type !== "checkbox") return;
+  const all = list.querySelector("input[data-all]");
+  if (box === all) {
+    if (all.checked) list.querySelectorAll("input:not([data-all])").forEach((k) => { k.checked = false; });
+    else all.checked = true;   // 아무것도 안 고른 채로 둘 수 없다
+    return;
+  }
+  const any = list.querySelector("input:not([data-all]):checked");
+  all.checked = !any;
+});
+// null = 반 전체, 배열 = 고른 학생 id들
+function targetIdsOf(el) {
+  if (el.querySelector("input[data-all]:checked")) return null;
+  return [...el.querySelectorAll("input:not([data-all]):checked")].map((k) => k.value);
+}
+function setTargetIds(el, ids) {
+  el.querySelectorAll("input:not([data-all])").forEach((k) => { k.checked = ids.includes(k.value); });
+  const all = el.querySelector("input[data-all]");
+  if (all) all.checked = !ids.length;
+}
+// 대상마다 한 번씩 부른다 — 반 전체면 studentId 없이 한 번, 학생 여러 명이면 학생마다 한 번
+async function postForTargets(el, send) {
+  const ids = targetIdsOf(el);
+  if (!ids) return send(null);
+  let last;
+  for (const id of ids) last = await send(id);
+  return last;
+}
 
 /* 반에 낼 단어장 — "지금 화면에 있는 단어장"(lastVocabRows)과 저장함에 담아 둔 단어장을
    **여러 개 체크해 한 시험으로 합쳐** 낼 수 있다(2026-10-19). 같은 단어가 두 단어장에 있으면
@@ -19734,7 +19770,7 @@ async function openVocabAssign(preIds, preTitle, pick, preset) {
   // 단어장 제목 칸에 적어 둔 이름을 시험 제목으로 가져온다(비어 있으면 비운다).
   $("assignTitle").value = preset ? preset.title : preIds && preIds.length ? (preTitle || "") : ($("vocabTitle").value || "").trim();
   await Promise.all([refreshClassSelectForModal(pick || preset ? selectedClassId : ""), refreshAssignVocabSourceSelect(preIds)]);
-  if (preset) assignTargetSelectEl.value = preset.studentId;
+  if (preset) setTargetIds(assignTargetSelectEl, [preset.studentId]);
   openModal(assignModalEl);
 }
 vocabAssignBtn.addEventListener("click", () => openVocabAssign());
@@ -19759,7 +19795,8 @@ assignFormEl.addEventListener("submit", async (e) => {
     assignErrorEl.textContent = "먼저 단어장을 만들거나, 저장된 단어장을 골라 주세요.";
     return;
   }
-  const target = assignTargetSelectEl.value; // "class" 또는 학생 id
+  const targets = targetIdsOf(assignTargetSelectEl);
+  if (targets && !targets.length) { assignErrorEl.textContent = "낼 대상을 골라 주세요."; return; }
   let maxWrong = null;
   if (assignRetestChkEl.checked) {
     maxWrong = parseInt(assignMaxWrongEl.value, 10);
@@ -19774,11 +19811,11 @@ assignFormEl.addEventListener("submit", async (e) => {
   try {
     for (const t of tests) {
       if (tests.length > 1) assignStatusEl.textContent = `내는 중… ${sent + 1}/${tests.length}`;
-      await postJson(
+      await postForTargets(assignTargetSelectEl, (studentId) => postJson(
         "/api/vocab-tests",
         {
           classId,
-          studentId: target === "class" ? null : target,
+          studentId,
           title: t.title,
           format: $("assignFormat").value,
           maxWrong,
@@ -19787,7 +19824,7 @@ assignFormEl.addEventListener("submit", async (e) => {
           })),
         },
         "시험 내기에 실패했습니다."
-      );
+      ));
       sent++;
     }
     closeModal(assignModalEl);
@@ -19852,7 +19889,8 @@ function withoutRetrySource(questions, retry) {
 async function submitAssignQuiz(classId) {
   const picked = assignVocabSourceListEl.querySelector('input[name="assignQuizPick"]:checked');
   if (!picked) { assignErrorEl.textContent = "낼 자료를 하나 골라 주세요."; return; }
-  const target = assignTargetSelectEl.value;
+  const targets = targetIdsOf(assignTargetSelectEl);
+  if (targets && !targets.length) { assignErrorEl.textContent = "낼 대상을 골라 주세요."; return; }
   const btn = $("assignSubmitBtn");
   btn.disabled = true;
   assignStatusEl.textContent = "내는 중…";
@@ -19864,10 +19902,10 @@ async function submitAssignQuiz(classId) {
       throw new Error(`문항이 ${questions.length}개라 한 번에 낼 수 없습니다(${QUIZ_TEST_MAX_QUESTIONS}문항까지).`);
     }
     const retry = source === "workbook" ? null : retryOption("assignRetryChk", "assignRetryPer");
-    const r = await postJson("/api/quiz-tests", {
-      classId, studentId: target === "class" ? null : target,
+    const r = await postForTargets(assignTargetSelectEl, (studentId) => postJson("/api/quiz-tests", {
+      classId, studentId,
       title: $("assignTitle").value, questions: withoutRetrySource(questions, retry), source, retry,
-    }, "시험 내기에 실패했습니다.");
+    }, "시험 내기에 실패했습니다."));
     closeModal(assignModalEl);
     if (classId === selectedClassId) loadAssignedTests();   // 낸 시험이 바로 목록에 뜨게
     alert(`${r.questions}${source === "workbook" ? "단계" : "문항"}을 냈습니다.` +
@@ -19918,8 +19956,7 @@ async function refreshQuizAssignTargets() {
       students = (await getJson(`/api/students?classId=${encodeURIComponent(classId)}`, "")).students || [];
     } catch (_) { students = []; }
   }
-  quizAssignTargetEl.innerHTML = `<option value="class">반 전체</option>` +
-    students.map((s) => `<option value="${esc(s.id)}">👤 ${esc(s.name)}</option>`).join("");
+  fillTargetList(quizAssignTargetEl, students);
 }
 quizAssignClassEl.addEventListener("change", refreshQuizAssignTargets);
 
@@ -19961,17 +19998,18 @@ $("quizAssignForm").addEventListener("submit", async (e) => {
     errEl.textContent = `한 시험에는 ${QUIZ_TEST_MAX_QUESTIONS}문항까지 낼 수 있습니다.`;
     return;
   }
-  const target = quizAssignTargetEl.value;
+  const targets = targetIdsOf(quizAssignTargetEl);
+  if (targets && !targets.length) { errEl.textContent = "낼 대상을 골라 주세요."; return; }
   const btn = $("quizAssignSubmitBtn");
   btn.disabled = true;
   $("quizAssignStatus").textContent = "내는 중…";
   try {
     const retry = quizAssignSource === "workbook" ? null : retryOption("quizAssignRetryChk", "quizAssignRetryPer");
-    const r = await postJson("/api/quiz-tests", {
-      classId, studentId: target === "class" ? null : target,
+    const r = await postForTargets(quizAssignTargetEl, (studentId) => postJson("/api/quiz-tests", {
+      classId, studentId,
       title: $("quizAssignTitle").value, questions: withoutRetrySource(quizAssignQuestions, retry),
       source: quizAssignSource, retry,
-    }, "시험 내기에 실패했습니다.");
+    }, "시험 내기에 실패했습니다."));
     closeModal(quizAssignModalEl);
     alert(`${r.questions}${quizAssignSource === "workbook" ? "단계" : "문항"}을 냈습니다.` +
       (r.skipped ? ` (학생 화면에서 풀 수 없는 모양의 문항 ${r.skipped}개는 뺐습니다.)` : "") +

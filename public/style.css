@@ -2954,3 +2954,8 @@ input.st-in{width:100%; box-sizing:border-box;}
   [data-print-scale="92"] .passage-block{zoom:.92;}
   [data-print-scale="88"] .passage-block{zoom:.88;}
 }
+
+/* 시험 내기 창의 낼 대상 — 반 전체 또는 학생 여러 명 체크 */
+.target-list{display:flex;flex-wrap:wrap;gap:6px 14px;max-height:180px;overflow:auto;padding:8px 10px;border:1px solid var(--line,#d0d5dd);border-radius:8px;margin-bottom:8px;}
+.target-list label{display:inline-flex;align-items:center;gap:5px;margin:0;font-weight:400;cursor:pointer;}
+.target-list label.target-all{flex-basis:100%;font-weight:600;}
