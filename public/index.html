@@ -1309,6 +1309,14 @@
           <label class="chk" title="그림이 뜻을 나르고, 글자는 지문에 쓰인 영어만 씁니다. 수업 게시·발표용으로 쓰기 좋고, 그림 속 오탈자도 가장 적습니다.">
             <input type="checkbox" class="img-lang" data-lang="en" id="infoLangEn"> 영어요약
           </label>
+          <!-- 4컷 그림(2026-11-03) — 리딩노트와 같은 그림(/api/decodepic). 그림 속 글자 없이 컷 설명을 아래에 붙인다 -->
+          <label class="chk" title="지문 흐름을 네 장면으로 그린 그림을 가로 한 줄로 넣고, 컷마다 우리말 설명 한 줄을 붙입니다. 그림 속에는 글자가 없어 오탈자 걱정이 없습니다.">
+            <input type="checkbox" class="img-lang" data-lang="comic" id="infoLangComic"> 🖼️ 4컷 그림
+          </label>
+          <select class="img-comic-style" id="infoComicStyle" aria-label="4컷 그림 느낌">
+            <option value="illust">일러스트</option>
+            <option value="webtoon">웹툰</option>
+          </select>
           <span class="chk-sub img-langs-note" id="infoLangNote"></span>
           <div class="img-extra-list" id="infoExtraList">
             <div class="img-extra-item" data-lang="mix" hidden>
@@ -1397,6 +1405,13 @@
           <label class="chk" title="그림이 뜻을 나르고, 글자는 지문에 쓰인 영어만 씁니다. 수업 게시·발표용으로 쓰기 좋고, 그림 속 오탈자도 가장 적습니다.">
             <input type="checkbox" class="img-lang" data-lang="en" id="briefLangEn"> 영어요약
           </label>
+          <label class="chk" title="지문 흐름을 네 장면으로 그린 그림을 가로 한 줄로 넣고, 컷마다 우리말 설명 한 줄을 붙입니다. 그림 속에는 글자가 없어 오탈자 걱정이 없습니다.">
+            <input type="checkbox" class="img-lang" data-lang="comic" id="briefLangComic"> 🖼️ 4컷 그림
+          </label>
+          <select class="img-comic-style" id="briefComicStyle" aria-label="4컷 그림 느낌">
+            <option value="illust">일러스트</option>
+            <option value="webtoon">웹툰</option>
+          </select>
           <span class="chk-sub img-langs-note" id="briefLangNote"></span>
           <div class="img-extra-list" id="briefExtraList">
             <div class="img-extra-item" data-lang="mix" hidden>
@@ -2382,7 +2397,6 @@
         <span class="dc-picopt-sep">그림 느낌</span>
         <label class="chk"><input type="radio" name="dcPicStyle" value="illust" checked> 일러스트</label>
         <label class="chk"><input type="radio" name="dcPicStyle" value="webtoon"> 웹툰</label>
-        <label class="chk"><input type="radio" name="dcPicStyle" value="watercolor"> 수채화</label>
         <div class="hint">지문 흐름을 네 장면으로 그려 2쪽 아래(자리가 모자라면 3쪽)에 넣습니다. 그림 속에는 글자가 없고, 컷마다 설명 한 줄이 아래에 붙습니다. 만든 뒤에도 지문마다 <b>🖼️ 4컷 그림 넣기 / 🔄 다시 그리기</b>로 더하거나 바꿀 수 있습니다. <span id="dcPicPrice"></span></div>
       </div>
       <div class="sheet-style" id="dcSheetStyle"></div>

@@ -10786,8 +10786,7 @@ def call_gemini_decode(passage, api_key, model, complete_hint=None):
 DECODE_PIC_STYLES = {
     "illust": "clean flat vector illustration, soft pastel colors, simple shapes, educational textbook style",
     "webtoon": "Korean webtoon comic style, expressive cute characters, bold clean outlines, bright cel shading",
-    # 2026-11-03 코코넛 지문으로 넷을 더 그려 보고 수채화만 남겼다 — 연필 스케치·흑백 만화·3D 캐릭터는 별로라 뺐다(사용자)
-    "watercolor": "soft watercolor painting, gentle warm colors, picture-book illustration with visible paper texture",
+    # 2026-11-03 수채화·연필 스케치·흑백 만화·3D 캐릭터도 그려 봤지만 별로라 뺐다(사용자) — 두 가지만 둔다
 }
 DECODE_PIC_CAPTION_MAX = 40
 
@@ -14681,6 +14680,15 @@ CHANGELOG = [
             "또 지문마다 인쇄 높이를 미리 재서, 넘칠 때는 글씨를 조금 줄이거나 주요 어휘·그림 자리를 옮겨 한 지문이 A4 두 쪽에 들어가게 맞춥니다.",
         ],
     },
+    {
+        "version": 115,
+        "date": "2026-11-03",
+        "items": [
+            "상세분석·요약분석의 '요약 이미지'에서도 '🖼️ 4컷 그림'(일러스트·웹툰)을 고를 수 있습니다. 지문 흐름을 네 장면으로 그린 그림이 "
+            "'한눈에 보는 요약' 자리에 가로 한 줄로 들어가고, 컷마다 우리말 설명 한 줄이 붙습니다(그림 속 글자가 없어 오탈자 걱정이 없습니다). "
+            "기존 인포그래픽과 함께 고를 수도 있고, 4컷은 한 세트에 리딩노트 그림과 같은 값입니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -15996,7 +16004,13 @@ def clean_saved_images_meta(payload):
                 entry = int(r.get("entry"))
             except (TypeError, ValueError):
                 continue
-            out.append({"entry": entry, "lang": str(r.get("lang") or "")[:8], "key": key})
+            item = {"entry": entry, "lang": str(r.get("lang") or "")[:8], "key": key}
+            # 4컷 그림(lang "comic")은 컷 설명 네 줄을 함께 담는다 — 그림 속에 글자가 없고 설명은 화면이 붙이므로
+            # 이것이 없으면 불러올 때 설명이 사라진다(상세분석·요약분석, 2026-11-03)
+            caps = r.get("caps")
+            if isinstance(caps, list):
+                item["caps"] = [_decode_plain(c, DECODE_PIC_CAPTION_MAX) for c in caps[:4]]
+            out.append(item)
     if isinstance(payload, dict):
         payload["images"] = out
     return out

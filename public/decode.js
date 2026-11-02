@@ -18,7 +18,7 @@ const dcState = {
 
 const DC_POS_LABEL = { 명: "명", 동: "동", 형: "형", 부: "부", 전: "전", 접: "접", 숙: "숙어" };
 // 4컷 그림 느낌 — 서버 DECODE_PIC_STYLES와 같은 열쇠
-const DC_PIC_STYLES = { illust: "일러스트", webtoon: "웹툰", watercolor: "수채화" };
+const DC_PIC_STYLES = { illust: "일러스트", webtoon: "웹툰" };
 /* 4컷 그림 본체는 entry.picSrc(blob 주소, 화면에서만 산다)이고, 그림 느낌·컷 설명은 entry.data.pic({style, captions})에 담겨
    저장본 글에 함께 들어간다. 그림 본체는 저장할 때 /api/saved-image로 따로 올린다(요약 이미지와 같은 길). */
 let dcBlobUrls = [];

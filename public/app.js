@@ -4579,13 +4579,12 @@ async function analyze() {
   const imgLangs = pickedImgLangs("info");
   const withInfo = imgLangs.length > 0;
   const perPassage =
-    (PRICING ? PRICING.analyze : 0) +
-    (PRICING ? PRICING.infographic * imgLangs.length : 0);
+    (PRICING ? PRICING.analyze : 0) + imgLangsPrice(imgLangs);
   if (!(await costConfirmed(
         billableJobCount() * perPassage,
         withInfo
           ? `지문 분석과 요약 이미지 ${imgLangs.length}종(${imgLangs.map((l) => IMG_LANG_NAME[l]).join(" · ")})을 함께 만듭니다.\n` +
-            "(이미지는 한 장에 8~12초가 더 걸립니다)"
+            "(이미지는 한 장에 40~70초가 더 걸립니다)"
           : "지문 분석을 시작합니다.",
         jobs.length,
         reduceAdvice(
@@ -4722,7 +4721,7 @@ async function analyzeRetryOne(btn, job, total) {
   if (!card || !resultEl.contains(card)) return;
   errorEl.textContent = "";
   const imgLangs = pickedImgLangs("info");
-  const cost = PRICING ? PRICING.analyze + PRICING.infographic * imgLangs.length : 0;
+  const cost = PRICING ? PRICING.analyze + imgLangsPrice(imgLangs) : 0;
   if (!(await costConfirmed(cost,
         `${job.name}만 다시 분석합니다.` +
           (imgLangs.length ? ` 요약 이미지 ${imgLangs.length}종도 함께 만듭니다.` : ""), 1, ""))) return;
@@ -4848,26 +4847,85 @@ function infographicHost(idx) {
   return host;
 }
 
-function addInfographic(idx, src, langName, lang) {
+function addInfographic(idx, src, langName, lang, caps) {
   const host = infographicHost(idx);
   if (!host) return false;
   host.querySelector(".info-shots").insertAdjacentHTML(
     "beforeend",
-    `<figure class="info-shot" data-lang="${esc(lang || "")}">
-      <img class="infographic" src="${src}" alt="지문 요약 인포그래픽">
-      ${langName ? `<figcaption>${esc(langName)}</figcaption>` : ""}
-    </figure>`
+    lang === "comic"
+      // 4컷 — 저장·불러오기가 찾는 img.infographic은 숨겨 두고(그림 본체), 보이는 것은 네 칸 자른 것이다
+      // esc는 따옴표를 바꾸지 않아 JSON을 속성에 넣으면 첫 따옴표에서 잘린다 — 따옴표도 바꿔 넣는다
+      ? `<figure class="info-shot info-comic" data-lang="comic" data-caps="${esc(JSON.stringify(caps || [])).replace(/"/g, "&quot;")}">
+          <img class="infographic" src="${src}" alt="">
+          ${comicCutsHtml(src, caps)}
+          ${langName ? `<figcaption>${esc(langName)}</figcaption>` : ""}
+        </figure>`
+      : `<figure class="info-shot" data-lang="${esc(lang || "")}">
+          <img class="infographic" src="${src}" alt="지문 요약 인포그래픽">
+          ${langName ? `<figcaption>${esc(langName)}</figcaption>` : ""}
+        </figure>`
   );
-  // 두 장이 되면 둘 다 조금 낮춰 한 쪽에 들어가게 한다
-  host.classList.toggle("two", host.querySelectorAll(".info-shot").length > 1);
+  syncInfoPair(host);
   return true;
+}
+/* 인포그래픽이 두 장이면 둘 다 조금 낮춰 한 쪽에 들어가게 한다. 4컷만 있으면 한 쪽을 다 차지하지 않으므로
+   새 쪽 강제(data-brk="page")를 풀어 앞 내용에 이어 붙이고, 인포그래픽용 오탈자 안내도 감춘다 */
+function syncInfoPair(host) {
+  const plain = host.querySelectorAll(".info-shot:not(.info-comic)").length;
+  host.classList.toggle("two", plain > 1);
+  host.classList.toggle("comic-only", plain === 0);
+  if (!host.classList.contains("pg-blk") || !host.hasAttribute("data-infographic")) return;
+  if (plain === 0) {
+    host.removeAttribute("data-brk");
+    host.removeAttribute("data-brk-def");
+  } else if (!host.hasAttribute("data-brk-def")) {
+    host.dataset.brk = "page";
+    host.dataset.brkDef = "page";
+  }
 }
 
 /* 요약 이미지의 말 — 셋을 다 고를 수 있고, 고른 만큼 장수와 값이 늘어난다.
    셋의 쓰임이 서로 달라서다: 섞기는 학생이 우리말로 뜻을 잡으며 지문의 영어와 잇는 판,
    한글요약은 지문을 이해하지 못한 학생용, 영어요약은 그림이 뜻을 나르고 글자는 지문의
    영어로만 두는 수업 게시·발표용이다. 서버에서는 값이 같다 — 한 장이 한 호출이다. */
-const IMG_LANG_NAME = { mix: "한국어＋영어", ko: "한글요약", en: "영어요약" };
+const IMG_LANG_NAME = { mix: "한국어＋영어", ko: "한글요약", en: "영어요약", comic: "4컷 그림" };
+
+/* 4컷 그림(2026-11-03 사용자) — 인포그래픽 대신(또는 함께) 고르는 '그림 종류'. 리딩노트의 4컷과 같은 그림이다
+   (서버 /api/decodepic — 정사각형 한 장에 2×2 네 컷, 그림 속 글자 없음, 값은 PRICING.decodePic). 요약 이미지와 같은
+   '종류(lang)' 자리에 "comic"으로 끼워 만들기·저장·불러오기 길을 그대로 쓴다. 다른 점은 그림 한 장을 칸마다 잘라 가로 한 줄로
+   놓고 컷 설명(caps)을 글자로 붙이는 것 — 설명은 저장본 그림 목록(images[].caps)에 함께 담긴다. 그림 느낌은 서버
+   DECODE_PIC_STYLES와 같은 열쇠. */
+const COMIC_STYLES = { illust: "일러스트", webtoon: "웹툰" };
+function comicStyleOf(prefix) {
+  const el = $(prefix + "ComicStyle");
+  return el && COMIC_STYLES[el.value] ? el.value : "illust";
+}
+// 종류마다 값이 다르다 — 인포그래픽은 PRICING.infographic, 4컷은 PRICING.decodePic
+function imgLangPrice(lang) {
+  if (!PRICING) return 0;
+  return (lang === "comic" ? PRICING.decodePic : PRICING.infographic) || 0;
+}
+function imgLangsPrice(langs) {
+  return langs.reduce((s, l) => s + imgLangPrice(l), 0);
+}
+// 2×2 한 장 → 네 칸. 리딩노트(decode.js)와 같은 자르기 — 컷 사이 흰 줄이 비치지 않게 206%로 놓고 가운데를 쓴다
+function comicCutsHtml(src, caps) {
+  return `<div class="dc-cuts">${[0, 1, 2, 3].map((j) =>
+    `<figure class="dc-cut"><div class="dc-cut-img"><img src="${src}" alt="" ` +
+    `style="left:${-((j % 2) * 103 + 1.5)}%;top:${-(Math.floor(j / 2) * 103 + 1.5)}%"></div>` +
+    `<figcaption><b>${j + 1}</b>${esc((caps || [])[j] || "")}</figcaption></figure>`).join("")}</div>`;
+}
+// 요약 이미지 한 장을 만든다 — 종류가 4컷이면 4컷 그림을. {src, caps?}
+async function makeSummaryImage(prefix, lang, job, onRetry) {
+  if (lang === "comic") {
+    const r = await postGenerate("/api/decodepic", { passage: job.text, style: comicStyleOf(prefix) },
+      "4컷 그림을 그리지 못했습니다.", onRetry);
+    return { src: b64ToBlobUrl(r.image, r.mime || "image/jpeg"), caps: (r.captions || []).slice(0, 4) };
+  }
+  const r = await postGenerate("/api/infographic", { passage: job.text, lang, extra: infoExtraOf(prefix, lang) },
+    "요약 이미지를 만들지 못했습니다.", onRetry);
+  return { src: b64ToBlobUrl(r.image, r.mime || "image/jpeg") };
+}
 
 /* 고를 수 있는 조합을 제한한다.
      한국어＋영어  … 혼자만 (그 한 장 안에 이미 두 말이 다 들어 있다)
@@ -4922,12 +4980,13 @@ function syncImgLangNote(prefix, perImage) {
     el.textContent = "그림 없이 만듭니다.";
     return;
   }
-  const each = PRICING ? perImage : 0;
-  const total = each * picked.length * Math.max(n, 1);
+  // 종류마다 값이 다르다(4컷은 PRICING.decodePic) — perImage는 옛 호출 모양이라 받기만 한다
+  const per = PRICING ? imgLangsPrice(picked) : 0;
+  const total = per * Math.max(n, 1);
   el.textContent =
-    `지문 1개당 ${picked.length}장` +
-    (each ? ` · 지문당 +${pt((each * picked.length))}` : "") +
-    (n > 1 && each ? ` (지문 ${n}개면 그림 값만 ${pt(total)})` : "");
+    `지문 1개당 ${picked.length}장` + (picked.includes("comic") ? "(4컷은 네 컷이 한 장)" : "") +
+    (per ? ` · 지문당 +${pt(per)}` : "") +
+    (n > 1 && per ? ` (지문 ${n}개면 그림 값만 ${pt(total)})` : "");
 }
 
 // 가격표는 화면이 다 그려진 뒤에 도착하므로, 도착하면 체크박스 옆 금액을 채워 넣는다
@@ -4969,10 +5028,11 @@ infoMakeBtn.addEventListener("click", async () => {
     return;
   }
   const pairs = todo.reduce((s, i) => s + langs.filter((l) => !infoHas(i, l)).length, 0);
+  const pairCost = todo.reduce((s, i) => s + imgLangsPrice(langs.filter((l) => !infoHas(i, l))), 0);
   if (!(await costConfirmed(
-        PRICING ? PRICING.infographic * pairs : 0,
+        PRICING ? pairCost : 0,
         `분석본은 그대로 두고 요약 이미지 ${pairs}장만 새로 만듭니다.\n` +
-        `(${langs.map((l) => IMG_LANG_NAME[l]).join(" · ")} 중 아직 없는 것 · 한 장에 8~12초)`,
+        `(${langs.map((l) => IMG_LANG_NAME[l]).join(" · ")} 중 아직 없는 것 · 한 장에 40~70초)`,
         todo.length))) {
     return;
   }
@@ -5017,20 +5077,14 @@ async function makeInfographics(todo) {
       loadingTextEl.textContent =
         total > 1
           ? `${job.name}${what} 요약 이미지 만드는 중… (${done}/${total})`
-          : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
+          : "AI가 요약 이미지를 그리는 중입니다… (40~70초)";
       try {
-        const data = await postGenerate(
-          "/api/infographic",
-          { passage: job.text, lang, extra: infoExtraOf("info", lang) },
-          "요약 이미지를 만들지 못했습니다.",
-          (n) => {
-            loadingTextEl.textContent =
-              `${job.name}${what} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${n}/${GEN_RETRY})`;
-          }
-        );
-        const src = b64ToBlobUrl(data.image, data.mime || "image/jpeg");
+        const made = await makeSummaryImage("info", lang, job, (n) => {
+          loadingTextEl.textContent =
+            `${job.name}${what} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${n}/${GEN_RETRY})`;
+        });
         // 두 종 이상 만들면 어느 판인지 적어 준다 — 안 적으면 인쇄한 뒤 구별이 안 된다
-        if (addInfographic(idx, src, langs.length > 1 ? IMG_LANG_NAME[lang] : "", lang)) okCount++;
+        if (addInfographic(idx, made.src, langs.length > 1 ? IMG_LANG_NAME[lang] : "", lang, made.caps)) okCount++;
       } catch (err) {
         // 한 장이 실패해도 나머지는 계속 만든다. 다만 한도 소진은 기다려도 안 풀린다.
         errorEl.textContent = `${job.name}${what}: ${err.message || String(err)}`;
@@ -5145,7 +5199,11 @@ function collectInfographicMeta() {
     sec.querySelectorAll(".info-shot[data-lang]").forEach((fig) => {
       const lang = fig.dataset.lang;
       if (lang && fig.querySelector("img.infographic")) {
-        out.push({ entry, lang, key: `${entry}_${lang}` });
+        const m = { entry, lang, key: `${entry}_${lang}` };
+        if (lang === "comic") {
+          try { m.caps = JSON.parse(fig.dataset.caps || "[]"); } catch (_e) { m.caps = []; }
+        }
+        out.push(m);
       }
     });
   });
@@ -5252,7 +5310,7 @@ async function loadInfographics(itemId, payload) {
       if (d && d.image && resultEl.querySelector(`.passage-block[data-entry="${m.entry}"]`)) {
         const src = b64ToBlobUrl(d.image, d.mime || "image/jpeg");
         const names = metas.filter((x) => x.entry === m.entry).length > 1;
-        if (addInfographic(m.entry, src, names ? IMG_LANG_NAME[m.lang] || "" : "", m.lang)) {
+        if (addInfographic(m.entry, src, names ? IMG_LANG_NAME[m.lang] || "" : "", m.lang, m.caps)) {
           added++;
           infoSavedSrc.set(itemId + "|" + m.key, src);  // 서버에 있는 그대로다 — 다시 올릴 필요 없다
         }
@@ -6024,16 +6082,24 @@ function buildBriefHtml(d, job, total, images) {
   const list = images || [];
   if (list.length) {
     const roman = d.summary && d.summary.length ? "Ⅲ" : "Ⅱ";
+    // 4컷(lang "comic")은 그림 한 장을 네 칸으로 잘라 보이고 컷 설명을 붙인다(addInfographic과 같은 모양)
     const shots = list
       .map(
-        (im) => `<figure class="info-shot">
+        (im) => im.lang === "comic"
+          ? `<figure class="info-shot info-comic" data-lang="comic">
+              <img class="infographic" src="${im.src}" alt="">
+              ${comicCutsHtml(im.src, im.caps)}
+              ${list.length > 1 && im.name ? `<figcaption>${esc(im.name)}</figcaption>` : ""}
+            </figure>`
+          : `<figure class="info-shot">
           <img class="infographic" src="${im.src}" alt="지문 요약 인포그래픽">
           ${list.length > 1 && im.name ? `<figcaption>${esc(im.name)}</figcaption>` : ""}
         </figure>`
       )
       .join("");
+    const plain = list.filter((im) => im.lang !== "comic").length;
     parts.push(`
-      <div class="pg-blk brief-tail info-pair${list.length > 1 ? " two" : ""}">
+      <div class="pg-blk brief-tail info-pair${plain > 1 ? " two" : ""}${plain === 0 ? " comic-only" : ""}">
       <h3 class="section"><span class="num">${roman}.</span> 한눈에 보는 요약</h3>
       <div class="info-shots">${shots}</div>
       <p class="info-caution">그림 속 글자는 AI가 그린 것이라 '직접 수정'으로 고칠 수 없습니다.
@@ -6087,7 +6153,7 @@ function updateBriefCostHint() {
     return;
   }
   const langs = pickedImgLangs("brief");
-  const each = PRICING.brief + PRICING.infographic * langs.length;
+  const each = PRICING.brief + imgLangsPrice(langs);
   briefCostHintEl.innerHTML =
     `지문 <b>${n}개</b> — <b>${pt((each * n))}</b>` +
     (langs.length
@@ -6122,22 +6188,14 @@ async function briefMakeImages(entry, job, i, jobsLen, redraw) {
     briefLoadingTextEl.textContent =
       jobsLen > 1 || imgLangs.length > 1
         ? `${job.name}${what} 요약 이미지 그리는 중… (${i + 1}/${jobsLen})`
-        : "AI가 요약 이미지를 그리는 중입니다… (8~12초)";
+        : "AI가 요약 이미지를 그리는 중입니다… (40~70초)";
     try {
-      const img = await postGenerate(
-        "/api/infographic",
-        { passage: job.text, lang, extra: infoExtraOf("brief", lang) },
-        "요약 이미지를 만들지 못했습니다.",
-        (n) => {
-          briefLoadingTextEl.textContent =
-            `${job.name}${what} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${n}/${GEN_RETRY})`;
-        }
-      );
-      entry.images = entry.images || [];
-      entry.images.push({
-        src: b64ToBlobUrl(img.image, img.mime || "image/jpeg"),
-        name: IMG_LANG_NAME[lang],
+      const made = await makeSummaryImage("brief", lang, job, (n) => {
+        briefLoadingTextEl.textContent =
+          `${job.name}${what} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${n}/${GEN_RETRY})`;
       });
+      entry.images = entry.images || [];
+      entry.images.push({ src: made.src, name: IMG_LANG_NAME[lang], lang, caps: made.caps });
       redraw();
     } catch (imgErr) {
       // 그림 한 장이 실패해도 소책자와 나머지 장은 살린다
@@ -6160,7 +6218,7 @@ async function briefRetryOne(retryId) {
   const job = briefShown[at0].job;
   briefErrorEl.textContent = "";
   const langs = pickedImgLangs("brief");
-  const cost = PRICING ? PRICING.brief + PRICING.infographic * langs.length : 0;
+  const cost = PRICING ? PRICING.brief + imgLangsPrice(langs) : 0;
   if (!(await costConfirmed(cost,
         `${job.name}만 요약분석을 다시 만듭니다.` +
           (langs.length ? ` 요약 이미지 ${langs.length}종도 함께 만듭니다.` : ""), 1, ""))) return;
@@ -6206,7 +6264,7 @@ briefBtn.addEventListener("click", async () => {
   }
   if (PRICING) {
     const langs = pickedImgLangs("brief");
-    const cost = (PRICING.brief + PRICING.infographic * langs.length) * jobs.length;
+    const cost = (PRICING.brief + imgLangsPrice(langs)) * jobs.length;
     const what = langs.length
       ? `요약분석과 요약 이미지 ${langs.length}종을`
       : "요약분석을";
@@ -6283,9 +6341,12 @@ TAB_SAVE.brief = {
      저장 뒤 한 장씩 올린다. 그림 이름(한글요약 등)은 lang 칸에 담는다. */
   getPayload: () => ({
     passages: passageMgr.getJobs(),
-    entries: lastBriefEntries.map((e) => ({ ...e, images: undefined, image: undefined })),
+    entries: lastBriefEntries.map((e) => ({ ...e, images: undefined, image: undefined })),   // 그림(4컷의 컷 설명 포함)은 아래 images로
+    // 4컷은 lang을 "comic"으로 두고 컷 설명(caps)을 함께 담는다 — 나머지는 예전처럼 그림 이름을 lang 칸에 담는다
     images: lastBriefEntries.flatMap((e, i) =>
-      (e.images || []).map((im, j) => ({ entry: i, lang: im.name || "", key: `${i}_${j}` }))),
+      (e.images || []).map((im, j) => (im.lang === "comic"
+        ? { entry: i, lang: "comic", key: `${i}_${j}`, caps: im.caps || [] }
+        : { entry: i, lang: im.name || "", key: `${i}_${j}` }))),
     settings: { targetGrammar: grammarEl.value },
     sheetStyle: briefSheetStyle.get(),
   }),
@@ -6329,7 +6390,9 @@ TAB_SAVE.brief = {
           `/api/saved-image/${encodeURIComponent(itemId)}/${encodeURIComponent(m.key)}`, "");
         if (d && d.image && next[m.entry]) {
           const src = b64ToBlobUrl(d.image, d.mime || "image/jpeg");
-          next[m.entry].images.push({ src, name: m.lang || "" });
+          next[m.entry].images.push(m.lang === "comic"
+            ? { src, name: IMG_LANG_NAME.comic, lang: "comic", caps: m.caps || [] }
+            : { src, name: m.lang || "" });
           infoSavedSrc.set(itemId + "|" + m.key, src);
           added++;
         }
@@ -14082,7 +14145,7 @@ const HOWTO = {
     lead: "지문을 의미 단위로 끊어 색·뜻을 달고, 문장마다 해설과 출제 포인트를 붙인 가장 두꺼운 자료입니다.",
     steps: [
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다. 여러 개면 <b>[＋ 지문 추가]</b>.",
-      "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 요약 이미지는 <b>추가 요청</b> 칸에 원하는 강조·색을 적을 수 있고, 비우면 기본 방식으로 만듭니다. 목표 어법을 적으면 그 구조가 주황색으로 표시됩니다.",
+      "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 요약 이미지는 <b>추가 요청</b> 칸에 원하는 강조·색을 적을 수 있고, 비우면 기본 방식으로 만듭니다. <b>🖼️ 4컷 그림</b>(일러스트·웹툰)을 고르면 지문 흐름을 네 장면으로 그린 그림이 컷마다 설명 한 줄과 함께 들어갑니다. 목표 어법을 적으면 그 구조가 주황색으로 표시됩니다.",
       "<b>[분석하기]</b>를 누릅니다. 요약 이미지가 안 만들어졌거나 나중에 필요하면 분석은 그대로 두고 <b>[🖼 요약 이미지만 만들기]</b>로 없는 그림만 따로 만듭니다.",
       "<b>[✏️ 직접 수정]</b>으로 글자를, <b>[📄 쪽 구성]</b>으로 인쇄될 쪽 경계를 고칩니다.",
       "<b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. 사이트에 저장하면 핵심 어휘도 <b>'제목_단어'</b> 단어장으로 함께 저장됩니다. <b>🎨 분석본 꾸미기</b>로 테마 색·글씨체를 바꿀 수 있습니다(요금 없음).",
@@ -14100,7 +14163,7 @@ const HOWTO = {
     lead: "상세분석과 같은 색·뜻에 해석을 한 줄 의역으로 담은, 학생이 들고 다니기 좋은 얇은 자료입니다.",
     steps: [
       "<b>지문 칸</b>에 영어 지문을 붙여 넣습니다.",
-      "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 요약 이미지는 <b>추가 요청</b> 칸에 원하는 강조·색을 적을 수 있고, 비우면 기본 방식으로 만듭니다.",
+      "(선택) <b>표지 제목</b>·<b>요약 이미지</b>를 고릅니다. 요약 이미지는 <b>추가 요청</b> 칸에 원하는 강조·색을 적을 수 있고, 비우면 기본 방식으로 만듭니다. <b>🖼️ 4컷 그림</b>(일러스트·웹툰)을 고르면 지문 흐름을 네 장면으로 그린 그림이 컷마다 설명 한 줄과 함께 들어갑니다.",
       "<b>[요약분석 만들기]</b>를 누릅니다.",
       "<b>[📄 쪽 구성]</b>으로 쪽 경계를 보고, <b>[🖨️ 인쇄 / PDF 변환]</b> · <b>[💾 사이트 저장]</b>으로 마무리합니다. <b>🎨 분석본 꾸미기</b>로 테마 색·글씨체를 바꿀 수 있습니다(요금 없음 — 짧은 문장 묶기까지 맞추려면 글꼴을 먼저 고르고 만드세요).",
     ],
