@@ -12080,6 +12080,68 @@ async function saveVocabSetsEach(btn) {
     btn.textContent = label;
   }
 }
+/* 지문별 단어장 저장(2026-11-02 사용자) — 지금 쓰는 단어장이 둘 이상이고 모두 지문에서 온 것(지문에서 뽑기 ·
+   지문 분석 — 둘 다 지문마다 묶음 하나)이면, [💾 사이트 저장]이 통째로 하나가 아니라 지문마다 '제목_지문 이름'
+   저장본을 하나씩 만들어 **제목 이름의 단어장(폴더)** 하나에 모두 넣는다 — 저장함에서 '📁 3월 모의고사 (3개)'를
+   펼치면 지문별 목록이 나오는, 단어장 책을 단원별로 저장한 것과 같은 모양(사용자가 그 화면을 보여 주며 정했다).
+   저장 제목 기본값은 지문 이름의 큰 이름(vocabBigName). 이름에 제목을 붙여야 '지문 1'·'18번'처럼 흔한 이름끼리
+   다른 시험의 것을 덮어쓰지 않는다. 단어장 저장본 중 같은 이름이 있으면 덮어쓴다(겹쳐 쌓이지 않게).
+   직접 입력·사진·PDF 단어장이 섞이면 예전처럼 하나로 저장한다. */
+function vocabPerPassageSets() {
+  const on = getVocabSets().filter((s) => !s.off && (s.vocab || []).length);
+  return on.length >= 2 && on.every((s) => ["extract", "analyze"].includes(s.src || "analyze")) ? on : [];
+}
+// 지문 이름들의 큰 이름 — 지문 저장함에서 불러오면 '3월 모의고사 · 18번'처럼 붙는다. 모두 같을 때만
+function vocabBigName(sets) {
+  const heads = sets.map((s) => (String(s.name || "").includes(" · ") ? String(s.name).split(" · ")[0].trim() : ""));
+  return heads[0] && heads.every((h) => h === heads[0]) ? heads[0] : "";
+}
+// 저장본 이름에 쓸 지문 이름 — 큰 이름은 제목에 이미 들어가므로 뗀다('3월 모의고사 · 18번' → '18번')
+function vocabShortName(s, big) {
+  const name = String(s.name || "지문");
+  return big && name.startsWith(big + " · ") ? name.slice(big.length + 3).trim() || name : name;
+}
+async function saveVocabPerPassage(title, folder, onProgress) {
+  const sets = vocabPerPassageSets();
+  const list = await getJson("/api/saved", "저장 목록을 불러오지 못했습니다.");
+  const same = new Map();
+  (list.items || []).forEach((it) => { if (it.tab === "vocab" && !same.has(it.title)) same.set(it.title, it.id); });
+  const base = TAB_SAVE.vocab.getPayload();
+  const big = vocabBigName(sets);
+  const used = new Set();
+  const ids = [];
+  let replaced = 0;
+  for (let i = 0; i < sets.length; i++) {
+    onProgress(i + 1, sets.length);
+    const short = vocabShortName(sets[i], big);
+    let name = `${title}_${short}`.slice(0, 200);
+    for (let n = 2; used.has(name); n++) name = `${title}_${short} (${n})`.slice(0, 200);
+    used.add(name);
+    const set = { ...sets[i] };
+    delete set.off;
+    const id = same.get(name);
+    const payload = { vocabSets: [set], settings: { ...base.settings, title: name }, sheetStyle: base.sheetStyle };
+    const res = await postJson("/api/saved", id ? { tab: "vocab", title: name, payload, id } : { tab: "vocab", title: name, payload },
+      "저장에 실패했습니다.");
+    if (id) replaced++;
+    if (res && res.id) ids.push(res.id);
+  }
+  // 모두 한 단어장(폴더)에 넣는다 — 저장창에서 따로 고르지 않았으면 제목 이름의 단어장. 실패해도 저장본은 남는다
+  if (folder === null || folder === "") folder = String(title).slice(0, 100);
+  let folderFail = "";
+  if (ids.length) {
+    try {
+      await postJson("/api/saved/folder", { ids, folder }, "단어장에 넣지 못했습니다.");
+    } catch (err) {
+      folderFail = err.message || "단어장에 넣지 못했습니다.";
+    }
+  }
+  // 하나의 저장본에 이어진 상태가 아니다 — 다음 저장에서 그중 하나를 덮어쓰지 않게 끊는다
+  delete LOADED_SAVED.vocab;
+  vocabBuildStatus(`저장함의 단어장 <b>📁 ${esc(folder)}</b>에 지문별 목록 <b>${ids.length}개</b>를 저장했습니다` +
+    (replaced ? ` (같은 이름 ${replaced}개는 새 내용으로 덮어썼습니다)` : "") + ".", "ok");
+  return folderFail;
+}
 renderVocabSource();
 
 // 정답 표시 토글 — 다시 그리지 않고 클래스만 바꾼다
@@ -12482,6 +12544,7 @@ vocabExtractRunBtn.addEventListener("click", async () => {
   vocabExtractBusy = true;
   vocabExtractRunBtn.disabled = true;
   const rows = [];
+  const perPassage = [];   // 지문마다 {name, items} — 지문이 여럿이면 지문별 단어장으로 나눠 둔다
   const notes = [];
   const fails = [];
   const taken = [];   // 앞 지문에서 이미 뽑은 낱말 — 뒤 지문에서 겹쳐 뽑지 않는다
@@ -12497,6 +12560,7 @@ vocabExtractRunBtn.addEventListener("click", async () => {
       );
       (data.items || []).forEach((it) => taken.push(it.word));
       rows.push(...(data.items || []));
+      if ((data.items || []).length) perPassage.push({ name: passages[i].name, items: data.items });
       if (data.note) notes.push(passages.length > 1 ? `${who}: ${data.note}` : data.note);
     } catch (err) {
       fails.push(`${who} — ${err.message || err}`);
@@ -12514,10 +12578,19 @@ vocabExtractRunBtn.addEventListener("click", async () => {
   const parts = [];
   notes.forEach((n) => parts.push(`⚠️ ${esc(n)}`));
   fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
-  if (rows.length) {
+  if (perPassage.length > 1) {
+    // 지문이 여럿이면 지문마다 단어장 하나 — [💾 사이트 저장]이 '제목_지문 이름'으로 하나씩 저장한다(saveVocabPerPassage)
+    vocabEditorClose();
+    perPassage.forEach((p) => appendVocabSet({ name: p.name, vocab: p.items, src: "extract" }));
+    parts.push(`지문 ${perPassage.length}개에서 <b>${rows.length}단어</b>를 뽑아 <b>지문별 단어장 ${perPassage.length}개</b>로 나눴습니다. ` +
+      "위 '📚 쓸 단어장 고르기'에서 지문마다 확인할 수 있고, [💾 사이트 저장]을 누르면 '제목_지문 이름'으로 하나씩 저장됩니다. " +
+      "AI가 쓴 뜻이니 만든 단어장에서 한 번 확인하세요.");
+    vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
+  } else if (rows.length) {
     parts.push(`<b>${rows.length}단어</b>를 단어장에 저장했습니다. AI가 쓴 뜻이니 아래 표에서 한 번 확인하세요.`);
     vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
-    vocabEditorAdd(rows, `지문에서 뽑기 · ${todayStr()}`, "extract");
+    const only = perPassage[0];
+    vocabEditorAdd(rows, only && (passages.length > 1 || passages[0].named) ? only.name : `지문에서 뽑기 · ${todayStr()}`, "extract");
   } else {
     if (!parts.length) parts.push("단어를 뽑지 못했습니다.");
     vocabBuildStatus(parts.join("<br>"), "warn");
@@ -12800,6 +12873,11 @@ document.addEventListener("paste", (e) => {
 // buildVocab()을 그대로 다시 호출하면 똑같이 재현된다.
 TAB_SAVE.vocab = {
   saveBtn: vocabSaveBtn,
+  saveLead: () => {
+    const n = vocabPerPassageSets().length;
+    return n ? `제목 이름의 단어장(📁)을 만들고, 그 안에 지문별 목록 ${n}개를 '제목_지문 이름'으로 하나씩 저장합니다` +
+      "(같은 이름이 있으면 덮어씁니다). 나중에 단어장 탭의 [📂 불러오기]나 반에 시험 내기에서 지문별로 고를 수 있습니다." : "";
+  },
   getPayload: () => ({
     vocabSets: getVocabSets(),
     settings: {
@@ -12901,7 +12979,9 @@ const SAVE_TITLE_SUGGEST = {
   mix: () => (QUIZ_SHEET_TITLE.mix && QUIZ_SHEET_TITLE.mix.get()) || passageBasedName("객관식주관식문제"),
   // 제목 칸에 적은 이름이 있으면 그 이름 그대로(문제 탭의 시험지명과 같은 방식, 2026-10-20 사용자)
   workbook: () => SAVE_TYPED_TITLE.workbook() || titledName("워크북", "wbTitle"),
-  vocab: () => SAVE_TYPED_TITLE.vocab() || titledName("단어장", "vocabTitle"),
+  // 지문별 단어장이면 지문 이름의 큰 이름('3월 모의고사 · 18번'의 '3월 모의고사')이 기본 — 그 이름의 단어장(폴더)이 된다
+  vocab: () => SAVE_TYPED_TITLE.vocab() || (vocabPerPassageSets().length && vocabBigName(vocabPerPassageSets())) ||
+    titledName("단어장", "vocabTitle"),
   /* 시험지는 공용 지문칸이 아니라 자기 지문칸을 쓰므로 passageBasedName을 못 쓴다.
      대신 시험지 머리글에 적어 둔 학교·고사 이름을 가져온다 — 기출에서 읽어 낸 고사
      이름(scan.title)은 저장하지 않으므로, 저장함에서 이 시험지가 어느 기출을 본뜬
@@ -12969,7 +13049,8 @@ async function fillSaveFolders(selected) {
   if (selected) names.add(selected);
   const list = [...names].sort((a, b) => a.localeCompare(b, "ko", { numeric: true }));
   saveFolderSelectEl.innerHTML =
-    `<option value="">단어장 없이 저장</option>` +
+    // 지문별 단어장 저장은 고르지 않으면 제목 이름의 단어장을 저절로 만든다(saveVocabPerPassage) — 문구를 그에 맞춘다
+    `<option value="">${vocabPerPassageSets().length ? "제목 이름으로 새 단어장 (자동)" : "단어장 없이 저장"}</option>` +
     list.map((n) => `<option value="${esc(n)}">📁 ${esc(n)}</option>`).join("") +
     `<option value="${SAVE_FOLDER_NEW}">＋ 새 단어장 만들기…</option>`;
   saveFolderSelectEl.value = selected || "";
@@ -13042,7 +13123,8 @@ function openSaveDialog(tab) {
      보여 주고 고르게 한다 — 되돌릴 수 없는 쪽이라 말없이 덮으면 안 된다.
      저장 자체가 막힌 상태(비로그인·저장할 것 없음)에서는 내놓지 않는다. */
   const from = saveDialogConfirmBtn.disabled ? null : LOADED_SAVED[tab];
-  saveDialogOverwriteBtn.hidden = !from;
+  // 지문별 단어장 저장은 저장본을 여러 개 만들므로 '불러온 그 저장본에 덮어쓰기'가 맞지 않는다
+  saveDialogOverwriteBtn.hidden = !from || (tab === "vocab" && vocabPerPassageSets().length > 0);
   saveDialogFromEl.hidden = !from;
   /* 불러온 자료의 제목 칸을 다른 이름으로 바꿔 만들었으면(예: "어휘끝 day 31"을 불러와 "Day 32"로 새로 만듦)
      새 자료로 본다 — 저장창이 옛 저장본 이름을 채우고 [덮어쓰기]를 앞세워, 그대로 누르면 31을 32로 덮어쓸 뻔했다
@@ -13117,6 +13199,16 @@ async function doSaveDialog(overwriteId) {
   const busyBtn = overwriteId ? saveDialogOverwriteBtn : saveDialogConfirmBtn;
   const busyLabel = busyBtn.textContent;
   try {
+    // 단어장 탭 — 지문에서 온 단어장이 여럿이면 지문마다 '제목_지문 이름'으로 하나씩 저장한다
+    if (tab === "vocab" && vocabPerPassageSets().length) {
+      const folderFail = await saveVocabPerPassage(title, wantFolder, (done, total) => {
+        busyBtn.textContent = `저장 중… ${done}/${total}`;
+      });
+      closeSaveDialog();
+      if (folderFail) alert(`저장은 됐지만 단어장에 넣지 못했습니다. (${folderFail})
+저장함에서 다시 넣어 주세요.`);
+      return;
+    }
     const payload = TAB_SAVE[tab].getPayload();
     // 표지 제목도 함께 담는다 — 안 담으면 불러왔을 때 앞 자료의 제목이 그대로 남는다
     if (DOC_TITLES[tab]) payload.coverTitle = DOC_TITLES[tab].get();
@@ -14047,7 +14139,7 @@ const HOWTO = {
     title: "📒 단어장 만드는 법",
     lead: "지문 분석·지문에서 뽑기·직접 입력·사진·PDF로 모은 단어로 단어장과 단어 시험지를 만듭니다.",
     steps: [
-      "<b>지문 상세분석</b>을 돌리면 핵심 어휘가 저절로 모입니다. <b>[✏️ 직접 입력]</b>이나 사진·PDF를 끌어다 놓아도 됩니다. 지문만 있으면 <b>[🤖 지문에서 뽑기]</b>를 누르세요 — 다른 탭과 같은 지문 입력 칸이 위에 뜨고, 지문당 단어 수를 정해 단어를 뽑습니다.",
+      "<b>지문 상세분석</b>을 돌리면 핵심 어휘가 저절로 모입니다. <b>[✏️ 직접 입력]</b>이나 사진·PDF를 끌어다 놓아도 됩니다. 지문만 있으면 <b>[🤖 지문에서 뽑기]</b>를 누르세요 — 다른 탭과 같은 지문 입력 칸이 위에 뜨고, 지문당 단어 수를 정해 단어를 뽑습니다. 지문이 여럿이면 지문별로 나뉘고, [💾 사이트 저장]을 누르면 저장함에 <b>제목 이름의 단어장(📁)</b>이 생겨 그 안에 지문별 목록이 들어갑니다.",
       "<b>형식</b>을 고릅니다 — 단어장, 또는 시험지(뜻 쓰기 · 영어 쓰기 · 섞어서).",
       "<b>[단어장 만들기]</b>를 누르고 <b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑습니다. <b>🎨 시험지 꾸미기</b>로 색·단어/뜻 글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
