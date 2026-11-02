@@ -3788,7 +3788,7 @@ function syncFloatPrint() {
   const btn =
     active &&
     active.querySelector(
-      "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #mixPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn, #grPrintBtn"
+      "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #mixPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn, #grPrintBtn, #dcPrintBtn"
     );
   // 묶음은 페이지 이동 버튼도 담고 있으므로 통째로 감추지 않고 인쇄 버튼만 여닫는다
   floatPrintBtn.hidden = !(btn && btn.style.display !== "none" && !btn.disabled);
@@ -3803,7 +3803,7 @@ function activeSectionBtn(selector) {
 }
 floatPrintBtn.addEventListener("click", () => {
   const b = activeSectionBtn(
-    "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #mixPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn, #grPrintBtn"
+    "#printBtn, #briefPrintBtn, #mcqPrintBtn, #saqPrintBtn, #mixPrintBtn, #workbookPrintBtn, #vocabPrintBtn, #examPaperPrintBtn, #grPrintBtn, #dcPrintBtn"
   );
   if (b) b.click();
 });
@@ -3886,7 +3886,8 @@ function syncTabChrome(tab) {
   if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || grammarNoPassage || vocabNoPassage || tab === "students" || tab === "leveltest";
   // 단어장 '지문에서 뽑기'는 목표 어법을 쓰지 않는다(사용자) — 칸만 감추고 적어 둔 값은 다른 탭을 위해 그대로 둔다
   const targetGrammarRow = $("targetGrammarRow");
-  if (targetGrammarRow) targetGrammarRow.hidden = tab === "vocab";
+  // 리딩노트도 목표 어법을 쓰지 않는다
+  if (targetGrammarRow) targetGrammarRow.hidden = tab === "vocab" || tab === "decode";
   // 공용 지문칸 아래 단어장은 문제 탭에서만 쓰인다(분석·워크북은 단어장을 보지 않는다)
   const quizVocabWrap = $("quizVocabWrap");
   if (quizVocabWrap) quizVocabWrap.hidden = !["mcq", "saq", "mix"].includes(tab);
@@ -3899,7 +3900,7 @@ function syncTabChrome(tab) {
      자리가 없는 화면(탭을 고르기 전, 반/학생 관리)에서는 감춘다. */
   const SLOT_ID = { analyze: "analyzeBrandSlot", brief: "briefBrandSlot", mcq: "mcqBrandSlot",
     saq: "saqBrandSlot", mix: "mixBrandSlot", workbook: "wbBrandSlot", vocab: "vocabBrandSlot",
-    grammar: "grammarBrandSlot" };
+    grammar: "grammarBrandSlot", decode: "decodeBrandSlot" };
   const slot = onExam ? (!examPaperPanelEl.hidden ? $("examBrandSlot") : null)
     : onTrend ? $("trendBrandSlot")
     : SLOT_ID[tab] ? $(SLOT_ID[tab]) : null;
@@ -6973,6 +6974,12 @@ const SHEET_FS = {
     { k: "m", name: "뜻", def: 13 },
   ],
   doc: [],   // 지문 분석·요약분석 — 테마 색·글꼴만 고른다(createSheetStyle의 "doc")
+  // 리딩노트(public/decode.js) — 처음 숫자는 인쇄 크기(style.css 끝 '리딩노트'의 9.5pt·9pt)와 같다
+  reading: [
+    { k: "e", name: "영어", def: 12.5 },
+    { k: "k", name: "우리말 해석", def: 12 },
+    { k: "v", name: "정리·어휘", def: 12 },
+  ],
 };
 const SHEET_FS_MIN = 8, SHEET_FS_MAX = 30;
 function sheetFsOf(v) {

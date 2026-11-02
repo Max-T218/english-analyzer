@@ -1103,6 +1103,8 @@
       <button type="button" class="tab-btn" data-tab="brief">요약분석</button>
       <button type="button" class="tab-btn" data-tab="analyze">상세분석</button>
     </div>
+    <!-- 리딩노트 — 지문 하나로 A4 두 쪽 복습 자료(public/decode.js). 지문 분석 묶음 밖에 따로 둔다(사용자) -->
+    <button type="button" class="tab-btn" data-tab="decode">📘 리딩노트</button>
     <!-- 문제 제작은 상위 탭 하나에 하위 셋(객관식·주관식·객관식+주관식)을 둔다. 하위 버튼은
          그대로 .tab-btn이라 저장함 불러오기 등이 data-tab으로 누르는 길이 바뀌지 않는다.
          상위 버튼은 탭이 아니라 '마지막에 보던 하위 탭을 여는' 단추다(app.js syncQuizGroup). -->
@@ -2361,6 +2363,41 @@
     <div id="trendResult"></div>
   </section>
 
+  <!-- ══════════ 리딩노트 (2026-11-02) ══════════
+       지문 하나 → A4 두 쪽: ① 본문과 해석 / 핵심 정리 / 주요 어휘 ② 끊어 읽기 해석.
+       공용 지문칸을 그대로 쓴다. 동작은 public/decode.js, 서버는 /api/decode. -->
+  <section class="tab-page" id="tab-decode">
+    <section class="panel">
+      <div class="row cover-row">
+        <div class="field">
+          <label for="dcTitle">자료 제목 (선택)</label>
+          <input type="text" id="dcTitle" maxlength="60" placeholder="예: 2학년 2학기 기말 대비">
+          <div class="hint">쪽마다 맨 위 머리띠에 이 이름과 지문 이름이 찍힙니다. 비워 두면 지문 이름만 찍힙니다.</div>
+        </div>
+      </div>
+      <div class="sheet-style" id="dcSheetStyle"></div>
+      <div class="brand-slot" id="decodeBrandSlot"></div>
+      <div class="actions">
+        <button type="button" class="btn" id="dcMakeBtn">리딩노트 만들기</button>
+        <button type="button" class="btn ghost" id="dcLoadBtn">📂 불러오기</button>
+        <button class="btn ghost" id="dcPrintBtn" style="display:none"
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
+        <button class="btn ghost" id="dcEditBtn" style="display:none"
+                title="해석·요약·어휘 뜻을 그 자리에서 고칩니다. 고친 그대로 인쇄·저장됩니다.">✏️ 직접 수정</button>
+        <button class="btn ghost" id="dcSaveBtn" style="display:none"
+                title="로그인한 계정에 이 자료와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
+        <span class="hint">지문마다 <b>두 쪽</b>: 본문과 해석·핵심 정리(제목·주제·글의 목적·흐름 세 줄)·주요 어휘, 그리고 문장마다 <b>끊어 읽기 해석</b>.</span>
+      </div>
+      <div class="hint cost-hint" id="dcCostHint" role="status" aria-live="polite"></div>
+      <div class="error" id="dcError"></div>
+    </section>
+    <div class="loading" id="dcLoading">
+      <span class="spinner"></span>
+      <span id="dcLoadingText">AI가 리딩노트를 만들고 있습니다…</span>
+    </div>
+    <div id="dcResult"></div>
+  </section>
+
   <!-- ══════════ 문법문제 출제 마법사 ══════════
        ① 레벨 → ② 문법 항목 → ③ 세부 항목 → ④ 고른 항목 → ⑤ 문항 수·모양을 한 화면 네 칸에 둔다
        (③·④는 셋째 칸 위아래). 모양은 다른 탭과 같은 칸·체크 모양을 쓴다 — 처음엔 참고한 사이트처럼
@@ -3051,6 +3088,7 @@
 <script src="/app.js?v=%%ASSET_V%%"></script>
 <script src="/trend.js?v=%%ASSET_V%%"></script>
 <script src="/grammar.js?v=%%ASSET_V%%"></script>
+<script src="/decode.js?v=%%ASSET_V%%"></script>
 <script src="/ltreport.js?v=%%ASSET_V%%"></script>
 <script src="/leveltest.js?v=%%ASSET_V%%"></script>
 </body>

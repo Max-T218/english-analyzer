@@ -297,6 +297,9 @@ RESULT_HOLD_MAX = int(os.environ.get("RESULT_HOLD_MAX", "40"))
 # 색·루비를 다는 일은 똑같이 하지만, 문장별 해설·출제 포인트·어휘표가 빠져 그만큼
 # 출력 토큰이 적다. 그 셋이 상세분석 출력의 대부분이다.
 PRICE_BRIEF_KRW = int(os.environ.get("PRICE_BRIEF_KRW", "200"))
+# 리딩노트(/api/decode), 지문 1개당 — 전체 해석·핵심 정리·주요 어휘·끊어 읽기 한 줄 해석.
+# 색·루비·해설이 없어 요약분석보다 가볍다. 150은 원가 실측 전 임시값 — Render 로그 [usage] decode로 맞출 것
+PRICE_DECODE_KRW = int(os.environ.get("PRICE_DECODE_KRW", "150"))
 PRICE_MCQ_PLAIN_KRW = int(os.environ.get("PRICE_MCQ_PLAIN_KRW", "250"))    # 객관식·지문유지, (지문×유형) 1개당
 PRICE_MCQ_TRANSFORM_KRW = int(os.environ.get("PRICE_MCQ_TRANSFORM_KRW", "250"))  # 객관식·지문변형, (지문×유형) 1개당
 # 주관식, (지문×유형) 1개당. 객관식과 같은 250원으로 맞춘다 — 주관식도 열다섯 유형 중
@@ -1200,7 +1203,7 @@ def _asset_version():
     stamp = 0.0
     # 만드는 법·결과물 예시 그림(howto-*)도 본다 — 2026-10-07에 그림만 갈아 끼웠다가 표식이 그대로여서
     # 옛 그림('홍보용' 제목)이 계속 보였다.
-    names = ["app.js", "trend.js", "grammar.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
+    names = ["app.js", "trend.js", "grammar.js", "decode.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
         p.name for pat in ("sample-*.jpg", "howto-*.jpg", "howto-*.png") for p in sorted(PUBLIC_DIR.glob(pat))
     ]
     for name in names:
@@ -10563,6 +10566,215 @@ def brief_english_incomplete(result, passage):
     return got < src * 0.6
 
 
+# ══════ 리딩노트(/api/decode, 2026-11-02 사용자) ══════
+# 지문 하나 → A4 두 쪽짜리 정리 자료: ① 지문과 전체 해석 ② 핵심 정리(제목·주제·목적·세 줄 요약)
+# ③ 주요 어휘 ④ 한 줄 해석(문장마다 끊어 읽기 — 영어 조각과 우리말 조각이 같은 자리에서 끊긴다).
+# 상세분석과 달리 색·루비·해설이 없다 — 그래서 상세분석의 chunks를 쓰지 않고 따로 가볍게 받는다.
+# 그리는 곳은 public/decode.js 한 곳이다.
+DECODE_VOCAB_MAX = 18
+DECODE_POS = ("명", "동", "형", "부", "전", "접", "숙")
+
+DECODE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "englishTitle": {"type": "STRING"},
+        "koreanTitle": {"type": "STRING"},
+        "topic": {"type": "STRING"},
+        "purpose": {"type": "STRING"},
+        "summary": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "vocab": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "word": {"type": "STRING"},
+                    "pos": {"type": "STRING"},
+                    "meaning": {"type": "STRING"},
+                },
+                "required": ["word", "pos", "meaning"],
+                "propertyOrdering": ["word", "pos", "meaning"],
+            },
+        },
+        "sentences": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "no": {"type": "INTEGER"},
+                    "chunks": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "en": {"type": "STRING"},
+                                "ko": {"type": "STRING"},
+                            },
+                            "required": ["en", "ko"],
+                            "propertyOrdering": ["en", "ko"],
+                        },
+                    },
+                    "ko": {"type": "STRING"},
+                },
+                "required": ["no", "chunks", "ko"],
+                "propertyOrdering": ["no", "chunks", "ko"],
+            },
+        },
+    },
+    "required": ["englishTitle", "koreanTitle", "topic", "purpose", "summary", "vocab", "sentences"],
+    "propertyOrdering": ["englishTitle", "koreanTitle", "topic", "purpose", "summary", "vocab",
+                         "sentences"],
+}
+
+DECODE_SYSTEM_PROMPT = r"""너는 한국 고등학교 영어 교사다. 영어 지문 하나를 받아, 학생이 혼자 읽고 복습할
+'리딩노트' 자료의 내용을 JSON으로 만든다. 읽는 사람은 고등학생이다.
+
+## sentences — 문장마다 하나 (가장 중요하다)
+- 지문의 **모든 문장을 빠짐없이, 원문 그대로** 차례대로 담는다. 낱말 하나도 바꾸거나 빼거나
+  더하지 마라. 따옴표·쉼표·마침표도 원문 그대로다. `no`는 1부터.
+- `chunks` — 문장을 **끊어 읽기 단위**(의미 덩어리)로 나눈 것. 학생이 '/'를 따라 앞에서부터
+  차례로 이해하게 하는 직독직해다.
+  · 끊는 자리: 주어부 뒤, 동사 뒤 목적어·보어가 길 때, 전치사구 앞, 접속사·관계사·to부정사·
+    분사구 앞, 쉼표로 이어진 삽입구 앞뒤. 한 조각은 대개 3~8낱말, 너무 잘게(1~2낱말씩) 끊지 마라.
+    짧은 문장(7낱말 이하)은 끊지 않고 한 조각이어도 된다.
+  · `en` — 그 조각의 영어 원문. 모든 조각의 en을 공백 하나로 이으면 **원래 문장과 똑같아야** 한다.
+  · `ko` — **그 조각만의** 우리말 뜻을 영어 어순대로. 뒤 조각의 내용을 끌어오지 마라.
+    예: "It all began / during the Great Depression / in the 1930s." →
+    "그 모든 것은 시작되었다 / 대공황 기간 동안 / 1930년대의"
+  · 조각 안에 '/'를 쓰지 마라(화면이 조각 사이에 붙인다).
+- `ko` — 그 문장의 **자연스러운 우리말 해석** 한두 문장(의역). 끊어 읽기 순서가 아니라 우리말
+  어순으로 매끄럽게. 앞뒤 문장의 ko를 이으면 지문 전체 해석이 되므로, 지칭어(그것·이것)가
+  가리키는 것이 앞 문장과 자연스럽게 이어지게 쓴다.
+
+## 핵심 정리
+- `englishTitle` — 지문에 어울리는 **영어 제목** 한 줄(명사구, 각 낱말 첫 글자 대문자, 12낱말 안쪽).
+- `koreanTitle` — 그 제목의 자연스러운 우리말(직역이 아니라 제목답게).
+- `topic` — **우리말 주제** 한 문장(명사형으로 끝나도 된다. 예: "팝콘이 영화관의 대표 간식이 된
+  역사적 배경과 과정"). 40자 안쪽.
+- `purpose` — 이 글을 쓴 **목적**을 우리말 1~2문장. "이 글은 ~하기 위한 것이다."로 시작하고,
+  둘째 문장은 "또한, ~"처럼 글이 함께 하는 일을 덧붙인다. 지문에 없는 내용을 지어내지 마라.
+- `summary` — **세 줄 요약**: 정확히 3개의 우리말 문장. 글의 흐름(도입 → 전개 → 결론) 순서대로,
+  각 문장은 60자 안쪽, "~했다/~이다"로 끝낸다. 번호(①·1.)를 붙이지 마라(화면이 붙인다).
+
+## vocab — 주요 어휘 12~16개
+- 지문에 나온 낱말·표현 중 **고등학생이 외워야 할 것**을 지문에 처음 나온 차례대로 고른다.
+  너무 쉬운 낱말(movie, people, popular 등 중학교 기초)은 빼고, 지문을 이해하는 데 열쇠가 되는
+  낱말과 고유한 표현(Great Depression 같은 역사 용어, 숙어)을 넣는다.
+- `word` — **지문에 나온 모양 그대로** 적는다(cemented, revolutionizing처럼 굴절된 모양도 그대로).
+- `pos` — 그 지문에서의 품사 한 글자: "명" "동" "형" "부" "전" "접", 두 낱말 이상 숙어는 "숙".
+- `meaning` — **지문 속 뜻**에 맞는 짧은 우리말, 1~2개 뜻을 쉼표로. 낱말 모양에 맞춘다
+  (cemented → "공고해진, 굳어진", revolutionizing → "혁신하고 있는"). 사전의 모든 뜻을
+  늘어놓지 마라.
+
+## 공통
+- HTML 태그·마크다운·이모지를 쓰지 마라. 순수한 글자만.
+- 우리말은 맞춤법을 지키고, 영어를 섞지 마라(어휘의 word와 englishTitle만 영어다).
+"""
+
+_DECODE_TRUNC_MSG = "지문이 너무 길어 리딩노트를 만들다가 잘렸습니다. 지문을 나눠 시도해 주세요."
+
+
+def _decode_plain(s, limit=600):
+    """AI 글에서 태그·마크다운 강조를 걷어 순수 글자로 — 화면이 esc()로 넣는다."""
+    t = _TAG_STRIP_RE.sub("", str(s or ""))
+    t = re.sub(r"\*\*|__", "", t)
+    return _fix_known_typos(re.sub(r"\s+", " ", t).strip())[:limit]
+
+
+def _decode_pos(p):
+    p = str(p or "").strip().strip("[]()")
+    if not p:
+        return ""
+    if p[0] in DECODE_POS:
+        return p[0]
+    kind = _vocab_pos_kind(p)
+    return {"noun": "명", "verb": "동", "adj": "형", "adv": "부", "idiom": "숙"}.get(kind, "")
+
+
+def _finish_decode(result):
+    """모델 답을 다듬는다 — 글자만 남기고, 빈 조각·빈 문장을 버리고, 개수를 상한에 맞춘다."""
+    out = {
+        "englishTitle": _decode_plain(result.get("englishTitle"), 160),
+        "koreanTitle": _decode_plain(result.get("koreanTitle"), 120),
+        "topic": _decode_plain(result.get("topic"), 200),
+        "purpose": _decode_plain(result.get("purpose"), 400),
+        "summary": [],
+        "vocab": [],
+        "sentences": [],
+    }
+    for s in result.get("summary") or []:
+        t = re.sub(r"^\s*(?:[①②③④⑤]|\d+[.)])\s*", "", _decode_plain(s, 200))
+        if t:
+            out["summary"].append(t)
+    out["summary"] = out["summary"][:3]
+    seen = set()
+    for v in result.get("vocab") or []:
+        if not isinstance(v, dict):
+            continue
+        w = _decode_plain(v.get("word"), 60)
+        m = _decode_plain(v.get("meaning"), 80)
+        if not w or not m or w.lower() in seen:
+            continue
+        seen.add(w.lower())
+        pos = _decode_pos(v.get("pos")) or ("숙" if " " in w else "")
+        out["vocab"].append({"word": w, "pos": pos, "meaning": m})
+    out["vocab"] = out["vocab"][:DECODE_VOCAB_MAX]
+    for s in result.get("sentences") or []:
+        if not isinstance(s, dict):
+            continue
+        chunks = []
+        for c in s.get("chunks") or []:
+            if not isinstance(c, dict):
+                continue
+            en = _decode_plain(c.get("en"), 400).replace(" / ", " ").strip("/ ")
+            # 우리말 조각은 문장이 아니라 덩어리라 끝 마침표를 뗀다("방식을." → "방식을"). 물음표는 둔다
+            ko = _decode_plain(c.get("ko"), 300).replace(" / ", " ").strip("/ ").rstrip(".")
+            if en:
+                chunks.append({"en": en, "ko": ko})
+        if not chunks:
+            continue
+        out["sentences"].append({"no": len(out["sentences"]) + 1, "chunks": chunks,
+                                 "ko": _decode_plain(s.get("ko"), 600)})
+    return out
+
+
+def decode_english_incomplete(result, passage):
+    """끊어 읽기 조각의 영어를 다 모아도 원문보다 많이 모자라면 문장이 빠진 것이다(요약분석과 같은 60% 기준)."""
+    src = _ascii_count(passage)
+    if src < 30:
+        return False
+    got = sum(_ascii_count(c.get("en", "")) for s in result.get("sentences", []) for c in s.get("chunks", []))
+    return got < src * 0.6
+
+
+def call_gemini_decode(passage, api_key, model, complete_hint=None):
+    """지문 하나 → 리딩노트 내용. complete_hint=(원문 문장 수, 받은 수)면 빠진 문장을 채우라고 다시 묻는다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+    user = ""
+    if complete_hint:
+        exp, got = complete_hint
+        user += (f"⚠️ 앞서 만든 답에는 문장이 {got}개뿐이었다. 이 지문은 약 {exp}문장이다. "
+                 "**모든 문장을 빠짐없이** 담아 다시 만들어라.\n\n")
+    user += "## 지문\n" + passage
+    payload = {
+        "systemInstruction": {"parts": [{"text": DECODE_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
+        "generationConfig": {
+            "temperature": 0.25,
+            "maxOutputTokens": 32768,
+            "responseMimeType": "application/json",
+            "responseSchema": DECODE_SCHEMA,
+        },
+    }
+    # 지시문이 짧아(2천 토큰 안쪽) 캐시에 맡기지 않는다 — 워크북과 같은 까닭(CLAUDE.md 지시문 캐시)
+    return _finish_decode(_gemini_json(payload, api_key, model, _DECODE_TRUNC_MSG, label="decode"))
+
+
 _RT_RE = re.compile(r"<rt[^>]*>.*?</rt>", re.S)
 _RUBY_RE = re.compile(r"</?ruby[^>]*>")
 _ROLE_SPAN_RE = re.compile(r'<span class="(?:g|v|gv|hl|ref|conj-hl)"[^>]*>(.*?)</span>', re.S)
@@ -14313,6 +14525,15 @@ CHANGELOG = [
             "단어장 탭 '🤖 지문에서 뽑기'에 지문을 여러 개 넣으면 지문별로 나눠 줍니다. [💾 사이트 저장]을 누르면 저장함에 "
             "'📁 3월 모의고사' 같은 단어장 하나가 생기고, 그 안에 지문별 목록(3월 모의고사_18번, _19번…)이 들어갑니다. 같은 이름은 덮어씁니다. "
             "단어장 저장함에서 [📁 폴더]로 저장한 단어장을 다른 폴더로 옮기거나 빼고, 폴더 머리의 [✏️ 폴더 이름]으로 폴더 이름을 바꿀 수 있습니다.",
+        ],
+    },
+    {
+        "version": 113,
+        "date": "2026-11-03",
+        "items": [
+            "새 탭 '📘 리딩노트'가 생겼습니다. 지문을 넣고 [리딩노트 만들기]를 누르면 지문 하나에 A4 두 쪽짜리 복습 자료가 나옵니다 — "
+            "1쪽은 본문과 전체 해석·핵심 정리(제목·주제·글의 목적·흐름 세 줄)·주요 어휘, 2쪽은 문장마다 '/'로 끊어 읽는 해석입니다. "
+            "🎨 꾸미기로 색·글자 크기·글꼴을 바꾸고, ✏️ 직접 수정으로 해석을 고칠 수 있습니다. 지문 하나당 포인트가 듭니다.",
         ],
     },
 ]
@@ -19267,6 +19488,8 @@ class Handler(BaseHTTPRequestHandler):
                 "vocabPdf": PRICE_VOCAB_PDF_KRW,
                 # 단어장 탭 — 지문 하나에서 단어를 뽑을 때마다
                 "vocabExtract": PRICE_VOCAB_EXTRACT_KRW,
+                # 리딩노트 — 지문 1개당
+                "decode": PRICE_DECODE_KRW,
             })
             return
 
@@ -19739,7 +19962,7 @@ class Handler(BaseHTTPRequestHandler):
         self._exam_run = None
 
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/analyze", "/api/brief", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
+        if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                         "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
@@ -19825,7 +20048,7 @@ class Handler(BaseHTTPRequestHandler):
         # 로그인이 곧 '누가 관리자 키를 쓰는지' 구분하는 유일한 장치다.
         # 그중 실제로 콘텐츠를 생성하는 여섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
-        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/quiz", "/api/workbook", "/api/grammar",
+        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/decode", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                            "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract")
@@ -19877,6 +20100,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/brief":
                     cost = PRICE_BRIEF_KRW
                     self._pending_label = "지문 요약분석"
+                elif path == "/api/decode":
+                    cost = PRICE_DECODE_KRW
+                    self._pending_label = "리딩노트"
                 elif path == "/api/infographic":
                     # 지문 1개에 그림 1장. 분석과 달리 한 번에 여러 장을 받지 않는다 —
                     # 1장에 8~12초가 걸려서 여러 장을 한 요청에 묶으면 프록시가 끊는다.
@@ -20961,6 +21187,41 @@ class Handler(BaseHTTPRequestHandler):
             model = MODEL  # 항상 Flash — 사용자가 모델을 고르지 않는다
             try:
                 result = call_gemini_vocab_ocr(file, api_key, model)
+                self._charge_and_send(path, req, result)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        # 리딩노트 — 지문 하나당 한 번. 문장이 많이 빠졌으면 한 번 더 묻는다(값은 한 번만)
+        if path == "/api/decode":
+            passage = (req.get("passage") or "").strip()
+            if len(passage) < 20:
+                self._send_json({"error": "정리할 영어 지문을 입력하세요 (20자 이상)."}, 400)
+                return
+            api_key = req.get("apiKey") or ""
+            trace = RefineTrace(time.monotonic())
+            try:
+                result = call_gemini_decode(passage, api_key, MODEL)   # 항상 Flash
+                trace.first_done()
+                expected = rough_sentence_count(passage)
+                for _ in range(2):
+                    got = len(result.get("sentences", []))
+                    if got >= expected - 2 and not decode_english_incomplete(result, passage):
+                        break
+                    if trace.blocked("문장"):
+                        break
+                    trace.retry("문장")
+                    retry = call_gemini_decode(passage, api_key, MODEL, complete_hint=(expected, got))
+                    if len(retry.get("sentences", [])) >= got:
+                        result = retry
+                if not result.get("sentences"):
+                    raise RuntimeError("문장을 읽어 내지 못했습니다. 다시 시도해 주세요.")
                 self._charge_and_send(path, req, result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
