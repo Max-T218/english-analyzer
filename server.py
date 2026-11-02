@@ -450,6 +450,9 @@ PRICE_VOCAB_OCR_KRW = int(os.environ.get("PRICE_VOCAB_OCR_KRW", "0"))
 # 이 값과 무관하게 언제나 0원이다(PRICE_PDFSPLIT_KRW와 같은 원칙). 규칙이 못 뽑아
 # '단어 인식(AI)'을 다시 눌렀을 때만 매겨진다.
 PRICE_VOCAB_PDF_KRW = int(os.environ.get("PRICE_VOCAB_PDF_KRW", "0"))
+# 단어장 탭 — 지문에서 단어 뽑기(2026-11-02 사용자). 지문 하나당 Flash 한 번이다.
+# 원가를 실측하기 전의 임시 값이다 — Render 로그의 [usage] vocabextract 줄로 재서 맞출 것.
+PRICE_VOCAB_EXTRACT_KRW = int(os.environ.get("PRICE_VOCAB_EXTRACT_KRW", "30"))
 
 # 객관식 전용 유형 — public/app.js의 MCQ_TYPES와 반드시 같은 목록을 유지한다.
 # 이 집합에 없는 유형은 전부 주관식으로 보고 PRICE_SAQ_KRW를 매긴다(객관식·주관식
@@ -3928,6 +3931,31 @@ def _curriculum_known(word):
     return any(c in _CURRICULUM_FORMS for c in cands)
 
 
+def _curriculum_rank(word):
+    """낱말이 목록의 어느 학교급 표제어인지 (차례, 맞춘 열쇠). 목록 밖이면 None.
+    _curriculum_known과 달리 접사를 떼어 넉넉하게 짐작하지 않는다 — 학교급을 가르는 데 쓰므로
+    어려운 낱말이 접사 때문에 쉬운 목록으로 잘못 들어가면 안 된다. 굴절(-s/-ed/-ing…)과 불규칙만 푼다."""
+    w = word.lower().strip("’'")
+    if not w or not w.isalpha():
+        return None
+    if w in _CURRICULUM_FORMS:
+        return _CURRICULUM_FORMS[w], w
+    cands = set()
+    irr = _CURRICULUM_IRREGULAR.get(w)
+    if irr:
+        cands.add(irr)
+    for end, rep in (("ies", "y"), ("ied", "y"), ("ier", "y"), ("iest", "y"), ("ily", "y"),
+                     ("es", ""), ("ed", ""), ("ed", "e"), ("ing", ""), ("ing", "e"), ("d", ""),
+                     ("s", ""), ("er", ""), ("est", ""), ("ly", "")):
+        if w.endswith(end) and len(w) - len(end) >= 2:
+            b = w[:-len(end)] + rep
+            cands.add(b)
+            if len(b) > 3 and b[-1] == b[-2]:
+                cands.add(b[:-1])   # stopped → stop
+    hits = [(_CURRICULUM_FORMS[c], c) for c in cands if c in _CURRICULUM_FORMS]
+    return min(hits) if hits else None
+
+
 def _curriculum_offlist(original, variations, exempt=()):
     """바뀐 낱말 중 목록 밖으로 보이는 것 — 목록 밖도 허용이지만 얼마나 자주 나가는지 Render 로그로 보려고 센다(화면에는 안 보인다)."""
     if not _CURRICULUM_FORMS:
@@ -4976,6 +5004,192 @@ def call_gemini_vocab_pdf(text, api_key, model):
     if not items:
         raise RuntimeError(note or "이 PDF에서 단어 목록을 찾지 못했습니다.")
     return {"items": items, "note": note}
+
+
+# ══════════════ 단어장 탭 — 지문에서 단어 뽑기 (2026-11-02 사용자) ══════════════
+# 지문 분석의 '핵심 어휘 & 표현'(vocab)과 같은 방식이다 — 목록에 맞추지 않고, AI가 이 지문에서
+# 학생이 꼭 알아야 할 단어·표현을 직접 고른다(전문 용어·숙어도 자연스럽게 들어간다). 처음엔 2022 교육과정
+# 목록으로 후보를 정하는 방식을 만들었는데 목록 밖 단어를 따로 다뤄야 해 복잡하고, 분석과 기준이
+# 달라진다는 사용자 의견으로 이쪽으로 바꿨다. 학교급 선택은 없다 — 지문의 낱말 중 2022 개정 교육과정
+# 목록(중학교·공통 / 고등 선택)에 있는 것을 후보로 보여 주고 그 단어 **위주로** 고르게 한다(2026-11-02 사용자).
+# 목록 밖 단어(전문 용어·숙어)는 후보 밖에서 일부만 허용하고(VOCAB_EXTRACT_OFF_DIV), 초등 단어는 서버가 뺀다.
+VOCAB_EXTRACT_COUNT_DEFAULT = 20
+VOCAB_EXTRACT_COUNT_MAX = 60
+VOCAB_EXTRACT_TEXT_MAX = 8000
+VOCAB_EXTRACT_EXCLUDE_MAX = 600
+VOCAB_EXTRACT_OFF_DIV = 3   # 목록 밖 단어·숙어는 개수의 1/이 값까지만(올림) — 1/4로는 광합성 지문의 chlorophyll·stomata가 빠졌다
+_VOCAB_EXTRACT_TOKEN_RE = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)?")
+_VOCAB_EXTRACT_POS = ("noun", "verb", "adj", "adv")
+_VOCAB_EXTRACT_TRUNC_MSG = "단어가 너무 많아 정리하다가 잘렸습니다. 지문을 나누거나 개수를 줄여 주세요."
+
+VOCAB_EXTRACT_SYSTEM_PROMPT = r"""You build a Korean school vocabulary list (단어장) from ONE English
+passage. Return ONLY the structured JSON in the schema — no markdown, no commentary.
+
+Choose the words and expressions a student most needs to learn FROM THIS PASSAGE — the same
+judgment as the "핵심 어휘 & 표현" table of a passage analysis.
+
+## What to choose
+- The request lists CANDIDATES: words of the passage that are on the official Korean curriculum
+  word lists (중학교·공통 / 고등 선택). Build the list MAINLY from them.
+- You may add a few words that are not candidates when they matter for this passage (topic and
+  technical terms, and — when allowed — idioms, phrasal verbs, fixed collocations). Keep these
+  few: at most about a third of the entries.
+- Only words/expressions that actually occur in the passage.
+- Prefer words worth memorizing: they carry meaning in this passage, a student could miss them,
+  and they are reusable beyond the passage. Skip proper names, numbers, and words almost every
+  student already knows.
+- Give up to the number asked for. Fewer is fine when the passage simply has fewer worth
+  learning — never pad the list with easy words to reach the number.
+- Keep the order in which they first appear in the passage.
+
+## Output — one entry per word
+- `word`: the BASE form (dictionary headword): run, not running; child, not children. A phrase
+  is given as its base phrase ("carry out", "be aware of"). Lower case unless always capitalized.
+- `pos`: one of "n.", "v.", "adj.", "adv.", "phr." (phrase/idiom) — the part of speech it has IN
+  THIS PASSAGE. Use only the parts of speech allowed in the request.
+- `meaning`: the Korean meaning that fits THIS passage — short, 1~2 senses at most, joined with
+  ", ". Never list every dictionary sense.
+- `synonym`: one common English synonym that fits this passage naturally, else "". `antonym`:
+  only when there is one clear opposite, else "".
+- `definition`: always "".
+- `note`: "" unless something needs saying.
+"""
+
+def _vocab_extract_candidates(text, exclude):
+    """지문의 낱말 중 목록(중학교·공통 / 고등 선택)에 있는 것 → [(표제어 열쇠, 차례)] (지문 순서).
+    초등 단어·고유명사(문장 가운데 대문자)·이미 뽑은 낱말은 뺀다."""
+    found = {}
+    for m in _VOCAB_EXTRACT_TOKEN_RE.finditer(text):
+        base = re.split(r"['’]", m.group(0))[0]
+        if len(base) < 3:
+            continue
+        before = text[:m.start()].rstrip()
+        if base[0].isupper() and before and before[-1] not in ".?!\"“”:;\n":
+            continue
+        hit = _curriculum_rank(base)
+        if hit and hit[0] in (1, 2) and hit[1] not in exclude and base.lower() not in exclude:
+            found.setdefault(hit[1], hit[0])
+    return list(found.items())
+
+
+def parse_vocab_extract(req):
+    """화면이 보낸 요청을 다듬는다 — (지문, 개수, 품사, 숙어, 이미 뽑은 낱말)."""
+    text = str(req.get("text") or "").strip()[:VOCAB_EXTRACT_TEXT_MAX]
+    try:
+        count = int(req.get("count") or VOCAB_EXTRACT_COUNT_DEFAULT)
+    except (TypeError, ValueError):
+        count = VOCAB_EXTRACT_COUNT_DEFAULT
+    count = max(1, min(VOCAB_EXTRACT_COUNT_MAX, count))
+    pos = req.get("pos")
+    pos = [p for p in _VOCAB_EXTRACT_POS if p in pos] if isinstance(pos, list) else list(_VOCAB_EXTRACT_POS)
+    exclude = set()
+    for w in (req.get("exclude") or [])[:VOCAB_EXTRACT_EXCLUDE_MAX]:
+        w = str(w or "").strip().lower()
+        if w:
+            exclude.add(w[:60])
+    return text, count, pos, bool(req.get("idioms")), exclude
+
+
+def _vocab_pos_kind(pos):
+    p = str(pos or "").lower().strip().rstrip(".")
+    if "숙어" in p or "idiom" in p or p.startswith("phr"):
+        return "idiom"
+    if p.startswith("adj") or p.startswith("형"):
+        return "adj"
+    if p.startswith("adv") or p.startswith("부"):
+        return "adv"
+    if p.startswith("v") or p.startswith("동"):
+        return "verb"
+    if p.startswith("n") or p.startswith("명"):
+        return "noun"
+    return ""
+
+
+def call_gemini_vocab_extract(text, count, pos, idioms, exclude, api_key, model):
+    """지문 하나에서 단어장 항목을 뽑는다 → {items, note}. 분석의 핵심 어휘와 같이 AI가 직접 고른다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+    if len(text) < 20:
+        raise RuntimeError("지문이 너무 짧습니다.")
+
+    names = {"noun": "nouns (n.)", "verb": "verbs (v.)", "adj": "adjectives (adj.)", "adv": "adverbs (adv.)"}
+    cands = _vocab_extract_candidates(text, exclude)
+    level = {1: "중학교·공통", 2: "고등(선택)"}
+    user = [
+        f"Number of entries: up to {count}.",
+        "Allowed parts of speech: " + ", ".join(names[k] for k in _VOCAB_EXTRACT_POS if k in pos) + ".",
+        "Idioms / phrasal verbs / collocations (pos \"phr.\"): "
+        + ("allowed — they count toward the number." if idioms else "not allowed — do not include any."),
+    ]
+    if exclude:
+        user.append("Already chosen from other passages — do NOT choose these again: "
+                    + ", ".join(sorted(exclude)[:VOCAB_EXTRACT_EXCLUDE_MAX]))
+    user.append("\n## Candidates (on the curriculum lists, in passage order)\n"
+                + (", ".join(f"{k} [{level[r]}]" for k, r in cands) if cands
+                   else "(none found — choose the most useful words yourself)"))
+    user.append("\n## Passage\n" + text)
+
+    payload = {
+        "systemInstruction": {"parts": [{"text": VOCAB_EXTRACT_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": "\n".join(user)}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 16384,
+            "responseMimeType": "application/json",
+            "responseSchema": VOCAB_ITEMS_SCHEMA,
+        },
+    }
+    result = _gemini_json(payload, api_key, model, _VOCAB_EXTRACT_TRUNC_MSG, label="vocabextract")
+
+    # 서버가 다시 거른다 — 허용하지 않은 품사·이미 뽑은 낱말·중복·초등 목록 단어는 버리고 개수만큼만 남긴다
+    kept, off_kept, seen = [], [], set()
+    cand_keys = {k for k, _r in cands}
+    off_max = max(1, -(-count // VOCAB_EXTRACT_OFF_DIV))   # 올림
+    for it in result.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        w = str(it.get("word") or "").strip()
+        lw = w.lower()
+        if not w or lw in seen or lw in exclude:
+            continue
+        kind = _vocab_pos_kind(it.get("pos"))
+        if kind == "idiom" or " " in w:
+            if not idioms:
+                continue
+            if len(off_kept) < off_max:
+                seen.add(lw)
+                off_kept.append(dict(it, pos="phr."))
+            continue
+        else:
+            if kind and kind not in pos:
+                continue
+            hit = _curriculum_rank(w)
+            if hit and hit[0] == 0:
+                continue   # 초등 단어
+            if not (hit and hit[1] in cand_keys):
+                if len(off_kept) < off_max:   # 목록 밖(전문 용어 등)은 일부만
+                    seen.add(lw)
+                    off_kept.append(it)
+                continue
+        seen.add(lw)
+        kept.append(it)
+    # 목록 단어를 먼저, 목록 밖·숙어는 남는 자리에 — 합쳐 개수를 넘기지 않는다
+    items = _clean_vocab_items(kept[:max(0, count - len(off_kept))] + off_kept)
+    if not items:
+        raise RuntimeError("뽑을 만한 단어를 찾지 못했습니다. 지문이나 옵션을 바꿔 다시 시도해 주세요.")
+
+    notes = []
+    if len(items) < count:
+        notes.append(f"요청한 {count}개 중 {len(items)}개만 뽑았습니다 — 이 지문에서 외울 만한 단어가 그만큼입니다.")
+    extra = str(result.get("note") or "").strip()
+    if extra:
+        notes.append(extra)
+    return {"items": items, "note": " ".join(notes)}
 
 
 VOCAB_PDF_PAGES_PER_CALL = 2      # 한 번에 보내는 쪽 수 — 단어장 책 한 쪽이 80단어 안팎이다
@@ -14074,6 +14288,16 @@ CHANGELOG = [
             "쪽 수가 줄어듭니다(화면은 그대로, 지문 3개 기준 21쪽 → 20쪽 → 19쪽). 요금은 없고 사이트 저장에 함께 담깁니다.",
         ],
     },
+    {
+        "version": 110,
+        "date": "2026-11-02",
+        "items": [
+            "단어장 탭에 '🤖 지문에서 뽑기'가 생겼습니다. 영어 지문을 붙여넣고 학교급(중학교/고등학교)과 지문당 단어 수(기본 20개), 품사를 고르면 "
+            "지문 분석의 핵심 어휘와 같은 방식으로 그 지문에서 꼭 알아야 할 단어를 뽑아 줍니다. 2022 개정 교육과정 단어 목록(중학교·공통 / 고등 선택)에 "
+            "있는 단어를 위주로 하고, 초등 단어는 넣지 않으며 목록에 없는 전문 용어·숙어는 일부만 넣습니다. "
+            "뜻은 AI가 쓰므로 편집 표에서 한 번 확인하세요. 지문 하나당 포인트가 듭니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -19024,6 +19248,8 @@ class Handler(BaseHTTPRequestHandler):
                 # 단어장 탭 — 사진 인식은 매번, PDF는 규칙이 못 뽑아 AI로 다시 시도할 때만
                 "vocabOcr": PRICE_VOCAB_OCR_KRW,
                 "vocabPdf": PRICE_VOCAB_PDF_KRW,
+                # 단어장 탭 — 지문 하나에서 단어를 뽑을 때마다
+                "vocabExtract": PRICE_VOCAB_EXTRACT_KRW,
             })
             return
 
@@ -19499,7 +19725,7 @@ class Handler(BaseHTTPRequestHandler):
         if path not in ("/api/analyze", "/api/brief", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                         "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
-                        "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf",
+                        "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/auth/reset-request", "/api/auth/reset-confirm",
                         "/api/logout", "/api/auth/delete",
@@ -19585,7 +19811,7 @@ class Handler(BaseHTTPRequestHandler):
         GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                            "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
-                           "/api/infographic", "/api/vocabocr", "/api/vocabpdf")
+                           "/api/infographic", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract")
         # /api/docx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
         # 않는다(그래서 GENERATE_PATHS가 아니라 여기 따로 붙는다).
         if path in GENERATE_PATHS + ("/api/models", "/api/docx"):
@@ -19735,6 +19961,9 @@ class Handler(BaseHTTPRequestHandler):
                     # PDF도 지문과 같은 원칙 — 규칙으로 뽑히면 0원, AI로 다시 시도할 때만 값을 매긴다.
                     cost = PRICE_VOCAB_PDF_KRW if req.get("ai") else 0
                     self._pending_label = "PDF에서 단어장 정리"
+                elif path == "/api/vocabextract":
+                    cost = PRICE_VOCAB_EXTRACT_KRW
+                    self._pending_label = "지문에서 단어 뽑기"
                 else:  # /api/ocr
                     cost = PRICE_OCR_KRW
                     self._pending_label = "사진에서 지문 옮기기"
@@ -20715,6 +20944,30 @@ class Handler(BaseHTTPRequestHandler):
             model = MODEL  # 항상 Flash — 사용자가 모델을 고르지 않는다
             try:
                 result = call_gemini_vocab_ocr(file, api_key, model)
+                self._charge_and_send(path, req, result)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        # 단어장 탭 — 지문 하나에서 단어 뽑기(교육과정 목록 기준). 지문마다 한 번씩 부른다.
+        if path == "/api/vocabextract":
+            text, count, pos, idioms, exclude = parse_vocab_extract(req)
+            if not text:
+                self._send_json({"error": "단어를 뽑을 지문을 넣어 주세요."}, 400)
+                return
+            if not pos:
+                self._send_json({"error": "품사를 하나 이상 고르세요."}, 400)
+                return
+            api_key = req.get("apiKey") or ""
+            try:
+                result = call_gemini_vocab_extract(text, count, pos, idioms, exclude,
+                                                   api_key, MODEL)   # 항상 Flash
                 self._charge_and_send(path, req, result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)

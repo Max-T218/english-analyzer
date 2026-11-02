@@ -12391,6 +12391,99 @@ vocabManualBtn.addEventListener("click", () => {
   vocabEditorAdd([null], `직접 입력 · ${todayStr()}`, "manual");
 });
 
+/* ── 지문에서 단어 뽑기 (2026-11-02 사용자) ──
+   지문 분석의 '핵심 어휘 & 표현'과 같은 방식 — AI가 이 지문에서 꼭 알아야 할 단어·표현을 직접 고른다
+   되, 서버가 지문의 낱말 중 2022 개정 교육과정 목록(중학교·공통 / 고등 선택)에 있는 것을 후보로 보여 주고
+   그 단어 위주로 고르게 한다(학교급 선택은 없다). 초등 단어는 서버가 빼고 목록 밖 단어·숙어는 일부만 허용한다.
+   지문이 여럿이면 한 번에 하나씩 부르고, 앞에서 뽑은 낱말은 `exclude`로 넘겨 뒤 지문에서 겹쳐 뽑지 않게 한다.
+   결과는 다른 통로와 같이 편집 표(vocabEditorAdd)로 들어가므로 뜻을 한 번 보고 고칠 수 있다. */
+const vocabExtractBtn = $("vocabExtractBtn");
+const vocabExtractPanel = $("vocabExtractPanel");
+const vocabExtractTextEl = $("vocabExtractText");
+const vocabExtractCountEl = $("vocabExtractCount");
+const vocabExtractRunBtn = $("vocabExtractRunBtn");
+const VOCAB_EXTRACT_COUNT_MAX = 60; // server.py의 VOCAB_EXTRACT_COUNT_MAX와 같은 값
+let vocabExtractBusy = false;
+
+function syncVocabExtractUI() {
+  const price = PRICING && PRICING.vocabExtract > 0 ? ` (지문당 ${pt(PRICING.vocabExtract)})` : "";
+  $("vocabExtractPrice").textContent = price;
+}
+vocabExtractBtn.addEventListener("click", () => {
+  vocabExtractPanel.hidden = !vocabExtractPanel.hidden;
+  if (!vocabExtractPanel.hidden) {
+    syncVocabExtractUI();
+    vocabExtractTextEl.focus();
+  }
+});
+$("vocabExtractCloseBtn").addEventListener("click", () => {
+  vocabExtractPanel.hidden = true;
+});
+
+vocabExtractRunBtn.addEventListener("click", async () => {
+  if (vocabExtractBusy) return;
+  const raw = vocabExtractTextEl.value.trim();
+  if (raw.length < 20) {
+    vocabBuildStatus("단어를 뽑을 영어 지문을 넣어 주세요.", "warn");
+    return;
+  }
+  const bundle = parsePassageBundle(raw);
+  const passages = bundle.length ? bundle : [{ name: "", text: raw }];
+  const pos = [...document.querySelectorAll('input[name="vocabExtractPos"]:checked')].map((c) => c.value);
+  if (!pos.length) {
+    vocabBuildStatus("품사를 하나 이상 고르세요.", "warn");
+    return;
+  }
+  const count = Math.max(1, Math.min(VOCAB_EXTRACT_COUNT_MAX, parseInt(vocabExtractCountEl.value, 10) || 20));
+  vocabExtractCountEl.value = count;
+  const idioms = $("vocabExtractIdioms").checked;
+  const unit = PRICING ? PRICING.vocabExtract || 0 : 0;
+  if (!(await costConfirmed(unit * passages.length, `지문 ${passages.length}개에서 단어를 뽑습니다.`, passages.length))) return;
+
+  vocabExtractBusy = true;
+  vocabExtractRunBtn.disabled = true;
+  const rows = [];
+  const notes = [];
+  const fails = [];
+  const taken = [];   // 앞 지문에서 이미 뽑은 낱말 — 뒤 지문에서 겹쳐 뽑지 않는다
+  for (let i = 0; i < passages.length; i++) {
+    const who = passages[i].name || (passages.length > 1 ? `지문 ${i + 1}` : "지문");
+    vocabBuildStatus(`<span class="spinner"></span> ${esc(who)}에서 단어를 뽑는 중… (${i + 1}/${passages.length})`);
+    try {
+      const data = await postGenerate(
+        "/api/vocabextract",
+        { text: passages[i].text, count, pos, idioms, exclude: taken },
+        "지문에서 단어를 뽑지 못했습니다."
+      );
+      (data.items || []).forEach((it) => taken.push(it.word));
+      rows.push(...(data.items || []));
+      if (data.note) notes.push(passages.length > 1 ? `${who}: ${data.note}` : data.note);
+    } catch (err) {
+      fails.push(`${who} — ${err.message || err}`);
+      if (isQuotaError(err)) {
+        const left = passages.length - (i + 1);
+        if (left > 0) fails.push(`한도 초과로 중단했습니다. 남은 ${left}개 지문은 시도하지 않았습니다.`);
+        break;
+      }
+    }
+  }
+  vocabExtractBusy = false;
+  vocabExtractRunBtn.disabled = false;
+  refreshTokenDisplay();
+
+  const parts = [];
+  notes.forEach((n) => parts.push(`⚠️ ${esc(n)}`));
+  fails.forEach((f) => parts.push(`❌ ${esc(f)}`));
+  if (rows.length) {
+    parts.push(`<b>${rows.length}단어</b>를 단어장에 저장했습니다. AI가 쓴 뜻이니 아래 표에서 한 번 확인하세요.`);
+    vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
+    vocabEditorAdd(rows, `지문에서 뽑기 · ${todayStr()}`, "extract");
+  } else {
+    if (!parts.length) parts.push("단어를 뽑지 못했습니다.");
+    vocabBuildStatus(parts.join("<br>"), "warn");
+  }
+});
+
 // 모아 둔 단어(지문 분석·직접 입력·사진·PDF 전부)를 지우고 새로 시작한다.
 // 만든 결과물(#vocabDoc)이 화면에 남아 있으면 무엇이 이미 들어 있는지 헷갈려
 // 새로 만들기 어렵다는 요청으로 추가했다 — TAB_SAVE.vocab.clearResults가 결과물
@@ -13912,13 +14005,13 @@ const HOWTO = {
 
   vocab: {
     title: "📒 단어장 만드는 법",
-    lead: "지문 분석·직접 입력·사진·PDF로 모은 단어로 단어장과 단어 시험지를 만듭니다.",
+    lead: "지문 분석·지문에서 뽑기·직접 입력·사진·PDF로 모은 단어로 단어장과 단어 시험지를 만듭니다.",
     steps: [
-      "<b>지문 상세분석</b>을 돌리면 핵심 어휘가 저절로 모입니다. <b>[✏️ 직접 입력]</b>이나 사진·PDF를 끌어다 놓아도 됩니다.",
+      "<b>지문 상세분석</b>을 돌리면 핵심 어휘가 저절로 모입니다. <b>[✏️ 직접 입력]</b>이나 사진·PDF를 끌어다 놓아도 됩니다. 지문만 있으면 <b>[🤖 지문에서 뽑기]</b>로 개수·품사를 고르고 단어를 뽑을 수 있습니다.",
       "<b>형식</b>을 고릅니다 — 단어장, 또는 시험지(뜻 쓰기 · 영어 쓰기 · 섞어서).",
       "<b>[단어장 만들기]</b>를 누르고 <b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑습니다. <b>🎨 시험지 꾸미기</b>로 색·단어/뜻 글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],
-    tip: "사진·PDF로 읽은 단어는 편집 표에서 확인한 뒤 [이 단어장에 추가]를 눌러야 들어갑니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 온라인 단어시험을 낼 수 있습니다(요금 없음). 저장한 단어장을 여러 개 체크하면 한 시험으로 합치거나 단어장마다 따로 낼 수 있습니다. [💾 사이트 저장]을 누르면 저장본을 넣을 <b>단어장</b>(저장한 단어장 묶음)을 목록에서 고르거나 새로 만들 수 있습니다. 단어장 책 PDF를 단원별로 나눠 읽었으면 '📚 쓸 단어장 고르기'의 <b>[💾 고른 단원 따로 저장]</b>으로 단원마다 저장해 두세요 — 다음엔 PDF를 다시 올리지 않아도 됩니다.",
+    tip: "[🤖 지문에서 뽑기]는 지문 분석의 핵심 어휘와 같은 방식으로, AI가 그 지문에서 꼭 알아야 할 단어·표현을 고릅니다. 2022 개정 교육과정 단어 목록(중학교·공통 / 고등 선택)에 있는 단어를 위주로 하고, 초등 단어는 넣지 않으며 목록에 없는 전문 용어·숙어는 일부만 넣습니다. 뜻은 AI가 쓰므로 편집 표에서 확인하세요. 사진·PDF로 읽은 단어는 편집 표에서 확인한 뒤 [이 단어장에 추가]를 눌러야 들어갑니다. 승인된 선생님은 <b>[🏫 반에 시험 내기]</b>로 온라인 단어시험을 낼 수 있습니다(요금 없음). 저장한 단어장을 여러 개 체크하면 한 시험으로 합치거나 단어장마다 따로 낼 수 있습니다. [💾 사이트 저장]을 누르면 저장본을 넣을 <b>단어장</b>(저장한 단어장 묶음)을 목록에서 고르거나 새로 만들 수 있습니다. 단어장 책 PDF를 단원별로 나눠 읽었으면 '📚 쓸 단어장 고르기'의 <b>[💾 고른 단원 따로 저장]</b>으로 단원마다 저장해 두세요 — 다음엔 PDF를 다시 올리지 않아도 됩니다.",
     shots: {
       0: [{ img: "howto-step-vocab-1.jpg", cap: "직접 입력 · 사진 · PDF로 단어 넣기" }],
       1: [{ img: "howto-step-vocab-2.jpg", cap: "형식 고르기" }],

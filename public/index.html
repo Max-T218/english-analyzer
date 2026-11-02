@@ -1875,8 +1875,36 @@
       </div>
       <div class="actions">
         <button type="button" class="btn ghost small" id="vocabManualBtn">✏️ 직접 입력</button>
+        <button type="button" class="btn ghost small" id="vocabExtractBtn">🤖 지문에서 뽑기</button>
         <button type="button" class="btn ghost small danger" id="vocabClearBtn">🔄 새 단어장</button>
         <span class="hint">모아 둔 단어·만든 단어장·제목을 비우고 새로 시작합니다. 저장해 둔 것은 그대로 남습니다.</span>
+      </div>
+
+      <!-- ── 지문에서 단어 뽑기 ──
+           지문 분석의 '핵심 어휘 & 표현'과 같은 방식 — AI가 이 지문에서 꼭 알아야 할 단어·표현을 직접 고르되,
+           2022 개정 교육과정 목록(중학교·공통 / 고등 선택)에 있는 단어를 위주로 한다. 초등 단어는 서버가 뺀다. 결과는 아래 편집 표로 들어가므로 뜻을 한 번 보고 고칠 수 있다. -->
+      <div class="vocab-extract" id="vocabExtractPanel" hidden>
+        <div class="field">
+          <label for="vocabExtractText">단어를 뽑을 지문</label>
+          <textarea id="vocabExtractText" rows="6" placeholder="영어 지문을 붙여넣으세요. 지문이 여러 개면 '=== 지문 1 ===' 줄로 나누면 지문마다 따로 뽑습니다."></textarea>
+        </div>
+        <div class="field">
+          <label for="vocabExtractCount">지문당 단어 수</label>
+          <input type="number" id="vocabExtractCount" min="1" max="60" value="20" style="width:90px">
+        </div>
+        <div class="field">
+          <label class="group-label">품사</label>
+          <div class="quiz-type-grid">
+            <label><input type="checkbox" name="vocabExtractPos" value="noun" checked> 명사</label>
+            <label><input type="checkbox" name="vocabExtractPos" value="verb" checked> 동사</label>
+            <label><input type="checkbox" name="vocabExtractPos" value="adj" checked> 형용사</label>
+            <label><input type="checkbox" name="vocabExtractPos" value="adv" checked> 부사</label>
+            <label><input type="checkbox" id="vocabExtractIdioms" checked> 숙어·표현 포함</label>          </div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn small" id="vocabExtractRunBtn">단어 뽑기<span id="vocabExtractPrice"></span></button>
+          <button type="button" class="btn ghost small" id="vocabExtractCloseBtn">닫기</button>
+        </div>
       </div>
       <div class="exam-drop" id="vocabDrop">
         <b>사진이나 PDF를 여기에 끌어다 놓으세요</b>
