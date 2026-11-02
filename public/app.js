@@ -12127,7 +12127,7 @@ async function saveVocabPerPassage(title, folder, onProgress) {
     if (res && res.id) ids.push(res.id);
   }
   // 모두 한 단어장(폴더)에 넣는다 — 저장창에서 따로 고르지 않았으면 제목 이름의 단어장. 실패해도 저장본은 남는다
-  if (folder === null || folder === "") folder = String(title).slice(0, 100);
+  if (folder === null || folder === "") folder = String(title).slice(0, 60);   // 서버가 폴더 이름을 60자로 자른다
   let folderFail = "";
   if (ids.length) {
     try {
@@ -13287,6 +13287,7 @@ function savedItemRowHtml(item) {
         <button type="button" class="btn ghost small saved-list-load"
                 title="이 저장본을 입력칸으로 가져옵니다.">불러오기</button>
         <button type="button" class="btn ghost small saved-list-rename" title="이 저장본의 이름을 바꿉니다.">✏️ 이름</button>
+        ${item.tab === "vocab" ? `<button type="button" class="btn ghost small saved-list-folder" title="이 단어장을 다른 폴더로 옮기거나 폴더에서 뺍니다.">📁 폴더</button>` : ""}
         <button type="button" class="btn ghost small danger saved-list-delete">삭제</button>
       </div>
     </div>`;
@@ -13456,7 +13457,8 @@ function savedRowsHtml(list) {
   groups.forEach((l, name) => {
     if (!(l.length >= 2 || l[0].folder)) return;
     html += `<details class="saved-folder" style="margin:4px 0;"><summary style="cursor:pointer;font-weight:700;padding:6px 0;">` +
-      `📁 ${esc(name)} <span class="hint">(${l.length}개)</span></summary>` +
+      `📁 ${esc(name)} <span class="hint">(${l.length}개)</span> ` +
+      `<button type="button" class="btn ghost small saved-folder-rename" data-folder="${esc(name)}" title="이 폴더의 이름을 바꿉니다. 안의 단어장이 모두 새 이름의 폴더로 갑니다.">✏️ 폴더 이름</button></summary>` +
       `<div style="margin-left:14px;">${l.slice().sort(byTitle).map(savedItemRowHtml).join("")}</div></details>`;
   });
   return html + list.filter((it) => !folded.has(it.id)).map(savedItemRowHtml).join("");
@@ -13913,10 +13915,58 @@ $("savedPickLoad").addEventListener("click", () => {
   else loadPickedItems(ids, "replace");
 });
 
+/* 단어장 폴더 바꾸기(2026-11-02 사용자) — 저장함에서 단어장마다 [📁 폴더]로 다른 폴더로 옮기거나 빼고, 폴더 머리의
+   [✏️ 폴더 이름]으로 폴더 이름을 바꾼다(안의 단어장을 모두 새 이름으로 옮긴다). 폴더는 저장본의 folder 값이라
+   /api/saved/folder 하나로 된다 — 시험 내기 창의 [📁 폴더에 넣기]와 같은 것. 폴더를 비워도 이름이 '책 · 단원'처럼
+   ' · '로 이어진 것끼리는 자동으로 묶여 보인다(assignFolderOf). */
+function savedVocabFolders() {
+  const names = new Set();
+  savedItemsCache.forEach((it) => { if (it.tab === "vocab" && assignFolderOf(it)) names.add(assignFolderOf(it)); });
+  return [...names].sort((a, b) => a.localeCompare(b, "ko", { numeric: true }));
+}
+async function savedSetFolder(ids, folder) {
+  try {
+    await postJson("/api/saved/folder", { ids, folder }, "폴더를 바꾸지 못했습니다.");
+  } catch (err) {
+    alert(err.message || "폴더를 바꾸지 못했습니다.");
+    return;
+  }
+  savedItemsCache.forEach((it) => { if (ids.includes(it.id)) it.folder = folder; });
+  renderSavedList();
+}
+
 savedListBodyEl.addEventListener("click", async (e) => {
+  const folderBtn = e.target.closest(".saved-folder-rename");
+  if (folderBtn) {
+    e.preventDefault();   // 폴더 머리(summary)를 누른 것으로 쳐서 접히지 않게
+    const old = folderBtn.dataset.folder;
+    const next = prompt("폴더의 새 이름을 적어 주세요. 안의 단어장이 모두 이 이름의 폴더로 갑니다.", old);
+    if (next === null) return;
+    const name = next.trim().slice(0, 60);
+    if (!name || name === old) return;
+    const ids = savedItemsCache.filter((it) => it.tab === "vocab" && assignFolderOf(it) === old).map((it) => it.id);
+    if (ids.length) await savedSetFolder(ids, name);
+    return;
+  }
   const row = e.target.closest(".saved-list-item");
   if (!row) return;
   const id = row.dataset.id;
+
+  if (e.target.closest(".saved-list-folder")) {
+    const cached = savedItemsCache.find((it) => it.id === id);
+    const now = cached ? assignFolderOf(cached) : "";
+    const others = savedVocabFolders().filter((n) => n !== now);
+    const next = prompt(
+      "옮길 폴더 이름을 적어 주세요. 없는 이름이면 새 폴더가 생기고, 비우면 폴더에서 뺍니다." +
+        (others.length ? `\n\n지금 있는 폴더: ${others.slice(0, 15).join(", ")}${others.length > 15 ? " …" : ""}` : ""),
+      now
+    );
+    if (next === null) return;
+    const name = next.trim().slice(0, 60);
+    if (name === now && (cached && cached.folder) === name) return;
+    await savedSetFolder([id], name);
+    return;
+  }
 
   if (e.target.closest(".saved-list-load")) {
     // 지문 저장본이고 입력칸이 이미 차 있을 때만 갈림길을 묻는다.
