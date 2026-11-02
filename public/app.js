@@ -4929,20 +4929,22 @@ async function makeSummaryImage(prefix, lang, job, onRetry) {
 
 /* 고를 수 있는 조합을 제한한다.
      한국어＋영어  … 혼자만 (그 한 장 안에 이미 두 말이 다 들어 있다)
+     4컷 그림      … 혼자만 (2026-11-03 사용자)
      한글요약 · 영어요약   … 둘을 함께 고를 수 있다 (쓰는 사람이 다르다 — 이해 못 한 학생 / 수업 게시)
-   한국어＋영어와 한글요약을 같이 만들면 같은 내용이 두 장에 겹쳐 나오므로 막는다. */
+   한국어＋영어와 한글요약을 같이 만들면 같은 내용이 두 장에 겹쳐 나오므로 막는다.
+   하나를 켜면 함께 고를 수 없는 것을 끈다(마지막에 누른 것이 이긴다). */
+const IMG_LANG_SOLO = ["mix", "comic"];
 function enforceImgLangRule(prefix, changed) {
   const box = $(prefix + "LangBox");
   if (!box) return;
-  const get = (l) => box.querySelector(`.img-lang[data-lang="${l}"]`);
-  const mix = get("mix"), ko = get("ko"), en = get("en");
-  if (!mix || !ko || !en) return;
-  if (changed === "mix" && mix.checked) {
-    ko.checked = false;
-    en.checked = false;
-  } else if (changed !== "mix" && (ko.checked || en.checked)) {
-    mix.checked = false;
-  }
+  const all = [...box.querySelectorAll(".img-lang")];
+  const now = all.find((c) => c.dataset.lang === changed);
+  if (!now || !now.checked) return;
+  all.forEach((c) => {
+    if (c === now) return;
+    // 혼자만 되는 것을 켰으면 나머지를 모두, 한글·영어요약을 켰으면 혼자만 되는 것만 끈다
+    if (IMG_LANG_SOLO.includes(changed) || IMG_LANG_SOLO.includes(c.dataset.lang)) c.checked = false;
+  });
 }
 
 // 요약 이미지 '추가 요청'(선택). 이미지 종류(한국어＋영어·한글요약·영어요약)마다 칸이 따로 있다 —
