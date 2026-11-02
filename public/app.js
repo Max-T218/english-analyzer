@@ -3884,6 +3884,9 @@ function syncTabChrome(tab) {
   const grammarNoPassage = tab === "grammar" && !(typeof grammarWantsPassage === "function" && grammarWantsPassage());
   const vocabNoPassage = tab === "vocab" && !(typeof vocabWantsPassage === "function" && vocabWantsPassage());
   if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || grammarNoPassage || vocabNoPassage || tab === "students" || tab === "leveltest";
+  // 단어장 '지문에서 뽑기'는 목표 어법을 쓰지 않는다(사용자) — 칸만 감추고 적어 둔 값은 다른 탭을 위해 그대로 둔다
+  const targetGrammarRow = $("targetGrammarRow");
+  if (targetGrammarRow) targetGrammarRow.hidden = tab === "vocab";
   // 공용 지문칸 아래 단어장은 문제 탭에서만 쓰인다(분석·워크북은 단어장을 보지 않는다)
   const quizVocabWrap = $("quizVocabWrap");
   if (quizVocabWrap) quizVocabWrap.hidden = !["mcq", "saq", "mix"].includes(tab);
@@ -12433,11 +12436,6 @@ vocabExtractRunBtn.addEventListener("click", async () => {
     if (sharedPassagePanel) sharedPassagePanel.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
-  const pos = [...document.querySelectorAll('input[name="vocabExtractPos"]:checked')].map((c) => c.value);
-  if (!pos.length) {
-    vocabBuildStatus("품사를 하나 이상 고르세요.", "warn");
-    return;
-  }
   const count = Math.max(1, Math.min(VOCAB_EXTRACT_COUNT_MAX, parseInt(vocabExtractCountEl.value, 10) || 20));
   vocabExtractCountEl.value = count;
   const idioms = $("vocabExtractIdioms").checked;
@@ -12456,7 +12454,8 @@ vocabExtractRunBtn.addEventListener("click", async () => {
     try {
       const data = await postGenerate(
         "/api/vocabextract",
-        { text: passages[i].text, count, pos, idioms, exclude: taken },
+        // 품사는 고르지 않는다(사용자) — pos를 안 실으면 서버가 명사·동사·형용사·부사를 모두 허용한다
+        { text: passages[i].text, count, idioms, exclude: taken },
         "지문에서 단어를 뽑지 못했습니다."
       );
       (data.items || []).forEach((it) => taken.push(it.word));
@@ -14011,7 +14010,7 @@ const HOWTO = {
     title: "📒 단어장 만드는 법",
     lead: "지문 분석·지문에서 뽑기·직접 입력·사진·PDF로 모은 단어로 단어장과 단어 시험지를 만듭니다.",
     steps: [
-      "<b>지문 상세분석</b>을 돌리면 핵심 어휘가 저절로 모입니다. <b>[✏️ 직접 입력]</b>이나 사진·PDF를 끌어다 놓아도 됩니다. 지문만 있으면 <b>[🤖 지문에서 뽑기]</b>를 누르세요 — 다른 탭과 같은 지문 입력 칸이 위에 뜨고, 개수·품사를 골라 단어를 뽑습니다.",
+      "<b>지문 상세분석</b>을 돌리면 핵심 어휘가 저절로 모입니다. <b>[✏️ 직접 입력]</b>이나 사진·PDF를 끌어다 놓아도 됩니다. 지문만 있으면 <b>[🤖 지문에서 뽑기]</b>를 누르세요 — 다른 탭과 같은 지문 입력 칸이 위에 뜨고, 지문당 단어 수를 정해 단어를 뽑습니다.",
       "<b>형식</b>을 고릅니다 — 단어장, 또는 시험지(뜻 쓰기 · 영어 쓰기 · 섞어서).",
       "<b>[단어장 만들기]</b>를 누르고 <b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑습니다. <b>🎨 시험지 꾸미기</b>로 색·단어/뜻 글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],

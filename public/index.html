@@ -1218,7 +1218,7 @@
     </p>
     <!-- 목표 어법 — 지문과 함께 다니는 설정이라 이 패널에 둔다(지문칸 아래).
          지문 분석(주황 표시)과 어법 계열 문제 출제가 같은 값을 쓴다. -->
-    <div class="row" style="margin-top:14px">
+    <div class="row" style="margin-top:14px" id="targetGrammarRow">
       <div class="field" style="flex:1 1 100%">
         <label for="targetGrammar">목표 어법 (선택)</label>
         <input type="text" id="targetGrammar" autocomplete="off" placeholder="예: 분사구문, 관계대명사, 가정법">
@@ -1890,13 +1890,10 @@
           <input type="number" id="vocabExtractCount" min="1" max="60" value="20" style="width:90px">
         </div>
         <div class="field">
-          <label class="group-label">품사</label>
+          <label class="group-label">숙어</label>
           <div class="quiz-type-grid">
-            <label><input type="checkbox" name="vocabExtractPos" value="noun" checked> 명사</label>
-            <label><input type="checkbox" name="vocabExtractPos" value="verb" checked> 동사</label>
-            <label><input type="checkbox" name="vocabExtractPos" value="adj" checked> 형용사</label>
-            <label><input type="checkbox" name="vocabExtractPos" value="adv" checked> 부사</label>
-            <label><input type="checkbox" id="vocabExtractIdioms" checked> 숙어·표현 포함</label>          </div>
+            <label><input type="checkbox" id="vocabExtractIdioms" checked> 숙어·표현 포함</label>
+          </div>
         </div>
         <div class="actions">
           <button type="button" class="btn small" id="vocabExtractRunBtn">단어 뽑기<span id="vocabExtractPrice"></span></button>
