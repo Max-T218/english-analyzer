@@ -282,9 +282,9 @@ function dcSyncCost() {
   const withPic = dcPicOn();
   const cost = dcCost(n, withPic);
   dcEl("dcCostHint").innerHTML = n && cost !== null
-    ? `예상 비용 <b>${pt(cost)}</b> (지문 ${n}개 × ${pt(PRICING.decode)}${withPic ? ` + 4컷 그림 ${n}장 × ${pt(dcPicPrice())}` : ""})` : "";
+    ? `예상 비용 <b>${pt(cost)}</b> (지문 ${n}개 × ${pt(PRICING.decode)}${withPic ? ` + 4컷 그림 ${n}세트(지문마다 1세트) × ${pt(dcPicPrice())}` : ""})` : "";
   const pp = dcPicPrice();
-  dcEl("dcPicPrice").textContent = pp !== null ? `그림 한 장(4컷)에 ${pt(pp)}입니다.` : "";
+  dcEl("dcPicPrice").textContent = pp !== null ? `4컷 한 세트(지문 1개)에 ${pt(pp)}입니다 — 컷마다 따로 받지 않습니다.` : "";
 }
 dcEl("dcPicChk").addEventListener("change", dcSyncCost);
 if (typeof onPricingReady === "function") onPricingReady(dcSyncCost);
@@ -316,7 +316,7 @@ async function dcDrawPics(list) {
   const style = dcPicStyle();
   const each = dcPicPrice();
   if (!(await costConfirmed(each === null ? null : each * list.length,
-    `${DECODE_NAME} 4컷 그림(${DC_PIC_STYLES[style]}) · ${list.length}장`, list.length))) return;
+    `${DECODE_NAME} 4컷 그림(${DC_PIC_STYLES[style]}) · ${list.length}세트(지문마다 1세트)`, list.length))) return;
   if (dcState.editing) { dcHarvest(); dcSetEditing(false); }
   dcState.busy = true;
   dcEl("dcMakeBtn").disabled = dcEl("dcPicBtn").disabled = true;
@@ -377,7 +377,7 @@ async function dcMake() {
   const withPic = dcPicOn();
   const style = dcPicStyle();
   if (!(await costConfirmed(dcCost(jobs.length, withPic),
-    `${DECODE_NAME} · 지문 ${jobs.length}개${withPic ? ` + 4컷 그림(${DC_PIC_STYLES[style]}) ${jobs.length}장` : ""}`,
+    `${DECODE_NAME} · 지문 ${jobs.length}개${withPic ? ` + 4컷 그림(${DC_PIC_STYLES[style]}) ${jobs.length}세트(지문마다 1세트)` : ""}`,
     jobs.length, reduceAdvice(jobs.length, withPic ? "4컷 그림을 빼면" : "")))) return;
   if (typeof dropStaleSavedLink === "function") dropStaleSavedLink("decode");
   dcState.busy = true;
@@ -548,6 +548,17 @@ TAB_SAVE.decode = {
 };
 // 저장본에 이미 올린 그림(저장본 id|key → 그때의 그림 주소) — 같은 그림을 다시 올리지 않는다
 const dcSavedSrc = new Map();
+
+/* 결과물 예시 — 탭 아래 '📄 결과물 예시'와 만드는 법 창이 함께 쓴다(app.js HOWTO_SAMPLE·TAB_SAMPLE_RESULT).
+   그림(howto-decode-1·2.jpg)은 다른 탭 예시와 같은 지문(Desirable Difficulty)으로 실제로 만든 리딩노트(4컷 웹툰 포함)를
+   헤드리스 크롬으로 인쇄한 쪽이다(2026-11-03). 리딩노트 모양을 눈에 띄게 바꾸면 다시 찍을 것 */
+if (typeof HOWTO_SAMPLE !== "undefined") {
+  HOWTO_SAMPLE.decode = () => samplePagesHtml("decode", [
+    "1쪽 — 본문과 해석 · 핵심 정리 · 주요 어휘",
+    "2쪽 — 끊어 읽기 해석 · 4컷 그림(웹툰)",
+  ]);
+  TAB_SAMPLE_RESULT.decode = "dcResult";
+}
 
 if (typeof HOWTO !== "undefined") {
   HOWTO.decode = {

@@ -12315,6 +12315,19 @@ def _log_usage(body, model, label=""):
     가릴 수가 없어(2026-09-27, 시험지 OCR 원가를 물었을 때 겪음) 기능 이름을 더했다."""
     u = body.get("usageMetadata") if isinstance(body, dict) else None
     if not isinstance(u, dict):
+        # 그림 모델(Interactions API)은 모양이 다르다 — usage.total_* 에 담겨 온다. 예전에는 이 모양을 못 읽어
+        # 요약 이미지·리딩노트 그림의 토큰이 로그에 한 줄도 안 남았다(2026-11-03 확인). 그림 몫을 따로 적는다
+        # (그림 출력은 글 출력과 단가가 다르다 — 나노바나나 2.1 표준 $30/100만, 2K 한 장 1,680 토큰).
+        iu = body.get("usage") if isinstance(body, dict) else None
+        if isinstance(iu, dict):
+            img = sum(int(m.get("tokens") or 0) for m in iu.get("output_tokens_by_modality") or []
+                      if isinstance(m, dict) and m.get("modality") == "image")
+            print(
+                f"[usage] {label or '?'} {model} 입력 {iu.get('total_input_tokens', 0)}"
+                f"(캐시 {iu.get('total_cached_tokens', 0)}) · 출력 {iu.get('total_output_tokens', 0)}"
+                f"(그림 {img}) · 생각 {iu.get('total_thought_tokens', 0)}",
+                flush=True,
+            )
         return
     print(
         f"[usage] {label or '?'} {model} 입력 {u.get('promptTokenCount', 0)}"
