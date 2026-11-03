@@ -4897,10 +4897,23 @@ const IMG_LANG_NAME = { mix: "한국어＋영어", ko: "한글요약", en: "영�
    놓고 컷 설명(caps)을 글자로 붙이는 것 — 설명은 저장본 그림 목록(images[].caps)에 함께 담긴다. 그림 느낌은 서버
    DECODE_PIC_STYLES와 같은 열쇠. */
 const COMIC_STYLES = { illust: "일러스트", webtoon: "웹툰" };
+// 그림 느낌은 체크박스 둘(2026-11-03 사용자 — 다른 요약 이미지 칸과 같은 모양)이지만 하나만 고른다: 하나를 켜면
+// 다른 하나가 꺼지고, 켜진 것을 다시 눌러도 꺼지지 않는다(4컷을 끄려면 '4컷 그림' 칸을 끈다)
 function comicStyleOf(prefix) {
   const el = $(prefix + "ComicStyle");
-  return el && COMIC_STYLES[el.value] ? el.value : "illust";
+  const on = el && el.querySelector("input[data-style]:checked");
+  return on && COMIC_STYLES[on.dataset.style] ? on.dataset.style : "illust";
 }
+["info", "brief"].forEach((prefix) => {
+  const box = $(prefix + "ComicStyle");
+  if (!box) return;
+  box.addEventListener("change", (e) => {
+    const t = e.target.closest("input[data-style]");
+    if (!t) return;
+    if (!t.checked) { t.checked = true; return; }
+    box.querySelectorAll("input[data-style]").forEach((x) => { if (x !== t) x.checked = false; });
+  });
+});
 // 종류마다 값이 다르다 — 인포그래픽은 PRICING.infographic, 4컷은 PRICING.decodePic
 function imgLangPrice(lang) {
   if (!PRICING) return 0;

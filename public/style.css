@@ -3111,7 +3111,6 @@ input.st-in{width:100%; box-sizing:border-box;}
 .info-comic img.infographic{display:none;}
 .info-pair .info-comic .dc-cut-img img{display:block; width:206%; height:206%; max-width:none; max-height:none; margin:0;}
 .info-pair.comic-only .info-caution{display:none;}
-.img-comic-style{font-size:13px; padding:2px 4px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink);}
-/* 그림 느낌 칸은 4컷을 체크했을 때만, 체크 칸 옆에 짧게 */
-.img-langs select.img-comic-style{width:auto; max-width:120px; flex:0 0 auto; margin:0;}
+/* 그림 느낌(일러스트·웹툰)은 4컷을 체크했을 때만, 체크 칸 옆에 — 체크박스 모양이지만 하나만 고른다(comicStyleOf) */
+.img-comic-style{display:inline-flex; gap:10px; align-items:center; padding:2px 8px; border-left:2px solid var(--line);}
 .img-langs:not(:has(.img-lang[data-lang="comic"]:checked)) .img-comic-style{display:none;}
