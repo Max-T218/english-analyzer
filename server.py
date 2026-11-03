@@ -303,6 +303,9 @@ PRICE_DECODE_KRW = int(os.environ.get("PRICE_DECODE_KRW", "150"))
 # 리딩노트 4컷 그림(/api/decodepic), 지문 1개당 그림 한 장(정사각형 2×2 네 컷). 원가는 그림 모델(MODEL_IMAGE)
 # 약 90원 + 장면 정하기(Flash) 1원 남짓(2026-11-03 실측 3장). 요약 이미지(500P)보다 싸게 둔다
 PRICE_DECODE_PIC_KRW = int(os.environ.get("PRICE_DECODE_PIC_KRW", "300"))
+# 내용 풀이(/api/explain), 지문 1개당 — 원문 없이 우리말로 글 내용을 풀어 주는 한 쪽. Flash 한 번이고
+# 원문을 옮기지 않아 출력이 리딩노트보다 짧다. 100은 원가 실측 전 임시값 — Render 로그 [usage] explain으로 맞출 것
+PRICE_EXPLAIN_KRW = int(os.environ.get("PRICE_EXPLAIN_KRW", "100"))
 PRICE_MCQ_PLAIN_KRW = int(os.environ.get("PRICE_MCQ_PLAIN_KRW", "250"))    # 객관식·지문유지, (지문×유형) 1개당
 PRICE_MCQ_TRANSFORM_KRW = int(os.environ.get("PRICE_MCQ_TRANSFORM_KRW", "250"))  # 객관식·지문변형, (지문×유형) 1개당
 # 주관식, (지문×유형) 1개당. 객관식과 같은 250원으로 맞춘다 — 주관식도 열다섯 유형 중
@@ -1206,7 +1209,7 @@ def _asset_version():
     stamp = 0.0
     # 만드는 법·결과물 예시 그림(howto-*)도 본다 — 2026-10-07에 그림만 갈아 끼웠다가 표식이 그대로여서
     # 옛 그림('홍보용' 제목)이 계속 보였다.
-    names = ["app.js", "trend.js", "grammar.js", "decode.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
+    names = ["app.js", "trend.js", "grammar.js", "decode.js", "explain.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
         p.name for pat in ("sample-*.jpg", "howto-*.jpg", "howto-*.png") for p in sorted(PUBLIC_DIR.glob(pat))
     ]
     for name in names:
@@ -10785,6 +10788,213 @@ def call_gemini_decode(passage, api_key, model, complete_hint=None):
     return _finish_decode(_gemini_json(payload, api_key, model, _DECODE_TRUNC_MSG, label="decode"))
 
 
+# ══════ 내용 풀이(/api/explain, 2026-11-03 사용자) ══════
+# 지문 하나 → A4 한 쪽, **우리말로만** 글의 내용을 쉽고 자세히 풀어 준다. 해석·문법 설명은 상세분석·
+# 요약분석·리딩노트가 이미 하므로 여기는 '분야를 몰라 글 자체가 이해되지 않는' 학생을 위한 자리다 —
+# 원문을 싣지 않고, 대목마다 선생님이 옆에서 이야기하듯 풀어 준다. 상세분석의 outline.background와
+# 겹쳐 보이지만 그쪽은 분석본 속 짧은 칸이고, 이쪽은 내용 풀이 한 장이 통째로 그 일을 한다.
+# 그리는 곳은 public/explain.js 한 곳이다.
+EXPLAIN_PARTS_MAX = 5
+EXPLAIN_CONCEPTS_MAX = 3
+EXPLAIN_QUESTIONS_MAX = 3
+
+EXPLAIN_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "title": {"type": "STRING"},
+        "field": {"type": "STRING"},
+        "oneLine": {"type": "STRING"},
+        "primer": {"type": "STRING"},
+        "parts": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "range": {"type": "STRING"},
+                    "cue": {"type": "STRING"},
+                    "heading": {"type": "STRING"},
+                    "explain": {"type": "STRING"},
+                },
+                "required": ["range", "cue", "heading", "explain"],
+                "propertyOrdering": ["range", "cue", "heading", "explain"],
+            },
+        },
+        # 배경지식 개념 카드 — 상세분석 outline.background.concepts와 같은 모양(한 줄 정의·쉬운 설명·이 글에서는)
+        "concepts": _BACKGROUND_SCHEMA["properties"]["concepts"],
+        "analogy": {"type": "STRING"},
+        "message": {"type": "STRING"},
+        "questions": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {"q": {"type": "STRING"}, "a": {"type": "STRING"}},
+                "required": ["q", "a"],
+                "propertyOrdering": ["q", "a"],
+            },
+        },
+    },
+    "required": ["title", "field", "oneLine", "primer", "concepts", "parts", "analogy", "message", "questions"],
+    "propertyOrdering": ["title", "field", "oneLine", "primer", "concepts", "parts", "analogy", "message",
+                         "questions"],
+}
+
+EXPLAIN_SYSTEM_PROMPT = r"""너는 한국 고등학교 영어 교사다. 영어 지문 하나를 받아, **영어 해석이 아니라 글의 내용 자체를**
+학생에게 쉽게 풀어 주는 '내용 풀이' 한 쪽을 JSON으로 만든다.
+
+## 누구를 위한 것인가
+요즘 영어 지문은 과학·경제·철학·심리·예술·기술 등 온갖 분야에서 나온다. 해석은 했는데도
+"그래서 무슨 말이지?" 하는 학생이 많다 — 영어 실력이 아니라 **내용을 몰라서** 막히는 것이다.
+이 자료는 그 학생 옆에 앉은 선생님이 **이야기하듯 차근차근** 글을 풀어 주는 것이다.
+- 해석·끊어 읽기·문법 설명은 **하지 마라**(다른 자료가 한다). 문장을 하나씩 옮기지 말고 **뜻을 풀어라**.
+- 지문을 읽지 않은 중학생도 이 쪽만 읽으면 글이 무슨 이야기인지 알 수 있을 만큼 쉽게 쓴다.
+- 모든 글은 **'~해요 / ~이에요' 말투**로 통일한다(친절한 선생님 말투, 반말·'~습니다' 섞지 마라).
+- 어려운 한자어는 쉬운 말로 바꾸고, 꼭 써야 하면 바로 뒤에 풀어 준다.
+
+## 분량 — A4 한 쪽(그림을 넣으면 그림까지)에 들어가야 한다
+모든 글을 합쳐 **우리말 1,700자 안쪽**으로 써라(대목 풀이 explain 전체가 그중 850자, 배경지식 concepts 전체가
+그중 400자 안쪽). 길게 늘어놓기보다
+**꼭 필요한 고리만** 쉽게 풀어라. 같은 말을 두 칸에 되풀이하지 마라(oneLine·message·analogy가 서로 겹치지 않게).
+
+## 항목
+- `title` — 글 내용을 담은 **우리말 제목** 한 줄(25자 안쪽). 질문형도 좋다("왜 어려운 공부가 더 오래 남을까?").
+- `field` — 이 글의 분야를 우리말 짧게("인지심리학", "행동경제학", "생태학"). 일상 이야기·편지·안내문처럼
+  분야라 할 것이 없으면 "일상 이야기", "안내문"처럼 글의 종류를 적는다.
+- `oneLine` — 글 전체를 **영어 없이 아주 쉬운 우리말 한 문장**으로. 초등학생도 알아들을 말로.
+- `primer`·`concepts` — **알아 두면 쉬워지는 배경지식**(상세분석의 배경지식 칸과 같은 것). 이 두 칸만은
+  **지문에 없는 지식**을 채우는 자리다 — 영어 실력이 아니라 **분야를 몰라서** 못 읽는 학생의 틈을 메운다.
+  · `primer` — 읽기 전에 알아 두면 좋은 상식을 2~3문장. 그 분야가 원래 무엇을 다루는지, 이 글이 나온
+    맥락(어떤 고민·현상에서 출발하는지) 같은 **분야의 바탕**만 깐다. 지문의 결론·주장을 미리 말하지 마라.
+    배경이 필요 없는 글이면 글의 상황(누가·어디서·무엇 때문에)을 2문장으로 소개한다.
+  · `concepts` — 지문을 이해하는 데 필요한 개념 **0~3개**. 각각
+    - `en` — 지문에 실제로 나온 영어 용어 그대로(지문에 없으면 그 개념을 가리키는 영어 표준 용어).
+    - `ko` — 우리말 용어.
+    - `short` — 한 줄 정의. 우리말 30자 안쪽.
+    - `explain` — 쉬운 설명 1~2문장(80자 안쪽). 일상의 예를 하나 들어도 좋다.
+    - `link` — 이 개념이 **지문의 어느 대목을 읽는 데** 쓰이는지 한 문장(문장 번호를 쓰지 말고 내용으로).
+  · 개념은 **지문에 실제로 나온 전문 용어**를 먼저 고르고, 모자라면 지문을 읽는 데 꼭 필요한 선행 개념을
+    **최대 1개** 더한다. 학생이 이미 아는 평범한 낱말(iteration=반복, increase=증가)과 지문에 이미 풀어
+    설명된 개념은 고르지 마라 — **그 분야 사람이 아니면 모를 용어**만.
+  · 개념의 예시는 **그 개념과 정확히 같은 현상**이어야 한다(비슷한 다른 현상에 빗대지 마라).
+  · **지문이 그 개념의 흔한 정의를 반박하거나 다르게 쓰면** 흔한 정의를 적되 `link`에서 "이 글은 ~라는 점을
+    짚어요"처럼 지문과의 차이를 밝혀라 — 지문과 해설이 다르다고 느끼지 않게.
+  · 배경지식이 필요 없는 글(일상 이야기·대화문·편지·광고·안내문·도표 설명)은 `concepts`를 빈 배열 []로.
+- `parts` — **차근차근 풀어 읽기.** 글을 내용 흐름에 따라 3~4대목으로 나눠 **빠짐없이** 덮는다.
+  · `range` — 그 대목의 문장 번호. 보통 숫자로 "1~3", 한 문장이면 "4". 동그라미 문자를 쓰지 마라.
+  · `cue` — 학생이 원문에서 그 대목을 찾을 수 있게, 그 대목 **첫 문장의 맨 앞 2~4낱말을 원문 그대로**.
+    (영어는 이 칸과 concepts.en에서만 쓴다.)
+  · `heading` — 그 대목이 하는 일을 짧은 우리말로(20자 안쪽). "흔히 하는 생각부터 꺼내요",
+    "실험으로 뒤집어요"처럼 **글이 어떻게 움직이는지**가 보이게.
+  · `explain` — 이 자료의 핵심이다. 그 대목의 내용을 **3~4문장**(250자 안쪽)으로 쉽고 자세히 풀어라.
+    · 글쓴이가 **무엇을 말하는지**와 **왜 그 말을 하는지**(앞 대목과 어떻게 이어지는지)를 함께 쓴다.
+      둘째 대목부터는 "앞에서 ~라고 했죠? 그런데 여기서는 ~" 처럼 흐름을 이어 준다.
+    · 지문에 나온 사례·실험·숫자는 무엇을 보여 주려는 것인지 풀어 준다(세부를 지어내지 마라).
+    · 학생이 막힐 만한 생각의 고리(왜 그렇게 되는지)를 한 단계씩 풀어 준다. 필요하면 짧은 일상 예를
+      **한 번** 들어도 좋다(지문의 논리와 정확히 맞는 예만).
+- `analogy` — 글의 핵심 구조를 학생이 아는 **전혀 다른 일상 장면**(학교·게임·운동·음식·스마트폰 등)에 빗댄
+  1~2문장. "쉽게 말하면"은 쓰지 마라(화면이 붙인다). 논리가 정확히 맞는 비유가 없으면 빈 문자열 "".
+- `message` — **그래서 글쓴이가 하고 싶은 말**을 2문장. 결론과 그 결론이 우리에게 주는 의미까지.
+- `questions` — 다 읽은 뒤 스스로 확인할 질문 3개. 낱말 뜻이 아니라 **내용 이해**를 묻는다
+  ("왜 ~일까요?", "~와 ~는 어떻게 다를까요?"). `a`는 지문 근거로 답한 우리말 한 문장.
+
+## 반드시 지킬 것
+- ⚠️ **틀린 정보를 쓰지 마라.** 배경·개념은 교과서·개론서에 실리는 널리 인정된 내용만. 확실하지 않은
+  수치·연도·사람 이름·연구 결과는 쓰지 마라. 지문과 어긋나는 설명을 하지 마라 — 지문이 흔한 생각을
+  반박하면 지문의 입장을 따른다.
+- 지문에 없는 주장을 글쓴이 말처럼 쓰지 마라.
+- 대화문이면 '글쓴이' 대신 대화하는 사람들의 상황과 용건을 풀어 준다.
+- HTML 태그·마크다운·이모지를 쓰지 마라. 순수한 글자만. 맞춤법을 지킨다.
+"""
+
+_EXPLAIN_TRUNC_MSG = "지문이 너무 길어 내용 풀이를 만들다가 잘렸습니다. 지문을 나눠 시도해 주세요."
+
+
+def _finish_explain(result):
+    """모델 답을 다듬는다 — 글자만 남기고(화면이 esc()로 넣는다), 빈 칸을 버리고, 개수를 상한에 맞춘다."""
+    P = _decode_plain
+    out = {
+        "title": P(result.get("title"), 80),
+        "field": P(result.get("field"), 40),
+        "oneLine": P(result.get("oneLine"), 200),
+        "primer": P(result.get("primer"), 800),
+        "analogy": re.sub(r"^\s*쉽게\s*말하면[,\s]*", "", P(result.get("analogy"), 400)),
+        "message": P(result.get("message"), 600),
+        "parts": [], "concepts": [], "questions": [],
+    }
+    for p in result.get("parts") or []:
+        if not isinstance(p, dict):
+            continue
+        ex = P(p.get("explain"), 1200)
+        if not ex:
+            continue
+        rng = re.sub(r"[^\d~\-–, ]", "", P(p.get("range"), 20)).replace("-", "~").replace("–", "~").strip()
+        out["parts"].append({"range": rng, "cue": P(p.get("cue"), 60).strip('"“” '),
+                             "heading": P(p.get("heading"), 60), "explain": ex})
+    out["parts"] = out["parts"][:EXPLAIN_PARTS_MAX]
+    seen = set()
+    for t in result.get("concepts") or []:
+        if not isinstance(t, dict):
+            continue
+        en, ko = P(t.get("en"), 80), P(t.get("ko"), 60)
+        short, ex = P(t.get("short"), 120), P(t.get("explain"), 400)
+        if not (short or ex) or not (en or ko) or (en or ko).lower() in seen:
+            continue
+        seen.add((en or ko).lower())
+        out["concepts"].append({"en": en, "ko": ko, "short": short, "explain": ex, "link": P(t.get("link"), 300)})
+    out["concepts"] = out["concepts"][:EXPLAIN_CONCEPTS_MAX]
+    for q in result.get("questions") or []:
+        if isinstance(q, dict) and P(q.get("q")):
+            out["questions"].append({"q": P(q.get("q"), 200), "a": P(q.get("a"), 400)})
+    out["questions"] = out["questions"][:EXPLAIN_QUESTIONS_MAX]
+    return out
+
+
+# 한 쪽 분량 — 화면이 보이는 글(제목·풀이·배경지식·정리·질문)을 모두 더한 글자 수. 지시문은 1,700자 안쪽을 시키고,
+# 이 값을 넘으면 서버가 한 번 더 줄여 쓰게 한다(값은 한 번만). 화면(explain.js xpFit)이 글씨를 82%까지 줄이고
+# 그래도 넘치면 덜 중요한 칸부터 인쇄에서 빼므로, 여기는 그 일이 거의 안 생기게 앞에서 막는 자리다(2026-11-03 사용자: 글은 무조건 한 쪽)
+EXPLAIN_CHAR_BUDGET = 1800
+EXPLAIN_SHORTEN_TO = 1500
+
+
+def explain_text_length(r):
+    """내용 풀이 결과에서 쪽에 찍히는 글자 수(공백 빼고)."""
+    bits = [r.get(k, "") for k in ("title", "field", "oneLine", "primer", "analogy", "message")]
+    for p in r.get("parts", []):
+        bits += [p.get("heading", ""), p.get("explain", ""), p.get("cue", "")]
+    for c in r.get("concepts", []):
+        bits += [c.get(k, "") for k in ("en", "ko", "short", "explain", "link")]
+    for q in r.get("questions", []):
+        bits += [q.get("q", ""), q.get("a", "")]
+    return sum(len(re.sub(r"\s+", "", str(b))) for b in bits)
+
+
+def call_gemini_explain(passage, api_key, model, shorten_from=None):
+    """지문 하나 → 내용 풀이(우리말). 원문을 옮기지 않으므로 문장 빠짐 검사는 없다.
+    shorten_from=앞 답의 글자 수면, 한 쪽에 들도록 줄여 다시 쓰라고 묻는다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+    payload = {
+        "systemInstruction": {"parts": [{"text": EXPLAIN_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": (
+            (f"⚠️ 앞서 만든 답은 글자가 약 {shorten_from}자라 A4 한 쪽을 넘었다. 같은 내용 구성을 지키되 "
+             f"**모든 글을 합쳐 {EXPLAIN_SHORTEN_TO}자 안쪽**으로 줄여 다시 써라 — 대목 풀이는 대목마다 2~3문장, "
+             "개념은 꼭 필요한 것만 최대 2개, 확인 질문은 짧게.\n\n" if shorten_from else "")
+            + "## 지문\n" + passage)}]}],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 16384,
+            "responseMimeType": "application/json",
+            "responseSchema": EXPLAIN_SCHEMA,
+        },
+    }
+    # 지시문이 짧아 캐시에 맡기지 않는다(리딩노트와 같다)
+    return _finish_explain(_gemini_json(payload, api_key, model, _EXPLAIN_TRUNC_MSG, label="explain"))
+
+
 # ── 리딩노트 4컷 그림(/api/decodepic, 2026-11-03 사용자) ──
 # 지문 흐름을 네 장면으로 — ① Flash가 장면(영어, 그릴 것만)과 컷 설명(쉬운 우리말 한 줄)을 정하고 ② 그림 모델이
 # 정사각형 한 장에 2×2로 네 컷을 그린다(한 번만 부르므로 네 컷이어도 한 장 값). 그림 속에는 글자를 넣지 않는다 —
@@ -14780,6 +14990,15 @@ CHANGELOG = [
             "개인정보처리방침 개정 안내 — 2026년 11월 10일부터 적용됩니다. 반을 함께 쓰면 공유 코드로 들어온 선생님도 그 반 학생의 이름·아이디와 "
             "시험 답안·성적을 보고 다룰 수 있다는 점, 함께 쓸지는 반을 만든 선생님이 정하고 학생·보호자에게 알리는 책임도 반을 만든 선생님에게 있다는 점, "
             "반 삭제·탈퇴 때 함께 쓰던 반의 정보를 어떻게 파기하는지를 더했습니다. 바뀐 내용은 방침 맨 아래 변경 이력에서 볼 수 있습니다.",
+        ],
+    },
+    {
+        "version": 118,
+        "date": "2026-11-03",
+        "items": [
+            "새 탭 💡 내용 풀이 — 해석은 했는데 글이 무슨 말인지 모르는 학생을 위해, 영어 지문의 내용을 우리말로 쉽고 자세히 풀어 주는 한 쪽 자료를 만듭니다. "
+            "읽기 전에 알아 둘 배경, 대목마다 차근차근 풀이, 낯선 개념, 글쓴이가 하고 싶은 말, 확인 질문이 들어가고 영어 원문·해석은 싣지 않습니다. "
+            "원하면 한글요약 인포그래픽이나 4컷 그림 같은 요약 이미지도 지문마다 한 장 넣을 수 있습니다.",
         ],
     },
 ]
@@ -19918,6 +20137,8 @@ class Handler(BaseHTTPRequestHandler):
                 # 리딩노트 — 지문 1개당, 4컷 그림은 그림 한 장(지문 1개)당
                 "decode": PRICE_DECODE_KRW,
                 "decodePic": PRICE_DECODE_PIC_KRW,
+                # 내용 풀이 — 지문 1개당
+                "explain": PRICE_EXPLAIN_KRW,
             })
             return
 
@@ -20390,7 +20611,7 @@ class Handler(BaseHTTPRequestHandler):
         self._exam_run = None
 
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
+        if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                         "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
@@ -20477,7 +20698,7 @@ class Handler(BaseHTTPRequestHandler):
         # 로그인이 곧 '누가 관리자 키를 쓰는지' 구분하는 유일한 장치다.
         # 그중 실제로 콘텐츠를 생성하는 여섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
-        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/quiz", "/api/workbook", "/api/grammar",
+        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                            "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract")
@@ -20535,6 +20756,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/decodepic":
                     cost = PRICE_DECODE_PIC_KRW
                     self._pending_label = "리딩노트 4컷 그림"
+                elif path == "/api/explain":
+                    cost = PRICE_EXPLAIN_KRW
+                    self._pending_label = "내용 풀이"
                 elif path == "/api/infographic":
                     # 지문 1개에 그림 1장. 분석과 달리 한 번에 여러 장을 받지 않는다 —
                     # 1장에 8~12초가 걸려서 여러 장을 한 요청에 묶으면 프록시가 끊는다.
@@ -21695,6 +21919,40 @@ class Handler(BaseHTTPRequestHandler):
                         result = retry
                 if not result.get("sentences"):
                     raise RuntimeError("문장을 읽어 내지 못했습니다. 다시 시도해 주세요.")
+                self._charge_and_send(path, req, result)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        # 내용 풀이 — 지문 하나당 한 번(Flash). 한 쪽 분량(EXPLAIN_CHAR_BUDGET)을 넘으면 한 번 더 줄여 쓰게 한다(값은 한 번).
+        # 대목 풀이가 비면 실패로 보고 값을 받지 않는다
+        if path == "/api/explain":
+            passage = (req.get("passage") or "").strip()
+            if len(passage) < 20:
+                self._send_json({"error": "풀어 줄 영어 지문을 입력하세요 (20자 이상)."}, 400)
+                return
+            api_key = req.get("apiKey") or ""
+            trace = RefineTrace(time.monotonic())
+            try:
+                result = call_gemini_explain(passage, api_key, MODEL)   # 항상 Flash
+                trace.first_done()
+                size = explain_text_length(result)
+                if result.get("parts") and size > EXPLAIN_CHAR_BUDGET and not trace.blocked("분량"):
+                    trace.retry("분량")
+                    try:
+                        short = call_gemini_explain(passage, api_key, MODEL, shorten_from=size)
+                        if short.get("parts") and explain_text_length(short) < size:
+                            result = short
+                    except Exception as e:   # 줄이기에 실패해도 처음 답을 쓴다 — 화면이 마저 맞춘다
+                        print(f"[explain] 줄여 쓰기 실패: {e}", flush=True)
+                if not result.get("parts"):
+                    raise RuntimeError("내용 풀이를 만들지 못했습니다. 다시 시도해 주세요.")
                 self._charge_and_send(path, req, result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)

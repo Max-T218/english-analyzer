@@ -1109,6 +1109,8 @@
     </div>
     <!-- 리딩노트 — 지문 하나로 A4 두 쪽 복습 자료(public/decode.js). 지문 분석 묶음 밖에 따로 둔다(사용자) -->
     <button type="button" class="tab-btn" data-tab="decode">📘 리딩노트</button>
+    <!-- 내용 풀이 — 원문·해석 없이 우리말로 글 내용을 쉽게 풀어 주는 한 쪽(public/explain.js, 2026-11-03 사용자) -->
+    <button type="button" class="tab-btn" data-tab="explain">💡 내용 풀이</button>
     <!-- 문제 제작은 상위 탭 하나에 하위 셋(객관식·주관식·객관식+주관식)을 둔다. 하위 버튼은
          그대로 .tab-btn이라 저장함 불러오기 등이 data-tab으로 누르는 길이 바뀌지 않는다.
          상위 버튼은 탭이 아니라 '마지막에 보던 하위 탭을 여는' 단추다(app.js syncQuizGroup). -->
@@ -2450,6 +2452,53 @@
     <div id="dcResult"></div>
   </section>
 
+  <!-- ══════════ 내용 풀이 (2026-11-03) ══════════
+       지문 하나 → A4 한 쪽, 우리말로만: 제목·분야·한 줄 요약 / 읽기 전에 / 차근차근 풀어 읽기 / 낯선 개념 /
+       한마디로 정리 / 스스로 확인. 공용 지문칸을 그대로 쓴다. 동작은 public/explain.js, 서버는 /api/explain. -->
+  <section class="tab-page" id="tab-explain">
+    <section class="panel">
+      <div class="row cover-row">
+        <div class="field">
+          <label for="xpTitle">자료 제목 (선택)</label>
+          <input type="text" id="xpTitle" maxlength="60" placeholder="예: 2학년 2학기 기말 대비">
+          <div class="hint">쪽마다 맨 위 머리띠에 이 이름과 지문 이름이 찍힙니다. 비워 두면 지문 이름만 찍힙니다.</div>
+        </div>
+      </div>
+      <!-- 요약 이미지 — 요약분석·상세분석과 같은 그림(인포그래픽·4컷), 지문마다 한 장. 종류는 explain.js XP_IMG_SPECS가 채운다 -->
+      <div class="dc-picopt">
+        <span class="dc-picopt-title">🖼️ 요약 이미지</span>
+        <label class="chk"><input type="checkbox" id="xpImgChk"> 만들 때 함께 넣기</label>
+        <span class="dc-picopt-sep">그림 종류</span>
+        <select id="xpImgSpec" class="xp-imgspec" aria-label="요약 이미지 종류"></select>
+        <div class="hint">지문마다 그림 한 장을 <b>둘째 쪽</b>에 넣습니다(첫 쪽은 풀이 글, 둘째 쪽은 그림 — 지문마다 두 쪽). 글이 첫 쪽을 넘으면 뒤쪽 칸이 그림 위로 넘어가고, <b>📄 쪽 구성</b>으로 칸을 직접 옮길 수 있습니다. 한글요약 인포그래픽은 글 내용을 우리말로 한눈에 정리하고, 4컷 그림은 글의 흐름을 네 장면으로 그립니다(컷마다 설명 한 줄). 만든 뒤에도 지문마다 <b>🖼️ 요약 이미지 넣기 / 🔄 그림 다시 만들기</b>로 더하거나 바꿀 수 있습니다. <span id="xpImgPrice"></span></div>
+      </div>
+      <div class="sheet-style" id="xpSheetStyle"></div>
+      <div class="brand-slot" id="explainBrandSlot"></div>
+      <div class="actions">
+        <button type="button" class="btn" id="xpMakeBtn">내용 풀이 만들기</button>
+        <button type="button" class="btn ghost" id="xpLoadBtn">📂 불러오기</button>
+        <button class="btn ghost" id="xpPrintBtn" style="display:none"
+                title="누르면 인쇄 창이 열립니다. 종이로 인쇄할지 PDF로 저장할지는 그 창에서 고릅니다.">🖨️ 인쇄 / PDF 변환</button>
+        <button class="btn ghost" id="xpEditBtn" style="display:none"
+                title="풀이 글을 그 자리에서 고칩니다. 고친 그대로 인쇄·저장됩니다.">✏️ 직접 수정</button>
+        <button class="btn ghost" id="xpSaveBtn" style="display:none"
+                title="로그인한 계정에 이 자료와 지문을 저장해 나중에 다시 불러올 수 있습니다.">💾 사이트 저장</button>
+        <button class="btn ghost" id="xpPageBtn" style="display:none"
+                title="칸을 첫 쪽과 둘째 쪽 사이로 옮깁니다. 지문마다 두 쪽(첫 쪽 글, 둘째 쪽 그림) 안에서 나눕니다.">📄 쪽 구성</button>
+        <button class="btn ghost" id="xpImgBtn" style="display:none"
+                title="아직 그림이 없는 지문마다 위에서 고른 종류로 요약 이미지를 그려 넣습니다.">🖼️ 요약 이미지 넣기</button>
+        <span class="hint">영어 해석이 아니라 <b>글의 내용</b>을 우리말로 쉽게 풀어 줍니다 — 지문마다 <b>한 쪽</b>: 읽기 전에 알아 둘 배경, 대목마다 차근차근 풀이, 낯선 개념, 글쓴이가 하고 싶은 말, 확인 질문.</span>
+      </div>
+      <div class="hint cost-hint" id="xpCostHint" role="status" aria-live="polite"></div>
+      <div class="error" id="xpError"></div>
+    </section>
+    <div class="loading" id="xpLoading">
+      <span class="spinner"></span>
+      <span id="xpLoadingText">AI가 내용을 풀어 쓰고 있습니다…</span>
+    </div>
+    <div id="xpResult"></div>
+  </section>
+
   <!-- ══════════ 문법문제 출제 마법사 ══════════
        ① 레벨 → ② 문법 항목 → ③ 세부 항목 → ④ 고른 항목 → ⑤ 문항 수·모양을 한 화면 네 칸에 둔다
        (③·④는 셋째 칸 위아래). 모양은 다른 탭과 같은 칸·체크 모양을 쓴다 — 처음엔 참고한 사이트처럼
@@ -3147,6 +3196,7 @@
 <script src="/trend.js?v=%%ASSET_V%%"></script>
 <script src="/grammar.js?v=%%ASSET_V%%"></script>
 <script src="/decode.js?v=%%ASSET_V%%"></script>
+<script src="/explain.js?v=%%ASSET_V%%"></script>
 <script src="/ltreport.js?v=%%ASSET_V%%"></script>
 <script src="/leveltest.js?v=%%ASSET_V%%"></script>
 </body>
