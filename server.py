@@ -3129,7 +3129,7 @@ def _check_answer_plan(result, answer_plan):
 def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
                            variation="verbatim", target_grammar="", ox_plan=(),
                            insert_hint=None, answer_plan=(), target_words=(), target_defs=(),
-                           ref_hint=None, verify_hint=None):
+                           ref_hint=None, verify_hint=None, avoid_hint=None):
     """items = [(유형, 문항수)] — 유형마다 몇 문항인지가 요청에 그대로 들어 있다.
     target_words = 시험 범위 단어장 중 이 지문에 나오는 단어(parse_target_words가 다듬은 것).
     target_defs = 그중 단어장에 영영풀이까지 적힌 것 [(낱말, 정의)] (parse_target_defs).
@@ -3342,6 +3342,12 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
             f"⚠️ 이전 시도는 {len(explain_hint)}개 문항({', '.join(map(str, explain_hint))}번)의 "
             "explanation을 비워서 보냈습니다. 이번에는 모든 문항에 25자 이상의 한국어 해설을 "
             "반드시 채우세요. 해설이 빈 문항이 하나라도 있으면 실패입니다."
+        )
+    if avoid_hint:   # 보충 학습 — 학생이 틀린 문제와 같은 유형으로 다시 낼 때(_qr_make_quiz)
+        lines.append(
+            "⚠️ 학생이 이 지문으로 아래 문제를 이미 풀고 틀렸습니다. 같은 유형이지만 새 문제를 만드세요 — "
+            "묻는 자리(밑줄·빈칸·고칠 곳·질문)와 보기·정답 문장을 이전 문제와 다르게 잡고, 이전 보기를 그대로 다시 쓰지 마세요.\n"
+            + "\n".join(f"- {a}" for a in avoid_hint)
         )
     lines += ["", "[지문]", passage.strip()]
     return "\n".join(lines)
@@ -3588,7 +3594,7 @@ def _check_ox_plan(result, ox_plan):
 def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
                       explain_hint=None, variation="verbatim", target_grammar="",
                       insert_hint=None, difficulty="normal", level="high", target_words=(),
-                      target_defs=(), ref_hint=None, verify_hint=None):
+                      target_defs=(), ref_hint=None, verify_hint=None, avoid_hint=None):
     """items = [(유형, 문항수)]. 개수 상한은 parse_quiz_items가 이미 적용해 둔다.
     difficulty="hard"면 QUIZ_HARD_RULES를 지시문 뒤에 덧붙인다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -3620,6 +3626,7 @@ def call_gemini_quiz(passage, items, api_key, model, short_hint=None,
                 {"text": build_quiz_user_prompt(
                     passage, items, short_hint, explain_hint, variation, target_grammar,
                     ox_plan, insert_hint, answer_plan, target_words, target_defs, ref_hint, verify_hint,
+                    avoid_hint,
                 )}
             ]}
         ],
@@ -18175,13 +18182,20 @@ def get_quiz_attempt_for_teacher(teacher_id, assignment_id, student_id):
     return out
 
 
-def grade_quiz_unit(teacher_id, assignment_id, student_id, no, unit, ok):
-    """확인 대기 칸(또는 자동 채점한 칸)을 선생님이 맞음/틀림으로 정한다. 점수를 다시 센다."""
+def grade_quiz_unit(teacher_id, assignment_id, student_id, no, unit, ok, round_no=None):
+    """확인 대기 칸(또는 자동 채점한 칸)을 선생님이 맞음/틀림으로 정한다. 점수를 다시 센다.
+    round_no가 있으면 원래 답안이 아니라 그 회차의 보충 학습(quiz_retries)을 채점한다 — 틀림으로 정하면
+    학생이 다음에 결과를 열 때 남은 회차의 보충 학습이 다시 붙는다(_qr_state가 그때 센다)."""
     _require_db()
     _own_assignment(teacher_id, assignment_id)
-    ref = DB.collection("test_attempts").document(f"{assignment_id}_{student_id}_1")
+    try:
+        rnd = int(round_no or 0)
+    except (TypeError, ValueError):
+        rnd = 0
+    ref = (_qr_ref(assignment_id, student_id, rnd) if rnd > 0
+           else DB.collection("test_attempts").document(f"{assignment_id}_{student_id}_1"))
     snap = ref.get()
-    if not snap.exists:
+    if not snap.exists or (rnd > 0 and (snap.to_dict() or {}).get("status") != "done"):
         raise ValueError("답안을 찾을 수 없습니다.")
     d = snap.to_dict() or {}
     qdetails = d.get("qdetails") or []
@@ -18218,9 +18232,13 @@ def _qt_question_stats(assignment, attempts):
 
 # ══════ 문제 시험 보충 학습 (2026-10-29 사용자) ══════
 # 단어시험은 합격선을 정해 재시험을 보지만 문제 시험은 한 번뿐이다. 선생님이 '다시 풀기'를 켜 두면 학생이 제출한 뒤
-# 틀린 문제를 다시 학습하고, 틀린 내용과 같은 범위의 새 객관식 문제를 푼다 — 최대 QUIZ_RETRY_MAX_ROUNDS회차.
-#   · 문법 문제: 선생님이 출제할 때 정한 항목·레벨·난이도를 지키고, 문제 모양(어법 고르기·빈칸·밑줄…)은 AI가 섞는다
-#   · 객관식 탭 문제: 같은 지문·같은 유형(객관식 유형만 — 주관식 문항은 일단 보충 대상에서 뺀다)
+# 틀린 문제를 다시 학습하고, 틀린 내용과 같은 범위의 새 문제를 푼다 — 최대 QUIZ_RETRY_MAX_ROUNDS회차.
+#   · 문법 문제: 선생님이 출제할 때 정한 항목·레벨·난이도를 지키고, 문제 모양(어법 고르기·빈칸·밑줄…)은 AI가 섞는다.
+#     객관식을 틀리면 객관식, 주관식을 틀리면 주관식으로 낸다.
+#   · 문제 탭(객관식·주관식·혼합) 문제: 같은 지문으로(2026-11-03 사용자)
+#       객관식을 틀리면 → 선생님이 이 시험에 낸 다른 객관식 유형으로(없으면 같은 유형, 보기·정답을 바꿔서)
+#       주관식을 틀리면 → 같은 유형의 주관식으로(묻는 자리·답을 바꿔서). 답을 여러 모양으로 쓰는 주관식은
+#       원래 시험처럼 확인 대기가 되고 선생님이 보충 기록에서 [맞음]/[틀림]을 누른다(grade_quiz_unit의 round).
 # 새 문제를 만드는 값은 선생님 잔액에서 나가고(학생에게는 포인트가 없다), 틀린 문제 하나당 몇 개를 낼지도 선생님이
 # 정한다. 원래 시험의 기록(test_attempts)은 건드리지 않고 회차마다 quiz_retries에 따로 쌓아 선생님이 따로 본다.
 QUIZ_RETRY_MAX_ROUNDS = 3          # 선생님이 고를 수 있는 회차의 상한(시험마다 1~이 값, 기본 QUIZ_RETRY_DEFAULT_ROUNDS)
@@ -18256,19 +18274,26 @@ def _qr_max_rounds(cfg):
 
 
 def _qt_src_of(raw, passages):
-    """문항 하나에서 '같은 내용의 새 문제'를 만들 재료를 꺼낸다. 문법 문항은 항목·레벨·난이도, 객관식 탭 문항은
-    지문과 유형(지문은 passages에 한 번만 담고 열쇠로 가리킨다). 재료가 없으면 None — 보충 대상에서 빠진다."""
+    """문항 하나에서 '같은 내용의 새 문제'를 만들 재료를 꺼낸다. 문법 문항은 항목·레벨·난이도, 문제 탭 문항은
+    지문과 유형(지문은 passages에 한 번만 담고 열쇠로 가리킨다). 재료가 없으면 None — 보충 대상에서 빠진다.
+    sa=True면 주관식 문항 — 주관식을 틀리면 주관식으로 다시 낸다(2026-11-03 사용자)."""
     if raw.get("gitem"):
         grade = _qt_s(raw.get("ggrade"), 10)
-        return {"k": "g", "item": _norm_text(_qt_s(raw["gitem"], 80)),
-                "grade": grade if grade in GRAMMAR_GRADES else "",
-                "diff": _qt_s(raw.get("gdiff"), 10) or "normal"}
+        src = {"k": "g", "item": _norm_text(_qt_s(raw["gitem"], 80)),
+               "grade": grade if grade in GRAMMAR_GRADES else "",
+               "diff": _qt_s(raw.get("gdiff"), 10) or "normal"}
+        if (raw.get("format") or "mc") != "mc":
+            src["sa"] = True
+        return src
     t = _norm_text(_qt_s(raw.get("type"), 60))
     text = _qt_s(raw.get("srcPassage"), 8000).strip()
-    if t in MCQ_ONLY_TYPES and len(text) >= 20:
+    if t in QUIZ_TYPE_LABELS and len(text) >= 20:
         key = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
         passages.setdefault(key, text)
-        return {"k": "q", "type": t, "p": key}
+        src = {"k": "q", "type": t, "p": key}
+        if t not in MCQ_ONLY_TYPES:
+            src["sa"] = True
+        return src
     return None
 
 
@@ -18335,75 +18360,134 @@ def _qr_state(assignment_id, assignment, student_id):
     return out
 
 
-def _qr_plan(base_q, wrong, per, passages):
-    """틀린 문항 → 새로 만들 묶음. 문법은 (항목, 레벨, 난이도), 객관식은 (유형, 지문 열쇠)별로 개수를 모은다."""
-    gram, quiz, left = {}, {}, QUIZ_RETRY_MAX_QUESTIONS
+def _qr_mc_pool(assignment):
+    """이 시험에 선생님이 낸 객관식 유형들(시험 차례대로) — 객관식을 틀리면 이 안의 다른 유형으로 새 문제를 낸다."""
+    out = []
+    for q in assignment.get("questions") or []:
+        s = q.get("src") or {}
+        t = s.get("type")
+        if s.get("k") == "q" and not s.get("sa") and t in MCQ_ONLY_TYPES and t not in out:
+            out.append(t)
+    return out
+
+
+def _qr_type_fits(t, text):
+    """이 지문으로 그 유형을 낼 수 있는지 — 대화문 유형·문장삽입처럼 지문을 가리는 유형을 거른다(fit_quiz_items와 같은 기준)."""
+    items, _skipped = fit_quiz_items([{"id": t, "count": 1}], with_dialogue_colons(text))
+    return bool(items)
+
+
+def _qr_avoid_text(q):
+    """틀린 문항을 같은 유형으로 다시 낼 때 AI에 보여 줄 원래 문제(발문·보기·답) — 같은 문제가 또 나오지 않게."""
+    parts = [_quiz_plain(q.get("instruction"))]
+    parts += [f"({i + 1}) {_quiz_plain(c)}" for i, c in enumerate(q.get("choices") or [])]
+    if q.get("answerText"):
+        parts.append("답: " + _quiz_plain(q.get("answerText")))
+    return re.sub(r"\s+", " ", " ".join(p for p in parts if p)).strip()[:500]
+
+
+def _qr_plan(base_q, wrong, per, passages, mc_pool=()):
+    """틀린 문항 → 새로 만들 묶음과 개념 설명 주제.
+    문법: (항목, 레벨, 난이도) → {"mc": 객관식 수, "sa": 주관식 수} — 틀린 모양(객관식/주관식) 그대로.
+    문제 탭: (유형, 지문 열쇠) → {"n": 수, "avoid": [원래 문제]}.
+      · 주관식을 틀리면 같은 유형의 주관식으로(묻는 자리·답을 원래 문제와 다르게).
+      · 객관식을 틀리면 선생님이 이 시험에 낸 객관식 유형(mc_pool) 중 이 지문에 맞는 **다른 유형**으로 돌려 낸다 —
+        같은 유형이면 보기만 바꾼 비슷한 문제가 되기 쉽다. 다른 유형이 없을 때만 같은 유형(보기·정답을 바꿔서)으로 낸다.
+    topics: 개념 설명을 쓸 문제 탭 주제 — 새 문제의 유형이 아니라 학생이 **틀린** 유형이다."""
+    gram, quiz, topics, left = {}, {}, [], QUIZ_RETRY_MAX_QUESTIONS
     for i in wrong:
-        s = base_q[i].get("src") or {}
+        q = base_q[i]
+        s = q.get("src") or {}
         n = min(per, left)
         if n <= 0:
             break
         if s.get("k") == "g":
             key = (s.get("item"), s.get("grade") or "", s.get("diff") or "normal")
-            gram[key] = gram.get(key, 0) + n
+            slot = gram.setdefault(key, {"mc": 0, "sa": 0})
+            slot["sa" if s.get("sa") else "mc"] += n
         elif s.get("k") == "q" and passages.get(s.get("p")):
-            key = (s.get("type"), s.get("p"))
-            quiz[key] = quiz.get(key, 0) + n
+            t, p = s.get("type"), s.get("p")
+            if s.get("sa") or t not in MCQ_ONLY_TYPES:
+                picks = [t] * n
+            else:
+                alts = [x for x in mc_pool if x != t and _qr_type_fits(x, passages[p])]
+                start = random.randrange(len(alts)) if alts else 0
+                picks = [alts[(start + j) % len(alts)] for j in range(n)] if alts else [t] * n
+            for typ in picks:
+                slot = quiz.setdefault((typ, p), {"n": 0, "avoid": []})
+                slot["n"] += 1
+                if typ == t:
+                    a = _qr_avoid_text(q)
+                    if a and a not in slot["avoid"]:
+                        slot["avoid"].append(a)
+            if (t, p) not in topics:
+                topics.append((t, p))
         else:
             continue
         left -= n
-    return gram, quiz
+    return gram, quiz, topics
 
 
 def _qr_estimate(gram, quiz):
     """잔액 확인용 — 만들 문항 수로 어림한 값(실제 차감은 받아 낸 문항 수로 다시 센다)."""
-    total = PRICE_GRAMMAR_PER_Q_KRW * sum(gram.values())
-    for (t, _p), n in quiz.items():
-        total += _quiz_action_cost([(t, n)])
+    total = PRICE_GRAMMAR_PER_Q_KRW * sum(v["mc"] + v["sa"] for v in gram.values())
+    for (t, _p), v in quiz.items():
+        total += _quiz_action_cost([(t, v["n"])])
     return total + PRICE_RETRY_CONCEPT_KRW
 
 
 def _qr_make_grammar(rows, diff):
-    """문법 묶음 하나(난이도가 같은 항목들) → 객관식 문항들. 모양은 AI가 고른다(난이도에 안 맞는 모양은 뺀다)."""
+    """문법 묶음 하나(난이도가 같은 항목들) → 새 문항들. 객관식을 틀린 만큼 객관식, 주관식을 틀린 만큼 주관식으로 만들고
+    모양은 AI가 고른다(난이도에 안 맞는 모양은 뺀다). rows = [(항목, 레벨, 객관식 수, 주관식 수)]."""
     ex = GRAMMAR_DIFF_EXCLUDE.get(diff, ())
-    shapes = [s for s in GRAMMAR_MC_SHAPES if s not in ex] or list(GRAMMAR_MC_SHAPES)
-    default_grade = next((g for _it, g, _n in rows if g in GRAMMAR_GRADES), "m2")
+    mc_shapes = [s for s in GRAMMAR_MC_SHAPES if s not in ex] or list(GRAMMAR_MC_SHAPES)
+    sa_shapes = [s for s in GRAMMAR_SA_SHAPES if s not in ex] or list(GRAMMAR_SA_SHAPES)
+    default_grade = next((g for _it, g, _m, _s in rows if g in GRAMMAR_GRADES), "m2")
     plan = {
         "grade": default_grade, "difficulty": diff, "difficulties": [diff], "mix": False,
-        "items": [{"name": it, "mc": max(1, min(GRAMMAR_MAX_QUESTIONS, n)), "sa": 0,
-                   "grade": g if g in GRAMMAR_GRADES else default_grade} for it, g, n in rows],
-        "mc_shapes": shapes, "sa_shapes": list(GRAMMAR_SA_SHAPES), "ai_pick": True, "passage": "",
+        "items": [{"name": it, "mc": min(GRAMMAR_MAX_QUESTIONS, m), "sa": min(GRAMMAR_MAX_QUESTIONS, s),
+                   "grade": g if g in GRAMMAR_GRADES else default_grade} for it, g, m, s in rows],
+        "mc_shapes": mc_shapes, "sa_shapes": sa_shapes, "ai_pick": True, "passage": "",
     }
     made = []
     for q in call_gemini_grammar(plan, "", low_think=True)["questions"]:
-        if q.get("format") != "mc":
-            continue
         q["src"] = {"k": "g", "item": q.get("gitem") or "", "grade": q.get("ggrade") or "",
                     "diff": q.get("gdiff") or diff}
+        if q.get("format") != "mc":
+            q["src"]["sa"] = True
+        if q.get("format") == "write":
+            q["looseOrder"] = True   # 문법 마법사에서 낸 시험과 같이 — 어순만 다르면 틀림이 아니라 확인 대기
         for k in ("gkind", "gitem", "ggrade", "gdiff"):
             q.pop(k, None)
         made.append(q)
     return made, PRICE_GRAMMAR_PER_Q_KRW * len(made)
 
 
-def _qr_make_quiz(t, p, n, text):
-    """객관식 탭 문항 묶음 하나(같은 지문·같은 유형) → 새 객관식 문항들. 정답 검산에 걸린 문항은 학생에게 내지 않는다."""
+def _qr_make_quiz(t, p, n, text, avoid=()):
+    """문제 탭 문항 묶음 하나(같은 지문·같은 유형) → 새 문항들(객관식 유형은 객관식, 주관식 유형은 주관식).
+    avoid = 학생이 틀린 원래 문제(같은 유형으로 다시 낼 때만) — 묻는 자리·보기를 다르게 잡게 한다.
+    정답 검산에 걸린 문항은 학생에게 내지 않는다."""
     passage = with_dialogue_colons(text)
     items, _skipped = fit_quiz_items([{"id": t, "count": n}], passage)
     if not items:
         return [], 0
+    sa = t not in MCQ_ONLY_TYPES
+    avoid = list(avoid or ())[:5] or None
     model = MODEL if t in QUIZ_PLAIN_PASSAGE_TYPES else MODEL_PRO
-    result = call_gemini_quiz(passage, items, "", model)
+    result = call_gemini_quiz(passage, items, "", model, avoid_hint=avoid)
     if QUIZ_VERIFY_ON and result.get("questions"):
         repair_verified_items(
-            result, lambda ty, why: call_gemini_quiz(passage, [(ty, 1)], "", model, verify_hint=why), "")
+            result, lambda ty, why: call_gemini_quiz(passage, [(ty, 1)], "", model, verify_hint=why,
+                                                     avoid_hint=avoid), "")
     made = []
     for raw in result.get("questions") or []:
         if not isinstance(raw, dict) or raw.get("review"):
             continue
         c = _qt_clean_question(raw)
-        if c and c["format"] == "mc":
+        if c and (c["format"] != "mc" if sa else c["format"] == "mc"):
             c["src"] = {"k": "q", "type": t, "p": p}
+            if sa:
+                c["src"]["sa"] = True
             made.append(c)
     made = made[:n]
     return made, _quiz_action_cost([(t, len(made))]) if made else 0
@@ -18415,13 +18499,13 @@ def _qr_generate(gram, quiz, passages):
     labels = _vertex_get_labels()
     jobs = []
     by_diff = {}
-    for (item, grade, diff), n in gram.items():
+    for (item, grade, diff), v in gram.items():
         d = diff if diff in GRAMMAR_DIFFICULTIES else GRAMMAR_DIFFICULTY_DEFAULT
-        by_diff.setdefault(d, []).append((item, grade, n))
+        by_diff.setdefault(d, []).append((item, grade, v["mc"], v["sa"]))
     for d, rows in by_diff.items():
         jobs.append(lambda rows=rows, d=d: _qr_make_grammar(rows, d))
-    for (t, p), n in quiz.items():
-        jobs.append(lambda t=t, p=p, n=n: _qr_make_quiz(t, p, n, passages[p]))
+    for (t, p), v in quiz.items():
+        jobs.append(lambda t=t, p=p, v=v: _qr_make_quiz(t, p, v["n"], passages[p], v["avoid"]))
 
     def run(job):
         _vertex_set_labels(labels)
@@ -18459,18 +18543,20 @@ QUIZ_RETRY_CONCEPT_PROMPT = (
     "너는 한국 학생에게 영어를 가르치는 친절한 선생님이다. 학생이 문제를 틀려 같은 내용을 다시 공부한다. "
     "주어진 주제마다 개념 설명 카드 하나를 쓴다. 쓰는 법: topic은 주제 이름. summary는 핵심 개념·규칙을 학생 눈높이의 "
     "한국어 두세 문장으로. points는 꼭 기억할 점·헷갈리기 쉬운 점 2~4개(한 줄씩, 한국어). examples는 영어 예문 2개를 "
-    "'영어 문장 — 한국어 뜻' 꼴로. 문법 주제는 규칙과 흔한 실수를 짚고, 객관식 유형 주제는 그 유형을 푸는 순서·요령을 짚는다. "
+    "'영어 문장 — 한국어 뜻' 꼴로. 문법 주제는 규칙과 흔한 실수를 짚고, 객관식·주관식 유형 주제는 그 유형을 푸는 순서·요령(주관식은 답을 쓸 때 흔히 틀리는 점)을 짚는다. "
     "수준은 '학생 수준' 줄이 알려 주는 대로 맞추고, 확실하지 않은 규칙·예외는 쓰지 않는다. HTML·마크다운 기호 없이 평문으로만 쓴다.")
 
 
-def _qr_make_concepts(gram, quiz, passages):
-    """틀린 내용마다 짧은 개념 설명 카드 — 한 번의 Flash 호출. 실패하면 빈 목록(개념 값은 받지 않는다)."""
+def _qr_make_concepts(gram, quiz_topics, passages):
+    """틀린 내용마다 짧은 개념 설명 카드 — 한 번의 Flash 호출. 실패하면 빈 목록(개념 값은 받지 않는다).
+    quiz_topics = 학생이 틀린 (유형, 지문 열쇠) — 새 문제가 다른 유형이어도 카드는 틀린 유형으로 쓴다."""
     topics = []
     for (item, grade, _diff), _n in gram.items():
         label = GRAMMAR_GRADES.get(grade, ("", ""))[0] or "중학생"
         topics.append(f"[문법] {item} (학생 수준: {label})")
-    for (t, p), _n in quiz.items():
-        topics.append(f"[객관식 유형] {t} — 이 지문에서 놓친 포인트도 한 줄 짚어 줘:\n{(passages.get(p) or '')[:1500]}")
+    for t, p in quiz_topics:
+        kind = "객관식" if t in MCQ_ONLY_TYPES else "주관식"
+        topics.append(f"[{kind} 유형] {t} — 이 지문에서 놓친 포인트도 한 줄 짚어 줘:\n{(passages.get(p) or '')[:1500]}")
     if not topics:
         return []
     payload = {
@@ -18547,7 +18633,7 @@ def start_quiz_retry(assignment_id, student_id):
     if not wrong:
         raise ValueError("다시 풀 틀린 문제가 없어요.")
     passages = assignment.get("src_passages") or {}
-    gram, quiz = _qr_plan(base_q, wrong, cfg.get("per_wrong") or 1, passages)
+    gram, quiz, quiz_topics = _qr_plan(base_q, wrong, cfg.get("per_wrong") or 1, passages, _qr_mc_pool(assignment))
     if not gram and not quiz:
         raise ValueError("이 문제는 새 문제를 만들 수 있는 모양이 아니에요.")
     teacher_id = assignment.get("teacher_id")
@@ -18564,7 +18650,7 @@ def start_quiz_retry(assignment_id, student_id):
         questions, cost = _qr_generate(gram, quiz, passages)
         if not questions:
             raise ValueError("새 문제를 만들지 못했어요. 잠시 뒤에 다시 눌러 주세요.")
-        concepts = _qr_make_concepts(gram, quiz, passages)
+        concepts = _qr_make_concepts(gram, quiz_topics, passages)
         if concepts:
             cost += PRICE_RETRY_CONCEPT_KRW   # 개념 설명을 못 만들었으면 그 값은 받지 않는다
         charge_krw(teacher_id, cost, f"보충 학습 · {len(questions)}문항" + (" + 개념 설명" if concepts else ""))
@@ -18606,7 +18692,7 @@ def submit_quiz_retry(assignment_id, student_id, round_no, answers):
 
 def get_quiz_retry_for_teacher(teacher_id, assignment_id, student_id, round_no):
     _require_db()
-    _own_assignment(teacher_id, assignment_id)
+    _ref, assignment = _own_assignment(teacher_id, assignment_id)
     try:
         rnd = int(round_no)
     except (TypeError, ValueError):
@@ -18615,7 +18701,7 @@ def get_quiz_retry_for_teacher(teacher_id, assignment_id, student_id, round_no):
     d = (snap.to_dict() or {}) if snap.exists else {}
     if d.get("status") != "done":
         raise ValueError("아직 제출하지 않은 보충 학습입니다.")
-    out = _qr_review(assignment_id, a_snap.to_dict(), d)
+    out = _qr_review(assignment_id, assignment, d)
     out["studentName"] = d.get("student_name", "")
     return out
 
@@ -21185,7 +21271,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self._send_json(grade_quiz_unit(
                         user_id, req.get("assignmentId"), req.get("studentId"),
-                        req.get("no"), req.get("unit"), req.get("ok"),
+                        req.get("no"), req.get("unit"), req.get("ok"), req.get("round"),
                     ))
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)

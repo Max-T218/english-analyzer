@@ -20282,38 +20282,46 @@ async function loadQuizAnswers(row, assignmentId, studentId) {
   }
 }
 
-// 학생 한 명의 보충 학습 한 회차 — 새로 만든 문제와 학생 답·정답·해설(채점할 칸은 없다: 모두 객관식)
+// 학생 한 명의 보충 학습 한 회차 — 새로 만든 문제와 학생 답·정답·해설. 주관식 보충 문제 중 답을 여러 모양으로 쓰는
+// 문항은 원래 답안처럼 [맞음]/[틀림]으로 채점한다(gradeQuizUnit이 row.dataset.round를 함께 보낸다)
 async function loadQuizRetry(row, assignmentId, studentId, round) {
   const cell = row.querySelector("td");
+  row.dataset.aid = assignmentId;
+  row.dataset.sid = studentId;
+  row.dataset.round = round;
   cell.innerHTML = `<p class="hint">불러오는 중…</p>`;
   try {
     const r = await getJson(
       `/api/quiz-tests/retry?assignmentId=${encodeURIComponent(assignmentId)}&studentId=${encodeURIComponent(studentId)}&round=${encodeURIComponent(round)}`,
       "보충 학습 기록을 불러오지 못했습니다.");
+    row._quiz = r;
     cell.innerHTML = `<div style="margin:6px 0 10px;"><b>${esc(r.studentName)} · 보충 ${esc(round)}회차</b>
-        <span class="hint">${QT.countsText(r.qc)}</span></div>
-      <div class="quiz-answers-list">${(r.items || []).map((q, i) => QT.questionHtml(q, i, "review")).join("")}</div>`;
+        <span class="hint qt-ans-counts">${QT.countsText(r.qc)}</span></div>
+      <div class="quiz-answers-list">${(r.items || []).map((q, i) => QT.questionHtml(q, i, "review", { grading: true })).join("")}</div>`;
   } catch (err) {
     cell.innerHTML = `<p class="error">${esc(err.message || "보충 학습 기록을 불러오지 못했습니다.")}</p>`;
   }
 }
 
 async function gradeQuizUnit(btn) {
-  const row = btn.closest("tr.quiz-answer-row");
+  const row = btn.closest("tr.quiz-answer-row, tr.quiz-retry-row");
   if (!row) return;
+  const isRetry = row.classList.contains("quiz-retry-row");
   const qi = Number(btn.dataset.q), u = Number(btn.dataset.u);
   btn.disabled = true;
   try {
     const res = await postJson("/api/quiz-tests/grade", {
       assignmentId: row.dataset.aid, studentId: row.dataset.sid,
       no: qi + 1, unit: u, ok: btn.dataset.ok === "1",
+      ...(isRetry ? { round: Number(row.dataset.round) } : {}),
     }, "채점을 저장하지 못했습니다.");
     // 그 문항 카드만 다시 그리고, 위 줄의 점수를 고친다
     const item = row._quiz && row._quiz.items[qi];
     if (item && item.units[u]) item.units[u].ok = btn.dataset.ok === "1";
     const card = row.querySelector(`.qt-card[data-q="${qi}"]`);
     if (card && item) card.outerHTML = QT.questionHtml(item, qi, "review", { grading: true });
-    const cell = row.previousElementSibling && row.previousElementSibling.querySelector(".qt-score-cell");
+    // 원래 답안이면 위 줄의 점수를 고친다(보충 회차는 위 줄이 원래 시험 점수라 건드리지 않는다)
+    const cell = !isRetry && row.previousElementSibling && row.previousElementSibling.querySelector(".qt-score-cell");
     if (cell) {
       cell.innerHTML = QT.countsText(res.qc, true) + (res.qc.pending ? ` <span class="tag fail">채점 필요</span>` : "");
     }
