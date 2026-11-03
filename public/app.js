@@ -11485,7 +11485,7 @@ function wbQuestionsForStudents(entries, stages) {
       } else if (id === 11) {
         const ga = d.grammarArrange;
         const lines = wbArrangeItems(ga).map((x, i) =>
-          ({ cue: x.ko, hint: `(${wbArrangeScramble(x.en, strSeed(x.en) + i + 1)})`, answer: x.en }));
+          ({ cue: x.ko, hint: wbArrangeScramble(x.en, strSeed(x.en) + i + 1), answer: x.en }));
         if (lines.length) {
           out.push({ ...base, format: "order", lines, instruction: esc(meta.guide + " (문장 전체를 쓰세요)") });
         }
@@ -12035,15 +12035,17 @@ function renderStageSentence(stageId, s, passage) {
   };
 }
 
-/* 워크북11 — 목표어법 배열 영작. 해독제 워크북처럼 문장의 낱말을 **모두 한 괄호에** 섞어 준다
-   (순서 배열하기(8)의 묶음 나누기는 쓰지 않는다 — 새로 지은 문장이라 지문 순서를 떠올릴 단서가
-   없고, 구조를 스스로 짜 보는 것이 이 단계의 목적이다). 목표 어법 이름은 정답 별지에만 싣는다. */
+/* 워크북11 — 목표어법 배열 영작. 보기는 순서 배열하기(8)와 같은 방식이다(2026-11-03 사용자 —
+   처음엔 낱말을 모두 한 괄호에 섞었다): 관사·소유격은 뒤 낱말에 붙이고, 조각이 12개를 넘으면
+   절이 시작되는 자리에서 괄호를 나눈다(autoChunkGroups). 목표 어법 이름은 정답 별지에만 싣는다. */
 function wbArrangeItems(ga) {
   return ((ga && ga.items) || []).filter((x) => x && x.en && x.ko);
 }
-// 낱말에 붙은 쉼표·쌍점도 뗀다 — 'economy,'처럼 남으면 절이 어디서 끊기는지 알려 주는 단서다
+// 묶음마다 따로 섞은 '(a / b) (c / d)' 글자 — 인쇄본(renderChunkOrder)과 학생 시험이 같은 순서를 쓴다
 function wbArrangeScramble(en, seed) {
-  return scrambleWords(String(en || "").replace(/[,;:](?=\s)/g, ""), seed);
+  return autoChunkGroups(en, en)
+    .map((g, i) => `(${(g.length > 1 ? seededShuffle(g, seed * 31 + i) : g).join(" / ")})`)
+    .join(" ");
 }
 function buildStage11(ga) {
   const items = wbArrangeItems(ga);
@@ -12054,10 +12056,11 @@ function buildStage11(ga) {
   const answers = [];
   items.forEach((x, i) => {
     const no = i + 1;
-    const scr = esc(wbArrangeScramble(x.en, strSeed(x.en) + no));
+    const scr = renderChunkOrder(x.en, strSeed(x.en) + no, x.en);
+    if (!scr) return;
     html.push(`<div class="wb-q"><div class="wb-q-body"><span class="wb-no">${no}</span><div class="wb-q-main">
       <div class="wb-ko">${esc(x.ko)}</div>
-      <div class="wb-scramble"><b class="wb-scramble-grp">(${scr})</b></div>
+      <div class="wb-scramble">${scr}</div>
       <div class="wb-writeline"></div>
       ${wbAns(x.en)}</div></div></div>`);
     answers.push({ no, text: x.en + (x.grammar ? ` — ${x.grammar}` : "") });
