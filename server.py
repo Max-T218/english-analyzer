@@ -10790,11 +10790,60 @@ def call_gemini_decode(passage, api_key, model, complete_hint=None):
 # 정사각형 한 장에 2×2로 네 컷을 그린다(한 번만 부르므로 네 컷이어도 한 장 값). 그림 속에는 글자를 넣지 않는다 —
 # 그림이 그린 한글은 오탈자가 잘 생겨서(요약 이미지), 컷 설명은 화면(decode.js)이 그림 아래에 글자로 붙인다.
 # 화면이 네 칸으로 잘라 2쪽 아래에 한 줄로 놓는다. 그림 느낌은 선생님이 고른다(DECODE_PIC_STYLES).
+# 처음엔 한 줄짜리 말("flat vector…" / "Korean webtoon…")만 달랐는데, 그림 모델이 둘 다 '귀여운 한국 학생 만화'로
+# 그려 차이가 거의 안 보였다(2026-11-03 사용자). 그래서 느낌마다 ① 그림 말(선·비율·색·화면 연출)을 길게 갈라 적고
+# ② 칸 모양(일러스트는 '만화 칸'이라는 말을 쓰지 않는다)과 ③ 장면을 정하는 단계의 연출(_STAGING)까지 나눴다.
 DECODE_PIC_STYLES = {
-    "illust": "clean flat vector illustration, soft pastel colors, simple shapes, educational textbook style",
-    "webtoon": "Korean webtoon comic style, expressive cute characters, bold clean outlines, bright cel shading",
+    # 처음 고친 판('선 없는 평면 그림책')은 단순하고 엉성해 '초등학생이 대충 그린 느낌'이었다(2026-11-03 사용자) —
+    # 전문 삽화가의 반실사 디지털 페인팅으로 올렸다
+    "illust": (
+        "polished semi-realistic digital painting by a professional illustrator, like a full-page illustration in a "
+        "quality magazine or a premium high-school textbook — NOT a comic, NOT manga, NOT webtoon, NOT flat clip art. "
+        "Refined, detailed rendering with painterly brush textures, soft cinematic lighting, depth of field and "
+        "atmospheric perspective. Rich but natural colors. Realistic anatomy and proportions; natural, subtly "
+        "expressive faces with carefully drawn features. No thick black outlines, no chibi, no cute mascots. "
+        "Thoughtful composition with a clear focal point in every panel"
+    ),
+    "webtoon": (
+        "Korean webtoon / manga comic style. Thick black ink outlines, bold cel shading with hard shadows, "
+        "vivid saturated colors. Big expressive faces with exaggerated emotions (sweat drops, sparkles, shock lines). "
+        "Dynamic camera work: mix extreme close-ups, low and high angles and wide shots; speed lines, impact effects "
+        "and dramatic backgrounds. Each panel has a black border like a real comic page"
+    ),
     # 2026-11-03 수채화·연필 스케치·흑백 만화·3D 캐릭터도 그려 봤지만 별로라 뺐다(사용자) — 두 가지만 둔다
 }
+# 칸 모양 — 일러스트에 'comic panels'를 쓰면 그 말에 끌려 만화가 된다
+DECODE_PIC_FRAMES = {
+    "illust": "four equal square illustrations (like four pages of a picture book)",
+    "webtoon": "four equal square comic panels",
+}
+# 장면을 정하는 단계(Flash)에 주는 연출 — 같은 장면표를 두 느낌이 함께 쓰면 인물·구도가 똑같아진다
+# 웹툰은 말풍선을 넣는다(2026-11-03 사용자 — 말풍선 대사가 지문 내용을 나르는 게 웹툰답다). 대사는 **영어**로, 지문의
+# 낱말을 그대로 빌려 짧게 쓴다 — 그림 모델이 한글을 그리면 오탈자가 잘 나서(그래서 우리말은 그림 밖 컷 설명으로 둔다).
+# 일러스트는 상황을 그리는 그림이라 글자 없이 장면만 — 네 컷이 서로 다른 장면이어야 흐름이 읽힌다.
+DECODE_PIC_LINE_MAX = 60
+DECODE_PIC_STAGING = {
+    "illust": ("Plan cinematic illustration scenes that DEPICT THE SITUATION with realistic people in real settings. "
+               "Make the four scenes clearly different from each other (different place, time, action, camera distance) "
+               "and make each one SHOW its point visually, not just a person studying — use concrete actions and, where "
+               "the idea is abstract, a subtle visual metaphor blended into the real scene (e.g. memories as glowing "
+               "particles drifting away or as threads of light growing thicker). Never use written words for this. "
+               "Do NOT turn ideas into cartoon mascots or cute characters. Leave line empty."),
+    "webtoon": ("Plan dramatic comic scenes: vary the camera in every panel (extreme close-up, low angle, wide shot), "
+                "give the characters strong, exaggerated reactions, and you may personify ideas as cute characters. "
+                "For EVERY panel also write line: what a character says in a speech bubble — {line_rule} "
+                "Plain words only, no quotation marks."),
+}
+# 웹툰 말풍선 말 — 한국어(기본)와 영어(지문 낱말을 빌려서) 중 고른다(2026-11-03 사용자 — 둘을 그려 비교하고 화면에서
+# 고르게 했다. 한국어 두 장은 오탈자가 없었다). 한국어는 그림 모델이 오탈자를 내기 쉬워 짧게(15자) 막는다.
+# 화면: app.js comicBubbleOf(<prefix>ComicBubble) · decode.js dcPicBubble(dcPicBubble 라디오) — 같은 열쇠.
+DECODE_PIC_BUBBLE_RULES = {
+    "en": "ONE short English sentence (max 8 words) that carries that panel's key point, reusing the passage's own key words.",
+    "ko": ("ONE short, natural Korean sentence (max 15 Korean characters, spoken style like a webtoon) that carries "
+           "that panel's key point. Use only common, simple Korean words."),
+}
+_DECODE_PIC_LINE_RE = {"en": re.compile(r"[A-Za-z0-9 ,.'!?\-]+"), "ko": re.compile(r"[가-힣0-9 ,.!?~\-]+")}
+_DECODE_PIC_LINE_LEN = {"en": DECODE_PIC_LINE_MAX, "ko": 18}
 DECODE_PIC_CAPTION_MAX = 40
 
 DECODE_PIC_SCHEMA = {
@@ -10805,9 +10854,10 @@ DECODE_PIC_SCHEMA = {
             "type": "ARRAY",
             "items": {
                 "type": "OBJECT",
-                "properties": {"caption": {"type": "STRING"}, "scene": {"type": "STRING"}},
+                "properties": {"caption": {"type": "STRING"}, "scene": {"type": "STRING"},
+                               "line": {"type": "STRING"}},
                 "required": ["caption", "scene"],
-                "propertyOrdering": ["caption", "scene"],
+                "propertyOrdering": ["caption", "scene", "line"],
             },
         },
     },
@@ -10826,22 +10876,32 @@ Stay faithful to the passage; do not add facts that are not in it. Keep every sc
 _DECODE_PIC_POS = ("top-left", "top-right", "bottom-left", "bottom-right")
 
 
-def _decode_pic_prompt(plan, style):
+def _decode_pic_prompt(plan, style, bubble="en"):
     lines = [
-        "Draw ONE square image divided into a 2x2 grid of four equal square comic panels, "
+        f"Draw ONE square image divided into a 2x2 grid of {DECODE_PIC_FRAMES[style]}, "
         "separated by thin white gutters, read left-to-right then top-to-bottom.",
         f"Style: {DECODE_PIC_STYLES[style]}.",
         f"Recurring characters/objects (keep identical in every panel): {plan['cast']}",
     ]
+    bubbles = style == "webtoon" and all(p.get("line") for p in plan["panels"])
     for i, p in enumerate(plan["panels"]):
-        lines.append(f"Panel {i + 1} ({_DECODE_PIC_POS[i]}): {p['scene']}")
-    lines.append("ABSOLUTELY NO TEXT anywhere: no letters, words, numbers, captions, labels, signs, "
-                 "speech bubbles or panel numbers. Pictures only.")
+        say = f' Speech bubble from the speaking character, containing exactly: "{p["line"]}"' if bubbles else ""
+        lines.append(f"Panel {i + 1} ({_DECODE_PIC_POS[i]}): {p['scene']}{say}")
+    if bubbles:
+        script = ("Korean Hangul characters — copy every syllable exactly, do not add, drop or change any character"
+                  if bubble == "ko" else "correctly spelled English letters")
+        lines.append("Each panel has ONE white speech bubble with a black outline. Write the bubble text exactly as given, "
+                     f"in clear, large, {script}. Apart from these bubble lines there is NO other "
+                     "text anywhere: no captions, labels, signs, sound effects or panel numbers.")
+    else:
+        lines.append("ABSOLUTELY NO TEXT anywhere: no letters, words, numbers, captions, labels, signs, "
+                     "speech bubbles or panel numbers. Pictures only.")
     return "\n".join(lines)
 
 
-def call_gemini_decode_pic(passage, style, api_key):
-    """지문 1개 → {image(base64), mime, captions[4], style}. 요금 차감은 라우트가 성공한 뒤에 한다."""
+def call_gemini_decode_pic(passage, style, api_key, bubble="ko"):
+    """지문 1개 → {image(base64), mime, captions[4], style}. 요금 차감은 라우트가 성공한 뒤에 한다.
+    bubble = 웹툰 말풍선 말("en"|"ko"), 일러스트는 쓰지 않는다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
@@ -10852,23 +10912,28 @@ def call_gemini_decode_pic(passage, style, api_key):
     if len(text) < 40:
         raise RuntimeError("지문이 너무 짧습니다.")
     style = style if style in DECODE_PIC_STYLES else "illust"
+    bubble = bubble if bubble in DECODE_PIC_BUBBLE_RULES else "ko"   # 화면 기본값과 같다(옛 화면은 이 값을 안 보낸다)
+    staging = DECODE_PIC_STAGING[style].replace("{line_rule}", DECODE_PIC_BUBBLE_RULES[bubble])
 
     raw = _gemini_json({
         "systemInstruction": {"parts": [{"text": DECODE_PIC_PLAN_PROMPT}]},
-        "contents": [{"role": "user", "parts": [{"text": text}]}],
+        "contents": [{"role": "user", "parts": [{"text": f"[Staging] {staging}\n\n[Passage]\n{text}"}]}],
         "generationConfig": {"temperature": 0.4, "maxOutputTokens": 8192,
                              "responseMimeType": "application/json", "responseSchema": DECODE_PIC_SCHEMA},
     }, api_key, MODEL, "그림 장면을 정하다가 잘렸습니다. 다시 시도해 주세요.", label="decodepic-plan")
     panels = []
     for p in (raw.get("panels") or [])[:4]:
         if isinstance(p, dict) and str(p.get("scene") or "").strip():
+            line = (_decode_plain(p.get("line"), _DECODE_PIC_LINE_LEN[bubble]).replace('"', "")
+                    if style == "webtoon" else "")
             panels.append({"scene": _decode_plain(p.get("scene"), 600),
-                           "caption": _decode_plain(p.get("caption"), DECODE_PIC_CAPTION_MAX)})
+                           "caption": _decode_plain(p.get("caption"), DECODE_PIC_CAPTION_MAX),
+                           "line": line if _DECODE_PIC_LINE_RE[bubble].fullmatch(line or "") else ""})
     if len(panels) < 4:
         raise RuntimeError("그림 장면을 네 개 정하지 못했습니다. 다시 시도해 주세요.")
     plan = {"cast": _decode_plain(raw.get("cast"), 600), "panels": panels}
 
-    prompt = _decode_pic_prompt(plan, style)
+    prompt = _decode_pic_prompt(plan, style, bubble)
     data = json.dumps({
         "model": MODEL_IMAGE,
         "input": [{"type": "text", "text": prompt}],
@@ -16038,6 +16103,10 @@ def clean_saved_images_meta(payload):
             caps = r.get("caps")
             if isinstance(caps, list):
                 item["caps"] = [_decode_plain(c, DECODE_PIC_CAPTION_MAX) for c in caps[:4]]
+            # 그림 방식(사양 "comic:webtoon:ko" 등) — [🖼 요약 이미지만 만들기]가 고른 것과 같은지 견줄 때 쓴다(2026-11-03)
+            spec = str(r.get("spec") or "")
+            if re.fullmatch(r"[a-z]{2,8}(:[a-z]{2,8}){0,2}", spec):
+                item["spec"] = spec
             out.append(item)
     if isinstance(payload, dict):
         payload["images"] = out
@@ -21589,7 +21658,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "그림으로 그릴 지문을 넣어 주세요."}, 400)
                 return
             try:
-                result = call_gemini_decode_pic(passage, req.get("style"), req.get("apiKey") or "")
+                result = call_gemini_decode_pic(passage, req.get("style"), req.get("apiKey") or "",
+                                                bubble=req.get("bubble"))
                 self._charge_and_send(path, req, result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)

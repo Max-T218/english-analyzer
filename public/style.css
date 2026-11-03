@@ -3112,5 +3112,18 @@ input.st-in{width:100%; box-sizing:border-box;}
 .info-pair .info-comic .dc-cut-img img{display:block; width:206%; height:206%; max-width:none; max-height:none; margin:0;}
 .info-pair.comic-only .info-caution{display:none;}
 /* 그림 느낌(일러스트·웹툰)은 4컷을 체크했을 때만, 체크 칸 옆에 — 체크박스 모양이지만 하나만 고른다(comicStyleOf) */
-.img-comic-style{display:inline-flex; gap:10px; align-items:center; padding:2px 8px; border-left:2px solid var(--line);}
+.img-comic-style, .img-comic-bubble{display:inline-flex; gap:10px; align-items:center; padding:2px 8px; border-left:2px solid var(--line);}
+.img-comic-bubble{font-size:13px; color:var(--muted, #666);}
+/* 말풍선 말(한국어·영어)은 웹툰을 골랐을 때만 */
+.img-langs:not(:has(.img-lang[data-lang="comic"]:checked)) .img-comic-bubble,
+.img-langs:not(:has(input[data-style="webtoon"]:checked)) .img-comic-bubble{display:none;}
+.dc-picopt:not(:has(input[name="dcPicStyle"][value="webtoon"]:checked)) .dc-picopt-bubble{display:none;}
+/* 지문마다 그림 방식 고르기 — 지문 이름 · 고르는 칸을 한 줄씩 */
+.img-per-list{flex-basis:100%; margin:6px 0 2px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--card);}
+.img-per-list .img-per-row{display:flex; align-items:center; gap:10px; padding:3px 0;}
+.img-per-list .img-per-name{flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px;}
+.img-per-list .img-per-dlg{font-size:11px; color:var(--accent); margin-left:4px;}
+.img-per-list select{flex:0 0 auto; width:auto; max-width:230px; margin:0; font-size:13px; padding:2px 4px;}
+.img-per-list .img-per-tools{display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap;}
+@media (max-width:600px){ .img-per-list .img-per-row{flex-wrap:wrap;} .img-per-list select{max-width:100%;} }
 .img-langs:not(:has(.img-lang[data-lang="comic"]:checked)) .img-comic-style{display:none;}

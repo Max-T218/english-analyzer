@@ -268,6 +268,8 @@ dcEl("dcEditBtn").addEventListener("click", () => {
 /* ── 값 안내 ── */
 const dcPicOn = () => dcEl("dcPicChk").checked;
 const dcPicStyle = () => (document.querySelector('input[name="dcPicStyle"]:checked') || {}).value || "illust";
+// 웹툰 말풍선 말 — 한국어·영어(서버 DECODE_PIC_BUBBLE_RULES와 같은 열쇠). 일러스트면 서버가 쓰지 않는다
+const dcPicBubble = () => (document.querySelector('input[name="dcPicBubble"]:checked') || {}).value || "ko";
 const dcPicPrice = () => (typeof PRICING !== "undefined" && PRICING && Number.isFinite(PRICING.decodePic) ? PRICING.decodePic : null);
 function dcCost(n, withPic) {
   if (typeof PRICING === "undefined" || !PRICING || !Number.isFinite(PRICING.decode)) return null;
@@ -297,7 +299,8 @@ document.querySelector('.tab-btn[data-tab="decode"]').addEventListener("click", 
 async function dcDrawPic(e, style, onRetry) {
   e.picError = "";
   try {
-    const r = await postGenerate("/api/decodepic", { passage: e.text, style }, "4컷 그림을 그리지 못했습니다.", onRetry);
+    const r = await postGenerate("/api/decodepic", { passage: e.text, style, bubble: dcPicBubble() },
+      "4컷 그림을 그리지 못했습니다.", onRetry);
     e.data.pic = { style: r.style || style, captions: (r.captions || []).slice(0, 4) };
     e.picSrc = dcBlobUrl(r.image, r.mime);
     return true;
