@@ -2957,7 +2957,9 @@ input.st-in{width:100%; box-sizing:border-box;}
 
 /* 시험 내기 창의 낼 대상 — 반 전체 또는 학생 여러 명 체크 */
 .target-list{display:flex;flex-wrap:wrap;gap:6px 14px;max-height:180px;overflow:auto;padding:8px 10px;border:1px solid var(--line,#d0d5dd);border-radius:8px;margin-bottom:8px;}
-.target-list label{display:inline-flex;align-items:center;gap:5px;margin:0;font-weight:400;cursor:pointer;}
+.target-list label{display:inline-flex;align-items:center;gap:5px;margin:0;font-weight:400;cursor:pointer;white-space:nowrap;}
+/* 창의 input 공통 규칙(width:100%)이 체크박스까지 늘려 이름이 한 글자씩 줄바꿈되던 것을 막는다 */
+.target-list label input{width:auto;flex:none;margin:0;}
 .target-list label.target-all{flex-basis:100%;font-weight:600;}
 
 /* ══════ 리딩노트 (public/decode.js) ══════

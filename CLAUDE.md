@@ -102,6 +102,8 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 **배포 후 옛 학생(이름만 있고 `login_id` 없는 문서)은 로그인할 수 없다** — 기존 기록은
 지우기로 했다(2026-10-12).
 
+**반 하나를 여러 선생님이 함께 쓴다**(2026-11-03 사용자): 반 주인이 `share_class`(`/api/classes/share` — 반 문서의 `share_code`, `off`면 끈다)로 공유 코드를 만들어 알려 주면, 승인된 다른 선생님이 `join_class`(`/api/classes/join`)로 반 문서의 `members` 배열에 들어간다. 나가기·내보내기는 `leave_class`(`/api/classes/leave`, `memberId`는 주인만). 권한은 `_class_access`/`_own_class(owner_only)`/`_own_assignment(delete)` 세 함수가 정한다 — 공동 선생님은 학생 등록·수정·삭제·반 이름 변경·시험 내기·성적·채점을 주인과 같이 하고, **반 삭제·공유 코드·내보내기는 주인만**, **시험 삭제는 낸 선생님과 반 주인만**. 시험 문서의 `teacher_id`는 낸 선생님이라 보충 학습 값도 그 선생님 잔액에서 나간다. 학생 문서의 `teacher_id`는 공동 선생님이 등록해도 **반 주인**으로 적는다(탈퇴·관리자 집계가 주인 기준). 화면은 `app.js`의 `renderSharePanel`·`joinClassBtn`·`leaveClassBtn`, 시험 목록의 '낸 선생님'(`by`, 공동 선생님이 있는 반에서만)·`canDelete`. 탈퇴하면 남의 반 `members`에서 빠지고 그 선생님이 낸 시험은 지운다.
+
 단어시험은 **반 전체**에 낼 수도, **학생 한 명**에게만 낼 수도 있습니다
 (`create_test_assignment`의 `student_id` — 없으면 반 전체, 있으면 그 학생만).
 `list_tests_for_student`·`get_test_detail_for_student`·`grade_and_submit_attempt`는

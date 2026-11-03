@@ -13514,6 +13514,9 @@ def delete_user_account(user_id, by_admin=False):
     # 반을 먼저 지워 딸린 것을 한꺼번에 치우고, 반 없이 남은 시험·학생이 있으면 그것도 지운다.
     for doc in DB.collection("classes").where("teacher_id", "==", user_id).stream():
         delete_class(user_id, doc.id)
+    # 공동 선생님으로 들어가 있던 남의 반에서는 빠진다(그 반에 낸 시험은 아래에서 함께 지운다)
+    for doc in DB.collection("classes").where("members", "array_contains", user_id).stream():
+        doc.reference.update({"members": firestore_array_remove([user_id])})
     for doc in DB.collection("test_assignments").where("teacher_id", "==", user_id).stream():
         delete_assignment(user_id, doc.id)
     for doc in DB.collection("students").where("teacher_id", "==", user_id).stream():
@@ -14687,6 +14690,15 @@ CHANGELOG = [
             "상세분석·요약분석의 '요약 이미지'에서도 '🖼️ 4컷 그림'(일러스트·웹툰)을 고를 수 있습니다. 지문 흐름을 네 장면으로 그린 그림이 "
             "'한눈에 보는 요약' 자리에 가로 한 줄로 들어가고, 컷마다 우리말 설명 한 줄이 붙습니다(그림 속 글자가 없어 오탈자 걱정이 없습니다). "
             "기존 인포그래픽과 함께 고를 수도 있고, 4컷은 한 세트에 리딩노트 그림과 같은 값입니다.",
+        ],
+    },
+    {
+        "version": 116,
+        "date": "2026-11-03",
+        "items": [
+            "학생 관리 — 반 하나를 여러 선생님이 함께 쓸 수 있습니다. 반을 만든 선생님이 [👥 함께 쓰는 선생님]에서 공유 코드를 만들어 알려 주면, "
+            "다른 선생님이 [공유 코드로 반 참여]에 코드를 넣어 그 반에 시험을 내고 성적을 함께 볼 수 있습니다. "
+            "반 삭제와 공유 코드 관리는 반을 만든 선생님만 하고, 시험은 낸 선생님(또는 반을 만든 선생님)만 지울 수 있습니다.",
         ],
     },
 ]
@@ -16292,25 +16304,136 @@ def create_class(teacher_id, name):
     return {"classId": ref.id, "code": code}
 
 
+def _teacher_label(user_id):
+    """공동 선생님 표시용 이름(없으면 이메일)."""
+    snap = DB.collection("users").document(user_id).get()
+    d = snap.to_dict() if snap.exists else {}
+    return (d.get("name") or d.get("email") or "(알 수 없음)")
+
+
 def list_classes(teacher_id):
+    """내 반 + 공유 코드로 들어간 반. 주인에게는 공동 선생님 목록과 공유 코드를 함께 준다."""
     _require_db()
     rows = []
-    for doc in DB.collection("classes").where("teacher_id", "==", teacher_id).stream():
+    seen = set()
+    docs = list(DB.collection("classes").where("teacher_id", "==", teacher_id).stream())
+    docs += list(DB.collection("classes").where("members", "array_contains", teacher_id).stream())
+    for doc in docs:
+        if doc.id in seen:
+            continue
+        seen.add(doc.id)
         d = doc.to_dict() or {}
-        rows.append({
+        owner = d.get("teacher_id") == teacher_id
+        row = {
             "id": doc.id, "name": d.get("name", ""), "code": d.get("code", ""),
-            "createdAt": d.get("created_at", ""),
-        })
+            "createdAt": d.get("created_at", ""), "owner": owner,
+        }
+        if owner:
+            row["shareCode"] = d.get("share_code", "")
+            row["members"] = [{"id": m, "name": _teacher_label(m)} for m in (d.get("members") or [])]
+        else:
+            row["ownerName"] = _teacher_label(d.get("teacher_id") or "")
+        rows.append(row)
     rows.sort(key=lambda r: r["createdAt"])
     return rows
 
 
-def _own_class(teacher_id, class_id):
+def share_class(teacher_id, class_id, off=False):
+    """공동 선생님을 부를 공유 코드를 새로 만든다(이미 있으면 바꾼다 — 옛 코드는 못 쓴다).
+    off이면 코드를 없애 더는 못 들어오게 한다(이미 들어온 선생님은 그대로)."""
+    _require_db()
+    ref, _ = _own_class(teacher_id, class_id, owner_only=True)
+    if off:
+        ref.update({"share_code": ""})
+        return ""
+    for _ in range(5):
+        code = _gen_class_code()
+        if not list(DB.collection("classes").where("share_code", "==", code).limit(1).stream()):
+            ref.update({"share_code": code})
+            return code
+    raise RuntimeError("코드 생성에 반복 실패했습니다. 다시 시도해 주세요.")
+
+
+def join_class(teacher_id, code):
+    """공유 코드로 남의 반에 공동 선생님으로 들어간다."""
+    _require_db()
+    code = (code or "").strip().upper()
+    if not code:
+        raise ValueError("공유 코드를 입력하세요.")
+    docs = list(DB.collection("classes").where("share_code", "==", code).limit(1).stream())
+    if not docs:
+        raise ValueError("공유 코드가 맞지 않거나 더는 쓸 수 없습니다.")
+    doc = docs[0]
+    d = doc.to_dict() or {}
+    if d.get("teacher_id") == teacher_id:
+        raise ValueError("내가 만든 반입니다.")
+    if teacher_id in (d.get("members") or []):
+        raise ValueError("이미 함께 쓰고 있는 반입니다.")
+    doc.reference.update({"members": firestore_array_union([teacher_id])})
+    return {"classId": doc.id, "name": d.get("name", "")}
+
+
+def firestore_array_union(values):
+    from google.cloud import firestore
+    return firestore.ArrayUnion(values)
+
+
+def firestore_array_remove(values):
+    from google.cloud import firestore
+    return firestore.ArrayRemove(values)
+
+
+def leave_class(teacher_id, class_id, member_id=None):
+    """공동 선생님이 반에서 나간다. 주인은 member_id를 주어 공동 선생님을 내보낼 수 있다.
+    나간 선생님이 낸 시험은 반에 남고 이제 반 주인이 관리한다."""
+    _require_db()
+    if member_id and member_id != teacher_id:
+        ref, _ = _own_class(teacher_id, class_id, owner_only=True)
+        target = member_id
+    else:
+        ref, d = _own_class(teacher_id, class_id)
+        if d.get("teacher_id") == teacher_id:
+            raise ValueError("반 주인은 나갈 수 없습니다. 반을 지우세요.")
+        target = teacher_id
+    ref.update({"members": firestore_array_remove([target])})
+
+
+def _class_access(teacher_id, c):
+    """반 문서 c를 이 선생님이 쓸 수 있나 — 주인이거나 공유 코드로 들어온 공동 선생님(members)."""
+    return bool(c) and (c.get("teacher_id") == teacher_id or teacher_id in (c.get("members") or []))
+
+
+def _own_class(teacher_id, class_id, owner_only=False):
+    """반을 찾아 (ref, 문서)를 돌려준다. 공동 선생님도 통과한다(2026-11-03 — 반 하나를 여러 선생님이
+    함께 쓴다). 반 삭제·공유 코드·공동 선생님 내보내기는 주인만 하므로 그때는 owner_only=True."""
     ref = DB.collection("classes").document(class_id or "_")
     snap = ref.get()
-    if not snap.exists or (snap.to_dict() or {}).get("teacher_id") != teacher_id:
+    d = snap.to_dict() if snap.exists else None
+    if not d or not (d.get("teacher_id") == teacher_id if owner_only else _class_access(teacher_id, d)):
         raise ValueError("반을 찾을 수 없습니다.")
-    return ref, snap.to_dict() or {}
+    return ref, d
+
+
+def _own_assignment(teacher_id, assignment_id, delete=False):
+    """시험을 찾아 (ref, 문서)를 돌려준다. 보기·성적·채점은 그 반을 쓰는 선생님 모두, 삭제는
+    낸 선생님과 반 주인만 한다(공동 선생님이 남이 낸 시험을 지우지 못하게). 반이 이미 없어진
+    옛 시험은 낸 선생님만 건드린다."""
+    ref = DB.collection("test_assignments").document(assignment_id or "-")
+    snap = ref.get()
+    a = snap.to_dict() if snap.exists else None
+    if not a:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    c_snap = DB.collection("classes").document(a.get("class_id") or "_").get()
+    c = c_snap.to_dict() if c_snap.exists else None
+    if c is None:
+        ok = a.get("teacher_id") == teacher_id
+    elif delete:
+        ok = a.get("teacher_id") == teacher_id or c.get("teacher_id") == teacher_id
+    else:
+        ok = _class_access(teacher_id, c)
+    if not ok:
+        raise ValueError("시험을 찾을 수 없습니다.")
+    return ref, a
 
 
 def rename_class(teacher_id, class_id, name):
@@ -16327,10 +16450,10 @@ def delete_class(teacher_id, class_id):
     함께 지운다. 반만 지우면 주인 없는 학생·시험이 남아 목록에도 안 뜬 채 쌓인다.
     되돌릴 수 없으므로 화면이 지우기 전에 한 번 더 묻는다."""
     _require_db()
-    ref, cur = _own_class(teacher_id, class_id)
+    ref, cur = _own_class(teacher_id, class_id, owner_only=True)
     n_students = n_tests = 0
     for doc in DB.collection("test_assignments").where("class_id", "==", class_id).stream():
-        delete_assignment(teacher_id, doc.id)
+        delete_assignment(teacher_id, doc.id)   # 반 주인이라 공동 선생님이 낸 시험도 지울 수 있다
         n_tests += 1
     for doc in DB.collection("students").where("class_id", "==", class_id).stream():
         delete_student(teacher_id, doc.id)
@@ -16343,11 +16466,8 @@ def delete_class(teacher_id, class_id):
 
 def regenerate_class_code(teacher_id, class_id):
     _require_db()
-    ref = DB.collection("classes").document(class_id)
-    snap = ref.get()
-    if not snap.exists or snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("반을 찾을 수 없습니다.")
-    old_code = snap.to_dict().get("code")
+    ref, cur = _own_class(teacher_id, class_id, owner_only=True)
+    old_code = cur.get("code")
     new_code = _new_unique_class_code()
     ref.update({"code": new_code})
     DB.collection("class_codes").document(new_code).set({"class_id": class_id})
@@ -16430,9 +16550,14 @@ def _release_login_id(login_id, student_id):
 def _own_student(teacher_id, student_id):
     ref = DB.collection("students").document(student_id or "_")
     snap = ref.get()
-    if not snap.exists or (snap.to_dict() or {}).get("teacher_id") != teacher_id:
+    d = snap.to_dict() if snap.exists else None
+    if not d:
         raise ValueError("학생을 찾을 수 없습니다.")
-    return ref, snap.to_dict() or {}
+    if d.get("teacher_id") != teacher_id:   # 공동 선생님이면 학생이 속한 반을 함께 쓰는지 본다
+        c_snap = DB.collection("classes").document(d.get("class_id") or "_").get()
+        if not c_snap.exists or not _class_access(teacher_id, c_snap.to_dict() or {}):
+            raise ValueError("학생을 찾을 수 없습니다.")
+    return ref, d
 
 
 def create_student(teacher_id, class_id, name, login_id, password):
@@ -16446,15 +16571,14 @@ def create_student(teacher_id, class_id, name, login_id, password):
     _check_login_id(login_id)
     password = password or STUDENT_PW_DEFAULT
     _check_student_pw(password)
-    c_snap = DB.collection("classes").document(class_id or "_").get()
-    if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("반을 찾을 수 없습니다.")
+    _, c = _own_class(teacher_id, class_id)
     ref = DB.collection("students").document()
     _claim_login_id(login_id, ref.id)
     salt, digest = _hash_password(_pw_key(password))
     try:
         ref.set({
-            "teacher_id": teacher_id, "class_id": class_id, "name": name,
+            # 공동 선생님이 등록해도 학생은 반 주인 몫으로 센다(탈퇴·관리자 집계가 주인 기준이다)
+            "teacher_id": c.get("teacher_id") or teacher_id, "class_id": class_id, "name": name,
             "login_id": login_id, "pw_salt": salt, "pw_hash": digest,
             "pw_set_by": "teacher", "pw_updated_at": _now_iso(),
             "pw_default": _pw_is_default_key(_pw_key(password)),
@@ -16485,8 +16609,9 @@ def update_student(teacher_id, student_id, name=None, login_id=None, password=No
                     "pw_set_by": "teacher", "pw_updated_at": _now_iso(),
                     "pw_default": _pw_is_default_key(_pw_key(password))})
     if class_id and class_id != cur.get("class_id"):
-        _own_class(teacher_id, class_id)   # 옮겨 갈 반도 내 반이어야 한다
+        _, new_c = _own_class(teacher_id, class_id)   # 옮겨 갈 반도 내가 쓰는 반이어야 한다
         upd["class_id"] = class_id
+        upd["teacher_id"] = new_c.get("teacher_id") or teacher_id
     new_id = None
     if login_id is not None:
         new_id = _norm_login_id(login_id)
@@ -16534,9 +16659,7 @@ def change_student_password(student_id, current, new):
 
 def list_students(teacher_id, class_id):
     _require_db()
-    c_snap = DB.collection("classes").document(class_id).get()
-    if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("반을 찾을 수 없습니다.")
+    _own_class(teacher_id, class_id)
     rows = []
     assignments, attempts_by = _class_tests_and_attempts(class_id)
     for doc in DB.collection("students").where("class_id", "==", class_id).stream():
@@ -16757,9 +16880,7 @@ def create_test_assignment(teacher_id, class_id, title, vocab, fmt, student_id=N
     _attempt_progress 참고) — 회차마다 문제를 다시 섞어 답 위치만 외워 통과하는
     것을 막는다(_build_student_questions의 round 인자)."""
     _require_db()
-    c_snap = DB.collection("classes").document(class_id).get()
-    if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("반을 찾을 수 없습니다.")
+    _own_class(teacher_id, class_id)
     if fmt not in ("mcq", "saq"):
         raise ValueError("잘못된 시험 형식입니다.")
     student_name = None
@@ -16815,13 +16936,10 @@ def update_assignment_retest(teacher_id, assignment_id, max_wrong):
     있고, 기준을 내려 붙은 학생은 합격이 된다. 기준을 없애면(None) 모두 합격이다.
     돌려주는 값은 (새 기준, 결과가 바뀐 학생 수)."""
     _require_db()
-    ref = DB.collection("test_assignments").document(assignment_id)
-    snap = ref.get()
-    if not snap.exists or snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("시험을 찾을 수 없습니다.")
-    if snap.to_dict().get("kind") == "quiz":
+    ref, assignment = _own_assignment(teacher_id, assignment_id)
+    if assignment.get("kind") == "quiz":
         raise ValueError("문제 시험은 한 번만 응시해 재시험 기준이 없습니다.")
-    word_count = len(snap.to_dict().get("vocab") or [])
+    word_count = len(assignment.get("vocab") or [])
     if max_wrong is not None:
         try:
             max_wrong = int(max_wrong)
@@ -16829,7 +16947,6 @@ def update_assignment_retest(teacher_id, assignment_id, max_wrong):
             raise ValueError("허용 오답 수는 숫자여야 합니다.")
         if not (0 <= max_wrong <= word_count):
             raise ValueError(f"허용 오답 수는 0~{word_count} 사이여야 합니다.")
-    assignment = snap.to_dict()
     ref.update({"max_wrong": max_wrong})
 
     # 지난 답안 다시 매기기 — 학생마다 바뀌기 전·후 합격 여부를 견줘 바뀐 학생 수를 센다
@@ -16862,13 +16979,18 @@ def update_assignment_retest(teacher_id, assignment_id, max_wrong):
 
 def list_assignments_for_class(teacher_id, class_id):
     _require_db()
-    c_snap = DB.collection("classes").document(class_id).get()
-    if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("반을 찾을 수 없습니다.")
+    _, c = _own_class(teacher_id, class_id)
+    is_owner = c.get("teacher_id") == teacher_id
+    names = {}   # 낸 선생님 이름 — 공동 선생님이 있는 반에서만 보인다
     rows = []
     for doc in DB.collection("test_assignments").where("class_id", "==", class_id).stream():
         d = doc.to_dict() or {}
+        by = d.get("teacher_id") or ""
+        if c.get("members") and by not in names:
+            names[by] = _teacher_label(by)
         rows.append({
+            "by": names.get(by, ""), "mine": by == teacher_id,
+            "canDelete": by == teacher_id or is_owner,
             "id": doc.id, "title": d.get("title", ""), "format": d.get("format"),
             "kind": d.get("kind") or "vocab", "source": d.get("source") or "",
             "questionCount": len(d.get("questions") or []), "unitCount": d.get("unit_count") or 0,
@@ -17004,11 +17126,7 @@ def open_retake(teacher_id, assignment_id, student_id, cancel=False):
     _attempt_progress가 그 회차부터 다시 합격을 센다(지난 회차 기록은 그대로 남는다).
     cancel이면 아직 안 본 재시험을 거둔다."""
     _require_db()
-    ref = DB.collection("test_assignments").document(assignment_id)
-    snap = ref.get()
-    if not snap.exists or snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("시험을 찾을 수 없습니다.")
-    assignment = snap.to_dict()
+    ref, assignment = _own_assignment(teacher_id, assignment_id)
     if assignment.get("kind") == "quiz":
         raise ValueError("문제 시험은 재시험을 열 수 없습니다.")
     s_snap = DB.collection("students").document(student_id or "_").get()
@@ -17465,10 +17583,7 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
     """시험 하나의 성적표 — 대상 학생(반 전체 또는 개별 한 명)을 모두 한 줄씩 싣는다.
     아직 안 낸 학생도 '미제출'로 나오고, 이미 삭제된 학생의 답안은 이름만 남아 뒤에 붙는다."""
     _require_db()
-    a_snap = DB.collection("test_assignments").document(assignment_id).get()
-    if not a_snap.exists or a_snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("시험을 찾을 수 없습니다.")
-    assignment = a_snap.to_dict()
+    _, assignment = _own_assignment(teacher_id, assignment_id)
     by_student = {}
     for doc in DB.collection("test_attempts").where("assignment_id", "==", assignment_id).stream():
         d = doc.to_dict() or {}
@@ -17564,10 +17679,7 @@ def delete_assignment(teacher_id, assignment_id):
     """시험(및 학생들이 이미 낸 답안)을 통째로 지운다. delete_student와 같은 모양 —
     소유권을 확인하고, 딸린 문서(test_attempts)부터 지운 뒤 본체를 지운다."""
     _require_db()
-    ref = DB.collection("test_assignments").document(assignment_id)
-    snap = ref.get()
-    if not snap.exists or snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("시험을 찾을 수 없습니다.")
+    ref, _ = _own_assignment(teacher_id, assignment_id, delete=True)   # 낸 선생님과 반 주인만
     for doc in DB.collection("test_attempts").where("assignment_id", "==", assignment_id).stream():
         doc.reference.delete()
     for doc in DB.collection("test_studies").where("assignment_id", "==", assignment_id).stream():
@@ -17830,9 +17942,7 @@ def _qt_student_view(q, seed):
 
 def create_quiz_assignment(teacher_id, class_id, title, questions, student_id=None, source="quiz", retry=None):
     _require_db()
-    c_snap = DB.collection("classes").document(class_id or "-").get()
-    if not c_snap.exists or c_snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("반을 찾을 수 없습니다.")
+    _own_class(teacher_id, class_id)
     student_name = None
     if student_id:
         s_snap = DB.collection("students").document(student_id).get()
@@ -18047,13 +18157,11 @@ def quiz_review(assignment_id, assignment, attempt):
 
 def get_quiz_attempt_for_teacher(teacher_id, assignment_id, student_id):
     _require_db()
-    a_snap = DB.collection("test_assignments").document(assignment_id or "-").get()
-    if not a_snap.exists or a_snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("시험을 찾을 수 없습니다.")
+    _, a_doc = _own_assignment(teacher_id, assignment_id)
     att = DB.collection("test_attempts").document(f"{assignment_id}_{student_id}_1").get()
     if not att.exists:
         raise ValueError("아직 제출하지 않았습니다.")
-    out = quiz_review(assignment_id, a_snap.to_dict(), att.to_dict() or {})
+    out = quiz_review(assignment_id, a_doc, att.to_dict() or {})
     out["studentName"] = (att.to_dict() or {}).get("student_name", "")
     return out
 
@@ -18061,9 +18169,7 @@ def get_quiz_attempt_for_teacher(teacher_id, assignment_id, student_id):
 def grade_quiz_unit(teacher_id, assignment_id, student_id, no, unit, ok):
     """확인 대기 칸(또는 자동 채점한 칸)을 선생님이 맞음/틀림으로 정한다. 점수를 다시 센다."""
     _require_db()
-    a_snap = DB.collection("test_assignments").document(assignment_id or "-").get()
-    if not a_snap.exists or a_snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("시험을 찾을 수 없습니다.")
+    _own_assignment(teacher_id, assignment_id)
     ref = DB.collection("test_attempts").document(f"{assignment_id}_{student_id}_1")
     snap = ref.get()
     if not snap.exists:
@@ -18491,9 +18597,7 @@ def submit_quiz_retry(assignment_id, student_id, round_no, answers):
 
 def get_quiz_retry_for_teacher(teacher_id, assignment_id, student_id, round_no):
     _require_db()
-    a_snap = DB.collection("test_assignments").document(assignment_id or "-").get()
-    if not a_snap.exists or a_snap.to_dict().get("teacher_id") != teacher_id:
-        raise ValueError("시험을 찾을 수 없습니다.")
+    _own_assignment(teacher_id, assignment_id)
     try:
         rnd = int(round_no)
     except (TypeError, ValueError):
@@ -20137,6 +20241,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
                         "/api/admin/approve-exam",
                         "/api/classes", "/api/classes/regenerate-code", "/api/classes/update", "/api/classes/delete",
+                        "/api/classes/share", "/api/classes/join", "/api/classes/leave",
                         "/api/students",
                         "/api/students/delete", "/api/students/update", "/api/student/password",
                         "/api/vocab-tests", "/api/vocab-tests/delete",
@@ -20894,6 +20999,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 404)
                 return
             self._send_json({"code": code})
+            return
+
+        if path in ("/api/classes/share", "/api/classes/join", "/api/classes/leave"):
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                if path == "/api/classes/share":
+                    off = bool(req.get("off"))
+                    self._send_json({"shareCode": share_class(user_id, req.get("classId"), off)})
+                elif path == "/api/classes/join":
+                    self._send_json(join_class(user_id, req.get("code")))
+                else:
+                    leave_class(user_id, req.get("classId"), req.get("memberId"))
+                    self._send_json({"left": True})
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
             return
 
         if path == "/api/students":

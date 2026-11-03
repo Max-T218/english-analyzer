@@ -2555,9 +2555,13 @@
           <button type="button" class="btn ghost small" id="newClassBtn">+ 새 반 만들기</button>
           <button type="button" class="btn ghost small" id="renameClassBtn">이름 변경</button>
           <button type="button" class="btn ghost small danger" id="deleteClassBtn">반 삭제</button>
+          <button type="button" class="btn ghost small" id="shareClassBtn">👥 함께 쓰는 선생님</button>
+          <button type="button" class="btn ghost small danger" id="leaveClassBtn">반에서 나가기</button>
+          <button type="button" class="btn ghost small" id="joinClassBtn">공유 코드로 반 참여</button>
         </div>
       </div>
       <div class="error" id="classError"></div>
+      <div id="classSharePanel" hidden style="margin-top:10px; padding:10px 12px; border:1px solid var(--line, #ddd); border-radius:8px; font-size:14px;"></div>
     </section>
 
     <section class="panel" id="studentsPanel" hidden>

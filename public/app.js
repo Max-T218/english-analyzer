@@ -14300,8 +14300,9 @@ const HOWTO = {
       "단어장·문제·문법 문제·워크북 탭에서 만든 뒤 <b>[🏫 반에 시험 내기]</b>를 누릅니다. 저장해 둔 자료는 이 탭의 <b>[＋ 시험 출제]</b>에서 골라 바로 낼 수 있습니다. <b>낼 대상</b>은 반 전체, 또는 학생을 여러 명 체크해 고릅니다.",
       "<b>🔗 학생에게 알려 줄 주소</b> 칸의 주소를 <b>[복사]</b>해 학생에게 보냅니다. 학생은 아이디·비밀번호로 로그인해 풉니다.",
       "결과는 시험의 <b>[결과 보기]</b>, 학생 한 명은 <b>[성적표]</b>에서 봅니다.",
+      "다른 선생님과 반을 함께 쓰려면 <b>[👥 함께 쓰는 선생님]</b>에서 공유 코드를 만들어 알려 줍니다. 받은 선생님은 <b>[공유 코드로 반 참여]</b>에 코드를 넣으면 그 반에 시험을 낼 수 있습니다.",
     ],
-    tip: "학생 표의 비밀번호 칸에 <b>⚠️ 1234 그대로</b>가 보이는 학생에게는 처음 로그인하면 비밀번호를 바꾸라고 알려 주세요 — 안 바꾸면 아이디만 아는 친구도 들어올 수 있습니다. 합격 기준을 두면 못 미친 학생은 재시험을 봅니다. 단어시험은 학생이 단어 학습(뜻을 모두 눌러 보기)을 마쳐야 열립니다. 문제 시험에서 <b>틀린 문제 보충 학습 필수로 하기</b>를 켜면 학생은 틀린 문제를 다시 읽고 새 문제를 풀어야 끝납니다(새 문제 값은 선생님 포인트에서 나갑니다). 학생 <b>[성적표]</b>의 <b>[지난 주]·[이번 주]</b>에서 틀린 단어로 바로 오답테스트를 내고, 아래 <b>[🎯 학생마다 오답테스트 내기]</b>로 반 전체에 한 번에 낼 수 있습니다. 비밀번호를 잊은 학생은 <b>[🔑 비번 초기화]</b>. 시험 삼아 넣을 때는 실제 학생 이름을 쓰지 마세요.",
+    tip: "함께 쓰는 선생님도 학생 등록·수정과 시험 내기를 할 수 있고, 반 삭제와 공유 코드 관리는 반을 만든 선생님만 합니다. 시험은 낸 선생님(또는 반을 만든 선생님)만 지울 수 있고, 보충 학습 값은 낸 선생님 포인트에서 나갑니다. 학생 표의 비밀번호 칸에 <b>⚠️ 1234 그대로</b>가 보이는 학생에게는 처음 로그인하면 비밀번호를 바꾸라고 알려 주세요 — 안 바꾸면 아이디만 아는 친구도 들어올 수 있습니다. 합격 기준을 두면 못 미친 학생은 재시험을 봅니다. 단어시험은 학생이 단어 학습(뜻을 모두 눌러 보기)을 마쳐야 열립니다. 문제 시험에서 <b>틀린 문제 보충 학습 필수로 하기</b>를 켜면 학생은 틀린 문제를 다시 읽고 새 문제를 풀어야 끝납니다(새 문제 값은 선생님 포인트에서 나갑니다). 학생 <b>[성적표]</b>의 <b>[지난 주]·[이번 주]</b>에서 틀린 단어로 바로 오답테스트를 내고, 아래 <b>[🎯 학생마다 오답테스트 내기]</b>로 반 전체에 한 번에 낼 수 있습니다. 비밀번호를 잊은 학생은 <b>[🔑 비번 초기화]</b>. 시험 삼아 넣을 때는 실제 학생 이름을 쓰지 마세요.",
   },
 
   leveltest: {
@@ -18235,19 +18236,120 @@ async function refreshClassSelect(preserveSelection) {
   }
   const prev = preserveSelection ? classSelectEl.value : "";
   classSelectEl.innerHTML = classesCache.length
-    ? classesCache.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")
+    ? classesCache.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}${c.owner ? "" : ` (${esc(c.ownerName || "")} 선생님 · 공유)`}</option>`).join("")
     : `<option value="">반을 먼저 만들어 주세요</option>`;
   if (prev && classesCache.some((c) => c.id === prev)) classSelectEl.value = prev;
   onClassSelectChange();
 }
 
+/* 반 하나를 여러 선생님이 함께 쓴다(2026-11-03). 주인은 공유 코드를 만들어 알려 주고, 받은 선생님은
+   [공유 코드로 반 참여]로 들어온다. 들어온 선생님은 학생 등록·수정, 시험 내기, 성적 보기를 주인과 같이 하고,
+   반 삭제·공유 코드 관리는 주인만 한다. 시험 값은 낸 선생님 포인트에서 나간다. */
+const shareClassBtn = $("shareClassBtn");
+const leaveClassBtn = $("leaveClassBtn");
+const joinClassBtn = $("joinClassBtn");
+const classSharePanelEl = $("classSharePanel");
+
+function currentClass() {
+  return classesCache.find((c) => c.id === selectedClassId);
+}
+
+function renderSharePanel() {
+  const cur = currentClass();
+  if (!cur || !cur.owner) {
+    classSharePanelEl.hidden = true;
+    return;
+  }
+  const members = (cur.members || []).map((m) =>
+    `<li>${esc(m.name)} <button type="button" class="btn ghost small danger" data-rm-member="${esc(m.id)}">내보내기</button></li>`
+  ).join("");
+  classSharePanelEl.innerHTML = `
+    <div><strong>공유 코드</strong> ${cur.shareCode
+      ? `<code style="font-size:16px;letter-spacing:2px;">${esc(cur.shareCode)}</code>
+         <button type="button" class="btn ghost small" id="shareCopyBtn">복사</button>
+         <button type="button" class="btn ghost small" id="shareNewBtn">새 코드</button>
+         <button type="button" class="btn ghost small danger" id="shareOffBtn">코드 끄기</button>`
+      : `<button type="button" class="btn ghost small" id="shareNewBtn">코드 만들기</button>`}</div>
+    <div class="hint" style="margin-top:4px;">함께 쓸 선생님께 이 코드를 알려 주세요. 선생님은 '학생 관리'에서 [공유 코드로 반 참여]를 누르고 코드를 넣으면 됩니다(학생 관리 승인을 받은 선생님만 가능).</div>
+    <div style="margin-top:8px;"><strong>함께 쓰는 선생님</strong> ${members ? `<ul style="margin:4px 0 0 18px;">${members}</ul>` : `<span class="hint">아직 없습니다.</span>`}</div>`;
+  classSharePanelEl.hidden = false;
+}
+
+classSharePanelEl.addEventListener("click", async (ev) => {
+  const t = ev.target.closest("button");
+  if (!t) return;
+  const cur = currentClass();
+  if (!cur) return;
+  classErrorEl.textContent = "";
+  try {
+    if (t.id === "shareCopyBtn") {
+      await navigator.clipboard.writeText(cur.shareCode);
+      t.textContent = "복사됨";
+      return;
+    }
+    if (t.id === "shareNewBtn") {
+      if (cur.shareCode && !confirm("새 코드를 만들면 이전 코드는 못 씁니다. 이미 들어온 선생님은 그대로입니다. 만들까요?")) return;
+      await postJson("/api/classes/share", { classId: cur.id }, "공유 코드를 만들지 못했습니다.");
+    } else if (t.id === "shareOffBtn") {
+      if (!confirm("공유 코드를 끌까요? 더는 이 코드로 들어올 수 없습니다(이미 들어온 선생님은 그대로).")) return;
+      await postJson("/api/classes/share", { classId: cur.id, off: true }, "코드를 끄지 못했습니다.");
+    } else if (t.dataset.rmMember) {
+      if (!confirm("이 선생님을 반에서 내보낼까요? 그 선생님이 낸 시험은 반에 남습니다.")) return;
+      await postJson("/api/classes/leave", { classId: cur.id, memberId: t.dataset.rmMember }, "내보내지 못했습니다.");
+    } else {
+      return;
+    }
+    await refreshClassSelect(true);
+    renderSharePanel();
+  } catch (err) {
+    classErrorEl.textContent = err.message || "처리하지 못했습니다.";
+  }
+});
+
+shareClassBtn.addEventListener("click", () => {
+  if (classSharePanelEl.hidden) renderSharePanel();
+  else classSharePanelEl.hidden = true;
+});
+
+joinClassBtn.addEventListener("click", async () => {
+  const code = prompt("함께 쓸 반의 공유 코드를 입력하세요.");
+  if (code === null || !code.trim()) return;
+  classErrorEl.textContent = "";
+  try {
+    const data = await postJson("/api/classes/join", { code }, "반에 참여하지 못했습니다.");
+    await refreshClassSelect(false);
+    classSelectEl.value = data.classId;
+    onClassSelectChange();
+  } catch (err) {
+    classErrorEl.textContent = err.message || "반에 참여하지 못했습니다.";
+  }
+});
+
+leaveClassBtn.addEventListener("click", async () => {
+  const cur = currentClass();
+  if (!cur || cur.owner) return;
+  if (!confirm(`'${cur.name}' 반에서 나갈까요? 이 반의 학생과 시험을 더는 볼 수 없습니다.\n내가 낸 시험은 반에 남아 반 주인이 관리합니다.`)) return;
+  classErrorEl.textContent = "";
+  try {
+    await postJson("/api/classes/leave", { classId: cur.id }, "나가지 못했습니다.");
+    await refreshClassSelect(false);
+  } catch (err) {
+    classErrorEl.textContent = err.message || "나가지 못했습니다.";
+  }
+});
+
 function onClassSelectChange() {
   selectedClassId = classSelectEl.value;
   const has = !!selectedClassId;
+  const cur = currentClass();
+  const owner = !!(cur && cur.owner);
   studentsPanelEl.hidden = !has;
   assignedTestsPanelEl.hidden = !has;
   renameClassBtn.hidden = !has;
-  deleteClassBtn.hidden = !has;
+  deleteClassBtn.hidden = !has || !owner;
+  shareClassBtn.hidden = !has || !owner;
+  leaveClassBtn.hidden = !has || owner;
+  classSharePanelEl.hidden = true;
   if (has) {
     loadStudents();
     loadAssignedTests();
@@ -19276,14 +19378,15 @@ function renderAssignedTests(tests) {
             ? (t.source === "workbook" ? `📚 워크북 · ${t.questionCount}단계` : `📝 문제 시험 · ${t.questionCount}문항`)
             : `${esc(FORMAT_LABEL_KO[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개`}
             · ${t.studentId ? `👤 ${esc(t.studentName || "학생 1명")}` : "반 전체"}
-            ${t.maxWrong != null ? `· 합격 기준 ${t.wordCount - t.maxWrong}/${t.wordCount}(오답 ${t.maxWrong}개까지)` : ""}</span>
+            ${t.maxWrong != null ? `· 합격 기준 ${t.wordCount - t.maxWrong}/${t.wordCount}(오답 ${t.maxWrong}개까지)` : ""}
+            ${t.by ? `· 낸 선생님 ${esc(t.by)}${t.mine ? "(나)" : ""}` : ""}</span>
         </div>
         <span style="display:inline-flex; gap:6px;">
           <button type="button" class="btn ghost small view-results-btn">결과 보기</button>
           ${t.kind === "quiz" ? "" : `<button type="button" class="btn ghost small edit-retest-btn"
                   data-max-wrong="${t.maxWrong == null ? "" : t.maxWrong}"
                   data-word-count="${t.wordCount}">재시험 기준 수정</button>`}
-          <button type="button" class="btn ghost small danger del-test-btn">삭제</button>
+          ${t.canDelete === false ? "" : `<button type="button" class="btn ghost small danger del-test-btn">삭제</button>`}
         </span>
       </div>
       <div class="results-body" hidden></div>
