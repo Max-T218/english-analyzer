@@ -416,9 +416,9 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 쪽 그림**(`public/howto-<탭>-N.jpg`, `samplePagesHtml`)이라, 인쇄물 모양이 눈에 띄게 바뀌면
 저절로 따라오지 않습니다 — PDF를 새로 뽑아 그림을 갈아 끼우세요(원본은 저장소 밖 `홍보/`의
 2026-09-20 홍보용 PDF 네 개). 단, **상세분석 4번째 그림(`howto-analyze-4.jpg`, 배경지식 칸)은 2026-10-22에 같은 지문으로 `buildBackgroundHtml`과 같은 마크업을 손으로 적어 `style.css`로 그린 것을 헤드리스 크롬으로 찍은 그림**이다 — 배경지식 CSS를 고치면 다시 찍을 것. 단어장·동형 모의고사 예시는 코드가 그 자리에서 그려서 알아서 따라갑니다.
-**요약 이미지 4컷 예시(`howto-analyze-6·7.jpg` = `howto-brief-4·5.png`, 웹툰·일러스트, 2026-11-03)**는 같은 지문으로 실제 그린 4컷을 앱 CSS(`dc-cuts`)로 그린 'Ⅳ. 한눈에 보는 요약'을 헤드리스 크롬으로 찍은 그림이다 — 4컷 CSS를 바꾸면 다시 찍을 것. **요약분석 예시(`howto-brief-1/2.png`)는 `SAMPLE_BRIEF`를 그린 화면을 헤드리스 크롬으로 찍은 그림**이라 따라오지 않으니, `SAMPLE_BRIEF`나 요약분석 CSS를 고치면 다시 찍으세요.
+**요약 이미지 4컷 예시**는 탭마다 지문·그림 느낌을 달리했다(2026-11-03 사용자 — 탭별 그림 스타일 차이가 보이게): 상세분석 `howto-analyze-6·7.jpg`(*Desirable Difficulty*, 웹툰·일러스트) / 요약분석 `howto-brief-4.png`(*The Hidden Work of Bees*, 일러스트) / 리딩노트 `howto-decode-1·2.jpg`(*Sleep and Memory*, 웹툰). 새 지문 둘은 직접 쓴 글이고 `call_gemini_decode_pic`·`call_gemini_decode`를 직접 불러(요금 차감 없이 GEMINI_API_KEY 원가만) 그린 뒤, 앱 CSS(`dc-cuts`)·`dcSheetHtml`을 헤드리스 크롬으로 찍었다 — 4컷·리딩노트 CSS를 바꾸면 다시 찍을 것. **요약분석 예시(`howto-brief-1/2.png`)는 `SAMPLE_BRIEF`를 그린 화면을 헤드리스 크롬으로 찍은 그림**이라 따라오지 않으니, `SAMPLE_BRIEF`나 요약분석 CSS를 고치면 다시 찍으세요.
 객관식·주관식 예시(`howto-mcq-*`·`howto-saq-*`)는 2026-10-07에 같은 지문으로 `call_gemini_quiz`를 직접 불러(요금 차감 없이) 새로 만들고, 앱의 `buildQuizHtml`+인쇄 CSS를 헤드리스 크롬으로 찍은 그림이다. 제목은 "예시 객관식문제"·"예시 주관식".
-**모든 탭 예시는 같은 지문(*Desirable Difficulty*)을 씁니다** — 새 예시를 만들 때도 이 지문으로 맞추세요.
+**탭 예시는 대부분 같은 지문(*Desirable Difficulty*)을 씁니다** — 새 예시를 만들 때도 이 지문으로 맞추세요. 단 **요약 이미지·4컷 그림 예시는 예외**(위 문단 — 탭마다 지문과 그림 느낌이 달라야 차이가 보인다).
 같은 예시(`HOWTO_SAMPLE`)가 **각 탭의 실행 버튼 아래에도** 접이식 '📄 결과물 예시'로 보입니다(`ensureTabSample`, 탭을 처음 열 때 한 번 만들고 결과가 생기면 감춥니다) — 그림을 갈아 끼우면 두 곳이 함께 바뀝니다. 새 탭에 예시를 붙이려면 `HOWTO_SAMPLE`에 더하고 `TAB_SAMPLE_RESULT`에 그 탭의 결과 칸 id를 적으세요.
 
 **약관을 고치면 판 번호도 함께 올리세요.** `public/terms.html`의 시행일과 `server.py`의

@@ -550,13 +550,13 @@ TAB_SAVE.decode = {
 const dcSavedSrc = new Map();
 
 /* 결과물 예시 — 탭 아래 '📄 결과물 예시'와 만드는 법 창이 함께 쓴다(app.js HOWTO_SAMPLE·TAB_SAMPLE_RESULT).
-   그림(howto-decode-1·2.jpg)은 다른 탭 예시와 같은 지문(Desirable Difficulty)으로 실제로 만든 리딩노트(4컷 웹툰 포함)를
-   헤드리스 크롬으로 인쇄한 쪽이다(2026-11-03). 리딩노트 모양을 눈에 띄게 바꾸면 다시 찍을 것 */
+   그림(howto-decode-1·2.jpg)은 **다른 탭 예시와 다른 지문**(Sleep and Memory — 상세분석·요약분석 예시와 지문도 그림 느낌도 달라 보이게,
+   2026-11-03 사용자)으로 실제로 만든 리딩노트(4컷 웹툰 포함)를 헤드리스 크롬으로 인쇄한 쪽이다. 리딩노트 모양을 눈에 띄게 바꾸면 다시 찍을 것 */
 if (typeof HOWTO_SAMPLE !== "undefined") {
   HOWTO_SAMPLE.decode = () => samplePagesHtml("decode", [
     "1쪽 — 본문과 해석 · 핵심 정리 · 주요 어휘",
     "2쪽 — 끊어 읽기 해석 · 4컷 그림(웹툰)",
-  ]);
+  ], "4컷 그림은 일러스트·웹툰 중에서 고릅니다 — 이 예시는 웹툰으로 그린 것이고, 지문마다 장면이 새로 정해집니다.");
   TAB_SAMPLE_RESULT.decode = "dcResult";
 }
 
