@@ -4913,7 +4913,7 @@ function comicBubbleOf(prefix) {
   const on = el && el.querySelector("input[data-bubble]:checked");
   return on && (on.dataset.bubble === "en" || on.dataset.bubble === "ko") ? on.dataset.bubble : "ko";
 }
-["info", "brief"].forEach((prefix) => {
+["info", "brief", "xp"].forEach((prefix) => {
   ["ComicStyle", "ComicBubble"].forEach((part) => {
     const box = $(prefix + part);
     if (!box) return;
@@ -5010,7 +5010,8 @@ const IMG_PER_CHOICES = [
   ["comic:webtoon:en", "4컷 · 웹툰 (영어 말풍선)"],
 ];
 const IMG_PER_NAME = Object.fromEntries(IMG_PER_CHOICES);
-const imgPerChoice = { info: new Map(), brief: new Map() };
+const imgPerChoice = { info: new Map(), brief: new Map(), xp: new Map() };
+const IMG_PREFIX_TAB = { info: "analyze", brief: "brief", xp: "explain" };
 const specLang = (spec) => String(spec || "").split(":")[0];
 function specName(spec) {
   return specLang(spec) === "comic" ? (IMG_PER_NAME[spec] || "4컷 그림").replace(/^4컷 · /, "4컷 ") : IMG_LANG_NAME[spec] || spec;
@@ -5163,7 +5164,7 @@ function setupImgPerList(prefix, onChange) {
   };
   passageListEl.addEventListener("input", later);
   document.addEventListener("click", (e) => {
-    if (e.target.closest(".passage-panel") || e.target.closest(`.tab-btn[data-tab="${prefix === "info" ? "analyze" : "brief"}"]`)) later();
+    if (e.target.closest(".passage-panel") || e.target.closest(`.tab-btn[data-tab="${IMG_PREFIX_TAB[prefix]}"]`)) later();
   });
 }
 

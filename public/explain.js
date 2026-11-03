@@ -23,19 +23,18 @@ const xpState = {
    ("ko"·"comic:illust"·"comic:webtoon:ko" …). 이 탭은 우리말 풀이라 한글요약이 기본이다.
    그림 본체는 entry.imgSrc(blob 주소, 화면에서만 산다), 사양·4컷 컷 설명은 entry.data.img({spec, caps})에 담겨 저장본 글에 들어간다.
    본체는 저장할 때 /api/saved-image로 따로 올린다(리딩노트·요약분석과 같은 길). */
-const XP_IMG_SPECS = [
-  { v: "ko", name: "한글요약 인포그래픽" },
-  { v: "comic:illust", name: "4컷 그림 · 일러스트" },
-  { v: "comic:webtoon:ko", name: "4컷 그림 · 웹툰 (한국어 말풍선)" },
-  { v: "comic:webtoon:en", name: "4컷 그림 · 웹툰 (영어 말풍선)" },
-  { v: "mix", name: "한국어＋영어 인포그래픽" },
-  { v: "en", name: "영어요약 인포그래픽" },
-];
+// 고르는 칸은 요약분석과 같은 모양이다(index.html xpLangBox — app.js의 pickedImgLangs·imgSpecsFor·지문마다 따로 고르기를
+// prefix "xp"로 그대로 쓴다, 2026-11-03 사용자). 다만 그림 자리가 둘째 쪽 한 장뿐이라 종류는 하나만 켜진다(아래 xpLangBox).
 const xpSpecLang = (spec) => String(spec || "").split(":")[0];
-const xpSpecName = (spec) => (XP_IMG_SPECS.find((x) => x.v === spec) || {}).name || "요약 이미지";
-const xpImgOn = () => xpEl("xpImgChk").checked;
-const xpImgSpec = () => (XP_IMG_SPECS.some((x) => x.v === xpEl("xpImgSpec").value) ? xpEl("xpImgSpec").value : "ko");
-xpEl("xpImgSpec").innerHTML = XP_IMG_SPECS.map((x) => `<option value="${x.v}">${esc(x.name)}</option>`).join("");
+const xpSpecName = (spec) => specName(spec);
+// 이 지문에 그릴 그림 사양 — 없으면 ""
+const xpSpecFor = (job) => imgSpecsFor("xp", job)[0] || "";
+xpEl("xpLangBox").addEventListener("change", (e) => {
+  const c = e.target.closest(".img-lang");
+  if (c && c.checked) xpEl("xpLangBox").querySelectorAll(".img-lang").forEach((x) => { if (x !== c) x.checked = false; });
+  xpSyncCost();
+});
+setupImgPerList("xp", () => xpSyncCost());
 // 이 탭이 만든 blob 주소 — 다시 만들거나 비울 때 놓아 준다
 let xpBlobUrls = [];
 function xpDropBlobs() {
@@ -321,25 +320,28 @@ xpEl("xpEditBtn").addEventListener("click", () => {
 /* ── 값 안내 ── */
 // 그림 한 장 값 — 종류마다 다르다(인포그래픽·4컷, app.js imgLangPrice)
 const xpImgPrice = (spec) => (typeof PRICING !== "undefined" && PRICING ? imgLangPrice(xpSpecLang(spec)) : null);
-function xpCost(n, withImg) {
+// 그림 값 합계 — 지문마다 고른 사양대로(없으면 0)
+const xpImgsCost = (list) => list.reduce((s, j) => {
+  const spec = xpSpecFor(j);
+  return s + (spec ? xpImgPrice(spec) || 0 : 0);
+}, 0);
+function xpCost(jobs, withImg) {
   if (typeof PRICING === "undefined" || !PRICING || !Number.isFinite(PRICING.explain)) return null;
-  return (PRICING.explain + (withImg ? xpImgPrice(xpImgSpec()) || 0 : 0)) * n;
+  return PRICING.explain * jobs.length + (withImg ? xpImgsCost(jobs) : 0);
 }
 function xpJobs() {
   return passageMgr.getJobs().filter((j) => j.text && j.text.length >= 20);
 }
 function xpSyncCost() {
-  const n = xpJobs().length;
-  const withImg = xpImgOn();
-  const cost = xpCost(n, withImg);
+  const jobs = xpJobs();
+  const n = jobs.length;
+  const imgN = jobs.filter((j) => xpSpecFor(j)).length;
+  const cost = xpCost(jobs, true);
   xpEl("xpCostHint").innerHTML = n && cost !== null
     ? `예상 비용 <b>${pt(cost)}</b> (지문 ${n}개 × ${pt(PRICING.explain)}` +
-      `${withImg ? ` + 요약 이미지 ${n}장 × ${pt(xpImgPrice(xpImgSpec()))}` : ""})` : "";
-  const ip = xpImgPrice(xpImgSpec());
-  xpEl("xpImgPrice").textContent = ip ? `고른 그림은 한 장(지문 1개)에 ${pt(ip)}입니다.` : "";
+      `${imgN ? ` + 요약 이미지 ${imgN}장 ${pt(xpImgsCost(jobs))}` : ""})` : "";
+  syncImgLangNote("xp");
 }
-xpEl("xpImgChk").addEventListener("change", xpSyncCost);
-xpEl("xpImgSpec").addEventListener("change", xpSyncCost);
 if (typeof onPricingReady === "function") onPricingReady(xpSyncCost);
 document.addEventListener("input", (e) => {
   if (e.target.closest && e.target.closest(".passage-panel")) xpSyncCost();
@@ -368,10 +370,15 @@ async function xpDrawImgs(list) {
   const errEl = xpEl("xpError");
   errEl.textContent = "";
   if (!list.length) return;
-  const spec = xpImgSpec();
-  const each = xpImgPrice(spec);
-  if (!(await costConfirmed(each === null ? null : each * list.length,
-    `${EXPLAIN_NAME} 요약 이미지(${xpSpecName(spec)}) · ${list.length}장`, list.length))) return;
+  const specs = list.map((e) => xpSpecFor(e));
+  if (!specs.some(Boolean)) {
+    errEl.textContent = "위 '요약 이미지' 칸에서 그림 종류를 먼저 골라 주세요.";
+    return;
+  }
+  list = list.filter((e, i) => specs[i]);
+  const kinds = [...new Set(list.map((e) => xpSpecName(xpSpecFor(e))))];
+  if (!(await costConfirmed(PRICING ? xpImgsCost(list) : null,
+    `${EXPLAIN_NAME} 요약 이미지(${kinds.join(" · ")}) · ${list.length}장`, list.length))) return;
   if (xpState.editing) { xpHarvest(); xpSetEditing(false); }
   xpState.busy = true;
   xpEl("xpMakeBtn").disabled = xpEl("xpImgBtn").disabled = true;
@@ -382,7 +389,7 @@ async function xpDrawImgs(list) {
     for (let i = 0; i < list.length; i++) {
       text.textContent = `AI가 ${list[i].name}의 요약 이미지를 그리고 있습니다… (${i + 1}/${list.length}, 한 장에 30~50초)`;
       try {
-        await xpDrawImg(list[i], spec, (n) => { text.textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; });
+        await xpDrawImg(list[i], xpSpecFor(list[i]), (n) => { text.textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; });
       } catch (err) {
         errEl.textContent = err.message;
         break;
@@ -432,10 +439,11 @@ async function xpMake() {
     errEl.textContent = "위쪽 영어 지문 칸에 지문을 넣어 주세요 (20자 이상).";
     return;
   }
-  const withImg = xpImgOn();
-  const spec = xpImgSpec();
-  if (!(await costConfirmed(xpCost(jobs.length, withImg),
-    `${EXPLAIN_NAME} · 지문 ${jobs.length}개${withImg ? ` + 요약 이미지(${xpSpecName(spec)}) ${jobs.length}장` : ""}`,
+  const imgJobs = jobs.filter((j) => xpSpecFor(j));
+  const withImg = imgJobs.length > 0;
+  const kinds = [...new Set(imgJobs.map((j) => xpSpecName(xpSpecFor(j))))];
+  if (!(await costConfirmed(xpCost(jobs, withImg),
+    `${EXPLAIN_NAME} · 지문 ${jobs.length}개${withImg ? ` + 요약 이미지(${kinds.join(" · ")}) ${imgJobs.length}장` : ""}`,
     jobs.length, reduceAdvice(jobs.length, withImg ? "요약 이미지를 빼면" : "")))) return;
   if (typeof dropStaleSavedLink === "function") dropStaleSavedLink("explain");
   xpState.busy = true;
@@ -464,7 +472,8 @@ async function xpMake() {
         const entry = { name: j.name, text: j.text, data };
         xpState.entries.push(entry);
         ok++;
-        if (withImg) {
+        const spec = xpSpecFor(j);
+        if (spec) {
           xpRender();
           text.textContent = `AI가 ${j.name}의 요약 이미지를 그리고 있습니다… (${i + 1}/${jobs.length}, 한 장에 30~50초)`;
           // 그림은 실패해도 풀이는 남긴다. 한도 소진·잔액 부족이면 여기서 멈춘다
