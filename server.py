@@ -4212,8 +4212,12 @@ Report any problem you hit in `note`.
 ## Dialogue — when kind is "dialogue"
 - Put ONE SPEAKER TURN in each item, not one sentence. If a person says three sentences
   in a row, they all go in the SAME item, in order.
-- Start every item with the speaker label exactly as printed, then one space:
-  "M We've waited for more than one hour, and we're still waiting."
+- Start every item with the speaker label as printed, then a colon and one space —
+  ADD the colon even when the page prints none (the app recognizes a dialogue by it):
+  "M: We've waited for more than one hour, and we're still waiting."
+  "Mina: Hey, Jun. You look tired." · "Ms. Seo: Good morning, class."
+  If the page already prints a colon, keep just that one. This colon is the only exception
+  to "Transcribe EXACTLY".
 - Keep the turns in the order they appear. Never merge two people into one item.
 - A textbook page often holds SEVERAL SEPARATE mini-dialogues, numbered (1) (2) (3).
   Drop those numbers, and put an empty item "" BETWEEN the mini-dialogues so the
