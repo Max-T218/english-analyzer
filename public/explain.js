@@ -1,4 +1,4 @@
-/* ══════ 내용 풀이 (2026-11-03 사용자) ══════
+/* ══════ 내용 한장정리 (2026-11-03 사용자) ══════
    지문 하나 → A4 한 쪽, 우리말로만 글의 내용을 쉽고 자세히 풀어 준다.
    해석·문법은 상세분석·요약분석·리딩노트가 하므로, 여기는 '분야를 몰라 글 자체가 이해되지 않는' 학생을 위한
    자리다 — 영어 원문은 싣지 않고(대목마다 찾을 수 있게 첫 낱말만), 대목마다 선생님이 이야기하듯 풀어 준다.
@@ -10,7 +10,7 @@
 
 const xpEl = (id) => document.getElementById(id);
 // 이 탭의 이름 — 사이드바 단추·저장함·파일 이름이 함께 쓴다(이름을 바꾸면 index.html 단추 글자도 같이)
-const EXPLAIN_NAME = "내용 풀이";
+const EXPLAIN_NAME = "내용 한장정리";
 const xpState = {
   entries: [],   // [{name, text, data, error, imgSrc, imgError}] — data는 서버 응답(_finish_explain 모양)
   title: "",
@@ -467,7 +467,7 @@ async function xpMake() {
       const j = jobs[i];
       text.textContent = `AI가 ${j.name}의 내용을 풀어 쓰고 있습니다… (${i + 1}/${jobs.length}, 지문 하나에 15~30초)`;
       try {
-        const data = await postGenerate("/api/explain", { passage: j.text }, "내용 풀이를 만들지 못했습니다.",
+        const data = await postGenerate("/api/explain", { passage: j.text }, "내용 한장정리를 만들지 못했습니다.",
           (n) => { text.textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; });
         const entry = { name: j.name, text: j.text, data };
         xpState.entries.push(entry);
@@ -525,7 +525,7 @@ xpEl("xpLoadBtn").addEventListener("click", () => openSavedList("tab", null, "ex
 const xpSheetStyle = createSheetStyle("xpSheetStyle", xpEl("xpResult"), "explain");
 xpSheetStyle.onChange(xpFitSoon);
 const xpStyleTitle = xpEl("xpSheetStyle").querySelector(".sheet-style-title");
-if (xpStyleTitle) xpStyleTitle.textContent = "🎨 내용 풀이 꾸미기";
+if (xpStyleTitle) xpStyleTitle.textContent = "🎨 내용 한장정리 꾸미기";
 
 TAB_LABELS.explain = "💡 " + EXPLAIN_NAME;
 TAB_LIBRARY_WORDS.explain = {
@@ -623,7 +623,7 @@ if (typeof HOWTO !== "undefined") {
     lead: "영어 해석이 아니라 <b>글의 내용 자체</b>를 우리말로 쉽고 자세히 풀어 주는 한 쪽 자료입니다 — 분야가 낯설어 해석을 해도 무슨 말인지 모르는 학생에게 좋습니다.",
     steps: [
       "위쪽 <b>영어 지문</b> 칸에 지문을 넣습니다(여러 개면 <b>＋ 지문 추가</b>). 지문 이름이 쪽 머리띠에 찍힙니다.",
-      "필요하면 <b>자료 제목</b>을 적고 <b>내용 풀이 만들기</b>를 누릅니다. 지문마다 15~30초 걸립니다. " +
+      "필요하면 <b>자료 제목</b>을 적고 <b>내용 한장정리 만들기</b>를 누릅니다. 지문마다 15~30초 걸립니다. " +
         "<b>🖼️ 요약 이미지</b>의 <b>만들 때 함께 넣기</b>를 체크하면 고른 종류(한글요약 인포그래픽·4컷 그림 등)의 그림도 지문마다 한 장 들어갑니다(그림 값 따로).",
       "화면에서 내용을 확인하고, 고칠 곳은 <b>✏️ 직접 수정</b>으로 그 자리에서 고칩니다. " +
         "칸을 다른 쪽으로 옮기려면 <b>📄 쪽 구성</b>을 누르고 칸 위의 <b>⤵ 여기부터 2쪽으로 / ⤴ 1쪽으로 올리기</b>를 누릅니다(지문 위의 <b>↺ 쪽 나눔 자동으로</b>로 되돌립니다). " +

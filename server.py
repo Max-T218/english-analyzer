@@ -303,7 +303,7 @@ PRICE_DECODE_KRW = int(os.environ.get("PRICE_DECODE_KRW", "150"))
 # 리딩노트 4컷 그림(/api/decodepic), 지문 1개당 그림 한 장(정사각형 2×2 네 컷). 원가는 그림 모델(MODEL_IMAGE)
 # 약 90원 + 장면 정하기(Flash) 1원 남짓(2026-11-03 실측 3장). 요약 이미지(500P)보다 싸게 둔다
 PRICE_DECODE_PIC_KRW = int(os.environ.get("PRICE_DECODE_PIC_KRW", "300"))
-# 내용 풀이(/api/explain), 지문 1개당 — 원문 없이 우리말로 글 내용을 풀어 주는 한 쪽. Flash 한 번이고
+# 내용 한장정리(/api/explain), 지문 1개당 — 원문 없이 우리말로 글 내용을 풀어 주는 한 쪽. Flash 한 번이고
 # 원문을 옮기지 않아 출력이 리딩노트보다 짧다. 100은 원가 실측 전 임시값 — Render 로그 [usage] explain으로 맞출 것
 PRICE_EXPLAIN_KRW = int(os.environ.get("PRICE_EXPLAIN_KRW", "100"))
 PRICE_MCQ_PLAIN_KRW = int(os.environ.get("PRICE_MCQ_PLAIN_KRW", "250"))    # 객관식·지문유지, (지문×유형) 1개당
@@ -10788,11 +10788,11 @@ def call_gemini_decode(passage, api_key, model, complete_hint=None):
     return _finish_decode(_gemini_json(payload, api_key, model, _DECODE_TRUNC_MSG, label="decode"))
 
 
-# ══════ 내용 풀이(/api/explain, 2026-11-03 사용자) ══════
+# ══════ 내용 한장정리(/api/explain, 2026-11-03 사용자) ══════
 # 지문 하나 → A4 한 쪽, **우리말로만** 글의 내용을 쉽고 자세히 풀어 준다. 해석·문법 설명은 상세분석·
 # 요약분석·리딩노트가 이미 하므로 여기는 '분야를 몰라 글 자체가 이해되지 않는' 학생을 위한 자리다 —
 # 원문을 싣지 않고, 대목마다 선생님이 옆에서 이야기하듯 풀어 준다. 상세분석의 outline.background와
-# 겹쳐 보이지만 그쪽은 분석본 속 짧은 칸이고, 이쪽은 내용 풀이 한 장이 통째로 그 일을 한다.
+# 겹쳐 보이지만 그쪽은 분석본 속 짧은 칸이고, 이쪽은 내용 한장정리가 통째로 그 일을 한다.
 # 그리는 곳은 public/explain.js 한 곳이다.
 EXPLAIN_PARTS_MAX = 5
 EXPLAIN_CONCEPTS_MAX = 3
@@ -10905,7 +10905,7 @@ EXPLAIN_SYSTEM_PROMPT = r"""너는 한국 고등학교 영어 교사다. 영어 
 - HTML 태그·마크다운·이모지를 쓰지 마라. 순수한 글자만. 맞춤법을 지킨다.
 """
 
-_EXPLAIN_TRUNC_MSG = "지문이 너무 길어 내용 풀이를 만들다가 잘렸습니다. 지문을 나눠 시도해 주세요."
+_EXPLAIN_TRUNC_MSG = "지문이 너무 길어 내용 한장정리를 만들다가 잘렸습니다. 지문을 나눠 시도해 주세요."
 
 
 def _finish_explain(result):
@@ -10956,7 +10956,7 @@ EXPLAIN_SHORTEN_TO = 1500
 
 
 def explain_text_length(r):
-    """내용 풀이 결과에서 쪽에 찍히는 글자 수(공백 빼고)."""
+    """내용 한장정리 결과에서 쪽에 찍히는 글자 수(공백 빼고)."""
     bits = [r.get(k, "") for k in ("title", "field", "oneLine", "primer", "analogy", "message")]
     for p in r.get("parts", []):
         bits += [p.get("heading", ""), p.get("explain", ""), p.get("cue", "")]
@@ -10968,7 +10968,7 @@ def explain_text_length(r):
 
 
 def call_gemini_explain(passage, api_key, model, shorten_from=None):
-    """지문 하나 → 내용 풀이(우리말). 원문을 옮기지 않으므로 문장 빠짐 검사는 없다.
+    """지문 하나 → 내용 한장정리(우리말). 원문을 옮기지 않으므로 문장 빠짐 검사는 없다.
     shorten_from=앞 답의 글자 수면, 한 쪽에 들도록 줄여 다시 쓰라고 묻는다."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -14996,7 +14996,7 @@ CHANGELOG = [
         "version": 118,
         "date": "2026-11-03",
         "items": [
-            "새 탭 💡 내용 풀이 — 해석은 했는데 글이 무슨 말인지 모르는 학생을 위해, 영어 지문의 내용을 우리말로 쉽고 자세히 풀어 주는 한 쪽 자료를 만듭니다. "
+            "새 탭 💡 내용 한장정리 — 해석은 했는데 글이 무슨 말인지 모르는 학생을 위해, 영어 지문의 내용을 우리말로 쉽고 자세히 풀어 주는 한 쪽 자료를 만듭니다. "
             "읽기 전에 알아 둘 배경, 대목마다 차근차근 풀이, 낯선 개념, 글쓴이가 하고 싶은 말, 확인 질문이 들어가고 영어 원문·해석은 싣지 않습니다. "
             "원하면 한글요약 인포그래픽이나 4컷 그림 같은 요약 이미지도 지문마다 한 장 넣을 수 있습니다.",
         ],
@@ -20137,7 +20137,7 @@ class Handler(BaseHTTPRequestHandler):
                 # 리딩노트 — 지문 1개당, 4컷 그림은 그림 한 장(지문 1개)당
                 "decode": PRICE_DECODE_KRW,
                 "decodePic": PRICE_DECODE_PIC_KRW,
-                # 내용 풀이 — 지문 1개당
+                # 내용 한장정리 — 지문 1개당
                 "explain": PRICE_EXPLAIN_KRW,
             })
             return
@@ -20758,7 +20758,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._pending_label = "리딩노트 4컷 그림"
                 elif path == "/api/explain":
                     cost = PRICE_EXPLAIN_KRW
-                    self._pending_label = "내용 풀이"
+                    self._pending_label = "내용 한장정리"
                 elif path == "/api/infographic":
                     # 지문 1개에 그림 1장. 분석과 달리 한 번에 여러 장을 받지 않는다 —
                     # 1장에 8~12초가 걸려서 여러 장을 한 요청에 묶으면 프록시가 끊는다.
@@ -21930,7 +21930,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 502)
             return
 
-        # 내용 풀이 — 지문 하나당 한 번(Flash). 한 쪽 분량(EXPLAIN_CHAR_BUDGET)을 넘으면 한 번 더 줄여 쓰게 한다(값은 한 번).
+        # 내용 한장정리 — 지문 하나당 한 번(Flash). 한 쪽 분량(EXPLAIN_CHAR_BUDGET)을 넘으면 한 번 더 줄여 쓰게 한다(값은 한 번).
         # 대목 풀이가 비면 실패로 보고 값을 받지 않는다
         if path == "/api/explain":
             passage = (req.get("passage") or "").strip()
@@ -21952,7 +21952,7 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as e:   # 줄이기에 실패해도 처음 답을 쓴다 — 화면이 마저 맞춘다
                         print(f"[explain] 줄여 쓰기 실패: {e}", flush=True)
                 if not result.get("parts"):
-                    raise RuntimeError("내용 풀이를 만들지 못했습니다. 다시 시도해 주세요.")
+                    raise RuntimeError("내용 한장정리를 만들지 못했습니다. 다시 시도해 주세요.")
                 self._charge_and_send(path, req, result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)

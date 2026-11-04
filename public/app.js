@@ -7359,7 +7359,7 @@ const SHEET_FS = {
     { k: "w", name: "단어", def: 13 },
     { k: "m", name: "뜻", def: 13 },
   ],
-  // 내용 풀이(public/explain.js) — 테마 색·글꼴만. "doc"과 달리 인쇄 크기(zoom)가 없다 — 한 쪽 맞춤(xpFit)이 따로 줄인다
+  // 내용 한장정리(public/explain.js) — 테마 색·글꼴만. "doc"과 달리 인쇄 크기(zoom)가 없다 — 한 쪽 맞춤(xpFit)이 따로 줄인다
   explain: [],
   doc: [],   // 지문 분석·요약분석 — 테마 색·글꼴만 고른다(createSheetStyle의 "doc")
   // 리딩노트(public/decode.js) — 처음 숫자는 인쇄 크기(style.css 끝 '리딩노트'의 9.5pt·9pt)와 같다
