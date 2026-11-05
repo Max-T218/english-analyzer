@@ -3014,14 +3014,16 @@ input.st-in{width:100%; box-sizing:border-box;}
 .dc-w-word{font-weight:700;}
 .dc-w-pos{font-size:10.5px; color:var(--accent); font-weight:700;}
 .dc-w-mean{flex-basis:100%; color:var(--ink-soft);}
-/* 끊어 읽기 — 문장마다 영어 줄 아래 우리말 줄 */
+/* 끊어 읽기 — 문장마다 왼쪽 영어, 오른쪽 우리말(2단) */
 .dc-lbl{list-style:none; margin:0; padding:0;}
-.dc-s{display:grid; grid-template-columns:30px 1fr; gap:8px; padding:9px 0; border-bottom:1px dashed var(--line);
+.dc-s{display:grid; grid-template-columns:30px 1fr; gap:8px; padding:4px 0; border-bottom:1px dashed var(--line);
   break-inside:avoid; page-break-inside:avoid;}
 .dc-s:last-child{border-bottom:none;}
-.dc-s-no{font-size:12px; font-weight:800; color:var(--accent); padding-top:2px; font-variant-numeric:tabular-nums;}
-.dc-s-en{line-height:1.7; font-size:14.5px;}
-.dc-s-ko{line-height:1.6; font-size:13px; color:var(--ink-soft); margin-top:3px; padding-left:10px; border-left:2px solid var(--accent-soft);}
+.dc-s-no{font-size:12px; font-weight:800; color:var(--accent); padding-top:7px; font-variant-numeric:tabular-nums;}
+.dc-s-body{display:grid; grid-template-columns:1fr 1fr; min-width:0;}
+.dc-s-en{line-height:1.7; font-size:14.5px; min-width:0; padding:5px 12px 5px 0;}
+/* 우리말 칸 바탕은 꾸미기의 테마 색을 옅게 푼 --accent-soft — 색을 고르면 함께 바뀐다 */
+.dc-s-ko{line-height:1.6; font-size:13px; color:var(--ink); min-width:0; padding:5px 12px; background:var(--accent-soft);}
 .dc-sl{color:var(--accent); font-weight:700; margin:0 5px;}
 .dc-editing .dc-ed{outline:1px dashed var(--accent); outline-offset:1px; border-radius:2px; cursor:text;}
 .dc-editing .dc-ed:focus{background:var(--hl); outline-style:solid;}
@@ -3030,6 +3032,10 @@ input.st-in{width:100%; box-sizing:border-box;}
   .dc-pair,.dc-flow{grid-template-columns:1fr;}
   .dc-step,.dc-step:first-child{clip-path:none; padding-left:10px;}
   .dc-words{grid-template-columns:1fr 1fr;}
+  /* 폰 화면에서는 두 칸이 너무 좁아 위아래로 쌓는다 — 인쇄는 그대로 2단 */
+  .dc-s-body{grid-template-columns:1fr;}
+  .dc-s-en{padding-right:0;}
+  .dc-s-ko{padding-left:10px;}
 }
 /* 인쇄 크기 — 1쪽(본문·해석 + 핵심 정리 + 어휘)이 A4 한 장에 들도록 화면보다 좁힌다.
    같은 규칙을 두 번 적는다: @media print(실제 인쇄)와 .dc-measure(decode.js dcFit이 화면에서 인쇄 폭으로 쪽 높이를 잴 때).
@@ -3045,9 +3051,10 @@ input.st-in{width:100%; box-sizing:border-box;}
 .dc-measure .dc-card,.dc-measure .dc-flow,.dc-measure .dc-words{font-size:8.8pt;}
 .dc-measure .dc-tc-en{font-size:10.5pt;}
 .dc-measure .dc-w{padding:3px 0;}
-.dc-measure .dc-s{padding:6px 0;}
-.dc-measure .dc-s-en{font-size:9.5pt;}
-.dc-measure .dc-s-ko{font-size:9pt;}
+.dc-measure .dc-s{padding:2px 0;}
+.dc-measure .dc-s-no{padding-top:6px;}
+.dc-measure .dc-s-en{font-size:9.5pt; padding-top:4px; padding-bottom:4px;}
+.dc-measure .dc-s-ko{font-size:9pt; padding-top:4px; padding-bottom:4px;}
 .dc-measure .dc-fitnote{display:none;}
 /* 그 지문만 글씨를 줄인다(dcFit이 정한다) — 쪽 전체를 zoom으로 줄여 폭은 그대로 쓴다 */
 .dc-measure .dc-sheet[data-fit="94"] .dc-page{zoom:.94;}
@@ -3066,9 +3073,10 @@ input.st-in{width:100%; box-sizing:border-box;}
   .dc-card,.dc-flow,.dc-words{font-size:8.8pt;}
   .dc-tc-en{font-size:10.5pt;}
   .dc-w{padding:3px 0;}
-  .dc-s{padding:6px 0;}
-  .dc-s-en{font-size:9.5pt;}
-  .dc-s-ko{font-size:9pt;}
+  .dc-s{padding:2px 0;}
+  .dc-s-no{padding-top:6px;}
+  .dc-s-en{font-size:9.5pt; padding-top:4px; padding-bottom:4px;}
+  .dc-s-ko{font-size:9pt; padding-top:4px; padding-bottom:4px;}
   .dc-fitnote{display:none !important;}
   .dc-sheet[data-fit="94"] .dc-page{zoom:.94;}
   .dc-sheet[data-fit="88"] .dc-page{zoom:.88;}
