@@ -451,7 +451,7 @@ const dcTitleHandle = {
 const dcFileName = () => sanitizeFilename(dcState.title || (dcState.entries[0] && dcState.entries[0].name) || "");
 dcEl("dcPrintBtn").addEventListener("click", () => {
   if (dcState.editing) { dcHarvest(); dcSetEditing(false); }
-  printDoc(() => ["리딩노트", dcFileName(), todayStr()].filter(Boolean).join("_"), { title: dcTitleHandle });
+  printDoc(() => ["리딩노트", dcFileName(), todayStr()].filter(Boolean).join("_"), { title: dcTitleHandle, before: dcFit });
 });
 dcEl("dcSaveBtn").addEventListener("click", () => openSaveDialog("decode"));
 dcEl("dcLoadBtn").addEventListener("click", () => openSavedList("tab", null, "decode"));

@@ -1,5 +1,5 @@
 /* ══════ 내용 한장정리 (2026-11-03 사용자) ══════
-   지문 하나 → A4 한 쪽, 우리말로만 글의 내용을 쉽고 자세히 풀어 준다.
+   지문 하나 → A4 두 쪽(아래 '쪽 대원칙'), 우리말로만 글의 내용을 쉽고 자세히 풀어 준다.
    해석·문법은 상세분석·요약분석·리딩노트가 하므로, 여기는 '분야를 몰라 글 자체가 이해되지 않는' 학생을 위한
    자리다 — 영어 원문은 싣지 않고(대목마다 찾을 수 있게 첫 낱말만), 대목마다 선생님이 이야기하듯 풀어 준다.
      머리(제목·한 줄 요약) / 01 알아 두면 쉬워지는 배경지식(분야·읽기 전 상식·개념 카드 — 상세분석의 배경지식 칸과 같은 내용) /
@@ -135,16 +135,18 @@ function xpRender() {
   if (typeof syncFloatPrint === "function") syncFloatPrint();
 }
 
-/* ── 지문 하나 = 두 쪽 안(2026-11-03 사용자) ──
-   첫 쪽은 글, 둘째 쪽은 요약 이미지. 글이 첫 쪽에 다 안 들면 **뒤쪽 칸부터 둘째 쪽(그림 위)으로 넘긴다** — 그림 쪽에 글이
-   함께 들어가더라도 두 쪽으로 끝낸다. 그림이 없으면 둘째 쪽에 넘긴 글만 들어간다.
-   리딩노트의 dcFit과 같은 방식으로 화면에서 인쇄 폭(.xp-measure, style.css에 인쇄 규칙과 같은 값)으로 쪽마다 높이를 잰다
-   (크롬 PDF와 잰 값이 같은 것을 확인했다). 차례: 글씨 그대로에서 ① 넘길 칸 수를 0개부터 늘려 보고(칸을 옮기는 것이 글씨를
-   줄이는 것보다 낫다) ② 둘째 쪽은 그림을 100 → 80 → 65 → 50%로 줄여 보고 ③ 안 되면 글씨를 94 → 88 → 82%(바닥)로 줄여 다시.
-   단 풀어 읽기 칸째 넘기는 것은 ①~③을 풀어 읽기 뒤 칸만으로 다 해 본 뒤다.
-   쪽 구성(xpPaging)에서 선생님이 나눔을 정하면(data.split = 둘째 쪽 첫 칸의 이름) 그 나눔을 지키고 ②③만 한다.
-   그래도 넘치면 마지막으로 덜 중요한 칸부터 인쇄에서 뺀다(XP_OMIT_STEPS — .xp-omit: 인쇄·측정에서는 숨고 화면에는 흐리게
-   '인쇄 제외'로 남는다. 저장본에는 그대로). 풀어 읽기와 글쓴이가 하고 싶은 말은 빼지 않는다. 첫 칸(머리·제목)은 늘 첫 쪽이다. */
+/* ── 쪽 대원칙(2026-11-06 사용자) ──
+   지문 하나 = 두 쪽. **1쪽은 머리·제목 ~ 배경지식 ~ 풀어 읽기 ~ 한마디로 정리하면, 2쪽은 스스로 확인하기 + 그림으로 보기.**
+   글 길이에 따라 칸을 옮기지 않는다 — 예전엔 재어 본 높이로 칸을 옮겼는데 그 값이 어긋나면 그림이 3쪽으로 밀렸다.
+   이 나눔은 늘 그대로이고, 맞추는 일은 크기만 한다: 2쪽은 그림을 100 → 80 → 65 → 50%로, 1쪽이 넘치면 글씨를 94 → 88 → 82%(바닥)로.
+   그림이 없으면 스스로 확인하기가 1쪽에 들 때만 1쪽에 두고(종이 한 장으로 끝난다) 안 들면 2쪽이다.
+   쪽 구성(xpPaging)에서 선생님이 나눔을 정하면(data.split = 둘째 쪽 첫 칸의 이름) 그것만 예외다.
+   그래도 넘치면 마지막으로 **넘친 쪽의** 덜 중요한 칸부터 인쇄에서 뺀다(XP_OMIT_STEPS — .xp-omit: 인쇄·측정에서는 숨고 화면에는
+   흐리게 '인쇄 제외'로 남는다. 저장본에는 그대로). 풀어 읽기와 글쓴이가 하고 싶은 말은 빼지 않는다.
+   높이는 리딩노트의 dcFit과 같은 방식으로 화면에서 인쇄 폭(.xp-measure, style.css에 인쇄 규칙과 같은 값)으로 잰다.
+   **다시 그린 뒤에는 반드시 재야 한다** — 재기 전의 화면은 모든 칸이 1쪽에 있다. xpRender는 rAF로 미뤄 재는데, 인쇄 안내창의 이름
+   반영(xpTitleHandle.set)이 다시 그린 직후 window.print()가 먼저 돌아 칸이 1쪽에 둔 채 인쇄됐다(3쪽 현상의 원인) —
+   그래서 인쇄 단추가 before로 xpFit을 바로 부른다. */
 const XP_FIT_STEPS = ["", "94", "88", "82"];
 const XP_IMG_SIZES = ["", "80", "65", "50"];
 const XP_SEC_NAMES = { bg: "배경지식", parts: "차근차근 풀어 읽기", sum: "한마디로 정리하면", qs: "스스로 확인하기" };
@@ -197,39 +199,41 @@ function xpFit() {
     const secs = [...sheet.querySelectorAll(".xp-sec[data-sec]:not([data-sec=img])")];
     const hasImg = !!sheet.querySelector(".xp-sec-img");
     sheet.querySelectorAll(".xp-omit").forEach((el) => el.classList.remove("xp-omit"));
-    const fits = () => [...sheet.querySelectorAll(":scope > .xp-page")]
-      .every((p) => p.getBoundingClientRect().height <= limit);
-    // 손으로 정한 나눔(그 칸이 지금 없으면 자동)
+    const pages = () => [...sheet.querySelectorAll(":scope > .xp-page")];
+    const over = () => pages().filter((p) => p.getBoundingClientRect().height > limit);
+    const fits = () => !over().length;
+    // 손으로 정한 나눔(그 칸이 지금 없으면 대원칙대로)
     const manual = !e.data || !e.data.split ? -1
       : e.data.split === "none" ? secs.length : secs.findIndex((s) => s.dataset.sec === e.data.split);
-    // 넘길 칸 수 — 풀어 읽기 뒤의 칸만 넘기는 경우를 글씨 줄이기까지 다 해 본 뒤에야 풀어 읽기째 넘긴다
-    // (풀어 읽기를 먼저 넘기면 첫 쪽이 배경지식만 남아 거의 빈다)
-    const all = secs.map((_, j) => secs.length - j).filter((k) => k >= 1);
-    const pi = secs.findIndex((s) => s.dataset.sec === "parts");
-    const phases = manual > 0 ? [[manual]] : [all.filter((k) => k > pi), all.filter((k) => k <= pi)];
+    // 대원칙 — 스스로 확인하기부터 둘째 쪽. 그림이 없으면 1쪽에 들 때만 1쪽에 둔다
+    const qsAt = secs.findIndex((s) => s.dataset.sec === "qs");
+    const ks = manual > 0 ? [manual]
+      : qsAt < 0 ? [secs.length] : hasImg ? [qsAt] : [secs.length, qsAt];
     const sizes = hasImg ? XP_IMG_SIZES : [""];
     let found = null;
     outer:
-    for (const ks of phases) {
-      for (const f of XP_FIT_STEPS) {
-        sheet.dataset.fit = f;
-        for (const k of ks) {
-          xpPlace(sheet, secs, k);
-          for (const size of sizes) {
-            sheet.dataset.img = size;
-            if (fits()) { found = { f, k, size }; break outer; }
-          }
+    for (const f of XP_FIT_STEPS) {
+      sheet.dataset.fit = f;
+      for (const k of ks) {
+        xpPlace(sheet, secs, k);
+        for (const size of sizes) {
+          sheet.dataset.img = size;
+          if (fits()) { found = { f, k, size }; break outer; }
         }
       }
     }
     const omitted = [];
     if (!found) {
-      // 마지막 — 가장 작은 모양(글씨 82%, 그림 50%, 칸은 손으로 정한 나눔 또는 두 쪽에 고르게)에서 덜 중요한 칸을 뺀다
-      const k = manual > 0 ? manual : Math.max(1, Math.ceil(secs.length / 2));
+      // 마지막 — 글씨 82%에서 넘친 쪽의 덜 중요한 칸을 뺀다. 그림은 그 쪽이 안 넘치는 가장 큰 크기로 돌려놓고 뺀다
+      const k = ks[ks.length - 1];
       xpPlace(sheet, secs, k);
-      sheet.dataset.img = sizes[sizes.length - 1];
+      const p2 = sheet.querySelector(":scope > .xp-page2");
+      for (const size of sizes) {
+        sheet.dataset.img = size;
+        if (!p2 || p2.getBoundingClientRect().height <= limit) break;
+      }
       for (const [sel, name] of XP_OMIT_STEPS) {
-        const els = sheet.querySelectorAll(sel);
+        const els = over().flatMap((p) => [...p.querySelectorAll(sel)]);
         if (!els.length) continue;
         els.forEach((el) => el.classList.add("xp-omit"));
         omitted.push(name);
@@ -241,7 +245,7 @@ function xpFit() {
     const moved = found ? secs.slice(found.k).map((s) => XP_SEC_NAMES[s.dataset.sec]) : [];
     if (!found) parts.push("⚠️ 풀어 읽기 글이 길어 두 쪽을 넘습니다 — ✏️ 직접 수정으로 풀이를 조금 줄여 주세요.");
     else {
-      if (moved.length && manual <= 0) parts.push(`📄 첫 쪽에 다 들어가지 않아 ${moved.join("·")}${josa(moved[moved.length - 1], "을", "를")} 둘째 쪽${hasImg ? "(그림 위)" : ""}으로 넘겼습니다 — [📄 쪽 구성]에서 바꿀 수 있습니다.`);
+      if (moved.length && manual <= 0 && !hasImg) parts.push(`📄 첫 쪽에 다 들어가지 않아 ${moved.join("·")}${josa(moved[moved.length - 1], "을", "를")} 둘째 쪽으로 넘겼습니다.`);
       if (found.f) parts.push(`📏 두 쪽에 맞추려고 이 지문만 글씨를 ${found.f}%로 줄였습니다.`);
       if (found.size) parts.push(`🖼️ 그림을 ${found.size}% 크기로 줄였습니다.`);
       if (omitted.length) parts.push(`✂️ 두 쪽에 맞추려고 인쇄에서 뺀 것: ${omitted.join(", ")} (화면에 흐리게 보이는 칸).`);
@@ -516,7 +520,8 @@ const xpFileName = () => sanitizeFilename(xpState.title || (xpState.entries[0] &
 xpEl("xpPrintBtn").addEventListener("click", () => {
   if (xpState.editing) { xpHarvest(); xpSetEditing(false); }
   if (xpPaging) xpSetPaging(false);
-  printDoc(() => [EXPLAIN_NAME, xpFileName(), todayStr()].filter(Boolean).join("_"), { title: xpTitleHandle });
+  // before — 이름을 반영하며 다시 그린 화면을 인쇄 직전에 바로 재서 쪽 나눔을 되찾는다(위 '쪽 대원칙')
+  printDoc(() => [EXPLAIN_NAME, xpFileName(), todayStr()].filter(Boolean).join("_"), { title: xpTitleHandle, before: xpFit });
 });
 xpEl("xpSaveBtn").addEventListener("click", () => openSaveDialog("explain"));
 xpEl("xpLoadBtn").addEventListener("click", () => openSavedList("tab", null, "explain"));
@@ -630,7 +635,7 @@ if (typeof HOWTO !== "undefined") {
         "그림은 지문마다 위의 <b>🖼️ 요약 이미지 넣기 / 🔄 그림 다시 만들기 / 그림 빼기</b>로 더하거나 바꿉니다.",
       "<b>🖨️ 인쇄 / PDF 변환</b>으로 뽑거나, <b>💾 사이트 저장</b>으로 남겨 둡니다.",
     ],
-    tip: "지문마다 한 쪽: 우리말 제목·한 줄 요약 / 알아 두면 쉬워지는 배경지식(분야·읽기 전 상식·개념 카드 — 한 줄 정의·쉬운 설명·이 글에서는, 상세분석의 배경지식과 같은 내용) / 차근차근 풀어 읽기(대목마다 문장 번호와 첫 낱말, 쉬운 설명) / 쉽게 말하면·글쓴이가 하고 싶은 말 / 스스로 확인하기(답 포함) · 요약 이미지(고른 경우). 영어 원문과 해석은 싣지 않습니다 — 해석은 상세분석·요약분석·리딩노트에서 만드세요. 지문마다 <b>두 쪽 안</b>에서 끝납니다 — 첫 쪽은 풀이 글, 둘째 쪽은 요약 이미지. 글이 첫 쪽을 넘으면 뒤쪽 칸(정리·확인 질문)이 그림 위로 넘어가고 그림은 그만큼 작아집니다. 그래도 넘치면 글씨를 82%까지 줄이고, 마지막으로 덜 중요한 칸을 인쇄에서 뺍니다(화면에 흐리게 '인쇄 제외'로 보입니다).",
+    tip: "우리말 제목·한 줄 요약 / 알아 두면 쉬워지는 배경지식(분야·읽기 전 상식·개념 카드 — 한 줄 정의·쉬운 설명·이 글에서는, 상세분석의 배경지식과 같은 내용) / 차근차근 풀어 읽기(대목마다 문장 번호와 첫 낱말, 쉬운 설명) / 쉽게 말하면·글쓴이가 하고 싶은 말 / 스스로 확인하기(답 포함) · 요약 이미지(고른 경우). 영어 원문과 해석은 싣지 않습니다 — 해석은 상세분석·요약분석·리딩노트에서 만드세요. 지문마다 <b>두 쪽</b>입니다 — 첫 쪽은 배경지식부터 한마디로 정리하면까지, 둘째 쪽은 스스로 확인하기와 그림으로 보기. 글이 첫 쪽을 넘으면 글씨를 82%까지 줄이고, 마지막으로 덜 중요한 칸을 인쇄에서 뺍니다(화면에 흐리게 '인쇄 제외'로 보입니다). 둘째 쪽에 맞게 그림 크기는 저절로 조절됩니다. 그림이 없으면 스스로 확인하기가 첫 쪽에 들어갈 때 첫 쪽에 둡니다.",
   };
 }
 
