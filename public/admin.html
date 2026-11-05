@@ -102,16 +102,15 @@
         <!-- 칸을 늘리면 아래 col도 반드시 함께 늘리고 합이 100%가 되게 할 것 —
              빠뜨리면 마지막 칸(관리)이 폭을 못 받아 세로로 찌그러진다. -->
         <colgroup>
-          <col style="width:15%">   <!-- 이메일 -->
+          <col style="width:19%">   <!-- 이메일 -->
           <col style="width:7%">    <!-- 이름 -->
           <col style="width:5%">    <!-- 가입 -->
           <col style="width:9%">    <!-- 가입일 -->
           <col style="width:9%">    <!-- 최근 접속 -->
           <col style="width:7%">    <!-- 잔액 -->
           <col style="width:7%">    <!-- 학생기능 -->
-          <col style="width:7%">    <!-- 모의고사 -->
           <col style="width:7%">    <!-- 레벨테스트 -->
-          <col style="width:27%">   <!-- 관리 — 칸·고르개·단추 셋이 한 줄에 들어갈 폭 -->
+          <col style="width:30%">   <!-- 관리 — 칸·고르개·단추 셋이 한 줄에 들어갈 폭 -->
         </colgroup>
         <thead>
           <tr style="text-align:left; border-bottom:1px solid var(--line);">
@@ -122,7 +121,6 @@
             <th style="padding:8px 6px; cursor:pointer; user-select:none;" title="마지막으로 로그인하거나 접속해 쓴 날(KST). 1년 넘게 비면 이용약관 14조 6항에 따라 휴면으로 전환된다 — 전환 30일 전에 메일로 알린다" class="sort-th" data-sort="lastLogin"><span class="sort-label">최근 접속</span><span class="sort-arrow"></span></th>
             <th style="padding:8px 6px; cursor:pointer; user-select:none; text-align:right;" class="sort-th" data-sort="krwRemaining"><span class="sort-label">잔액(원)</span><span class="sort-arrow"></span></th>
             <th style="padding:8px 6px; cursor:pointer; user-select:none;" title="반/학생 등록 기능 사용 허가 — 미성년자 데이터가 걸려 있어 기본은 꺼짐" class="sort-th" data-sort="classroomApproved"><span class="sort-label">학생기능</span><span class="sort-arrow"></span></th>
-            <th style="padding:8px 6px; cursor:pointer; user-select:none;" title="동형 모의고사 제작 사용 허가 — 남의 학교 기출 시험지를 올려 읽는 기능이라 기본은 꺼짐" class="sort-th" data-sort="examApproved"><span class="sort-label">모의고사</span><span class="sort-arrow"></span></th>
             <th style="padding:8px 6px; cursor:pointer; user-select:none;" title="레벨테스트 탭 사용 허가 — 특정 학원의 시험지라 기본은 꺼짐" class="sort-th" data-sort="leveltestApproved"><span class="sort-label">레벨테스트</span><span class="sort-arrow"></span></th>
             <th style="padding:8px 6px;">관리</th>
           </tr>
@@ -312,7 +310,6 @@ function sortedUsers() {
   if (!sortKey) return currentUsers;
   const val = (u) => {
     const v = u[sortKey];
-    if (sortKey === "examApproved") return (u.examOpen || v) ? 1 : 0;
     return typeof v === "boolean" ? (v ? 1 : 0) : (v ?? "");
   };
   return currentUsers.slice().sort((a, b) => {
@@ -426,18 +423,6 @@ function renderUsers() {
         </button>
       </td>
       <td style="padding:8px 6px;">
-        ${u.examOpen
-          /* 서버의 EXAM_OPEN_TO_ALL이 켜져 있으면 모든 회원이 쓴다 — 회원별 단추를 눌러도
-             달라지는 것이 없으므로 단추 대신 글자로 보인다. 끄면 예전 단추가 돌아온다. */
-          ? `<span style="font-size:11.5px; color:var(--ink-soft);"
-                   title="모든 회원에게 열려 있습니다. 승인제로 되돌리려면 Render 환경변수 EXAM_OPEN_TO_ALL=0">전체 공개</span>`
-          : `<button type="button" class="btn ${u.examApproved ? "" : "ghost"} small exam-btn"
-                style="padding:4px 7px; font-size:11.5px;"
-                title="동형 모의고사 제작을 이 선생님에게 허용할지">
-          ${u.examApproved ? "허용됨" : "미허용"}
-        </button>`}
-      </td>
-      <td style="padding:8px 6px;">
         <button type="button" class="btn ${u.leveltestApproved ? "" : "ghost"} small leveltest-btn"
                 style="padding:4px 7px; font-size:11.5px;"
                 title="레벨테스트 탭을 이 선생님에게 허용할지">
@@ -468,7 +453,7 @@ function renderUsers() {
         </div>
       </td>
     </tr>
-  `).join("") || `<tr><td colspan="10" style="padding:16px 6px; color:var(--ink-soft);">회원이 없습니다.</td></tr>`;
+  `).join("") || `<tr><td colspan="9" style="padding:16px 6px; color:var(--ink-soft);">회원이 없습니다.</td></tr>`;
 }
 
 /* 회원 강제 탈퇴 — 되돌릴 수 없다. 계정·저장 자료·이용 내역·잔액이 함께 사라지고,
@@ -528,7 +513,7 @@ async function toggleUsage(row, uid) {
   }
   const tr = document.createElement("tr");
   tr.className = "usage-row";
-  tr.innerHTML = `<td colspan="10" style="padding:8px 12px; background:var(--bg-soft, #fafafa); font-size:12.5px;">불러오는 중…</td>`;
+  tr.innerHTML = `<td colspan="9" style="padding:8px 12px; background:var(--bg-soft, #fafafa); font-size:12.5px;">불러오는 중…</td>`;
   row.after(tr);
   try {
     const data = await getJson("/api/admin/usage?userId=" + encodeURIComponent(uid));
@@ -604,36 +589,6 @@ $("userTableBody").addEventListener("click", async (e) => {
       alert(err.message || "처리에 실패했습니다.");
     } finally {
       leveltestBtn.disabled = false;
-    }
-    return;
-  }
-  const examBtn = e.target.closest(".exam-btn");
-  if (examBtn) {
-    const row = examBtn.closest("tr");
-    const uid = row.dataset.uid;
-    const u = currentUsers.find((x) => x.id === uid);
-    if (!u) return;
-    const next = !u.examApproved;
-    if (next && !confirm(
-        `${u.email} 선생님에게 동형 모의고사 제작을 허용합니다.
-
-` +
-        `학교 기출 시험지를 올려 읽는 기능입니다. 올린 시험지를 어떻게 쓰는지에 ` +
-        `저작권 문제가 따를 수 있으니, 이 선생님에게 허용해도 되는지 확인한 뒤에 켜세요.
-
-` +
-        `계속할까요?`)) {
-      return;
-    }
-    examBtn.disabled = true;
-    try {
-      await postJson("/api/admin/approve-exam", { userId: uid, approved: next });
-      u.examApproved = next;
-      renderUsers();
-    } catch (err) {
-      alert(err.message || "처리에 실패했습니다.");
-    } finally {
-      examBtn.disabled = false;
     }
     return;
   }
