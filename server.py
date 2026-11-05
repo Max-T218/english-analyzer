@@ -1192,6 +1192,36 @@ def _usage_flush():
         t.flush()
 
 
+# 학생 화면 응답 시간 — Render의 응답 시간 수치가 비어 있어 실제로 몇 초 걸리는지 알 길이 없었다(2026-11-06 사용자).
+# Render 로그에 `[timing] GET /api/student/tests 200 812ms 동시 3`으로 남는다. 동시는 그 순간 서버가 처리 중이던
+# API 요청 수(선생님 쪽 포함). 학생 이름·아이디와 주소 뒤의 값은 남기지 않는다.
+_API_NOW = 0
+_API_NOW_LOCK = threading.Lock()
+
+
+def _timing_begin(handler):
+    global _API_NOW
+    handler._last_status = 0
+    if not handler.path.startswith("/api/"):
+        return None
+    with _API_NOW_LOCK:
+        _API_NOW += 1
+        now = _API_NOW
+    return time.monotonic(), now
+
+
+def _timing_end(handler, started):
+    global _API_NOW
+    if started is None:
+        return
+    with _API_NOW_LOCK:
+        _API_NOW -= 1
+    path = handler.path.split("?", 1)[0]
+    if path.startswith(("/api/student/", "/api/lt/")):
+        ms = int((time.monotonic() - started[0]) * 1000)
+        print(f"[timing] {handler.command} {path} {handler._last_status} {ms}ms 동시 {started[1]}", flush=True)
+
+
 def _vertex_with_labels(data):
     """본문(JSON bytes) 맨 앞에 labels를 끼워 넣는다 — 사진·PDF가 든 큰 본문을 다시
     풀었다 묶지 않으려고 글자로 붙인다."""
@@ -17374,6 +17404,7 @@ def create_test_assignment(teacher_id, class_id, title, vocab, fmt, student_id=N
         "student_id": student_id, "student_name": student_name,
         "title": (title or "").strip(),
         "vocab": clean_vocab, "format": fmt, "max_wrong": max_wrong,
+        "n_questions": 0, "n_words": len(clean_vocab),
         "created_at": _now_iso(),
     })
     return ref.id
@@ -17705,30 +17736,110 @@ def get_test_vocab_for_student(student_id, assignment_id):
     }
 
 
+# 학생 시험 목록이 읽는 칸. 문항·단어·지문을 빼야 한다 — 시험 문서는 한 개에 40KB 안팎(큰 것은 100KB)이라 시험이 36개인
+# 반은 목록 한 번에 1.6MB를 받았다. 개수는 시험을 낼 때 n_questions·n_words에 적어 둔다.
+_TEST_LIST_FIELDS = ["title", "format", "kind", "source", "student_id", "max_wrong", "created_at", "retakes", "retry",
+                     "n_questions", "n_words"]
+_ATTEMPT_LIST_FIELDS = ["assignment_id", "student_id", "round", "passed", "pending", "qdetails", "score", "total"]
+
+
+def _save_test_counts(counts):
+    """n_questions·n_words가 없는 옛 시험에 개수를 적어 둔다. 실패해도 목록은 나간다 — 다음에 다시 적는다."""
+    try:
+        items = list(counts.items())
+        for i in range(0, len(items), 400):
+            batch = DB.batch()
+            for aid, c in items[i:i + 400]:
+                batch.update(DB.collection("test_assignments").document(aid), c)
+            batch.commit()
+    except Exception:
+        traceback.print_exc()
+
+
+def _fill_test_counts(tests):
+    """개수가 안 적힌 시험만 문서를 통째로 읽어 채운다(한 번에 묶어 읽는다). 한 번 적으면 다음부터는 안 읽는다."""
+    missing = [aid for aid, d in tests.items() if "n_questions" not in d or "n_words" not in d]
+    if not missing:
+        return
+    counts = {}
+    for snap in DB.get_all([DB.collection("test_assignments").document(aid) for aid in missing]):
+        if snap.exists:
+            d = snap.to_dict() or {}
+            counts[snap.id] = {"n_questions": len(d.get("questions") or []), "n_words": len(d.get("vocab") or [])}
+            tests[snap.id].update(counts[snap.id])
+    for aid in missing:
+        tests[aid].setdefault("n_questions", 0)
+        tests[aid].setdefault("n_words", 0)
+    _save_test_counts(counts)
+
+
+def _retry_todo_map(tests, attempts_by, student_id):
+    """보충 학습이 필수인 시험 중 이 학생이 아직 마치지 못한 것 {시험 id: True}. 시험마다 묻지 않고 한 번에 읽는다."""
+    ids = [aid for aid, d in tests.items() if attempts_by.get(aid) and d.get("kind") == "quiz"
+           and (d.get("retry") or {}).get("enabled")]
+    if not ids:
+        return {}
+    by_test = {}
+    for doc in DB.collection("quiz_retries").where("student_id", "==", student_id).stream():
+        d = doc.to_dict() or {}
+        by_test.setdefault(d.get("assignment_id"), []).append(d)
+    docs = {}
+    for aid in ids:
+        rows, out = sorted(by_test.get(aid, []), key=lambda d: d.get("round") or 0), []
+        for n, d in enumerate(rows, 1):   # _qr_docs처럼 1회차부터 이어진 것만 본다
+            if d.get("round") != n:
+                break
+            out.append(d)
+        docs[aid] = out
+    # 보충 기록이 없는 시험만 원래 문항이 있어야 틀린 문제를 셀 수 있다
+    need = [aid for aid in ids if not any(d.get("status") in ("open", "done") for d in docs[aid])]
+    full = {}
+    if need:
+        for snap in DB.get_all([DB.collection("test_assignments").document(aid) for aid in need]):
+            if snap.exists:
+                full[snap.id] = snap.to_dict() or {}
+    return {aid: bool((_qr_state(aid, full.get(aid) or tests[aid], student_id,
+                                 atts=attempts_by[aid], docs=docs[aid]) or {}).get("todo")) for aid in ids}
+
+
 def list_tests_for_student(student_id):
+    """학생 시험 목록. Firestore 서버는 서울, 이 서버는 미국이라 왕복 한 번이 비싸다 — 시험 수와 상관없이 몇 번 안에 끝나게
+    한 번에 읽는다. 예전에는 시험마다 답안을 따로 물어 시험이 쌓일수록 목록이 느려졌다(2026-11-06)."""
     _require_db()
     s_snap = DB.collection("students").document(student_id).get()
     if not s_snap.exists:
         raise ValueError("학생 정보를 찾을 수 없습니다.")
     class_id = s_snap.to_dict().get("class_id")
-    rows = []
-    for doc in DB.collection("test_assignments").where("class_id", "==", class_id).stream():
+    tests = {}
+    for doc in DB.collection("test_assignments").where("class_id", "==", class_id).select(_TEST_LIST_FIELDS).stream():
         d = doc.to_dict() or {}
         # 반 전체로 낸 시험(student_id 없음)과 이 학생 개인에게 낸 시험만 보여준다 —
         # 같은 반의 다른 학생 한 명에게만 낸 시험은 여기서 걸러진다.
         target = d.get("student_id")
         if target is not None and target != student_id:
             continue
-        attempts = _get_student_attempts(doc.id, student_id)
+        tests[doc.id] = d
+    _fill_test_counts(tests)
+    attempts_by = {}
+    if tests:
+        for doc in DB.collection("test_attempts").where("student_id", "==", student_id).select(_ATTEMPT_LIST_FIELDS).stream():
+            d = doc.to_dict() or {}
+            attempts_by.setdefault(d.get("assignment_id"), []).append(d)
+    for rows in attempts_by.values():
+        rows.sort(key=lambda d: d.get("round", 1))
+    retry_todo = _retry_todo_map(tests, attempts_by, student_id)
+    rows = []
+    for aid, d in tests.items():
+        attempts = attempts_by.get(aid, [])
         progress = _attempt_progress(d, attempts)
         last = attempts[-1] if attempts else None
         rows.append({
-            "id": doc.id, "title": d.get("title", ""), "format": d.get("format"),
+            "id": aid, "title": d.get("title", ""), "format": d.get("format"),
             "kind": d.get("kind") or "vocab", "source": d.get("source") or "",
-            "questionCount": len(d.get("questions") or []),
+            "questionCount": d.get("n_questions") or 0,
             "pending": (last.get("pending") or 0) if last else 0,
             "qc": _qt_q_counts(last.get("qdetails")) if last else None,
-            "wordCount": len(d.get("vocab") or []), "createdAt": d.get("created_at", ""),
+            "wordCount": d.get("n_words") or 0, "createdAt": d.get("created_at", ""),
             "maxWrong": d.get("max_wrong"),
             "submitted": bool(attempts),
             "passed": progress["passed"], "passedRound": progress["passedRound"],
@@ -17737,8 +17848,7 @@ def list_tests_for_student(student_id):
             "score": last.get("score") if last else None,
             "total": last.get("total") if last else None,
             # 보충 학습이 필수인 시험에서 아직 마치지 못했는가 — 목록에 표시한다
-            "retryTodo": bool(attempts and d.get("kind") == "quiz" and (d.get("retry") or {}).get("enabled")
-                              and (_qr_state(doc.id, d, student_id) or {}).get("todo")),
+            "retryTodo": retry_todo.get(aid, False),
         })
     rows.sort(key=lambda r: r["createdAt"], reverse=True)
     return rows
@@ -18440,6 +18550,7 @@ def create_quiz_assignment(teacher_id, class_id, title, questions, student_id=No
         "student_id": student_id, "student_name": student_name,
         "title": _norm_text(_qt_s(title, 100)),
         "questions": clean, "unit_count": units,
+        "n_questions": len(clean), "n_words": 0,
         "skipped": len(raw) - len(clean),
         "max_wrong": None, "created_at": _now_iso(),
         "retry": retry_cfg, "src_passages": kept if retry_cfg else {},
@@ -18767,15 +18878,18 @@ def _qr_summary(d):
             "at": d.get("submitted_at") or d.get("created_at", "")}
 
 
-def _qr_state(assignment_id, assignment, student_id):
-    """학생 결과 화면이 보여 줄 보충 학습 상태. 다시 풀기가 꺼진 시험이면 None."""
+def _qr_state(assignment_id, assignment, student_id, atts=None, docs=None):
+    """학생 결과 화면이 보여 줄 보충 학습 상태. 다시 풀기가 꺼진 시험이면 None.
+    atts·docs는 목록처럼 이미 한 번에 읽어 둔 곳이 넘긴다 — 없으면 여기서 읽는다."""
     cfg = assignment.get("retry") or {}
     if not cfg.get("enabled"):
         return None
-    atts = _get_student_attempts(assignment_id, student_id)
+    if atts is None:
+        atts = _get_student_attempts(assignment_id, student_id)
     if not atts:
         return None
-    docs = [d for d in _qr_docs(assignment_id, student_id) if d.get("status") in ("open", "done")]
+    docs = [d for d in (_qr_docs(assignment_id, student_id) if docs is None else docs)
+            if d.get("status") in ("open", "done")]
     out = {"enabled": True, "perWrong": cfg.get("per_wrong") or 1, "maxRounds": _qr_max_rounds(cfg),
            "rounds": [_qr_summary(d) for d in docs], "open": None, "canStart": False,
            "required": True, "todo": False,   # 선생님이 켠 보충 학습은 필수 — todo면 학생이 아직 마쳐야 한다
@@ -20104,6 +20218,7 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
     def _send_json(self, obj, status=200, cookies=None, headers=None):
+        self._last_status = status
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("content-type", "application/json; charset=utf-8")
@@ -20180,6 +20295,7 @@ class Handler(BaseHTTPRequestHandler):
         """/api/*는 Firestore를 호출하므로, do_POST처럼 예상 못 한 예외에도
         연결을 끊지 않고 JSON 오류로 답한다(정적 파일 서빙은 예외가 날 일이 거의
         없지만 같은 안전망을 함께 태워도 손해가 없다)."""
+        started = _timing_begin(self)
         try:
             self._handle_get()
         except Exception as e:
@@ -20188,6 +20304,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"서버 내부 오류입니다: {e}"}, 500)
             except Exception:
                 pass
+        finally:
+            _timing_end(self, started)
 
     def do_HEAD(self):
         """HEAD는 GET과 같은 머리말을 주고 본문만 뺀다. 없을 때는 http.server가 501로 답해,
@@ -20735,6 +20853,7 @@ class Handler(BaseHTTPRequestHandler):
         self._inflight_key = None
         _VERTEX_CALLS.n = 0   # 이번 요청의 Vertex 호출 차례를 처음부터 센다(_vertex_try)
         _vertex_set_labels(None)   # 지난 요청의 회원 라벨이 남지 않게(keep-alive는 스레드를 다시 쓴다)
+        started = _timing_begin(self)
         try:
             self._handle_post()
         except Exception as e:
@@ -20749,6 +20868,7 @@ class Handler(BaseHTTPRequestHandler):
             _inflight_release(self._inflight_key)
             self._inflight_key = None
             _usage_flush()   # 답을 보낸 뒤라 화면을 기다리게 하지 않는다
+            _timing_end(self, started)
     def _handle_post(self):
         # keep-alive 연결에서는 같은 핸들러 인스턴스(=같은 스레드)가 요청을 여러 번
         # 처리할 수 있다 — 지난 요청의 흔적이 이번 요청으로 새어 들어오지 않도록
