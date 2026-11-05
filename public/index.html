@@ -2966,6 +2966,16 @@
       <label for="printGuideName">시험지명 <span class="chk-sub">(선택 — 시험지와 답지에 함께 찍힙니다)</span></label>
       <input type="text" id="printGuideName" placeholder="예: 2학기 중간고사 대비 3과">
     </div>
+    <!-- 이 탭의 결과를 아직 사이트에 저장하지 않았을 때만 뜬다(tabHasUnsavedWork).
+         인쇄 미리보기를 그리다 브라우저가 메모리 부족으로 멈추면 결과가 통째로 사라지고,
+         다시 만들면 요금이 또 나간다(2026-10-28 실제로 있었다). '다시 보지 않기'를 켜 두었어도 뜬다. -->
+    <div class="print-guide-warn print-guide-unsaved" id="printGuideUnsaved" hidden>
+      ⚠️ <b>아직 사이트에 저장하지 않은 자료입니다.</b><br>
+      인쇄 창을 여는 동안 컴퓨터 메모리가 모자라 브라우저가 멈추면 만든 자료가 사라지고, 다시 만들면 <b>요금이 또 나갑니다.</b> 먼저 저장해 두세요.
+      <div class="print-guide-unsaved-act">
+        <button type="button" class="btn" id="printGuideSaveFirst">💾 먼저 저장하기</button>
+      </div>
+    </div>
     <p class="print-guide-lead">아래 버튼을 누르면 브라우저 <b>인쇄 창</b>이 열립니다. 그 창의 <b>‘대상(프린터)’</b>을 무엇으로 고르느냐에 따라 종이 인쇄가 되기도, PDF 파일이 되기도 합니다.</p>
     <ul class="print-guide-steps">
       <li><b>종이로 인쇄</b> — ‘대상’에서 쓰던 프린터를 고르고 <b>[인쇄]</b></li>
