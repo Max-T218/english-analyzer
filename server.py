@@ -222,6 +222,9 @@ WEBHOOK_MAX_AGE = 5 * 60
 # 들어왔다), 잔액이 움직일 때마다 한 줄씩 남긴다. 이력은 소급해서 만들 수 없어서
 # 유료 전환 전에 미리 쌓아 둔다.
 POINT_LEDGER = "point_ledger"
+# 요청 한 건의 토큰·포인트 기록(2026-11-06 사용자 — 토큰은 Render 로그에만 있었는데 로그에는 누가 썼는지가 없고
+# 며칠 지나면 지워져 사용자별 토큰을 알 수 없었다). 회원별 원가를 재는 자료라 화면에는 안 나온다. _UsageTally 참고.
+USAGE_RECORDS = "usage_records"
 # 보관 기간(개월). 지난 것은 지우되, 지우기 전에 '이월' 한 줄로 접어 둔다 — 그래야
 # 포인트에 유효기간이 없는 지금 구조에서도 (지급+충전-사용=잔액) 검산이 유지된다.
 LEDGER_KEEP_MONTHS = int(os.environ.get("LEDGER_KEEP_MONTHS", "18"))
@@ -1097,10 +1100,102 @@ def _vertex_get_labels():
     return dict(getattr(_VERTEX_LABELS, "v", None) or {})
 
 
+class _UsageTally:
+    """요청 한 건이 쓴 토큰과 받은 포인트를 모아 usage_records에 한 줄로 남긴다.
+
+    AI를 여러 번 부르는 요청(문제 제작+검산, 문법 묶음 등)도 한 줄이 되고, 호출별 내역은 calls에 (기능, 모델)로
+    묶여 들어간다. 실패해서 포인트를 안 받은 요청도 토큰은 나갔으므로 points 0으로 남긴다 — 그것도 원가다.
+    Vertex 라벨 그릇에 얹어 다니므로 일을 새 스레드로 넘기는 곳은 라벨을 옮기는 것만으로 함께 따라온다.
+    요청이 끝난 뒤에 늦게 돌아온 호출(시간 예산을 넘겨 버려 둔 스레드)은 따로 한 줄 더 남긴다.
+    지문·문항 같은 내용은 넣지 않는다. 기록이 실패해도 요청은 그대로 끝나야 한다."""
+
+    def __init__(self, user_id, feature):
+        self.user_id = user_id
+        self.feature = feature
+        self.lock = threading.Lock()
+        self.closed = False
+        self._reset()
+
+    def _reset(self):
+        self.calls = {}
+        self.points = self.points_paid = self.points_free = 0
+        self.items = []
+
+    def add_tokens(self, label, model, inp, cached, out, image, thought):
+        with self.lock:
+            c = self.calls.setdefault((label or "?", model or "?"), [0, 0, 0, 0, 0, 0])
+            for i, v in enumerate((1, inp, cached, out, image, thought)):
+                c[i] += int(v or 0)
+            late = self.closed
+        if late:
+            self.flush()
+
+    def add_points(self, amount, paid, free, label):
+        with self.lock:
+            self.points += int(amount)
+            self.points_paid += int(paid)
+            self.points_free += int(free)
+            self.items.append(str(label or "")[:80])
+            late = self.closed
+        if late:
+            self.flush()
+
+    def flush(self):
+        with self.lock:
+            self.closed = True
+            calls, items = self.calls, self.items
+            points, paid, free = self.points, self.points_paid, self.points_free
+            self._reset()
+        if not calls and not points:
+            return
+        rows = [{"label": k[0], "model": k[1], "n": v[0], "input": v[1], "cached": v[2],
+                 "output": v[3], "image": v[4], "thought": v[5]} for k, v in calls.items()]
+        total = lambda key: sum(r[key] for r in rows)
+        now = datetime.now(timezone.utc)
+        kst = now.astimezone(KST)
+        try:
+            DB.collection(USAGE_RECORDS).document().set({
+                "user_id": self.user_id,
+                "feature": self.feature,
+                "created_at": now.isoformat(),
+                "date_kst": kst.strftime("%Y-%m-%d %H:%M"),
+                "month": kst.strftime("%Y-%m"),
+                "points": points,            # 원장과 같은 값이다(charge_krw). 양수로 적는다
+                "points_paid": paid,
+                "points_free": free,
+                "items": items,              # 원장의 항목 이름
+                "calls": rows,               # 호출을 (기능, 모델)로 묶은 것
+                "n_calls": total("n"),
+                "input": total("input"),     # 입력 전체. cached는 그중 캐시로 싸게 나간 몫
+                "cached": total("cached"),
+                "output": total("output"),   # 출력(그림 몫 image 포함)
+                "image": total("image"),
+                "thought": total("thought"),
+            })
+        except Exception:
+            traceback.print_exc()
+
+
+def _request_track(user_id, feature):
+    """이번 요청의 값을 낼 회원을 정한다 — 구글 결제 라벨과 토큰·포인트 기록(_UsageTally)이 함께 따라다닌다."""
+    _vertex_set_labels({"teacher": _vertex_cost_tag(user_id), "feature": feature,
+                        "_tally": _UsageTally(user_id, feature) if DB is not None else None})
+
+
+def _usage_tally():
+    return _vertex_get_labels().get("_tally")
+
+
+def _usage_flush():
+    t = _usage_tally()
+    if t:
+        t.flush()
+
+
 def _vertex_with_labels(data):
     """본문(JSON bytes) 맨 앞에 labels를 끼워 넣는다 — 사진·PDF가 든 큰 본문을 다시
     풀었다 묶지 않으려고 글자로 붙인다."""
-    labels = _vertex_get_labels()
+    labels = {k: v for k, v in _vertex_get_labels().items() if not k.startswith("_")}
     if not labels or not data:
         return data
     if isinstance(data, str):
@@ -12592,8 +12687,8 @@ def _log_usage(body, model, label=""):
 
     청구서는 모델별 합계만 알려 줘 '문제 한 세트에 얼마'를 가를 수 없다. 특히 AI가 답하기
     전에 속으로 생각하는 몫(thoughts)은 출력 요금으로 나가는데 짐작밖에 할 수 없었다
-    (2026-09-27 객관식 고난도의 Pro 원가를 계산할 때 걸린 부분). 로그만 남기고 아무것도
-    바꾸지 않는다.
+    (2026-09-27 객관식 고난도의 Pro 원가를 계산할 때 걸린 부분). 결과물은 아무것도 바꾸지 않는다.
+    같은 값을 이번 요청의 _UsageTally에도 더해 회원별로 남긴다 — 로그에는 누가 썼는지가 없고 며칠이면 지워진다.
 
     label: 어느 기능의 호출인지(quiz·examocr·examscan 등). 처음에는 모델 이름만 찍었는데,
     실제로 원가를 물었을 때 여러 기능이 뒤섞인 로그만으로는 어느 줄이 어느 기능인지
@@ -12607,6 +12702,10 @@ def _log_usage(body, model, label=""):
         if isinstance(iu, dict):
             img = sum(int(m.get("tokens") or 0) for m in iu.get("output_tokens_by_modality") or []
                       if isinstance(m, dict) and m.get("modality") == "image")
+            tally = _usage_tally()
+            if tally:
+                tally.add_tokens(label, model, iu.get("total_input_tokens"), iu.get("total_cached_tokens"),
+                                 iu.get("total_output_tokens"), img, iu.get("total_thought_tokens"))
             print(
                 f"[usage] {label or '?'} {model} 입력 {iu.get('total_input_tokens', 0)}"
                 f"(캐시 {iu.get('total_cached_tokens', 0)}) · 출력 {iu.get('total_output_tokens', 0)}"
@@ -12614,6 +12713,10 @@ def _log_usage(body, model, label=""):
                 flush=True,
             )
         return
+    tally = _usage_tally()
+    if tally:
+        tally.add_tokens(label, model, u.get("promptTokenCount"), u.get("cachedContentTokenCount"),
+                         u.get("candidatesTokenCount"), 0, u.get("thoughtsTokenCount"))
     print(
         f"[usage] {label or '?'} {model} 입력 {u.get('promptTokenCount', 0)}"
         f"(캐시 {u.get('cachedContentTokenCount', 0)}) · 출력 {u.get('candidatesTokenCount', 0)}"
@@ -13785,6 +13888,8 @@ def delete_user_account(user_id, by_admin=False):
     # 이용 내역도 함께 지운다 — 탈퇴하면 다 사라진다고 안내하고 있고,
     # 계정이 없어진 뒤에도 남아 있을 이유가 없다.
     for row in DB.collection(POINT_LEDGER).where("user_id", "==", user_id).stream():
+        row.reference.delete()
+    for row in DB.collection(USAGE_RECORDS).where("user_id", "==", user_id).select(["user_id"]).stream():
         row.reference.delete()
     # 레벨테스트 — 이 선생님의 응시 링크와 응시 결과(상담 온 학생 이름이 들어 있다)
     for col in (LT_LINKS, LT_RESULTS):
@@ -15576,8 +15681,12 @@ def charge_krw(user_id, amount, label="사용", kind="use"):
         tx.set(row_ref, _ledger_row(
             user_id, kind, label, -amount, -use_paid, -use_free, new_free + new_paid
         ))
+        return use_paid, use_free
 
-    _apply(DB.transaction())
+    use_paid, use_free = _apply(DB.transaction())
+    tally = _usage_tally()
+    if tally and kind == "use" and tally.user_id == user_id:
+        tally.add_points(amount, use_paid, use_free, label)
 
 
 def add_krw(user_id, amount, kind, label):
@@ -18964,6 +19073,7 @@ def start_quiz_retry(assignment_id, student_id):
     teacher_id = assignment.get("teacher_id")
     if get_user_krw(teacher_id) < _qr_estimate(gram, quiz):
         raise ValueError("선생님의 포인트가 부족해 새 문제를 만들 수 없어요. 선생님께 알려 주세요.")
+    _request_track(teacher_id, "retry")   # 학생 요청이지만 값은 선생님이 낸다
     ref = _qr_ref(assignment_id, student_id, rnd)
     try:
         ref.create({"assignment_id": assignment_id, "student_id": student_id, "teacher_id": teacher_id,
@@ -20638,6 +20748,7 @@ class Handler(BaseHTTPRequestHandler):
             # 기다리던 요청이 그릇에서 결과를 찾는다.
             _inflight_release(self._inflight_key)
             self._inflight_key = None
+            _usage_flush()   # 답을 보낸 뒤라 화면을 기다리게 하지 않는다
     def _handle_post(self):
         # keep-alive 연결에서는 같은 핸들러 인스턴스(=같은 스레드)가 요청을 여러 번
         # 처리할 수 있다 — 지난 요청의 흔적이 이번 요청으로 새어 들어오지 않도록
@@ -20752,8 +20863,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "로그인이 필요한 서비스입니다."}, 401)
                 return
             self._auth_user_id = user_id
-            _vertex_set_labels({"teacher": _vertex_cost_tag(user_id),
-                                "feature": path.rsplit("/", 1)[-1].lower()})
+            _request_track(user_id, path.rsplit("/", 1)[-1].lower())
             # 끊겼던 요청을 다시 묻는 것이라면, 만들어 둔 것을 그대로 돌려준다.
             # 새로 만들지 않으므로 Gemini 요금도 회원 차감도 다시 일어나지 않는다.
             # 잔액 확인보다 앞에 두는 것이 중요하다 — 이미 값을 낸 결과를 받아 가는
