@@ -12552,16 +12552,20 @@ async function saveVocabSetsEach(btn) {
     btn.textContent = label;
   }
 }
-/* 지문별 단어장 저장(2026-11-02 사용자) — 지금 쓰는 단어장이 둘 이상이고 모두 지문에서 온 것(지문에서 뽑기 ·
-   지문 분석 — 둘 다 지문마다 묶음 하나)이면, [💾 사이트 저장]이 통째로 하나가 아니라 지문마다 '제목_지문 이름'
+/* 지문별 단어장 저장(2026-11-02 사용자) — 지금 쓰는 단어장이 둘 이상이고 모두 지문이나 PDF에서 온 것(지문에서 뽑기 ·
+   지문 분석은 지문마다 묶음 하나, PDF는 파일마다 묶음 하나 — 2026-11-05 사용자: 둘을 읽었으면 둘로 저장)이면, [💾 사이트 저장]이 통째로 하나가 아니라 지문마다 '제목_지문 이름'
    저장본을 하나씩 만들어 **제목 이름의 단어장(폴더)** 하나에 모두 넣는다 — 저장함에서 '📁 3월 모의고사 (3개)'를
    펼치면 지문별 목록이 나오는, 단어장 책을 단원별로 저장한 것과 같은 모양(사용자가 그 화면을 보여 주며 정했다).
    저장 제목 기본값은 지문 이름의 큰 이름(vocabBigName). 이름에 제목을 붙여야 '지문 1'·'18번'처럼 흔한 이름끼리
    다른 시험의 것을 덮어쓰지 않는다. 단어장 저장본 중 같은 이름이 있으면 덮어쓴다(겹쳐 쌓이지 않게).
-   직접 입력·사진·PDF 단어장이 섞이면 예전처럼 하나로 저장한다. */
+   직접 입력·사진·단어장 책 단원이 섞이면 예전처럼 하나로 저장한다. */
 function vocabPerPassageSets() {
   const on = getVocabSets().filter((s) => !s.off && (s.vocab || []).length);
-  return on.length >= 2 && on.every((s) => ["extract", "analyze"].includes(s.src || "analyze")) ? on : [];
+  return on.length >= 2 && on.every((s) => ["extract", "analyze", "pdf"].includes(s.src || "analyze")) ? on : [];
+}
+// 안내 문구 — 지문에서 온 것만이면 '지문별', PDF가 끼면 '단어장별'
+function vocabPerWord(sets) {
+  return sets.some((s) => s.src === "pdf") ? "단어장별" : "지문별";
 }
 // 지문 이름들의 큰 이름 — 지문 저장함에서 불러오면 '3월 모의고사 · 18번'처럼 붙는다. 모두 같을 때만
 function vocabBigName(sets) {
@@ -12610,7 +12614,7 @@ async function saveVocabPerPassage(title, folder, onProgress) {
   }
   // 하나의 저장본에 이어진 상태가 아니다 — 다음 저장에서 그중 하나를 덮어쓰지 않게 끊는다
   delete LOADED_SAVED.vocab;
-  vocabBuildStatus(`저장함의 단어장 <b>📁 ${esc(folder)}</b>에 지문별 목록 <b>${ids.length}개</b>를 저장했습니다` +
+  vocabBuildStatus(`저장함의 단어장 <b>📁 ${esc(folder)}</b>에 ${vocabPerWord(sets)} 목록 <b>${ids.length}개</b>를 저장했습니다` +
     (replaced ? ` (같은 이름 ${replaced}개는 새 내용으로 덮어썼습니다)` : "") + ".", "ok");
   return folderFail;
 }
@@ -13270,7 +13274,7 @@ async function runVocabPdf(fileList) {
       name: f.name, vocab: f.items, src: "pdf", _id: `v${stamp}${i}${Math.floor(Math.random() * 1e6)}`,
     }));
     saveVocabSets([...getVocabSets(), ...made]);
-    parts.push(`<b>${made.length}개 단어장</b>(${made.map((s) => esc(s.name)).join(", ")}) · ${rows.length}단어를 파일마다 따로 저장했습니다. PDF와 대조해 확인하세요.`);
+    parts.push(`<b>${made.length}개 단어장</b>(${made.map((s) => esc(s.name)).join(", ")}) · ${rows.length}단어를 파일마다 따로 나눴습니다. PDF와 대조해 확인하세요. [💾 사이트 저장]을 누르면 단어장마다 하나씩 저장됩니다.`);
     vocabBuildStatus(parts.join("<br>"), fails.length ? "warn" : "ok");
   } else if (rows.length) {
     parts.push(`<b>${rows.length}단어</b>를 단어장에 저장했습니다. PDF와 대조해 확인하세요.`);
@@ -13346,9 +13350,11 @@ document.addEventListener("paste", (e) => {
 TAB_SAVE.vocab = {
   saveBtn: vocabSaveBtn,
   saveLead: () => {
-    const n = vocabPerPassageSets().length;
-    return n ? `제목 이름의 단어장(📁)을 만들고, 그 안에 지문별 목록 ${n}개를 '제목_지문 이름'으로 하나씩 저장합니다` +
-      "(같은 이름이 있으면 덮어씁니다). 나중에 단어장 탭의 [📂 불러오기]나 반에 시험 내기에서 지문별로 고를 수 있습니다." : "";
+    const sets = vocabPerPassageSets();
+    const n = sets.length;
+    const word = vocabPerWord(sets);
+    return n ? `제목 이름의 단어장(📁)을 만들고, 그 안에 ${word} 목록 ${n}개를 '제목_${word === "지문별" ? "지문" : "단어장"} 이름'으로 하나씩 저장합니다` +
+      `(같은 이름이 있으면 덮어씁니다). 나중에 단어장 탭의 [📂 불러오기]나 반에 시험 내기에서 ${word}로 고를 수 있습니다.` : "";
   },
   getPayload: () => ({
     vocabSets: getVocabSets(),
@@ -13684,7 +13690,7 @@ async function doSaveDialog(overwriteId) {
   const busyBtn = overwriteId ? saveDialogOverwriteBtn : saveDialogConfirmBtn;
   const busyLabel = busyBtn.textContent;
   try {
-    // 단어장 탭 — 지문에서 온 단어장이 여럿이면 지문마다 '제목_지문 이름'으로 하나씩 저장한다
+    // 단어장 탭 — 지문·PDF에서 온 단어장이 여럿이면 하나마다 '제목_이름'으로 따로 저장한다
     if (tab === "vocab" && vocabPerPassageSets().length) {
       const folderFail = await saveVocabPerPassage(title, wantFolder, (done, total) => {
         busyBtn.textContent = `저장 중… ${done}/${total}`;
@@ -14684,7 +14690,7 @@ const HOWTO = {
     title: "📒 단어장 만드는 법",
     lead: "지문 분석·지문에서 뽑기·직접 입력·사진·PDF로 모은 단어로 단어장과 단어 시험지를 만듭니다.",
     steps: [
-      "<b>지문 상세분석</b>을 돌리면 핵심 어휘가 저절로 모입니다. <b>[✏️ 직접 입력]</b>이나 사진·PDF를 끌어다 놓아도 됩니다. 지문만 있으면 <b>[🤖 지문에서 뽑기]</b>를 누르세요 — 다른 탭과 같은 지문 입력 칸이 위에 뜨고, 지문당 단어 수를 정해 단어를 뽑습니다. 지문이 여럿이면 지문별로 나뉘고, [💾 사이트 저장]을 누르면 저장함에 <b>제목 이름의 단어장(📁)</b>이 생겨 그 안에 지문별 목록이 들어갑니다.",
+      "<b>지문 상세분석</b>을 돌리면 핵심 어휘가 저절로 모입니다. <b>[✏️ 직접 입력]</b>이나 사진·PDF를 끌어다 놓아도 됩니다. 지문만 있으면 <b>[🤖 지문에서 뽑기]</b>를 누르세요 — 다른 탭과 같은 지문 입력 칸이 위에 뜨고, 지문당 단어 수를 정해 단어를 뽑습니다. 지문이 여럿이면 지문별로 나뉘고, [💾 사이트 저장]을 누르면 저장함에 <b>제목 이름의 단어장(📁)</b>이 생겨 그 안에 지문별 목록이 들어갑니다. PDF 여러 개를 함께 올려 단어장이 여럿으로 나뉘어도 같은 방식으로 하나씩 저장됩니다.",
       "<b>형식</b>을 고릅니다 — 단어장, 또는 시험지(뜻 쓰기 · 영어 쓰기 · 섞어서).",
       "<b>[단어장 만들기]</b>를 누르고 <b>[🖨️ 인쇄 / PDF 변환]</b>으로 뽑습니다. <b>🎨 시험지 꾸미기</b>로 색·단어/뜻 글자 크기·글꼴을 바꿀 수 있습니다(요금 없음).",
     ],

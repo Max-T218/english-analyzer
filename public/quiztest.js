@@ -93,11 +93,52 @@
     return `<div class="qz-passage">${html}</div>`;
   }
 
-  function bankHtml(q) {
+  /* ── 보기 낱말 줄 긋기(2026-11-05 사용자) — 언스크램블을 타이핑으로 풀 때 어느 낱말까지 썼는지
+     보기를 눈으로 대조해야 했다. 답 칸에 쓴 낱말과 같은 보기에 줄을 긋는다. 보기에 있는지만 볼 뿐
+     순서는 안 보므로 정답이 새지 않는다. 풀기 화면(take)에서만 낱말을 쪼개 그린다 — 인쇄·결과 화면은 그대로다. */
+  function bankTokens(s) {
+    return String(s || "").toLowerCase().replace(/[’‘`]/g, "'").split(/\s+/)
+      .map((t) => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")).filter(Boolean);
+  }
+  const bankWord = (w) => `<span class="qt-w" data-w="${esc(bankTokens(w).join(" "))}">${esc(w)}</span>`;
+
+  // 워크북 보기는 글자 한 줄이다 — '(a / b) (c / d)'(순서 배열) · '[보기: a, b] ____ ____'(영작 연습)
+  function hintWordsHtml(hint, fmt) {
+    if (fmt === "wbwrite") {
+      const m = /^\[보기: ([^\]]*)\]/.exec(hint);
+      if (!m) return esc(hint);
+      return `[보기: ${m[1].split(", ").map(bankWord).join(", ")}]${esc(hint.slice(m[0].length))}`;
+    }
+    return hint.split(/(\s*\/\s*|[()\s]*[()][()\s]*)/).map((part, k) =>
+      (k % 2 || !part.trim() ? esc(part) : bankWord(part))).join("");
+  }
+
+  // 쓴 낱말 하나는 보기 하나만 지운다(같은 낱말이 둘이면 쓴 만큼만). 여러 낱말 덩이부터 맞춰 본다
+  function syncBank(box, value) {
+    const typed = bankTokens(value);
+    const used = typed.map(() => false);
+    const items = Array.from(box.querySelectorAll(".qt-w"))
+      .map((el) => ({ el, need: el.dataset.w.split(" ") }))
+      .sort((a, b) => b.need.length - a.need.length);
+    items.forEach(({ el, need }) => {
+      let hit = false;
+      for (let s = 0; !hit && s + need.length <= typed.length; s++) {
+        if (need.every((w, k) => !used[s + k] && typed[s + k] === w)) {
+          need.forEach((_, k) => { used[s + k] = true; });
+          hit = true;
+        }
+      }
+      el.classList.toggle("used", hit);
+    });
+  }
+
+  function bankHtml(q, i, mode) {
     const bank = (q.wordBank || []).filter(Boolean);
     const conds = (q.conditions || []).filter(Boolean);
     return (bank.length
-      ? `<div class="qz-scramble"><span class="qz-scramble-tag">&lt;보기&gt;</span>${esc(bank.join(" / "))}</div>` : "") +
+      ? (mode === "take"
+          ? `<div class="qz-scramble qt-bank" data-q="${i}" data-u="0"><span class="qz-scramble-tag">&lt;보기&gt;</span>${bank.map(bankWord).join(" / ")}</div>`
+          : `<div class="qz-scramble"><span class="qz-scramble-tag">&lt;보기&gt;</span>${esc(bank.join(" / "))}</div>`) : "") +
       (conds.length
         ? `<div class="qz-conditions"><span class="qz-conditions-tag">&lt;조건&gt;</span><ul>${conds.map((c, k) =>
             `<li><span class="qz-num">${CIRCLED[k] || k + 1}</span><span>${esc(c)}</span></li>`).join("")}</ul></div>` : "");
@@ -176,7 +217,11 @@
     if (fmt === "order" || fmt === "wbwrite") {
       return (q.lines || []).map((l, j) =>
         `<div class="qt-cue"><span class="qt-blankno">(${j + 1})</span> ${esc(l.cue)}</div>` +
-        (l.hint ? `<div class="qz-scramble">${esc(l.hint)}</div>` : "") +
+        (l.hint
+          ? (mode === "take"
+              ? `<div class="qz-scramble qt-bank" data-q="${i}" data-u="${j}">${hintWordsHtml(String(l.hint), fmt)}</div>`
+              : `<div class="qz-scramble">${esc(l.hint)}</div>`)
+          : "") +
         (mode === "take"
           // 힌트가 없는 줄은 단어 쓰기(워크북 13·14·15) — 문장이 아니라 단어·뜻 하나를 쓴다
           ? (l.hint ? `<textarea ${inputAttrs(j)} rows="2" placeholder="영어 문장 전체를 쓰세요"></textarea>`
@@ -249,7 +294,7 @@
         `<p class="hint">틀린 곳 ${q.fixCount || 0}개를 찾아 고쳐 쓰세요 (순서는 상관없어요).</p>` + rows;
     }
     // write · short · compose · convert · answer — 문장 하나를 쓴다
-    return passageBox(q.passageHtml) + bankHtml(q) +
+    return passageBox(q.passageHtml) + bankHtml(q, i, mode) +
       (mode === "take" ? `<textarea ${inputAttrs(0)} rows="2" placeholder="답을 쓰세요"></textarea>` : "");
   }
 
@@ -338,7 +383,10 @@
       onChange && onChange();
     });
     root.addEventListener("input", (e) => {
-      if (e.target.classList.contains("qt-in")) onChange && onChange();
+      if (!e.target.classList.contains("qt-in")) return;
+      const box = root.querySelector(`.qt-bank[data-q="${e.target.dataset.q}"][data-u="${e.target.dataset.u}"]`);
+      if (box) syncBank(box, e.target.value);
+      onChange && onChange();
     });
   }
 
@@ -376,6 +424,11 @@
       });
     });
     boxRestore(root);
+    // 임시 저장한 답을 되살릴 때도 줄을 다시 긋는다
+    root.querySelectorAll(".qt-bank").forEach((box) => {
+      const el = root.querySelector(`.qt-in[data-q="${box.dataset.q}"][data-u="${box.dataset.u}"]`);
+      if (el) syncBank(box, el.value);
+    });
   }
 
   function blankCount(answers) {

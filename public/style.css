@@ -958,6 +958,8 @@ label.chk-lg{gap:8px; font-size:14.5px;}
   font-size:14.5px; line-height:1.9; color:var(--ink); margin:4px 0 10px;
   padding:10px 12px; background:var(--paper); border:1px dashed var(--line); border-radius:9px;
 }
+/* 학생 풀기 화면 — 답 칸에 쓴 보기 낱말에 줄을 긋는다(quiztest.js syncBank) */
+.qt-w.used{color:var(--muted, #888); text-decoration:line-through; text-decoration-color:#dc2626; text-decoration-thickness:2px;}
 /* 내신 서술형 시험지의 <보기> 상자 — 배열할 낱말 앞에 붙는 이름표 */
 .qz-scramble-tag{
   display:inline-block; margin-right:8px; font-weight:700; font-size:13px;
