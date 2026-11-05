@@ -17141,7 +17141,7 @@ def list_students(teacher_id, class_id):
     _require_db()
     _own_class(teacher_id, class_id)
     rows = []
-    assignments, attempts_by = _class_tests_and_attempts(class_id)
+    assignments, attempts_by = _class_tests_light(class_id)
     for doc in DB.collection("students").where("class_id", "==", class_id).stream():
         d = doc.to_dict() or {}
         tests = _student_test_rows(doc.id, assignments, attempts_by)
@@ -17464,18 +17464,20 @@ def list_assignments_for_class(teacher_id, class_id):
     is_owner = c.get("teacher_id") == teacher_id
     names = {}   # 낸 선생님 이름 — 공동 선생님이 있는 반에서만 보인다
     rows = []
-    for doc in DB.collection("test_assignments").where("class_id", "==", class_id).stream():
-        d = doc.to_dict() or {}
+    tests = {doc.id: doc.to_dict() or {} for doc in
+             DB.collection("test_assignments").where("class_id", "==", class_id).select(_TEST_LIST_FIELDS).stream()}
+    _fill_test_counts(tests)
+    for aid, d in tests.items():
         by = d.get("teacher_id") or ""
         if c.get("members") and by not in names:
             names[by] = _teacher_label(by)
         rows.append({
             "by": names.get(by, ""), "mine": by == teacher_id,
             "canDelete": by == teacher_id or is_owner,
-            "id": doc.id, "title": d.get("title", ""), "format": d.get("format"),
+            "id": aid, "title": d.get("title", ""), "format": d.get("format"),
             "kind": d.get("kind") or "vocab", "source": d.get("source") or "",
-            "questionCount": len(d.get("questions") or []), "unitCount": d.get("unit_count") or 0,
-            "wordCount": len(d.get("vocab") or []), "createdAt": d.get("created_at", ""),
+            "questionCount": d.get("n_questions") or 0, "unitCount": d.get("unit_count") or 0,
+            "wordCount": d.get("n_words") or 0, "createdAt": d.get("created_at", ""),
             "maxWrong": d.get("max_wrong"),
             # None이면 반 전체, 있으면 그 학생 한 명에게만 낸 시험
             "studentId": d.get("student_id"), "studentName": d.get("student_name"),
@@ -17738,9 +17740,10 @@ def get_test_vocab_for_student(student_id, assignment_id):
 
 # 학생 시험 목록이 읽는 칸. 문항·단어·지문을 빼야 한다 — 시험 문서는 한 개에 40KB 안팎(큰 것은 100KB)이라 시험이 36개인
 # 반은 목록 한 번에 1.6MB를 받았다. 개수는 시험을 낼 때 n_questions·n_words에 적어 둔다.
-_TEST_LIST_FIELDS = ["title", "format", "kind", "source", "student_id", "max_wrong", "created_at", "retakes", "retry",
-                     "n_questions", "n_words"]
-_ATTEMPT_LIST_FIELDS = ["assignment_id", "student_id", "round", "passed", "pending", "qdetails", "score", "total"]
+_TEST_LIST_FIELDS = ["title", "format", "kind", "source", "student_id", "student_name", "teacher_id", "unit_count",
+                     "max_wrong", "created_at", "retakes", "retry", "n_questions", "n_words"]
+_ATTEMPT_LIST_FIELDS = ["assignment_id", "student_id", "round", "passed", "pending", "qdetails", "score", "total",
+                        "wrong", "submitted_at"]
 
 
 def _save_test_counts(counts):
@@ -18007,8 +18010,27 @@ def get_result_for_student(student_id, assignment_id):
     }
 
 
+def _class_tests_light(class_id):
+    """학생 표용 — 문항·단어·틀린 단어 내역을 빼고 읽는다. 답안도 시험마다 따로 묻지 않고 30개씩(Firestore in의 상한) 묶는다.
+    예전에는 _class_tests_and_attempts로 시험마다 왕복해 반을 바꿀 때마다 시험 수만큼 기다렸다(2026-11-06 사용자)."""
+    assignments = {}
+    for doc in DB.collection("test_assignments").where("class_id", "==", class_id).select(_TEST_LIST_FIELDS).stream():
+        assignments[doc.id] = doc.to_dict() or {}
+    _fill_test_counts(assignments)
+    ids = list(assignments)
+    attempts_by = {}
+    for i in range(0, len(ids), 30):
+        q = DB.collection("test_attempts").where("assignment_id", "in", ids[i:i + 30])
+        for doc in q.select(_ATTEMPT_LIST_FIELDS).stream():
+            d = doc.to_dict() or {}
+            attempts_by.setdefault((d.get("assignment_id"), d.get("student_id")), []).append(d)
+    for rows in attempts_by.values():
+        rows.sort(key=lambda d: d.get("round", 1))
+    return assignments, attempts_by
+
+
 def _class_tests_and_attempts(class_id):
-    """반의 시험과 그 답안을 한꺼번에 읽는다 — 학생 표(성적 요약)·학생별 성적표가 같이 쓴다.
+    """반의 시험과 그 답안을 통째로 읽는다 — 학생별 성적표처럼 틀린 단어까지 필요한 곳이 쓴다.
     attempts_by는 (시험 id, 학생 id) → 회차순 답안 목록."""
     assignments = {}
     for doc in DB.collection("test_assignments").where("class_id", "==", class_id).stream():
@@ -18036,10 +18058,10 @@ def _student_test_rows(student_id, assignments, attempts_by):
         rows.append({
             "assignmentId": aid, "title": a.get("title", ""), "format": a.get("format"),
             "kind": "quiz" if quiz else "vocab", "source": a.get("source") or "",
-            "questionCount": len(a.get("questions") or []),
+            "questionCount": a["n_questions"] if "n_questions" in a else len(a.get("questions") or []),
             "pending": (last.get("pending") or 0) if (quiz and last) else 0,
             "qc": _qt_q_counts(last.get("qdetails")) if (quiz and last) else None,
-            "wordCount": len(a.get("vocab") or []), "maxWrong": a.get("max_wrong"),
+            "wordCount": a["n_words"] if "n_words" in a else len(a.get("vocab") or []), "maxWrong": a.get("max_wrong"),
             "createdAt": a.get("created_at", ""),
             # 문제 시험은 합격/불합격이 없다 — 냈으면 'done'(제출)
             "status": ("done" if atts else "none") if quiz else
