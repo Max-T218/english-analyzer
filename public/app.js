@@ -97,10 +97,70 @@ function docHasUnsavedInfographic() {
    여러 벌을 뽑을 때 이름으로 구분하려는 것이 목적이라, 물어보지 않으면 기능이 없는
    것과 같기 때문이다. */
 let printGuideTitleOpt = null;
+/* ── 인쇄 전 저장 확인 (2026-11-05 사용자) ──
+   오래된 컴퓨터에서 상세분석 인쇄 미리보기를 그리다 크롬이 메모리 부족(Out of Memory)으로
+   멈췄고, 저장하지 않은 결과가 통째로 사라져 값만 나간 일이 있었다(2026-10-28). 결과는 그 화면의
+   메모리에만 있고 앱이 열릴 때 localStorage를 비우므로 되살릴 길이 없다. 그래서 인쇄 안내 창이
+   '이 탭의 결과를 저장한 뒤로 바뀌었는가'를 보고, 저장 안 했으면 먼저 저장하라고 묻는다.
+
+   견주는 값은 TAB_SAVE[탭].getPayload()의 지문표(지문 칸 passages는 뺀다 — 다음 자료를 만들려고
+   지문만 바꿔 넣었는데 결과가 그대로인 것을 '안 저장했다'고 하지 않게). 저장했을 때·불러왔을 때
+   (딸린 그림을 다 받은 뒤 한 번 더) 적어 두고, 인쇄할 때 다시 재서 다르면 저장 안 한 것이다. */
+const SAVED_PRINT_FP = {};   // {탭: 저장했을 때의 지문표}
+function payloadFingerprint(tab) {
+  const entry = TAB_SAVE[tab];
+  if (!entry || typeof entry.getPayload !== "function") return null;
+  try {
+    const { passages: _p, ...rest } = entry.getPayload() || {};
+    const s = JSON.stringify(rest);
+    let h = 0x811c9dc5;   // FNV-1a — 글 전체를 들고 있지 않으려고 짧은 표로 줄인다
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return `${s.length}:${(h >>> 0).toString(36)}`;
+  } catch (_e) {
+    return null;
+  }
+}
+function markTabSaved(tab) {
+  const fp = payloadFingerprint(tab);
+  if (fp) SAVED_PRINT_FP[tab] = fp;
+  else delete SAVED_PRINT_FP[tab];
+}
+function forgetTabSaved(tab) {
+  delete SAVED_PRINT_FP[tab];
+}
+function activeTabId() {
+  const b = document.querySelector(".tab-btn.active");
+  return b ? b.dataset.tab : "";
+}
+/* 이 탭에 저장하지 않은 결과가 있는가. 로그인 전이면 저장할 수 없으니 묻지 않는다.
+   저장할 것이 없으면(canSave가 사유를 돌려주면) 묻지 않는다. */
+function tabHasUnsavedWork(tab) {
+  if (!tab || !isLoggedIn) return false;
+  const entry = TAB_SAVE[tab];
+  if (!entry || typeof entry.getPayload !== "function") return false;
+  if (entry.canSave && entry.canSave()) return false;
+  const fp = payloadFingerprint(tab);
+  return !!fp && fp !== SAVED_PRINT_FP[tab];
+}
+/* [💾 먼저 저장하기]로 저장창을 열었을 때, 저장이 끝나면 이어서 인쇄하려고 기억해 둔다.
+   저장창을 그냥 닫으면 잊는다(closeSaveDialog). */
+let printAfterSave = null;   // {run, titleOpt}
+
 function showPrintGuide(run, titleOpt) {
-  const warn = docHasUnsavedInfographic();
+  const tab = activeTabId();
+  const unsaved = tabHasUnsavedWork(tab);
+  const unsavedEl = $("printGuideUnsaved");
+  if (unsavedEl) unsavedEl.hidden = !unsaved;
+  // 그림 경고는 저장 안 한 자료 경고가 없을 때만 — 둘 다 '저장하라'는 말이라 겹쳐 띄우지 않는다
+  const warn = !unsaved && docHasUnsavedInfographic();
   const warnEl = $("printGuideWarn");
   if (warnEl) warnEl.hidden = !warn;
+  const goBtn = $("printGuideGo");
+  goBtn.textContent = unsaved ? "저장하지 않고 인쇄" : "인쇄 창 열기";
+  goBtn.classList.toggle("ghost", unsaved);
   printGuideTitleOpt = titleOpt || null;
   const field = $("printGuideTitleField");
   const nameEl = $("printGuideName");
@@ -108,15 +168,29 @@ function showPrintGuide(run, titleOpt) {
   if (titleOpt && nameEl) nameEl.value = titleOpt.get() || "";
   // 경고가 있을 때는 '다시 보지 않기'를 켜 둔 사람에게도 반드시 보여 준다 —
   // 놓치면 되돌릴 수 없는(요금이 다시 나가는) 손해라서 건너뛰게 두면 안 된다.
-  if (!warn && !titleOpt && localStorage.getItem(PRINT_GUIDE_SKIP) === "1") {
+  if (!warn && !unsaved && !titleOpt && localStorage.getItem(PRINT_GUIDE_SKIP) === "1") {
     run();
     return;
   }
   printGuideRun = run;
+  printGuideSaveTab = unsaved ? tab : "";
   printGuideEl.hidden = false;
-  if (titleOpt && nameEl) nameEl.focus();
-  else $("printGuideGo").focus();
+  if (unsaved) $("printGuideSaveFirst").focus();
+  else if (titleOpt && nameEl) nameEl.focus();
+  else goBtn.focus();
 }
+let printGuideSaveTab = "";   // 경고가 떴을 때 저장할 탭
+$("printGuideSaveFirst").addEventListener("click", () => {
+  const tab = printGuideSaveTab;
+  const run = printGuideRun;
+  const titleOpt = printGuideTitleOpt;
+  // 적어 둔 시험지명을 먼저 반영한다 — 저장본·표지에 그 이름이 담기게
+  if (titleOpt) titleOpt.set(($("printGuideName").value || "").trim());
+  closePrintGuide();
+  if (!tab || !run) return;
+  openSaveDialog(tab);
+  printAfterSave = { run, titleOpt };
+});
 $("printGuideCancel").addEventListener("click", closePrintGuide);
 $("printGuideGo").addEventListener("click", () => {
   const run = printGuideRun;
@@ -13562,6 +13636,19 @@ function closeSaveDialog() {
   passageSaveFrom = null;   // 남겨 두면 다음 '지문 저장'이 엉뚱한 칸을 담는다
   saveDialogEl.hidden = true;
   pendingSaveTab = null;
+  printAfterSave = null;    // 저장하지 않고 닫았으면 이어서 인쇄하지 않는다 (저장했으면 아래에서 먼저 꺼내 간다)
+}
+/* 저장이 끝났다 — 인쇄 안내 창의 [💾 먼저 저장하기]에서 왔으면 인쇄를 이어 간다.
+   저장창을 닫기 '전에' 불러 이어 갈 인쇄를 꺼내 두고, 닫은 뒤에 실행한다. */
+function finishSaveDialog(tab) {
+  markTabSaved(tab);
+  const next = printAfterSave;
+  printAfterSave = null;
+  closeSaveDialog();
+  return next;
+}
+function resumePrintAfterSave(next) {
+  if (next) showPrintGuide(next.run, next.titleOpt);
 }
 saveDialogCancelBtn.addEventListener("click", closeSaveDialog);
 saveDialogEl.addEventListener("click", (e) => {
@@ -13602,9 +13689,10 @@ async function doSaveDialog(overwriteId) {
       const folderFail = await saveVocabPerPassage(title, wantFolder, (done, total) => {
         busyBtn.textContent = `저장 중… ${done}/${total}`;
       });
-      closeSaveDialog();
+      const next = finishSaveDialog(tab);
       if (folderFail) alert(`저장은 됐지만 단어장에 넣지 못했습니다. (${folderFail})
 저장함에서 다시 넣어 주세요.`);
+      resumePrintAfterSave(next);
       return;
     }
     const payload = TAB_SAVE[tab].getPayload();
@@ -13632,9 +13720,10 @@ async function doSaveDialog(overwriteId) {
         folderFail = err.message || "단어장에 넣지 못했습니다.";
       }
     }
-    closeSaveDialog();
+    const next = finishSaveDialog(tab);
     if (folderFail) alert(`저장은 됐지만 단어장에 넣지 못했습니다. (${folderFail})
 저장함에서 다시 넣어 주세요.`);
+    resumePrintAfterSave(next);
   } catch (err) {
     saveDialogErrorEl.textContent = err.message || "저장에 실패했습니다.";
   } finally {
@@ -14106,8 +14195,16 @@ async function loadSavedItem(id, mode, preItem) {
     /* 표지 제목을 되살린다. 제목을 담기 전에 저장한 옛 저장본은 빈칸으로 남는데,
        앞 자료의 이름이 남아 있는 것보다 낫다 — 탭 위 칸에 새로 적으면 된다. */
     if (!append && DOC_TITLES[tab]) DOC_TITLES[tab].set((item.payload || {}).coverTitle || "");
+    /* 인쇄 전 저장 확인의 기준 — 불러온 그대로면 저장된 것이다. 이어 붙였으면 저장함 어디에도 없는 모양이다.
+       딸린 그림은 늦게 붙어 지문표가 바뀌므로, 그림을 다 받은 뒤 한 번 더 적는다. */
+    if (append || item._multi) forgetTabSaved(tab);
+    else markTabSaved(tab);
     // 글을 먼저 보여 준 뒤 딸린 그림을 받아 붙인다 (받는 동안 화면을 막지 않는다)
-    if (!append && !item._multi && TAB_SAVE[tab].afterLoad) TAB_SAVE[tab].afterLoad(id, item.payload || {});
+    if (!append && !item._multi && TAB_SAVE[tab].afterLoad) {
+      Promise.resolve(TAB_SAVE[tab].afterLoad(id, item.payload || {}))
+        .catch(() => {})
+        .then(() => markTabSaved(tab));
+    }
   } catch (err) {
     alert(err.message || "불러오기에 실패했습니다.");
   }

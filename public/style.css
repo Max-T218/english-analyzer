@@ -1830,6 +1830,8 @@ input[type=file]{width:100%; font:inherit; font-size:13px; color:var(--ink); bac
 }
 .print-guide-warn[hidden]{display:none;}
 .print-guide-warn b{font-weight:800;}
+/* 저장 안 한 자료 경고 — 저장 단추를 경고 안에 둔다(눌러야 할 곳이 경고 바로 아래에 있게) */
+.print-guide-unsaved-act{margin-top:8px;}
 .print-guide-skip{display:inline-flex; align-items:center; gap:6px; font-size:13px;}
 .print-guide-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:16px; flex-wrap:wrap;}
 /* 불러오기 방식 묻는 창은 저장함 위에 겹쳐 뜬다 */
