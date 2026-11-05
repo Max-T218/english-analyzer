@@ -704,7 +704,7 @@ function renderQuizRetryBox(r) {
 async function startQuizRetry(statusEl, errEl, btn) {
   errEl.textContent = "";
   btn.disabled = true;
-  statusEl.textContent = "새 문제를 만드는 중이에요… (최대 1분 정도 걸려요)";
+  statusEl.textContent = "새 문제를 만드는 중이에요…";
   try {
     const data = await postJson("/api/student/retry/start", { assignmentId: currentAssignmentId });
     if ((data.concepts || []).length) showQuizConcepts(data);   // 개념 정리를 읽어야 새 문제로 넘어간다

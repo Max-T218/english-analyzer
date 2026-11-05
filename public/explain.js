@@ -387,7 +387,7 @@ async function xpDrawImgs(list) {
   loading.classList.add("on");
   try {
     for (let i = 0; i < list.length; i++) {
-      text.textContent = `AI가 ${list[i].name}의 요약 이미지를 그리고 있습니다… (${i + 1}/${list.length}, 한 장에 30~50초)`;
+      text.textContent = `AI가 ${list[i].name}의 요약 이미지를 그리고 있습니다… (${i + 1}/${list.length})`;
       try {
         await xpDrawImg(list[i], xpSpecFor(list[i]), (n) => { text.textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; });
       } catch (err) {
@@ -465,7 +465,7 @@ async function xpMake() {
         break;
       }
       const j = jobs[i];
-      text.textContent = `AI가 ${j.name}의 내용을 풀어 쓰고 있습니다… (${i + 1}/${jobs.length}, 지문 하나에 15~30초)`;
+      text.textContent = `AI가 ${j.name}의 내용을 풀어 쓰고 있습니다… (${i + 1}/${jobs.length})`;
       try {
         const data = await postGenerate("/api/explain", { passage: j.text }, "내용 한장정리를 만들지 못했습니다.",
           (n) => { text.textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; });
@@ -475,7 +475,7 @@ async function xpMake() {
         const spec = xpSpecFor(j);
         if (spec) {
           xpRender();
-          text.textContent = `AI가 ${j.name}의 요약 이미지를 그리고 있습니다… (${i + 1}/${jobs.length}, 한 장에 30~50초)`;
+          text.textContent = `AI가 ${j.name}의 요약 이미지를 그리고 있습니다… (${i + 1}/${jobs.length})`;
           // 그림은 실패해도 풀이는 남긴다. 한도 소진·잔액 부족이면 여기서 멈춘다
           const stop = await xpDrawImg(entry, spec, (n) => { text.textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; })
             .then(() => false, (err) => { errEl.textContent = err.message; return true; });
@@ -623,7 +623,7 @@ if (typeof HOWTO !== "undefined") {
     lead: "영어 해석이 아니라 <b>글의 내용 자체</b>를 우리말로 쉽고 자세히 풀어 주는 한 쪽 자료입니다 — 분야가 낯설어 해석을 해도 무슨 말인지 모르는 학생에게 좋습니다.",
     steps: [
       "위쪽 <b>영어 지문</b> 칸에 지문을 넣습니다(여러 개면 <b>＋ 지문 추가</b>). 지문 이름이 쪽 머리띠에 찍힙니다.",
-      "필요하면 <b>자료 제목</b>을 적고 <b>내용 한장정리 만들기</b>를 누릅니다. 지문마다 15~30초 걸립니다. " +
+      "필요하면 <b>자료 제목</b>을 적고 <b>내용 한장정리 만들기</b>를 누릅니다. " +
         "<b>🖼️ 요약 이미지</b>의 <b>만들 때 함께 넣기</b>를 체크하면 고른 종류(한글요약 인포그래픽·4컷 그림 등)의 그림도 지문마다 한 장 들어갑니다(그림 값 따로).",
       "화면에서 내용을 확인하고, 고칠 곳은 <b>✏️ 직접 수정</b>으로 그 자리에서 고칩니다. " +
         "칸을 다른 쪽으로 옮기려면 <b>📄 쪽 구성</b>을 누르고 칸 위의 <b>⤵ 여기부터 2쪽으로 / ⤴ 1쪽으로 올리기</b>를 누릅니다(지문 위의 <b>↺ 쪽 나눔 자동으로</b>로 되돌립니다). " +

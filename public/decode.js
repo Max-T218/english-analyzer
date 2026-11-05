@@ -328,7 +328,7 @@ async function dcDrawPics(list) {
   loading.classList.add("on");
   try {
     for (let i = 0; i < list.length; i++) {
-      text.textContent = `AI가 ${list[i].name}의 4컷 그림을 그리고 있습니다… (${i + 1}/${list.length}, 한 장에 30~50초)`;
+      text.textContent = `AI가 ${list[i].name}의 4컷 그림을 그리고 있습니다… (${i + 1}/${list.length})`;
       try {
         await dcDrawPic(list[i], style, (n) => { text.textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; });
       } catch (err) {
@@ -402,7 +402,7 @@ async function dcMake() {
         break;
       }
       const j = jobs[i];
-      text.textContent = `AI가 ${j.name}의 리딩노트를 만들고 있습니다… (${i + 1}/${jobs.length}, 지문 하나에 20~40초)`;
+      text.textContent = `AI가 ${j.name}의 리딩노트를 만들고 있습니다… (${i + 1}/${jobs.length})`;
       try {
         const data = await postGenerate("/api/decode", { passage: j.text }, "리딩노트를 만들지 못했습니다.",
           (n) => { text.textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; });
@@ -411,7 +411,7 @@ async function dcMake() {
         ok++;
         if (withPic) {
           dcRender();
-          text.textContent = `AI가 ${j.name}의 4컷 그림을 그리고 있습니다… (${i + 1}/${jobs.length}, 한 장에 30~50초)`;
+          text.textContent = `AI가 ${j.name}의 4컷 그림을 그리고 있습니다… (${i + 1}/${jobs.length})`;
           // 그림은 실패해도 글 자료는 남긴다. 한도 소진·잔액 부족이면 여기서 멈춘다
           const stop = await dcDrawPic(entry, style, (n) => { text.textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; })
             .then(() => false, (err) => { errEl.textContent = err.message; return true; });
@@ -570,7 +570,7 @@ if (typeof HOWTO !== "undefined") {
     lead: "지문 하나로 A4 두 쪽짜리 복습 자료를 만듭니다 — 본문과 해석, 핵심 정리, 주요 어휘, 끊어 읽기 해석.",
     steps: [
       "위쪽 <b>영어 지문</b> 칸에 지문을 넣습니다(여러 개면 <b>＋ 지문 추가</b>). 지문 이름이 쪽 머리띠에 찍힙니다.",
-      "필요하면 <b>자료 제목</b>을 적고 <b>리딩노트 만들기</b>를 누릅니다. 지문마다 20~40초 걸립니다. " +
+      "필요하면 <b>자료 제목</b>을 적고 <b>리딩노트 만들기</b>를 누릅니다. " +
         "<b>🖼️ 4컷 그림</b>의 <b>만들 때 함께 넣기</b>를 체크하면 지문 흐름을 네 장면으로 그린 그림도 들어갑니다(일러스트·웹툰 중 고르기, 그림 값 따로).",
       "화면에서 내용을 확인하고, 고칠 곳은 <b>✏️ 직접 수정</b>으로 그 자리에서 고칩니다. " +
         "그림은 지문마다 위의 <b>🖼️ 4컷 그림 넣기 / 🔄 그림 다시 그리기 / 그림 빼기</b>로 더하거나 바꿉니다.",

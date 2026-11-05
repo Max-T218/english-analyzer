@@ -3136,7 +3136,7 @@ function askProblemFill(probs) {
     if (per && !(await hasEnoughPoints(per * todo.length, "문제 사진 답 풀기"))) return;
     const btn = $("probFillAiBtn");
     btn.disabled = true;
-    msg(`<span class="spinner"></span> AI가 ${todo.length}문제를 푸는 중… (30초쯤 걸립니다)`);
+    msg(`<span class="spinner"></span> AI가 ${todo.length}문제를 푸는 중…`);
     try {
       const res = await postGenerate("/api/passagesolve", { problems: todo.map((r) => r.it.problem) },
         "문제를 풀지 못했습니다.");
@@ -3566,7 +3566,7 @@ function mockJobsInOrder(jobs) {
 async function mockRestoreInto(mgr, data, nos, status, key = {}, extra = []) {
   const hasKey = !!(key.keyText || key.keyFile);
   status(`<span class="spinner"></span> ${hasKey ? "정답표대로" : "AI가"} ${esc(mockNosText(nos))}번 ` +
-    `${hasKey ? "답을 채워" : "문제를 풀어"} 지문을 되살리는 중… (1분쯤 걸립니다)`);
+    `${hasKey ? "답을 채워" : "문제를 풀어"} 지문을 되살리는 중…`);
   const body = { file: { mime: "application/pdf", data }, nos };
   if (key.keyText) body.keyText = key.keyText;
   if (key.keyFile) body.keyFile = key.keyFile;
@@ -4659,8 +4659,7 @@ async function analyze() {
   if (!(await costConfirmed(
         billJobs.length * (PRICING ? PRICING.analyze : 0) + imgSpecsCost("info", billJobs),
         withInfo
-          ? `지문 분석과 요약 이미지 ${imgSum.images}장(${imgSum.kinds.join(" · ")})을 함께 만듭니다.\n` +
-            "(이미지는 한 장에 40~70초가 더 걸립니다)"
+          ? `지문 분석과 요약 이미지 ${imgSum.images}장(${imgSum.kinds.join(" · ")})을 함께 만듭니다.`
           : "지문 분석을 시작합니다.",
         jobs.length,
         reduceAdvice(
@@ -4709,7 +4708,7 @@ async function analyze() {
     loadingTextEl.textContent =
       total > 1
         ? `${job.name} 분석 중… (${i + 1}/${total})`
-        : `AI가 지문을 분석 중입니다… (지문 길이에 따라 20~60초)`;
+        : `AI가 지문을 분석 중입니다…`;
 
     if (job.text.length < 20) {
       htmlParts.push(buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력)."));
@@ -4808,7 +4807,7 @@ async function analyzeRetryOne(btn, job, total) {
   lockPassagePanel(true);
   setEditMode(false);
   setPagingMode(false);
-  loadingTextEl.textContent = `${job.name} 분석 중… (지문 길이에 따라 20~60초)`;
+  loadingTextEl.textContent = `${job.name} 분석 중…`;
   loadingEl.classList.add("on");
   let madeAt = -1;
   try {
@@ -5154,7 +5153,7 @@ async function confirmImgSwap(curList, wantList) {
     ? await costConfirmed(PRICING ? cost : 0,
         `분석은 그대로 두고 요약 이미지 ${makeN}장(${kinds.join(" · ")})을 새로 그립니다.` +
         (dropN ? `\n고른 것과 다른 그림 ${dropN}장은 빼고 바꿔 끼웁니다.` : "") +
-        "\n고른 것과 같은 그림은 그대로 두고 값도 받지 않습니다. (한 장에 40~70초)", passages)
+        "\n고른 것과 같은 그림은 그대로 두고 값도 받지 않습니다.", passages)
     : confirm(`'그림 없음'으로 고른 지문의 그림 ${dropN}장을 뺍니다. 진행할까요?`);
   return ok ? { plans, makeN, dropN } : null;
 }
@@ -5382,7 +5381,7 @@ async function makeInfographics(todo, plans) {
       loadingTextEl.textContent =
         total > 1
           ? `${job.name}${what} 요약 이미지 만드는 중… (${done}/${total})`
-          : "AI가 요약 이미지를 그리는 중입니다… (40~70초)";
+          : "AI가 요약 이미지를 그리는 중입니다…";
       try {
         const made = await makeSummaryImage("info", spec, job, (n) => {
           loadingTextEl.textContent =
@@ -6501,7 +6500,7 @@ async function briefMakeImages(entry, job, i, jobsLen, redraw) {
     briefLoadingTextEl.textContent =
       jobsLen > 1 || imgLangs.length > 1
         ? `${job.name}${what} 요약 이미지 그리는 중… (${i + 1}/${jobsLen})`
-        : "AI가 요약 이미지를 그리는 중입니다… (40~70초)";
+        : "AI가 요약 이미지를 그리는 중입니다…";
     try {
       const made = await makeSummaryImage("brief", spec, job, (n) => {
         briefLoadingTextEl.textContent =
@@ -6573,7 +6572,7 @@ briefInfoMakeBtn.addEventListener("click", async () => {
         const lang = specLang(spec);
         briefLoadingTextEl.textContent = total > 1
           ? `${entry.job.name} 요약 이미지 그리는 중… (${done}/${total})`
-          : "AI가 요약 이미지를 그리는 중입니다… (40~70초)";
+          : "AI가 요약 이미지를 그리는 중입니다…";
         try {
           const made = await makeSummaryImage("brief", spec, entry.job, (k) => {
             briefLoadingTextEl.textContent = `${entry.job.name} 요약 이미지 — 연결이 끊겨 다시 받는 중… (${k}/${GEN_RETRY})`;
@@ -7046,25 +7045,6 @@ const QUIZ_QUESTIONS_PER_CALL = 6;
 // 지문 수는 이 탭 밖에서 바뀌므로 만들기를 누르는 시점에만 확인한다.
 const QUIZ_MAX_QUESTIONS_PER_RUN = 200;
 
-/* ── 호출에 실제로 걸린 시간 ──
-   '문항이 많습니다' 창에서 예상 시간을 보여 주는 데 쓴다. 근거 없는 숫자를 보여 주면
-   안 되므로 상수로 못박지 않고, 이 브라우저에서 방금 돌려 본 호출의 평균을 쓴다.
-   아직 한 번도 안 돌렸으면 시간 줄을 아예 빼고 호출 횟수만 보여 준다.
-   지문 변형(/api/reword)과 문제 생성(/api/quiz)은 걸리는 시간이 달라 따로 잰다. */
-const CALL_SECS = { quiz: null, reword: null };
-function noteCallSecs(kind, secs) {
-  if (!Number.isFinite(secs) || secs <= 0) return;
-  const prev = CALL_SECS[kind];
-  // 최근 것에 무게를 두는 평균 — 첫 값은 그대로, 그다음부터는 3:1로 섞는다
-  CALL_SECS[kind] = prev == null ? secs : prev * 0.75 + secs * 0.25;
-}
-function humanDuration(secs) {
-  if (secs < 90) return `${Math.round(secs / 10) * 10 || 10}초`;
-  const m = Math.round(secs / 60);
-  if (m < 60) return `${m}분`;
-  return `${Math.floor(m / 60)}시간 ${m % 60}분`;
-}
-
 /* ── 200문항을 넘겼을 때 뜨는 창 ──
    예전에는 그냥 거부했다. 그러면 지문·유형·문항 수를 다 골라 둔 뒤에 "줄이세요"만
    듣고 처음부터 다시 설정해야 했다. 대신 구체적인 숫자를 보여 주고 셋 중에 고르게
@@ -7104,21 +7084,6 @@ function askBigRun(info) {
     `<b>AI 호출 ${calls.toLocaleString()}회</b> — 문항 ${QUIZ_QUESTIONS_PER_CALL}개마다 따로 부릅니다` +
       (info.rewordCalls ? ` (지문 변형 ${info.rewordCalls.toLocaleString()}회 포함)` : ""),
   ];
-  // 잰 적이 있는 호출만으로 시간을 계산한다 — 하나라도 기준이 없으면 시간 줄을 뺀다
-  const haveQuiz = CALL_SECS.quiz != null;
-  const haveReword = !info.rewordCalls || CALL_SECS.reword != null;
-  if (haveQuiz && haveReword) {
-    const secs = info.quizCalls * CALL_SECS.quiz + info.rewordCalls * (CALL_SECS.reword || 0);
-    facts.push(
-      `<b>예상 시간 약 ${humanDuration(secs)}</b> — 이 브라우저에서 방금 잰 ` +
-        `호출 한 번 ${Math.round(CALL_SECS.quiz)}초 기준`
-    );
-  } else {
-    facts.push(
-      `<b>예상 시간은 아직 알 수 없습니다</b> — 이 창을 연 뒤 아직 만들어 본 적이 없어 ` +
-        `기준으로 삼을 실측 시간이 없습니다. 한 번 만들어 보면 다음부터 여기에 표시됩니다`
-    );
-  }
   if (Number.isFinite(info.krw) && info.krw > 0) {
     facts.push(
       `<b>예상 요금 약 ${pt(info.krw)}</b>` +
@@ -9254,15 +9219,12 @@ function setupQuizTab({ prefix, types, footer }) {
           }
           if (variation !== "verbatim" && !rewordDone) {
             loadingTextEl.textContent = `${tag} 지문 변형본 만드는 중…`;
-            const rwStart = Date.now();
             try {
               const r = await postGenerate(
                 "/api/reword",
                 { passage: job.text, variation, school: school() },
                 "지문 변형에 실패했습니다."
               );
-              // 다음에 '문항이 많습니다' 창이 뜰 때 예상 시간의 근거가 된다
-              noteCallSecs("reword", (Date.now() - rwStart) / 1000);
               source = (r.passage || "").trim() || job.text;
               varied = Array.isArray(r.variations) ? r.variations : [];
             } catch (err) {
@@ -9303,14 +9265,12 @@ function setupQuizTab({ prefix, types, footer }) {
                 steps > 1
                   ? `${lvTag} 문제 만드는 중… (${step}/${steps}) — ${groupLabel(group)}`
                   : "AI가 문제를 만들고 있습니다…";
-              const qzStart = Date.now();
               try {
                 const data = await postGenerate(
                   "/api/quiz",
                   quizReq(source, group, difficulty, varied),
                   "문제 생성에 실패했습니다."
                 );
-                noteCallSecs("quiz", (Date.now() - qzStart) / 1000);
                 if (Array.isArray(data.questions)) questions.push(...data.questions);
                 // 서버가 뺀 유형(짧은 지문의 문장삽입 · 대화문이 아닌 지문의 대화문 유형) —
                 // 요금은 안 나갔지만 빠진 줄은 알려야 한다. 문구에 유형 이름이 이미 들어 있다.
@@ -9724,7 +9684,7 @@ function setupQuizTab({ prefix, types, footer }) {
       if (!(await costConfirmed(per * 10, `PDF에서 문제 불러오기\n되살린 문항 1개당 ${pt(per)}씩 받습니다(아래는 10문항일 때)`))) return;
       const label = restoreBtn.textContent;
       restoreBtn.disabled = true;
-      restoreBtn.textContent = "⏳ PDF 읽는 중… (1분쯤 걸립니다)";
+      restoreBtn.textContent = "⏳ PDF 읽는 중…";
       try {
         const data = await blobToBase64(f);
         const res = await postGenerate("/api/quizrestore", { file: { mime: "application/pdf", data } },
@@ -11102,7 +11062,7 @@ workbookDocEl.addEventListener("click", async (e) => {
   wbBtn.disabled = true;
   btn.disabled = true;
   lockPassagePanel(true);
-  wbLoadingTextEl.textContent = `${job.name} 워크북을 다시 만드는 중… (지문 길이에 따라 40~120초 걸릴 수 있어요)`;
+  wbLoadingTextEl.textContent = `${job.name} 워크북을 다시 만드는 중…`;
   wbLoadingEl.classList.add("on");
   let quotaErr = null;
   try {
@@ -11192,7 +11152,7 @@ async function generateWorkbook() {
     wbLoadingTextEl.textContent =
       total > 1
         ? `${job.name} 워크북 만드는 중… (${i + 1}/${total})`
-        : "AI가 워크북을 만들고 있습니다… (지문 길이에 따라 40~120초 걸릴 수 있어요)";
+        : "AI가 워크북을 만들고 있습니다…";
 
     if (job.text.length < 20) {
       results.push({ errorHtml: buildErrorHtml(job, total, "지문이 너무 짧습니다 (20자 이상 입력).") });
@@ -16277,7 +16237,7 @@ async function runExamScan() {
     examLoadingTextEl.textContent =
       batches.length > 1
         ? `AI가 시험지를 읽고 있습니다… (${b + 1}/${batches.length}) — ${docLabel(doc)}${from}~${to}쪽`
-        : `AI가 시험지 ${files.length}쪽을 읽고 있습니다… (1~3분 걸립니다)`;
+        : `AI가 시험지 ${files.length}쪽을 읽고 있습니다…`;
     try {
       await readBatch(from, files, doc);
     } catch (err) {

@@ -611,7 +611,7 @@ async function trendRun() {
         const idx = jobs[j];
         if (quotaOut) { failed.push(...idx); continue; }
         trendLoadingTextEl.textContent =
-          `AI가 「${d.name}」의 문항 유형을 읽고 있습니다… (${idx[0] + 1}~${idx[idx.length - 1] + 1}쪽, 1~3분 걸립니다)`;
+          `AI가 「${d.name}」의 문항 유형을 읽고 있습니다… (${idx[0] + 1}~${idx[idx.length - 1] + 1}쪽)`;
         try {
           await readJob(idx);
         } catch (err) {

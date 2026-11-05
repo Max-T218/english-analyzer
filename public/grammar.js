@@ -804,7 +804,7 @@ async function grMake() {
   const loading = grEl("grLoading");
   loading.classList.add("on");
   const text = grEl("grLoadingText");
-  text.textContent = `AI가 문법 문제 ${t.mc + t.sa}문항을 만들고 있습니다… (20문항에 30초~1분)`;
+  text.textContent = `AI가 문법 문제 ${t.mc + t.sa}문항을 만들고 있습니다…`;
   try {
     const made = {};   // 난이도 → 문항[]
     let missing = 0;
