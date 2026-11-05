@@ -113,23 +113,80 @@
       (k % 2 || !part.trim() ? esc(part) : bankWord(part))).join("");
   }
 
-  // 쓴 낱말 하나는 보기 하나만 지운다(같은 낱말이 둘이면 쓴 만큼만). 여러 낱말 덩이부터 맞춰 본다
+  /* 어형을 바꿔 쓰는 칸(2026-11-05 사용자) — 조건 영작의 <보기>는 원형이라 학생이 reads·read→went처럼
+     바꿔 쓰는데 그대로 대조하면 줄이 안 그어졌다. 배열 문제(write·order)는 보기가 곧 정답의 낱말이라
+     그대로 대조한다 — 오타가 드러나야 해서다. 표는 흔한 불규칙 변화만, 첫 낱말이 원형이다.
+     줄 긋기 표시용 짐작이라 채점과 상관없다. */
+  const IRREGULAR = {};
+  ("be am is are was were been being|go goes went gone going|do does did done doing|have has had having|" +
+   "arise arose arisen|bear bore borne born|beat beaten|become became|begin began begun|bind bound|" +
+   "bite bit bitten|blow blew blown|break broke broken|bring brought|build built|buy bought|catch caught|" +
+   "choose chose chosen|come came|deal dealt|dig dug|draw drew drawn|dream dreamt|drink drank drunk|" +
+   "drive drove driven|eat ate eaten|fall fell fallen|feed fed|feel felt|fight fought|find found|flee fled|" +
+   "fly flew flown|forget forgot forgotten|forgive forgave forgiven|freeze froze frozen|get got gotten|" +
+   "give gave given|grow grew grown|hang hung|hear heard|hide hid hidden|hold held|keep kept|know knew known|" +
+   "lay laid|lead led|leave left|lend lent|lie lay lain lying|lose lost|make made|mean meant|meet met|" +
+   "pay paid|ride rode ridden|ring rang rung|rise rose risen|run ran|say said|see saw seen|seek sought|" +
+   "sell sold|send sent|shake shook shaken|shine shone|shoot shot|show shown|sing sang sung|sink sank sunk|" +
+   "sit sat|sleep slept|speak spoke spoken|spend spent|spin spun|stand stood|steal stole stolen|stick stuck|" +
+   "strike struck|swear swore sworn|sweep swept|swim swam swum|take took taken|teach taught|tear tore torn|" +
+   "tell told|think thought|throw threw thrown|understand understood|wake woke woken|wear wore worn|win won|" +
+   "withdraw withdrew withdrawn|write wrote written|child children|foot feet|man men|woman women|mouse mice|" +
+   "tooth teeth|person people|life lives|leaf leaves|good better best|well better best|bad worse worst|" +
+   "many more most|much more most|little less least|far farther further farthest furthest").split("|")
+    .forEach((g) => { const [base, ...forms] = g.split(" "); forms.forEach((f) => { (IRREGULAR[f] = IRREGULAR[f] || []).push(base); }); });
+
+  // 낱말에서 어미를 떼어 본 후보들 — 두 낱말의 후보가 겹치면 같은 낱말의 다른 모양으로 친다
+  function wordStems(w) {
+    const out = new Set([w]);
+    (IRREGULAR[w] || []).forEach((x) => out.add(x));   // better → good, well
+    const add = (x) => { if (x.length >= 3) out.add(x); };
+    [["ies", "y"], ["ied", "y"], ["ier", "y"], ["iest", "y"], ["ily", "y"], ["ying", "ie"]].forEach(([end, to]) => {
+      if (w.endsWith(end)) add(w.slice(0, -end.length) + to);
+    });
+    ["s", "es", "d", "ed", "ing", "r", "er", "st", "est", "ly"].forEach((end) => {
+      if (!w.endsWith(end)) return;
+      const stem = w.slice(0, -end.length);
+      add(stem);
+      if (/^(ing|ed|er|est)$/.test(end)) {
+        add(stem + "e");                                    // making → make
+        if (/([b-df-hj-np-tv-z])\1$/.test(stem)) add(stem.slice(0, -1));   // stopped → stop
+      }
+    });
+    return out;
+  }
+  function looseSame(a, b) {
+    const sa = wordStems(a);
+    return Array.from(wordStems(b)).some((x) => sa.has(x));
+  }
+  // didn't → did not — 보기의 not·do를 줄임말로 쓴 경우
+  const NT_FULL = { "won't": "will", "can't": "can", "shan't": "shall" };
+  const splitNt = (list) => list.flatMap((w) =>
+    (/n't$/.test(w) ? [NT_FULL[w] || w.slice(0, -3), "not"] : [w]));
+
+  // 쓴 낱말 하나는 보기 하나만 지운다(같은 낱말이 둘이면 쓴 만큼만). 여러 낱말 덩이부터,
+  // 똑같은 낱말부터 맞춘다 — book·books가 함께 있을 때 books가 book을 먼저 차지하지 않게
   function syncBank(box, value) {
-    const typed = bankTokens(value);
+    const loose = box.dataset.loose === "1";
+    const typed = loose ? splitNt(bankTokens(value)) : bankTokens(value);
     const used = typed.map(() => false);
     const items = Array.from(box.querySelectorAll(".qt-w"))
-      .map((el) => ({ el, need: el.dataset.w.split(" ") }))
+      .map((el) => {
+        const need = el.dataset.w.split(" ");
+        return { el, need: loose ? splitNt(need) : need, hit: false };
+      })
       .sort((a, b) => b.need.length - a.need.length);
-    items.forEach(({ el, need }) => {
-      let hit = false;
-      for (let s = 0; !hit && s + need.length <= typed.length; s++) {
-        if (need.every((w, k) => !used[s + k] && typed[s + k] === w)) {
-          need.forEach((_, k) => { used[s + k] = true; });
-          hit = true;
+    const match = (same) => items.forEach((it) => {
+      for (let s = 0; !it.hit && s + it.need.length <= typed.length; s++) {
+        if (it.need.every((w, k) => !used[s + k] && same(w, typed[s + k]))) {
+          it.need.forEach((_, k) => { used[s + k] = true; });
+          it.hit = true;
         }
       }
-      el.classList.toggle("used", hit);
     });
+    match((a, b) => a === b);
+    if (loose) match(looseSame);
+    items.forEach((it) => it.el.classList.toggle("used", it.hit));
   }
 
   function bankHtml(q, i, mode) {
@@ -137,7 +194,7 @@
     const conds = (q.conditions || []).filter(Boolean);
     return (bank.length
       ? (mode === "take"
-          ? `<div class="qz-scramble qt-bank" data-q="${i}" data-u="0"><span class="qz-scramble-tag">&lt;보기&gt;</span>${bank.map(bankWord).join(" / ")}</div>`
+          ? `<div class="qz-scramble qt-bank" data-q="${i}" data-u="0"${q.format === "write" ? "" : ` data-loose="1"`}><span class="qz-scramble-tag">&lt;보기&gt;</span>${bank.map(bankWord).join(" / ")}</div>`
           : `<div class="qz-scramble"><span class="qz-scramble-tag">&lt;보기&gt;</span>${esc(bank.join(" / "))}</div>`) : "") +
       (conds.length
         ? `<div class="qz-conditions"><span class="qz-conditions-tag">&lt;조건&gt;</span><ul>${conds.map((c, k) =>
@@ -219,7 +276,7 @@
         `<div class="qt-cue"><span class="qt-blankno">(${j + 1})</span> ${esc(l.cue)}</div>` +
         (l.hint
           ? (mode === "take"
-              ? `<div class="qz-scramble qt-bank" data-q="${i}" data-u="${j}">${hintWordsHtml(String(l.hint), fmt)}</div>`
+              ? `<div class="qz-scramble qt-bank" data-q="${i}" data-u="${j}"${fmt === "wbwrite" ? ` data-loose="1"` : ""}>${hintWordsHtml(String(l.hint), fmt)}</div>`
               : `<div class="qz-scramble">${esc(l.hint)}</div>`)
           : "") +
         (mode === "take"
