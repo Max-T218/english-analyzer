@@ -128,14 +128,17 @@ function dcRender() {
 /* ── 인쇄 2쪽 맞추기(2026-11-03 사용자) ──
    지문 길이보다 해석·목적 글 길이에 따라 1쪽이 넘쳐, 주요 어휘만 다음 쪽으로 밀려 거의 빈 쪽이 생겼다
    (152단어 지문에서도 났다). 화면에서 인쇄 폭(.dc-measure — style.css에 인쇄 규칙과 같은 값)으로 쪽마다 높이를 재서
-   ① 그대로 ② 그 지문만 글씨 94% ③ 주요 어휘를 2쪽 맨 위로 ④ ③+94% ⑤ ③+88% 차례로(바뀌는 것이 적은 쪽부터),
-   두 쪽이 모두 들어가는 첫 모양을 고른다.
+   ① 그대로 ② 그 지문만 글씨 94% ③ 주요 어휘를 2쪽 맨 위로 ④ ③+94% ⑤ 어휘는 1쪽 그대로 글씨 88% ⑥ ③+88% 차례로
+   (바뀌는 것이 적은 쪽부터), 두 쪽이 모두 들어가는 첫 모양을 고른다.
    쪽 높이는 다른 탭과 같은 PAGE_H_MM(아래 학원 마크 줄을 뺀 높이)에서 3mm를 더 남긴다. 화면에도 같은 모양으로 보인다.
-   4컷 그림은 **늘 가로 한 줄**로 둔다(2026-11-03 사용자 — 3쪽에 2×2로 크게 넣었더니 쪽 낭비가 심했다). 글 모양 차례마다
-   그림 자리를 2쪽 아래 → 2쪽 아래 80% → 1쪽 빈자리(어휘가 2쪽으로 갔을 때 생긴다) → 1쪽 80% → 65%로 해 보고, 그래도 안 되면
-   그때만 한 줄 그대로 3쪽에 둔다. 소제목 번호는 맞춘 뒤 쪽 차례대로 다시 매긴다. */
-const DC_PIC_SPOTS = [["p2", ""], ["p2", "80"], ["p1", ""], ["p1", "80"], ["p2", "65"], ["p1", "65"]];
-const DC_FIT_STEPS = [[false, ""], [false, "94"], [true, ""], [true, "94"], [true, "88"]];
+   4컷 그림은 **늘 가로 한 줄**로 둔다(2026-11-03 사용자 — 3쪽에 2×2로 크게 넣었더니 쪽 낭비가 심했다). 글 모양을 차례로 돌며
+   그림을 2쪽 끝(100 → 80 → 65%)에 먼저 넣어 보고, 어느 글 모양으로도 안 될 때만 1쪽 빈자리, 그래도 안 되면 한 줄 그대로 3쪽에 둔다.
+   **그림이 1쪽으로 가면 그림이 어휘·끊어 읽기보다 앞에 놓여 순서가 무너지므로 마지막 수단이다**(2026-11-06 사용자 — 16문장 지문이
+   '본문 → 그림 | 어휘 → 끊어 읽기'로 나왔다. 어휘 1쪽 + 88%가 없어 맞는 모양이 있는데도 1쪽으로 갔다).
+   소제목 번호는 맞춘 뒤 쪽 차례대로 다시 매긴다. */
+const DC_PIC_KEEP = [["p2", ""], ["p2", "80"], ["p2", "65"]];     // 순서가 그대로인 자리
+const DC_PIC_SPARE = [["p1", ""], ["p1", "80"], ["p1", "65"]];    // 순서가 바뀌는 자리 — 마지막 수단
+const DC_FIT_STEPS = [[false, ""], [false, "94"], [true, ""], [true, "94"], [false, "88"], [true, "88"]];
 
 function dcPlaceWords(sheet, toPage2) {
   const w = sheet.querySelector(".dc-sec-words");
@@ -182,18 +185,22 @@ function dcFit() {
     const fits = () => [...sheet.querySelectorAll(":scope > .dc-page")]
       .every((p) => p.getBoundingClientRect().height <= limit);
     const hasPic = !!sheet.querySelector(".dc-sec-pic");
-    let step = null, picP3 = false;
+    let picP3 = false;
     sheet.dataset.pic = "";
-    outer:
-    for (const [toPage2, fit] of DC_FIT_STEPS) {
-      dcPlaceWords(sheet, toPage2);
-      sheet.dataset.fit = fit;
-      for (const [where, size] of hasPic ? DC_PIC_SPOTS : [["p2", ""]]) {
-        dcPlacePic(sheet, where);
-        sheet.dataset.pic = size;
-        if (fits()) { step = [toPage2, fit]; break outer; }
+    // 글 모양마다 그림 자리들을 넣어 보고 처음 맞는 글 모양을 돌려준다
+    const tryAll = (spots) => {
+      for (const [toPage2, fit] of DC_FIT_STEPS) {
+        dcPlaceWords(sheet, toPage2);
+        sheet.dataset.fit = fit;
+        for (const [where, size] of spots) {
+          dcPlacePic(sheet, where);
+          sheet.dataset.pic = size;
+          if (fits()) return [toPage2, fit];
+        }
       }
-    }
+      return null;
+    };
+    let step = hasPic ? tryAll(DC_PIC_KEEP) || tryAll(DC_PIC_SPARE) : tryAll([["p2", ""]]);
     if (!step && hasPic) {
       // 어느 모양으로도 안 들어가면 그림만 한 줄 그대로 3쪽에 둔다 — 글은 그림 없이 맞춘다
       sheet.dataset.pic = "";
@@ -213,7 +220,9 @@ function dcFit() {
     else if (step[1]) parts.push(`📏 인쇄 2쪽에 맞추려고 이 지문만 글씨를 ${step[1]}%로 줄였습니다.`);
     else if (step[0]) parts.push("📏 인쇄 2쪽에 맞추려고 주요 어휘를 2쪽 위로 옮겼습니다.");
     if (picP3) parts.push("🖼️ 4컷 그림은 자리가 모자라 3쪽에 넣었습니다 — 2쪽 안에 넣으려면 🎨 꾸미기의 글자 크기를 줄여 보세요.");
-    else if (sheet.dataset.pic) parts.push(`🖼️ 4컷 그림을 ${sheet.dataset.pic}% 크기로 줄여 넣었습니다.`);
+    else if (hasPic && !sheet.querySelector(".dc-page2 .dc-sec-pic")) {
+      parts.push(`🖼️ 2쪽에 자리가 모자라 4컷 그림을 1쪽에 넣었습니다${sheet.dataset.pic ? `(${sheet.dataset.pic}% 크기)` : ""} — 그림이 끊어 읽기보다 앞에 옵니다.`);
+    } else if (sheet.dataset.pic) parts.push(`🖼️ 4컷 그림을 ${sheet.dataset.pic}% 크기로 줄여 넣었습니다.`);
     note.textContent = parts.join(" ");
     note.hidden = !parts.length;
   });
