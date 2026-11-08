@@ -13776,7 +13776,9 @@ function openSaveDialog(tab) {
   saveDialogLeadEl.textContent = customLead || (tab === PASSAGE_TAB
     ? `지금 ${passageSaveFrom ? passageSaveFrom.label : "입력칸"}에 있는 지문만 저장합니다. ` +
       "나중에 \"📄 지문 저장함\"에서 그대로 되불러올 수 있습니다."
-    : "지문과 만든 결과를 함께 저장합니다. 나중에 \"📦 제작 자료 저장함\"에서 이 제목으로 다시 찾을 수 있습니다.");
+    : "지문과 만든 결과를 함께 저장합니다. 나중에 \"📦 제작 자료 저장함\"에서 이 제목으로 다시 찾을 수 있습니다.")
+    // 학원 모드에서 새로 저장하면 서버가 학원 공유 폴더에 바로 넣는다(save_item)
+    + (currentAcademy ? ` 학원 모드라 새로 저장하면 \"🏫 학원 공유 자료\"에 바로 들어가 학원 선생님 모두가 봅니다(덮어쓰기는 원래 공유 상태 그대로).` : "");
   // 지문 분석에 요약 이미지가 붙어 있으면, 그림도 함께 저장된다는 것을 알린다(용량을 차지한다).
   const warnEl = $("saveDialogWarn");
   if (warnEl) warnEl.hidden = !(tab === "analyze" && docHasInfographic());

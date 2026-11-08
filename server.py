@@ -17003,11 +17003,16 @@ def save_item(item_id, user_id, tab, title, payload, acad=None):
         prune_item_images(item_id, {r["key"] for r in (payload.get("images") or [])}
                           if isinstance(payload, dict) else set())
         return item_id
-    ref = DB.collection("saved_items").document()
-    ref.set({
+    doc = {
         "user_id": user_id, "tab": tab, "title": title, "payload": payload,
         "created_at": now, "updated_at": now,
-    })
+    }
+    # 학원 모드에서 새로 저장한 것은 곧바로 학원 공유 폴더에 넣는다(2026-11-09 사용자) — 덮어쓰기는 위에서
+    # 원래 공유 상태를 그대로 두므로, 개인 자료를 학원 모드에서 고쳐 덮어써도 저절로 공유되지 않는다
+    if acad and acad.get("aid"):
+        doc.update({"shared_academy": acad["aid"], "shared_by": acad.get("member_name", ""), "shared_at": now})
+    ref = DB.collection("saved_items").document()
+    ref.set(doc)
     return ref.id
 
 
