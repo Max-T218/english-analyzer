@@ -1103,7 +1103,9 @@ function syncAcademyBar(info) {
   $("deleteAccountBtn").hidden = !!a;
   $("openRechargeBtn").hidden = !!a && !a.isDirector;
   $("academyMoveBtn").hidden = !a;
+  $("academySharedBtn").hidden = !a;
 }
+$("academySharedBtn").addEventListener("click", () => openSavedList("shared"));
 $("academyLinks").addEventListener("click", async (e) => {
   const b = e.target.closest(".ac-inv-ans");
   if (!b) return;
@@ -14050,6 +14052,16 @@ const LIBRARY = {
     empty: "아직 저장한 제작 자료가 없습니다. 자료를 만든 뒤 각 탭의 “💾 사이트 저장”을 눌러 보세요.",
     match: (item) => item.tab !== PASSAGE_TAB,
   },
+  /* 학원 모드 사이드바의 [🏫 학원 공유 자료] — 지문·제작 자료 가리지 않고 학원 공유 폴더에 든 것만.
+     저장본은 그대로 saved_items 한 곳이고(shared_academy 표시) 보는 창만 하나 더 둔 것이다 */
+  shared: {
+    title: () => `🏫 ${currentAcademy ? `${currentAcademy.name} ` : ""}학원 공유 자료`,
+    lead: "학원 선생님들이 공유 폴더에 넣은 자료입니다. [불러오기]로 열어 쓰고, 고친 뒤 [💾 사이트 저장]에서 덮어쓰면 원본이 바뀌어 " +
+          "학원 선생님 모두에게 그대로 보입니다. 지우기는 만든 선생님과 원장만 됩니다. " +
+          "내 자료를 여기에 넣으려면 지문 저장함·제작 자료 저장함에서 그 자료 옆의 [🏫 공유]를 누르세요.",
+    empty: "아직 공유된 자료가 없습니다. 지문 저장함이나 제작 자료 저장함에서 자료 옆의 [🏫 공유]를 누르면 여기에 나옵니다.",
+    match: (item) => !!item.shared,
+  },
 };
 
 // 목록은 열 때마다 통째로 받아 두고, 어느 저장함인지는 화면에서만 걸러 낸다
@@ -14180,12 +14192,14 @@ function renderSavedList() {
 
   const multi = kinds.length > 1;
   const nShared = all.filter((it) => it.shared).length;
-  if (!currentAcademy) savedSharedOnly = false;
-  savedKindsEl.hidden = !multi && !currentAcademy;
-  savedListToolsEl.hidden = all.length < 2 && !currentAcademy;   // 한 개뿐이면 찾을 것도 없다
-  if (multi || currentAcademy) {
+  // 공유 자료 창은 이미 공유된 것만이라 [🏫 학원 공유 폴더] 거르개가 필요 없다
+  const sharedChip = !!currentAcademy && openLibrary !== "shared";
+  if (!sharedChip) savedSharedOnly = false;
+  savedKindsEl.hidden = !multi && !sharedChip;
+  savedListToolsEl.hidden = all.length < 2 && !sharedChip;   // 한 개뿐이면 찾을 것도 없다
+  if (multi || sharedChip) {
     savedKindsEl.innerHTML =
-      (currentAcademy ? `<button type="button" class="saved-kind saved-kind-shared${savedSharedOnly ? " on" : ""}" data-shared="1" title="학원 선생님이 함께 쓰는 자료만 봅니다">🏫 학원 공유 폴더 <b>${nShared}</b></button>` : "") +
+      (sharedChip ? `<button type="button" class="saved-kind saved-kind-shared${savedSharedOnly ? " on" : ""}" data-shared="1" title="학원 선생님이 함께 쓰는 자료만 봅니다">🏫 학원 공유 폴더 <b>${nShared}</b></button>` : "") +
       `<button type="button" class="saved-kind${savedKindFilter ? "" : " on"}" data-kind="">전체 <b>${all.length}</b></button>` +
       kinds
         .map(
