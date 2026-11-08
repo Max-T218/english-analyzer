@@ -3239,6 +3239,15 @@
         <button type="button" class="btn small" id="savedPickLoad" disabled>선택한 저장본 불러오기</button>
       </div>
     </div>
+    <!-- 학원 모드 — [☑ 여러 개 공유]를 누르면 체크한 자료를 한꺼번에 학원 공유 폴더에 넣는다(app.js savedShareMode) -->
+    <div class="saved-pick-bar" id="savedShareBar" hidden>
+      <div class="saved-pick-info" id="savedShareInfo"></div>
+      <div class="saved-pick-btns">
+        <button type="button" class="btn ghost small" id="savedShareVisible">보이는 것 모두 선택</button>
+        <button type="button" class="btn ghost small" id="savedShareCancel">그만두기</button>
+        <button type="button" class="btn small" id="savedShareGo" disabled>선택한 자료 공유</button>
+      </div>
+    </div>
     <div class="print-guide-actions">
       <button type="button" class="btn ghost" id="savedListClose">닫기</button>
     </div>

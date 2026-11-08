@@ -13963,9 +13963,15 @@ function savedItemRowHtml(item) {
   const label = TAB_LABELS[item.tab] || item.tab;
   const date = savedDateText(item.updated_at) + (typeof item.n === "number" ? ` · 지문 ${item.n}개` : "");
   // 지문 저장함에서만 체크박스를 둔다 — 체크한 차례가 번호로 보이고, 그 차례대로 입력칸에 들어간다
-  const at = openLibrary === "passage" ? savedPick.indexOf(item.id) : -2;
-  const pick = at === -2 ? "" :
+  const at = openLibrary === "passage" && !savedShareMode ? savedPick.indexOf(item.id) : -2;
+  let pick = at === -2 ? "" :
     `<label class="saved-pick" title="체크한 차례대로 입력칸에 들어갑니다."><input type="checkbox" class="saved-pick-cb"${at >= 0 ? " checked" : ""}><span class="saved-pick-no">${at >= 0 ? at + 1 : ""}</span></label>`;
+  // 여러 개 공유 — 아직 어디에도 공유하지 않은 내 자료에만 체크박스를 둔다
+  if (savedShareMode) {
+    pick = !item.shared && !item.sharedElsewhere
+      ? `<label class="saved-pick" title="학원 공유 폴더에 넣을 자료를 고릅니다."><input type="checkbox" class="saved-share-cb"${savedSharePick.has(item.id) ? " checked" : ""}></label>`
+      : `<span class="saved-pick" aria-hidden="true"></span>`;
+  }
   // 학원 공유 폴더(학원 모드) — 남이 넣은 것은 고쳐 저장할 수 있지만 지우기는 만든 사람과 원장만(서버가 다시 본다)
   const ac = currentAcademy;
   const mine = !item.shared || item.mine;
@@ -14108,9 +14114,31 @@ function savedItemMatches(item) {
 /* 선택 바 — 체크한 개수·지문 합계·입력칸 상한을 보여 주고 [불러오기]를 켠다.
    상한은 공용 지문칸 40개, 시험지 탭의 시험 범위 칸은 100개다. 넘으면 빨갛게 알린다(넘어도 막지는 않는다 —
    뒤쪽이 잘린다는 안내가 불러온 뒤에 따로 나온다). */
+/* 학원 모드 — 여러 자료를 체크해 한꺼번에 학원 공유 폴더에 넣는다(2026-11-09 사용자). 서버는 한 건씩인
+   /api/saved/share 그대로이고 화면이 4건씩 나눠 부른다. 지문 저장함의 '불러오기 체크'와 겹치지 않게
+   [☑ 여러 개 공유]를 켠 동안에는 그 체크를 감춘다. */
+let savedShareMode = false;
+const savedSharePick = new Set();
+function updateShareBar() {
+  $("savedShareBar").hidden = !savedShareMode;
+  if (!savedShareMode) return;
+  const n = savedSharePick.size;
+  $("savedShareInfo").textContent = n
+    ? `${n}개 선택 — 원본 그대로 공유되어 학원 선생님 누구나 보고 고쳐 저장할 수 있습니다(지우기는 나와 원장만).`
+    : "공유할 자료 앞의 체크박스를 누르세요. 이미 공유한 자료에는 체크박스가 없습니다.";
+  $("savedShareGo").disabled = !n;
+  $("savedShareGo").textContent = n ? `선택한 ${n}개 공유` : "선택한 자료 공유";
+}
+function setSavedShareMode(on) {
+  savedShareMode = !!on;
+  savedSharePick.clear();
+  renderSavedList();
+}
+
 function updatePickBar() {
+  updateShareBar();
   const bar = $("savedPickBar");
-  const on = openLibrary === "passage";
+  const on = openLibrary === "passage" && !savedShareMode;
   bar.hidden = !on;
   if (!on) return;
   const picked = savedPick.map((id) => savedItemsCache.find((it) => it.id === id)).filter(Boolean);
@@ -14194,12 +14222,13 @@ function renderSavedList() {
   const nShared = all.filter((it) => it.shared).length;
   // 공유 자료 창은 이미 공유된 것만이라 [🏫 학원 공유 폴더] 거르개가 필요 없다
   const sharedChip = !!currentAcademy && openLibrary !== "shared";
-  if (!sharedChip) savedSharedOnly = false;
+  if (!sharedChip) { savedSharedOnly = false; savedShareMode = false; }
   savedKindsEl.hidden = !multi && !sharedChip;
   savedListToolsEl.hidden = all.length < 2 && !sharedChip;   // 한 개뿐이면 찾을 것도 없다
   if (multi || sharedChip) {
     savedKindsEl.innerHTML =
-      (sharedChip ? `<button type="button" class="saved-kind saved-kind-shared${savedSharedOnly ? " on" : ""}" data-shared="1" title="학원 선생님이 함께 쓰는 자료만 봅니다">🏫 학원 공유 폴더 <b>${nShared}</b></button>` : "") +
+      (sharedChip ? `<button type="button" class="saved-kind saved-kind-shared${savedSharedOnly ? " on" : ""}" data-shared="1" title="학원 선생님이 함께 쓰는 자료만 봅니다">🏫 학원 공유 폴더 <b>${nShared}</b></button>` +
+        `<button type="button" class="saved-kind saved-kind-shared${savedShareMode ? " on" : ""}" data-sharemode="1" title="여러 자료를 체크해 한꺼번에 학원 공유 폴더에 넣습니다">☑ 여러 개 공유</button>` : "") +
       `<button type="button" class="saved-kind${savedKindFilter ? "" : " on"}" data-kind="">전체 <b>${all.length}</b></button>` +
       kinds
         .map(
@@ -14269,6 +14298,8 @@ async function openSavedList(kind, target, onlyTab) {
   savedKindFilter = "";
   savedSearchText = "";
   savedPick = [];
+  savedShareMode = false;
+  savedSharePick.clear();
   if (savedSearchEl) savedSearchEl.value = "";
   savedListCountEl.textContent = "";
   savedListToolsEl.hidden = true;
@@ -14776,9 +14807,51 @@ savedSearchEl.addEventListener("input", () => {
 savedKindsEl.addEventListener("click", (e) => {
   const btn = e.target.closest(".saved-kind");
   if (!btn) return;
+  if (btn.dataset.sharemode) { setSavedShareMode(!savedShareMode); return; }
   if (btn.dataset.shared) savedSharedOnly = !savedSharedOnly;
   else savedKindFilter = btn.dataset.kind || "";
   renderSavedList();
+});
+
+savedListBodyEl.addEventListener("change", (e) => {
+  const cb = e.target.closest(".saved-share-cb");
+  if (!cb) return;
+  const id = cb.closest(".saved-list-item").dataset.id;
+  if (cb.checked) savedSharePick.add(id); else savedSharePick.delete(id);
+  updateShareBar();
+});
+$("savedShareVisible").addEventListener("click", () => {
+  savedListBodyEl.querySelectorAll(".saved-share-cb").forEach((cb) => {
+    cb.checked = true;
+    savedSharePick.add(cb.closest(".saved-list-item").dataset.id);
+  });
+  updateShareBar();
+});
+$("savedShareCancel").addEventListener("click", () => setSavedShareMode(false));
+$("savedShareGo").addEventListener("click", async () => {
+  const ids = [...savedSharePick];
+  if (!ids.length) return;
+  if (!confirm(`고른 자료 ${ids.length}개를 학원 공유 폴더에 넣습니다.\n\n원본 그대로 공유되어 학원 선생님 누구나 보고 고쳐 저장할 수 있습니다(지우기는 나와 원장만). 계속할까요?`)) return;
+  const go = $("savedShareGo");
+  go.disabled = true;
+  const failed = [];
+  let done = 0;
+  for (let i = 0; i < ids.length; i += 4) {
+    await Promise.all(ids.slice(i, i + 4).map(async (id) => {
+      try {
+        await postJson("/api/saved/share", { id, share: true }, "공유하지 못했습니다.");
+        const cached = savedItemsCache.find((it) => it.id === id);
+        if (cached) Object.assign(cached, { shared: true, mine: true });
+      } catch (err) {
+        const it = savedItemsCache.find((x) => x.id === id);
+        failed.push(`· ${(it && it.title) || "제목 없음"} — ${err.message || "공유하지 못했습니다."}`);
+      }
+      done += 1;
+      go.textContent = `공유하는 중… ${done}/${ids.length}`;
+    }));
+  }
+  setSavedShareMode(false);
+  if (failed.length) alert(`${ids.length - failed.length}개를 공유했고 ${failed.length}개는 못 했습니다.\n\n${failed.join("\n")}`);
 });
 
 passageLibraryBtn.addEventListener("click", () => {
