@@ -1112,7 +1112,7 @@ class _UsageTally:
     def __init__(self, user_id, feature):
         self.user_id = user_id
         self.feature = feature
-        # 학원 계정이면 학원(user_id) 안에서 누가 쓴 것인지 — _session_user가 정하고 _handle_post가 옮겨 담는다
+        # 학원 모드 — 값은 원장(user_id)이 내지만 실제로 쓴 선생님(member_id/이름)을 함께 남긴다
         self.member_id = ""
         self.member_name = ""
         self.lock = threading.Lock()
@@ -1159,7 +1159,7 @@ class _UsageTally:
         try:
             DB.collection(USAGE_RECORDS).document().set({
                 "user_id": self.user_id,
-                "member_id": self.member_id,   # 학원 계정만 — 학원 관리 화면의 '이번 달 쓴 포인트'
+                "member_id": self.member_id,   # 학원 모드에서 원장 포인트를 쓴 선생님(아니면 빈칸)
                 "feature": self.feature,
                 "created_at": now.isoformat(),
                 "date_kst": kst.strftime("%Y-%m-%d %H:%M"),
@@ -13946,8 +13946,7 @@ def delete_user_account(user_id, by_admin=False):
         delete_assignment(user_id, doc.id)
     for doc in DB.collection("students").where("teacher_id", "==", user_id).stream():
         delete_student(user_id, doc.id)
-    # 학원 관리자로 이어 붙어 있던 학원에서는 떼어 낸다 — 학원 자료는 학원 것이라 남는다
-    unlink_user_from_academies(user_id)
+    leave_all_academies(user_id)   # 들어가 있던 학원에서 빠진다(학원 반·공유 자료는 학원에 남는다)
     for sess in DB.collection("sessions").where("user_id", "==", user_id).stream():
         sess.reference.delete()
     DB.collection("users").document(user_id).delete()
@@ -15243,19 +15242,37 @@ def _account_payload(user_id):
         "examApproved": EXAM_OPEN_TO_ALL or bool(info.get("exam_approved")),
         # 로그인마다 함께 내려준다 — 비어 있으면 화면이 아무것도 띄우지 않는다
         "updates": _unseen_updates(info.get("last_seen_changelog")),
-        # 이어 붙은 학원(학원 관리자로 지정된 기존 회원) — 화면의 [학원으로 전환]
-        "academies": _linked_academies_safe(user_id, linked_academies) if info.get("provider") != "academy" else [],
-        # 이 회원 이메일로 온 학원 초대 — 화면의 [수락]/[거절]
-        "invites": _linked_academies_safe(user_id, invites_for_user) if info.get("provider") != "academy" else [],
+        # 들어가 있는 학원([🏫 ○○학원 열기])과 이메일로 온 학원 초대([수락]/[거절])
+        "academies": _safe_list(lambda: my_academies(user_id)),
+        "invites": _safe_list(lambda: invites_for_user(user_id, info)),
     }
 
 
-def _linked_academies_safe(user_id, fn):
+def _safe_list(fn):
+    """계정 정보에 곁들이는 목록 — 못 읽어도 로그인은 되어야 한다."""
     try:
-        return fn(user_id)
+        return fn()
     except Exception:
-        traceback.print_exc()   # 곁들이라 못 읽어도 로그인은 된다
+        traceback.print_exc()
         return []
+
+
+def academy_me(handler, user_id):
+    """학원 모드 /api/me — 계정 정보에 학원 칸을 더한다. 잔액은 원장 포인트(내 월 한도까지)로 보여 준다."""
+    out = _account_payload(user_id)
+    ctx = handler._acad
+    director = ctx.get("director") or ""
+    dkrw = get_user_krw(director) if director else 0
+    left = academy_limit_left(ctx, user_id)
+    out["academy"] = {
+        "name": ctx["name"], "slug": ctx["slug"], "role": ctx["role"],
+        "roleLabel": ACADEMY_ROLES.get(ctx["role"], "강사"), "manager": bool(ctx.get("manager")),
+        "isDirector": director == user_id, "directorKrw": dkrw, "limit": ctx.get("limit"),
+        "used": academy_spent(ctx["aid"], user_id), "limitLeft": left,
+    }
+    out["krwRemaining"] = dkrw if left is None else min(dkrw, left)
+    out["classroomApproved"] = True   # 학원 반은 학원 몫 문서가 허용돼 있다
+    return out
 
 
 def _split_balance(d):
@@ -15701,7 +15718,7 @@ def charge_krw(user_id, amount, label="사용", kind="use"):
         return
     _require_db()
     tally = _usage_tally()
-    # 학원 계정 — 잔액은 학원 하나라 이용 내역에 누가 썼는지를 이름으로 붙인다(원장이 본다)
+    # 학원 모드 — 원장 잔액에서 나가므로 이용 내역 항목 뒤에 실제로 쓴 선생님 이름을 붙인다(원장이 본다)
     if tally and tally.user_id == user_id and tally.member_name:
         label = f"{label} · {tally.member_name}"
     user_ref = DB.collection("users").document(user_id)
@@ -15782,25 +15799,18 @@ def add_krw(user_id, amount, kind, label):
     return _apply(DB.transaction())
 
 
-def create_payment_intent(user_id, amount, paid_by=None):
+def create_payment_intent(user_id, amount):
     """결제창을 열기 '전에' 부른다. 아직 포인트를 주지 않는다 — 결제가 실제로
     끝난 뒤 confirm_payment_intent가 포트원 서버에 직접 물어보고 나서야 지급한다.
-    브라우저가 보고하는 성공 여부는 위조될 수 있으므로 그 자체를 근거로 쓰지 않는다.
-
-    paid_by: 학원 계정이 결제할 때 결제한 사람({member_id, name}). 잔액은 학원에 들어가지만
-    환불은 실제로 결제한 사람에게 해야 하므로 그 근거를 남긴다."""
+    브라우저가 보고하는 성공 여부는 위조될 수 있으므로 그 자체를 근거로 쓰지 않는다."""
     _require_db()
     payment_id = f"pay-{secrets.token_hex(16)}"
-    row = {
+    DB.collection("payment_intents").document(payment_id).set({
         "user_id": user_id,
         "amount": int(amount),
         "status": "pending",
         "created_at": _now_iso(),
-    }
-    if paid_by:
-        row["paid_by_member"] = paid_by.get("member_id", "")
-        row["paid_by_name"] = paid_by.get("name", "")
-    DB.collection("payment_intents").document(payment_id).set(row)
+    })
     return payment_id
 
 
@@ -16093,10 +16103,11 @@ def _parse_cookies(header):
 def _session_user(handler):
     """세션 쿠키로 로그인한 사용자(구글 sub)를 찾는다. 없거나 만료됐으면 None.
 
-    학원 계정(원장·강사)이면 돌려주는 값은 **학원의 회원 id**(academy:…)다 — 저장함·포인트·반·학원 마크가
-    모두 이 id에 붙어 있어 학원 안에서 저절로 함께 쓰인다. 누가 로그인했는지는 handler._acad에 둔다.
-    첫 로그인에서 비밀번호를 바꾸고 동의하기 전에는 ACADEMY_PENDING_PATHS 밖의 요청을 로그인 안 된 것으로 본다."""
+    학원 모드(화면이 학원 링크로 열려 요청마다 X-Academy 머리에 학원 주소를 싣는다)면 handler._acad에
+    학원 정보를 둔다. 그때 학생 관리 요청(ACADEMY_CLASS_PREFIXES)은 **학원 몫 id**(academy:<학원id>)를 돌려줘
+    학원 반·학생·시험을 학원 선생님 모두가 함께 쓰게 한다. 그 밖의 요청(저장함·자료 만들기)은 본인 id 그대로다."""
     handler._acad = None
+    handler._uid = None
     if DB is None:
         return None
     token = _parse_cookies(handler.headers.get("Cookie", "")).get("session")
@@ -16116,12 +16127,16 @@ def _session_user(handler):
         return None
     user_id = sess.get("user_id")
     if sess.get("member_id"):
-        if sess.get("must_change") and handler.path.split("?", 1)[0] not in ACADEMY_PENDING_PATHS:
-            return None
-        handler._acad = {"member_id": sess["member_id"], "name": sess.get("member_name", ""),
-                         "academy_id": sess.get("academy_id", ""), "must_change": bool(sess.get("must_change")),
-                         "back": bool(sess.get("back_user"))}
+        # 2026-11-08 하루 배포됐던 '학원 전용 아이디' 판의 로그인 — 그 방식은 없앴으므로 끊는다
+        ref.delete()
+        return None
     _touch_active(user_id)
+    handler._uid = user_id
+    slug = (handler.headers.get("X-Academy") or "").strip().lower()
+    if slug:
+        handler._acad = _academy_ctx(user_id, slug)
+        if handler._acad and handler.path.split("?", 1)[0].startswith(ACADEMY_CLASS_PREFIXES):
+            return _academy_uid(handler._acad["aid"])
     return user_id
 
 
@@ -16141,124 +16156,102 @@ def _touch_active(user_id):
     _active_seen[user_id] = today
 
 
-# --- 학원 계정 (2026-11-08 사용자) -------------------------------------------
-# 사이트 관리자가 학원을 열고 학원 관리자 계정을 만들어 주면, 학원 관리자가 원장·강사 계정을 만든다.
-# 학원 하나 = users 문서 하나(academy:<학원id>, 이메일 없음)이고, 원장·강사는 그 회원으로 일한다 — 그래서
-# 저장함·포인트·반/학생·학원 마크·레벨테스트가 따로 손대지 않아도 학원 안에서 함께 쓰이고, 강사 계정을
-# 지워도 만든 것은 학원에 남는다(사용자: 학원이 준 아이디로 입력한 것은 모두 학원 것).
-# 계정은 학생처럼 아이디+비밀번호이지만 포인트와 학생 정보를 다루므로 더 단단하게 둔다: 비밀번호 8자 이상·
-# 대소문자 구분, 첫 로그인 때 반드시 새 비밀번호로 바꾸고 약관·개인정보 동의를 받는다(그 전에는
-# ACADEMY_PENDING_PATHS만 통한다). 충전은 원장·학원 관리자만, 계정 삭제는 학원 관리자만 한다.
-# 개인 계정의 '학생 관리'(반 공유 포함)는 그대로 두고 이 기능과 섞지 않는다.
+# --- 학원 (2026-11-08 사용자) -------------------------------------------------
+# 아이디는 하나다. 같은 계정으로 사이트를 그냥 열면 '개인 모드'(내 포인트), 학원 링크(/academy?k=<주소>)로 열면
+# '학원 모드'다. 학원 모드에서는
+#   · 자료를 만들면 **원장 포인트**가 나간다 — 원장이 선생님마다 정한 월 한도(academy_spend로 센다) 안에서만.
+#   · 저장함은 내 것 그대로 다 보이고, 학원 **공유 폴더**에 넣은 자료(원본)는 학원 선생님 모두가 보고 고쳐 저장한다.
+#     지우기는 원장과 만든 사람만(saved_items의 shared_academy).
+#   · 학생 관리는 학원 반을 함께 쓴다 — 학원 몫 id(users/academy:<학원id>, 이메일 없는 문서)가 반·학생·시험의 주인이다.
+#     개인 모드에서 만든 반은 [학원으로 옮기기]로 가져온다(move_class_to_academy).
+# 사이트 관리자가 회원 목록에서 [학원 열기]로 기존 회원을 학원 관리자(기본 원장 겸임)로 정하면, 학원 관리자가 다른
+# 회원을 이메일로 초대한다(상대가 로그인해 수락). 화면은 fetch에 X-Academy 머리를 실어 보내고, 서버는 요청마다
+# 회원 자격을 확인한다(_academy_ctx — 30초 캐시).
 ACADEMIES = "academies"
-ACADEMY_MEMBERS = "academy_members"
-ACADEMY_LOGIN_IDS = "academy_login_ids"
-ACADEMY_PW_MIN = 8
-ACADEMY_PW_MAX = 64
+ACADEMY_MEMBERS = "academy_members"     # 문서 id {학원}_{회원}
+ACADEMY_INVITES = "academy_invites"     # 문서 id {학원}_{이메일 해시}
+ACADEMY_SPEND = "academy_spend"         # 문서 id {학원}_{회원}_{YYYY-MM} — 원장 포인트를 쓴 양(월 한도)
 ACADEMY_ROLES = {"director": "원장", "teacher": "강사"}
-ACADEMY_MAX_MEMBERS = 100
 ACADEMY_NAME_MAX = 40
-# 첫 로그인에서 비밀번호를 바꾸기 전에도 통하는 길 — 계정 정보 보기·비밀번호 바꾸기·로그아웃뿐
-ACADEMY_PENDING_PATHS = ("/api/me", "/api/academy/first-password", "/api/logout")
+ACADEMY_MAX_MEMBERS = 100
+ACADEMY_INVITE_DAYS = 30
+ACADEMY_LIMIT_MAX = 10_000_000
+# 학원 모드에서 학원 몫 id로 처리하는 요청(학생 관리) — /api/student/(학생 본인)는 해당 없다
+ACADEMY_CLASS_PREFIXES = ("/api/classes", "/api/students", "/api/vocab-tests", "/api/quiz-tests")
+_ACAD_CACHE = {}          # (회원 id, 학원 주소) → (만료 시각, 정보 또는 None)
+_ACAD_CACHE_TTL = 30
 
 
 def _academy_uid(academy_id):
     return "academy:" + academy_id
 
 
-def _check_academy_pw(password, login_id=""):
-    if not isinstance(password, str) or len(password) < ACADEMY_PW_MIN:
-        raise ValueError(f"비밀번호는 {ACADEMY_PW_MIN}자 이상으로 정해 주세요.")
-    if len(password) > ACADEMY_PW_MAX:
-        raise ValueError(f"비밀번호는 {ACADEMY_PW_MAX}자 이하로 정해 주세요.")
-    if login_id and password.lower() == login_id.lower():
-        raise ValueError("비밀번호를 아이디와 다르게 정해 주세요.")
+def _academy_cache_clear():
+    _ACAD_CACHE.clear()
 
 
-def _academy_claim_login_id(login_id, member_id):
-    from google.api_core.exceptions import AlreadyExists
-    try:
-        DB.collection(ACADEMY_LOGIN_IDS).document(login_id).create({"member_id": member_id})
-    except AlreadyExists:
-        raise ValueError("이미 사용 중인 아이디입니다. 다른 아이디로 정해 주세요.")
+def _kst_month():
+    return datetime.now(timezone.utc).astimezone(KST).strftime("%Y-%m")
 
 
-def _academy_release_login_id(login_id, member_id):
-    if not login_id:
+def _academy_by_slug(slug):
+    for doc in DB.collection(ACADEMIES).where("slug", "==", slug).limit(1).stream():
+        return doc.id, doc.to_dict() or {}
+    return None, None
+
+
+def _academy_ctx(user_id, slug):
+    """이 회원이 이 학원의 선생님이면 학원 정보, 아니면 None. 요청마다 부르므로 잠깐 기억해 둔다."""
+    key = (user_id, slug)
+    hit = _ACAD_CACHE.get(key)
+    now = time.monotonic()
+    if hit and hit[0] > now:
+        return hit[1]
+    ctx = None
+    if re.fullmatch(r"[a-z0-9]{4,16}", slug or ""):
+        aid, a = _academy_by_slug(slug)
+        if aid:
+            m = DB.collection(ACADEMY_MEMBERS).document(f"{aid}_{user_id}").get().to_dict()
+            if m:
+                ctx = {"aid": aid, "slug": slug, "name": a.get("name", ""),
+                       "director": a.get("director_uid", ""), "role": m.get("role", "teacher"),
+                       "manager": bool(m.get("manager")), "limit": m.get("limit"),
+                       "member_name": m.get("name", "")}
+    _ACAD_CACHE[key] = (now + _ACAD_CACHE_TTL, ctx)
+    return ctx
+
+
+def _payer_for(user_id):
+    """값을 낼 회원 — 학원 몫 id(학원 반에서 학생이 보충 학습을 만들 때 등)면 그 학원의 원장."""
+    if isinstance(user_id, str) and user_id.startswith("academy:"):
+        a = DB.collection(ACADEMIES).document(user_id[len("academy:"):]).get().to_dict() or {}
+        return a.get("director_uid") or user_id
+    return user_id
+
+
+def academy_spent(aid, user_id, month=None):
+    d = DB.collection(ACADEMY_SPEND).document(f"{aid}_{user_id}_{month or _kst_month()}").get().to_dict() or {}
+    return int(d.get("points") or 0)
+
+
+def academy_add_spend(aid, user_id, amount):
+    if amount <= 0:
         return
-    ref = DB.collection(ACADEMY_LOGIN_IDS).document(login_id)
-    snap = ref.get()
-    if snap.exists and (snap.to_dict() or {}).get("member_id") == member_id:
-        ref.delete()
+    month = _kst_month()
+    DB.collection(ACADEMY_SPEND).document(f"{aid}_{user_id}_{month}").set(
+        {"academy_id": aid, "user_id": user_id, "month": month,
+         "points": firestore.Increment(int(amount)), "updated_at": _now_iso()}, merge=True)
 
 
-def _academy_drop_sessions(member_id):
-    for doc in DB.collection("sessions").where("member_id", "==", member_id).select(["member_id"]).stream():
-        doc.reference.delete()
+def academy_limit_left(ctx, user_id):
+    """이번 달 원장 포인트를 더 쓸 수 있는 양(한도가 없으면 None)."""
+    lim = ctx.get("limit")
+    if lim is None or ctx.get("director") == user_id:
+        return None   # 원장 본인은 한도가 없다
+    return max(0, int(lim) - academy_spent(ctx["aid"], user_id))
 
 
-def _academy_doc(academy_id):
-    snap = DB.collection(ACADEMIES).document(academy_id or "_").get()
-    d = snap.to_dict() if snap.exists else None
-    if not d:
-        raise ValueError("학원을 찾을 수 없습니다.")
-    return d
-
-
-def _academy_members(academy_id):
-    return [(doc.id, doc.to_dict() or {})
-            for doc in DB.collection(ACADEMY_MEMBERS).where("academy_id", "==", academy_id).stream()]
-
-
-def _academy_member_row(mid, d, usage=None):
-    return {
-        "id": mid, "name": d.get("name", ""), "loginId": d.get("login_id", ""),
-        # 기존 회원 계정을 이어 붙인 학원 계정(방법 B) — 아이디·비밀번호가 없고 평소 로그인으로 들어온다
-        "linked": bool(d.get("linked_user")), "email": d.get("link_email", ""),
-        "role": d.get("role", "teacher"), "roleLabel": ACADEMY_ROLES.get(d.get("role"), "강사"),
-        "manager": bool(d.get("manager")), "mustChange": bool(d.get("must_change")),
-        "createdAt": d.get("created_at", ""), "lastLogin": _kst_date(d.get("last_login")) or "",
-        **({"monthPoints": int(usage.get(mid, 0))} if usage is not None else {}),
-    }
-
-
-def _academy_new_member(academy_id, name, login_id, password, role, manager, by):
-    """학원에 계정 하나를 만든다. 처음 비밀번호는 만든 사람이 알고 있으므로 must_change로 시작한다."""
-    name = _norm_text(name)[:30]
-    if not name:
-        raise ValueError("이름을 입력하세요.")
-    login_id = _norm_login_id(login_id)
-    _check_login_id(login_id)
-    _check_academy_pw(password, login_id)
-    role = role if role in ACADEMY_ROLES else "teacher"
-    members = _academy_members(academy_id)
-    if len(members) >= ACADEMY_MAX_MEMBERS:
-        raise ValueError(f"학원 계정은 {ACADEMY_MAX_MEMBERS}개까지 만들 수 있습니다.")
-    ref = DB.collection(ACADEMY_MEMBERS).document()
-    _academy_claim_login_id(login_id, ref.id)
-    salt, digest = _hash_password(password)
-    try:
-        ref.set({
-            "academy_id": academy_id, "name": name, "login_id": login_id,
-            "pw_salt": salt, "pw_hash": digest, "role": role, "manager": bool(manager),
-            "must_change": True, "created_at": _now_iso(), "created_by": by,
-        })
-    except Exception:
-        _academy_release_login_id(login_id, ref.id)
-        raise
-    _academy_one_director(members, role)
-    return ref.id
-
-
-def _academy_one_director(members, role, keep=None):
-    if role == "director":   # 원장은 한 명 — 새 원장을 정하면 이전 원장은 강사가 된다
-        for mid, d in members:
-            if mid != keep and d.get("role") == "director":
-                DB.collection(ACADEMY_MEMBERS).document(mid).update({"role": "teacher"})
-
-
-def _find_user_by_email(email):
-    """기존 회원(이메일 가입·구글 가입)을 이메일로 찾는다 → (회원 id, 문서). 학원 회원 문서는 이메일이 없어 걸리지 않는다."""
+def _user_by_email(email):
     email = (email or "").strip().lower()
     if not _EMAIL_RE.match(email):
         raise ValueError("회원 이메일을 정확히 입력하세요.")
@@ -16270,60 +16263,71 @@ def _find_user_by_email(email):
     raise ValueError("그 이메일로 가입한 회원이 없습니다.")
 
 
-def _academy_link_member(academy_id, email, role, manager, by):
-    """기존 회원 계정을 학원 계정으로 이어 붙인다(2026-11-08 사용자 — 방법 B). 이 사람은 평소 쓰던 이메일·구글
-    로그인 그대로 들어와 [학원으로 전환]으로 학원 작업 공간에 넘어간다. 개인 자료·잔액은 개인 계정에 그대로 있다."""
-    uid, u = _find_user_by_email(email)
-    if u.get("provider") == "academy":
-        raise ValueError("학원 회원 문서는 이어 붙일 수 없습니다.")
-    members = _academy_members(academy_id)
-    if any(d.get("linked_user") == uid for _mid, d in members):
-        raise ValueError("이미 이 학원에 들어와 있는 회원입니다.")
-    if len(members) >= ACADEMY_MAX_MEMBERS:
-        raise ValueError(f"학원 계정은 {ACADEMY_MAX_MEMBERS}개까지 만들 수 있습니다.")
-    role = role if role in ACADEMY_ROLES else "teacher"
-    ref = DB.collection(ACADEMY_MEMBERS).document()
-    ref.set({
-        "academy_id": academy_id, "name": (_norm_text(u.get("name")) or u.get("email", ""))[:30],
-        "linked_user": uid, "link_email": (u.get("email") or "").strip().lower(),
-        "role": role, "manager": bool(manager), "must_change": False,
-        "created_at": _now_iso(), "created_by": by,
-    })
-    _academy_one_director(members, role)
-    return ref.id
+def _academy_members(aid):
+    return [(doc.id, doc.to_dict() or {})
+            for doc in DB.collection(ACADEMY_MEMBERS).where("academy_id", "==", aid).stream()]
 
 
-def admin_create_academy(name, mgr_name, mgr_login_id, mgr_password, mgr_director=True, link_email=""):
-    """사이트 관리자가 학원을 연다 — 학원 문서 + 학원 회원(이메일 없는 users 문서) + 첫 학원 관리자 계정.
-    link_email을 주면 새 아이디를 만들지 않고 그 기존 회원을 학원 관리자로 이어 붙인다."""
+def _academy_add_member(aid, user_id, u, role, manager, by):
+    ref = DB.collection(ACADEMY_MEMBERS).document(f"{aid}_{user_id}")
+    if ref.get().exists:
+        raise ValueError("이미 이 학원에 들어와 있는 선생님입니다.")
+    if len(_academy_members(aid)) >= ACADEMY_MAX_MEMBERS:
+        raise ValueError(f"학원 선생님은 {ACADEMY_MAX_MEMBERS}명까지입니다.")
+    ref.set({"academy_id": aid, "user_id": user_id, "email": (u.get("email") or "").strip().lower(),
+             "name": (_norm_text(u.get("name")) or u.get("email", ""))[:30],
+             "role": role if role in ACADEMY_ROLES else "teacher", "manager": bool(manager),
+             "limit": None, "created_at": _now_iso(), "created_by": by})
+    if role == "director":
+        _academy_set_director(aid, user_id)
+    _academy_cache_clear()
+
+
+def _academy_set_director(aid, user_id):
+    """원장은 한 명 — 원장 포인트가 이 사람 잔액에서 나간다. 이전 원장은 강사가 된다."""
+    for mid, d in _academy_members(aid):
+        if d.get("user_id") != user_id and d.get("role") == "director":
+            DB.collection(ACADEMY_MEMBERS).document(mid).update({"role": "teacher"})
+    DB.collection(ACADEMY_MEMBERS).document(f"{aid}_{user_id}").update({"role": "director"})
+    DB.collection(ACADEMIES).document(aid).update({"director_uid": user_id})
+    _academy_cache_clear()
+
+
+def _new_academy_slug():
+    for _ in range(20):
+        slug = "".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(8))
+        if not _academy_by_slug(slug)[0]:
+            return slug
+    raise RuntimeError("학원 주소를 만들지 못했습니다.")
+
+
+def admin_create_academy(name, email, director=True):
+    """사이트 관리자가 기존 회원에게 학원을 열어 준다 — 그 회원이 학원 관리자(기본 원장 겸임)가 된다."""
     _require_db()
     name = _norm_text(name)[:ACADEMY_NAME_MAX]
     if not name:
         raise ValueError("학원 이름을 입력하세요.")
+    uid, u = _user_by_email(email)
     ref = DB.collection(ACADEMIES).document()
-    uid = _academy_uid(ref.id)
     now = _now_iso()
-    # 계정을 먼저 만들어 본다 — 아이디가 겹치면 학원 문서를 남기지 않는다
-    ref.set({"name": name, "user_id": uid, "created_at": now})
-    role = "director" if mgr_director else "teacher"
-    try:
-        if link_email:
-            _academy_link_member(ref.id, link_email, role, True, "admin")
-        else:
-            _academy_new_member(ref.id, mgr_name, mgr_login_id, mgr_password, role, True, "admin")
-    except Exception:
-        ref.delete()
-        raise
-    DB.collection("users").document(uid).set({
+    ref.set({"name": name, "slug": _new_academy_slug(), "director_uid": uid if director else "",
+             "created_at": now, "created_by_admin": True})
+    _academy_add_member(ref.id, uid, u, "director" if director else "teacher", True, "admin")
+    # 학원 몫 문서 — 학원 반·학생·시험의 주인. 학생 관리를 바로 연다(사용자). 포인트는 원장 것을 쓰므로 0
+    DB.collection("users").document(_academy_uid(ref.id)).set({
         "name": name, "provider": "academy", "academy_id": ref.id, "created_at": now,
-        # 가입 축하 포인트는 주지 않는다 — 계정을 여러 개 만들어 받아 내는 길이 된다
-        "krw_remaining": 0, "krw_free": 0, "krw_paid": 0,
+        "krw_remaining": 0, "krw_free": 0, "krw_paid": 0, "classroom_approved": True,
         "last_seen_changelog": CHANGELOG_LATEST,
-        # 학원을 열면 학생 관리가 바로 열린다(2026-11-08 사용자) — 원장·강사·학원 관리자가 모두 이 회원으로
-        # 일하므로 학원 관리자가 만든 계정도 따로 승인 없이 쓴다. 관리자 화면 회원 목록의 '학원' 줄에서 끌 수 있다.
-        "classroom_approved": True,
     })
-    return {"academyId": ref.id, "userId": uid}
+    return {"academyId": ref.id}
+
+
+def admin_academy_add_manager(aid, email):
+    _require_db()
+    if not DB.collection(ACADEMIES).document(aid or "_").get().exists:
+        raise ValueError("학원을 찾을 수 없습니다.")
+    uid, u = _user_by_email(email)
+    _academy_add_member(aid, uid, u, "teacher", True, "admin")
 
 
 def admin_list_academies():
@@ -16331,140 +16335,106 @@ def admin_list_academies():
     rows = []
     for doc in DB.collection(ACADEMIES).stream():
         a = doc.to_dict() or {}
-        u = DB.collection("users").document(a.get("user_id") or _academy_uid(doc.id)).get().to_dict() or {}
-        krw, _free, _paid = _split_balance(u)
-        members = sorted((_academy_member_row(mid, d) for mid, d in _academy_members(doc.id)),
-                         key=lambda r: r["createdAt"])
-        rows.append({"id": doc.id, "name": a.get("name", ""), "userId": a.get("user_id", ""),
-                     "createdAt": a.get("created_at", ""), "krwRemaining": krw,
-                     "classroomApproved": bool(u.get("classroom_approved")), "members": members})
+        members = [{"name": d.get("name", ""), "email": d.get("email", ""),
+                    "roleLabel": ACADEMY_ROLES.get(d.get("role"), "강사"), "manager": bool(d.get("manager"))}
+                   for _mid, d in _academy_members(doc.id)]
+        rows.append({"id": doc.id, "name": a.get("name", ""), "slug": a.get("slug", ""),
+                     "createdAt": a.get("created_at", ""), "members": members})
     rows.sort(key=lambda r: r["createdAt"], reverse=True)
     return rows
 
 
-def admin_academy_add_manager(academy_id, name, login_id, password, link_email=""):
-    """학원 관리자가 모두 비밀번호를 잊었을 때 등 — 사이트 관리자가 학원 관리자 계정을 하나 더 만든다.
-    link_email이면 기존 회원을 학원 관리자로 이어 붙인다."""
+def admin_user_academies():
+    """관리자 회원 목록용 — 회원 id → 들어가 있는 학원 [{name, manager, director}]."""
+    names = {doc.id: (doc.to_dict() or {}).get("name", "") for doc in DB.collection(ACADEMIES).stream()}
+    out = {}
+    for doc in DB.collection(ACADEMY_MEMBERS).stream():
+        d = doc.to_dict() or {}
+        if d.get("user_id"):
+            out.setdefault(d["user_id"], []).append({"name": names.get(d.get("academy_id"), ""),
+                                                     "manager": bool(d.get("manager")),
+                                                     "director": d.get("role") == "director"})
+    return out
+
+
+def _close_academy(aid):
+    """학원 계정(선생님 명단)·초대·사용 기록을 지우고 공유 폴더 표시를 걷는다. 학원 반·학생은 따로(학원 몫 회원)."""
+    for mid, _d in _academy_members(aid):
+        DB.collection(ACADEMY_MEMBERS).document(mid).delete()
+    for col in (ACADEMY_INVITES, ACADEMY_SPEND):
+        for doc in DB.collection(col).where("academy_id", "==", aid).stream():
+            doc.reference.delete()
+    for doc in DB.collection("saved_items").where("shared_academy", "==", aid).stream():
+        doc.reference.update({"shared_academy": None, "shared_by": None})
+    DB.collection(ACADEMIES).document(aid).delete()
+    _academy_cache_clear()
+
+
+def admin_delete_academy(aid, confirm_name):
+    """학원을 닫는다 — 선생님 명단·초대·공유 표시와 **학원 반·학생·시험·성적**을 지운다. 선생님 개인 자료·포인트는 남는다."""
     _require_db()
-    _academy_doc(academy_id)
-    if link_email:
-        return _academy_link_member(academy_id, link_email, "teacher", True, "admin")
-    return _academy_new_member(academy_id, name, login_id, password, "teacher", True, "admin")
+    a = DB.collection(ACADEMIES).document(aid or "_").get().to_dict()
+    if not a:
+        raise ValueError("학원을 찾을 수 없습니다.")
+    if _norm_text(confirm_name) != a.get("name", ""):
+        raise ValueError("학원 이름이 맞지 않아 지우지 않았습니다.")
+    _close_academy(aid)
+    if DB.collection("users").document(_academy_uid(aid)).get().exists:
+        delete_user_account(_academy_uid(aid), by_admin=True)
 
 
-def linked_academies(user_id):
-    """이 개인 회원이 이어 붙어 있는 학원들 — 화면의 [학원으로 전환] 단추."""
+def my_academies(user_id):
+    """이 회원이 들어가 있는 학원 — 개인 모드 화면의 [🏫 ○○학원 열기] 링크."""
     out = []
-    for doc in DB.collection(ACADEMY_MEMBERS).where("linked_user", "==", user_id).stream():
+    for doc in DB.collection(ACADEMY_MEMBERS).where("user_id", "==", user_id).stream():
         d = doc.to_dict() or {}
         a = DB.collection(ACADEMIES).document(d.get("academy_id") or "_").get().to_dict()
         if a:
-            out.append({"memberId": doc.id, "name": a.get("name", ""),
+            out.append({"name": a.get("name", ""), "slug": a.get("slug", ""),
                         "roleLabel": ACADEMY_ROLES.get(d.get("role"), "강사"), "manager": bool(d.get("manager"))})
     return out
 
 
-def academy_switch_in(personal_uid, member_id):
-    """개인 계정으로 로그인한 사람이 이어 붙은 학원으로 넘어간다 → 학원 세션 토큰. 개인 세션은 호출부가 지운다.
-    세션에 back_user를 남겨 [개인 계정으로]가 다시 개인 세션을 만들 수 있게 한다."""
-    _require_db()
-    snap = DB.collection(ACADEMY_MEMBERS).document(member_id or "_").get()
-    d = snap.to_dict() if snap.exists else None
-    if not d or d.get("linked_user") != personal_uid:
-        raise ValueError("들어갈 수 있는 학원이 아닙니다.")
-    a = _academy_doc(d.get("academy_id"))
-    snap.reference.update({"last_login": _now_iso()})
-    token = create_academy_session(member_id, d, a)
-    DB.collection("sessions").document(token).update({"back_user": personal_uid})
-    return token
+def _invite_id(aid, email):
+    return f"{aid}_{hashlib.sha256(email.encode('utf-8')).hexdigest()[:24]}"
 
 
-def academy_switch_out(handler):
-    """학원 세션 → 원래 개인 계정 세션. 학원 아이디로 들어온 계정(back_user 없음)은 돌아갈 곳이 없다."""
-    token = _parse_cookies(handler.headers.get("Cookie", "")).get("session")
-    snap = DB.collection("sessions").document(token or "_").get()
-    back = (snap.to_dict() or {}).get("back_user") if snap.exists else None
-    if not back or not DB.collection("users").document(back).get().exists:
-        raise ValueError("돌아갈 개인 계정이 없습니다.")
-    new_token = create_session(back)
-    snap.reference.delete()
-    return back, new_token
-
-
-def academy_sole_manager_of(user_id):
-    """이 개인 회원이 혼자 학원 관리자인 학원 이름들 — 탈퇴 전에 막는다(남은 관리자가 없으면 학원을 아무도 못 다룬다)."""
-    names = []
-    for doc in DB.collection(ACADEMY_MEMBERS).where("linked_user", "==", user_id).stream():
-        d = doc.to_dict() or {}
-        if not d.get("manager"):
-            continue
-        others = [x for x, y in _academy_members(d.get("academy_id")) if y.get("manager") and x != doc.id]
-        if not others:
-            names.append((DB.collection(ACADEMIES).document(d.get("academy_id") or "_").get().to_dict() or {}).get("name", ""))
-    return names
-
-
-def unlink_user_from_academies(user_id):
-    """회원 탈퇴 때 — 이어 붙은 학원 계정만 떼어 낸다. 학원 자료는 학원에 남는다."""
-    for doc in DB.collection(ACADEMY_MEMBERS).where("linked_user", "==", user_id).stream():
-        _academy_drop_sessions(doc.id)
-        doc.reference.delete()
-
-
-# --- 학원 초대 (2026-11-08 사용자 — 학원 관리자가 기존 회원을 원장·강사로 초대한다) ---
-# 학원 관리자가 이메일을 적으면 초대장만 남기고, 그 이메일로 가입한 회원이 로그인했을 때 [수락]을 눌러야 학원에
-# 들어온다. **가입 여부를 알려 주지 않는다** — 가입하지 않은 이메일도 똑같이 '초대했습니다'로 답하고, 나중에 그
-# 이메일로 가입하면 그때 초대가 보인다. 이메일을 넣어 보는 것으로 누가 이 사이트 회원인지 알아내지 못하게 한다.
-ACADEMY_INVITES = "academy_invites"
-ACADEMY_INVITE_DAYS = 30
-
-
-def _invite_id(academy_id, email):
-    return f"{academy_id}_{hashlib.sha256(email.encode('utf-8')).hexdigest()[:24]}"
+def _academy_manager(handler):
+    ctx = getattr(handler, "_acad", None)
+    if not ctx:
+        raise PermissionError("학원 링크로 열어 주세요.")
+    if not ctx.get("manager"):
+        raise PermissionError("학원 관리자만 할 수 있습니다.")
+    return ctx
 
 
 def academy_invite(handler, email, role, manager):
-    mid, d = _academy_manager_of(handler)
-    aid = d.get("academy_id")
+    """초대장만 남긴다 — 가입 여부를 알려 주지 않는다(가입 안 한 이메일도 같은 답, 나중에 가입하면 초대가 보인다)."""
+    ctx = _academy_manager(handler)
     email = (email or "").strip().lower()
     if not _EMAIL_RE.match(email):
         raise ValueError("초대할 이메일을 정확히 입력하세요.")
-    for _x, y in _academy_members(aid):
-        if y.get("link_email") == email:
-            raise ValueError("이미 이 학원에 들어와 있는 사람입니다.")
-    role = role if role in ACADEMY_ROLES else "teacher"
-    DB.collection(ACADEMY_INVITES).document(_invite_id(aid, email)).set({
-        "academy_id": aid, "email": email, "role": role, "manager": bool(manager),
-        "invited_by": mid, "invited_by_name": d.get("name", ""), "created_at": _now_iso(),
+    if any(d.get("email") == email for _m, d in _academy_members(ctx["aid"])):
+        raise ValueError("이미 이 학원에 들어와 있는 선생님입니다.")
+    DB.collection(ACADEMY_INVITES).document(_invite_id(ctx["aid"], email)).set({
+        "academy_id": ctx["aid"], "email": email, "role": role if role in ACADEMY_ROLES else "teacher",
+        "manager": bool(manager), "invited_by": handler._uid, "invited_by_name": ctx.get("member_name", ""),
+        "created_at": _now_iso(),
         "expires_at": (datetime.now(timezone.utc) + timedelta(days=ACADEMY_INVITE_DAYS)).isoformat(),
     })
 
 
-def academy_list_invites(academy_id):
-    rows = []
-    for doc in DB.collection(ACADEMY_INVITES).where("academy_id", "==", academy_id).stream():
-        v = doc.to_dict() or {}
-        rows.append({"id": doc.id, "email": v.get("email", ""), "roleLabel": ACADEMY_ROLES.get(v.get("role"), "강사"),
-                     "manager": bool(v.get("manager")), "createdAt": v.get("created_at", ""),
-                     "expired": (v.get("expires_at") or "") < _now_iso()})
-    rows.sort(key=lambda r: r["createdAt"])
-    return rows
-
-
 def academy_cancel_invite(handler, invite_id):
-    _mid, d = _academy_manager_of(handler)
+    ctx = _academy_manager(handler)
     ref = DB.collection(ACADEMY_INVITES).document(invite_id or "_")
-    v = ref.get().to_dict() or {}
-    if v.get("academy_id") != d.get("academy_id"):
+    if (ref.get().to_dict() or {}).get("academy_id") != ctx["aid"]:
         raise ValueError("초대를 찾을 수 없습니다.")
     ref.delete()
 
 
-def invites_for_user(user_id):
-    """이 회원 이메일로 온 학원 초대(기간이 남은 것만) — 화면의 [수락]/[거절]."""
-    u = DB.collection("users").document(user_id).get().to_dict() or {}
-    email = (u.get("email") or "").strip().lower()
-    if not email or u.get("provider") == "academy":
+def invites_for_user(user_id, info):
+    email = (info.get("email") or "").strip().lower()
+    if not email or info.get("provider") == "academy":
         return []
     out, now = [], _now_iso()
     for doc in DB.collection(ACADEMY_INVITES).where("email", "==", email).stream():
@@ -16479,7 +16449,6 @@ def invites_for_user(user_id):
 
 
 def answer_invite(user_id, invite_id, accept):
-    """초대 수락(학원 계정으로 이어 붙인다) 또는 거절. 초대받은 이메일의 회원만 할 수 있다."""
     ref = DB.collection(ACADEMY_INVITES).document(invite_id or "_")
     snap = ref.get()
     v = snap.to_dict() if snap.exists else None
@@ -16490,284 +16459,176 @@ def answer_invite(user_id, invite_id, accept):
         if (v.get("expires_at") or "") < _now_iso():
             ref.delete()
             raise ValueError("기간이 지난 초대입니다. 학원 관리자에게 다시 초대해 달라고 하세요.")
-        _academy_doc(v.get("academy_id"))
-        _academy_link_member(v["academy_id"], v["email"], v.get("role"), v.get("manager"),
-                             v.get("invited_by") or "invite")
+        if not DB.collection(ACADEMIES).document(v.get("academy_id") or "_").get().exists:
+            ref.delete()
+            raise ValueError("닫힌 학원입니다.")
+        _academy_add_member(v["academy_id"], user_id, u, v.get("role"), v.get("manager"), v.get("invited_by") or "invite")
     ref.delete()
 
 
-def admin_user_academies():
-    """관리자 회원 목록용 — 회원 id → 이어 붙은 학원 [{name, manager}]. 학원 계정 문서를 한 번에 읽는다."""
-    names = {doc.id: (doc.to_dict() or {}).get("name", "") for doc in DB.collection(ACADEMIES).stream()}
-    out = {}
-    for doc in DB.collection(ACADEMY_MEMBERS).select(["linked_user", "academy_id", "manager"]).stream():
+def academy_overview(handler):
+    """학원 관리 창 — 선생님 명단(역할·관리자·월 한도·이번 달 쓴 양)과 답을 기다리는 초대."""
+    ctx = getattr(handler, "_acad", None)
+    if not ctx or not (ctx.get("manager") or ctx.get("director") == handler._uid):
+        raise PermissionError("학원 관리자나 원장만 볼 수 있습니다.")
+    aid, month = ctx["aid"], _kst_month()
+    spend = {}
+    for doc in DB.collection(ACADEMY_SPEND).where("academy_id", "==", aid).stream():
         d = doc.to_dict() or {}
-        if d.get("linked_user"):
-            out.setdefault(d["linked_user"], []).append(
-                {"name": names.get(d.get("academy_id"), ""), "manager": bool(d.get("manager"))})
-    return out
+        if d.get("month") == month:
+            spend[d.get("user_id")] = int(d.get("points") or 0)
+    members = sorted(({"userId": d.get("user_id"), "name": d.get("name", ""), "email": d.get("email", ""),
+                       "role": d.get("role", "teacher"), "roleLabel": ACADEMY_ROLES.get(d.get("role"), "강사"),
+                       "manager": bool(d.get("manager")), "limit": d.get("limit"),
+                       "used": spend.get(d.get("user_id"), 0), "createdAt": d.get("created_at", "")}
+                      for _m, d in _academy_members(aid)),
+                     key=lambda r: (r["role"] != "director", r["createdAt"]))
+    invites = []
+    for doc in DB.collection(ACADEMY_INVITES).where("academy_id", "==", aid).stream():
+        v = doc.to_dict() or {}
+        invites.append({"id": doc.id, "email": v.get("email", ""), "roleLabel": ACADEMY_ROLES.get(v.get("role"), "강사"),
+                        "manager": bool(v.get("manager")), "expired": (v.get("expires_at") or "") < _now_iso()})
+    return {"name": ctx["name"], "slug": ctx["slug"], "month": month, "me": handler._uid,
+            "isDirector": ctx.get("director") == handler._uid, "isManager": bool(ctx.get("manager")),
+            "members": members, "invites": invites}
 
 
-def _academy_set_pw(mid, password, login_id):
-    _check_academy_pw(password, login_id)
-    salt, digest = _hash_password(password)
-    DB.collection(ACADEMY_MEMBERS).document(mid).update(
-        {"pw_salt": salt, "pw_hash": digest, "must_change": True, "pw_updated_at": _now_iso()})
-    _academy_drop_sessions(mid)
-    _student_login_clear("ac:" + login_id)
-
-
-def admin_academy_reset_password(member_id, password):
-    _require_db()
-    snap = DB.collection(ACADEMY_MEMBERS).document(member_id or "_").get()
-    d = snap.to_dict() if snap.exists else None
-    if not d:
-        raise ValueError("계정을 찾을 수 없습니다.")
-    if d.get("linked_user"):
-        raise ValueError("기존 회원 계정으로 들어오는 사람이라 비밀번호가 없습니다(본인 이메일·구글 로그인을 씁니다).")
-    _academy_set_pw(member_id, password, d.get("login_id", ""))
-
-
-def admin_delete_academy(academy_id, confirm_name):
-    """학원을 닫는다 — 학원 계정 모두와 학원이 만든 자료·반·학생·잔액을 함께 지운다. 되돌릴 수 없다."""
-    _require_db()
-    a = _academy_doc(academy_id)
-    if _norm_text(confirm_name) != a.get("name", ""):
-        raise ValueError("학원 이름이 맞지 않아 지우지 않았습니다.")
-    for mid, d in _academy_members(academy_id):
-        _academy_drop_sessions(mid)
-        _academy_release_login_id(d.get("login_id"), mid)
-        DB.collection(ACADEMY_MEMBERS).document(mid).delete()
-    for doc in DB.collection(ACADEMY_INVITES).where("academy_id", "==", academy_id).stream():
-        doc.reference.delete()
-    uid = a.get("user_id") or _academy_uid(academy_id)
-    if DB.collection("users").document(uid).get().exists:
-        delete_user_account(uid, by_admin=True)
-    DB.collection(ACADEMIES).document(academy_id).delete()
-
-
-def login_academy(login_id, password, ip):
-    """학원 계정 로그인. 아이디가 없는지 비밀번호가 틀렸는지는 같은 문구로 답한다."""
-    login_id = _norm_login_id(login_id)
-    if not login_id or not isinstance(password, str) or not password:
-        raise ValueError("아이디와 비밀번호를 입력하세요.")
-    key = "ac:" + login_id
-    if _student_login_blocked(ip, key):
-        raise ValueError("시도가 너무 많습니다. 5분 뒤 다시 시도하세요.")
-    _require_db()
-    mid = None
-    if STUDENT_LOGIN_ID_RE.match(login_id):
-        mid = (DB.collection(ACADEMY_LOGIN_IDS).document(login_id).get().to_dict() or {}).get("member_id")
-    snap = DB.collection(ACADEMY_MEMBERS).document(mid).get() if mid else None
-    d = snap.to_dict() if snap is not None and snap.exists else None
-    if not d or not d.get("pw_hash") or not _verify_password_hash(password, d["pw_salt"], d["pw_hash"]):
-        _student_login_record_fail(ip, key)
-        raise ValueError("아이디 또는 비밀번호가 맞지 않습니다. 학원 관리자에게 확인해 주세요.")
-    _student_login_clear(key)
-    a = _academy_doc(d.get("academy_id"))
-    snap.reference.update({"last_login": _now_iso()})
-    return mid, d, a
-
-
-def create_academy_session(member_id, d, a):
-    _require_db()
-    token = secrets.token_urlsafe(32)
-    expires = datetime.now(timezone.utc) + timedelta(seconds=SESSION_MAX_AGE)
-    uid = a.get("user_id") or _academy_uid(d.get("academy_id"))
-    DB.collection("sessions").document(token).set({
-        "user_id": uid, "member_id": member_id, "member_name": d.get("name", ""),
-        "academy_id": d.get("academy_id", ""), "must_change": bool(d.get("must_change")),
-        "created_at": _now_iso(), "expires_at": expires.isoformat(),
-    })
-    _touch_login(uid)
-    return token
-
-
-def _academy_member_of(handler):
-    """지금 요청의 학원 계정 문서(없으면 None). 역할이 필요한 곳에서만 읽는다(요청마다 읽지 않는다)."""
-    acad = getattr(handler, "_acad", None)
-    if not acad:
-        return None
-    snap = DB.collection(ACADEMY_MEMBERS).document(acad["member_id"]).get()
-    d = snap.to_dict() if snap.exists else None
-    return (acad["member_id"], d) if d else None
-
-
-def _academy_manager_of(handler):
-    m = _academy_member_of(handler)
-    if not m or not m[1].get("manager"):
-        raise PermissionError("학원 관리자만 할 수 있습니다.")
-    return m
-
-
-def academy_payload(handler, user_id):
-    """/api/me·학원 로그인 응답 — 일반 계정 정보에 학원·역할을 더한다."""
-    out = _account_payload(user_id)
-    m = _academy_member_of(handler)
-    if m:
-        mid, d = m
-        a = DB.collection(ACADEMIES).document(d.get("academy_id") or "_").get().to_dict() or {}
-        out["academy"] = {
-            "name": a.get("name", ""), "memberId": mid, "memberName": d.get("name", ""),
-            "loginId": d.get("login_id", ""), "role": d.get("role", "teacher"),
-            "roleLabel": ACADEMY_ROLES.get(d.get("role"), "강사"), "manager": bool(d.get("manager")),
-            "canRecharge": d.get("role") == "director" or bool(d.get("manager")),
-            # 기존 회원 계정으로 넘어온 학원 계정 — [개인 계정으로] 단추, 비밀번호 바꾸기는 없다
-            "linked": bool(d.get("linked_user")),
-            "canGoBack": bool((getattr(handler, "_acad", None) or {}).get("back")),
-            "mustChange": bool(d.get("must_change")),
-        }
-    return out
-
-
-def academy_first_password(handler, password, agree):
-    """첫 로그인(또는 관리자가 비밀번호를 새로 정해 준 뒤) — 새 비밀번호로 바꾸고 동의를 받는다."""
-    m = _academy_member_of(handler)
-    if not m:
-        raise ValueError("학원 계정으로 로그인해 주세요.")
-    mid, d = m
-    consent = _consent_record(agree) if not d.get("terms_agreed_at") else {}
-    _check_academy_pw(password, d.get("login_id", ""))
-    if _verify_password_hash(password, d["pw_salt"], d["pw_hash"]):
-        raise ValueError("처음 받은 비밀번호와 다른 비밀번호로 정해 주세요.")
-    salt, digest = _hash_password(password)
-    DB.collection(ACADEMY_MEMBERS).document(mid).update({
-        "pw_salt": salt, "pw_hash": digest, "must_change": False, "pw_updated_at": _now_iso(),
-        "pw_set_by": "self", **consent,
-    })
-    token = _parse_cookies(handler.headers.get("Cookie", "")).get("session")
-    # 다른 기기에 남은 '바꾸기 전' 로그인은 끊고, 지금 창은 이어 쓴다
-    for doc in DB.collection("sessions").where("member_id", "==", mid).select(["member_id"]).stream():
-        if doc.id == token:
-            doc.reference.update({"must_change": False})
+def academy_update_member(handler, user_id, role=None, manager=None, limit="keep"):
+    """역할·관리자는 학원 관리자가, 월 한도는 원장이 정한다(사용자). 원장은 한 명, 학원 관리자는 한 명 이상."""
+    ctx = getattr(handler, "_acad", None)
+    if not ctx:
+        raise PermissionError("학원 링크로 열어 주세요.")
+    aid = ctx["aid"]
+    ref = DB.collection(ACADEMY_MEMBERS).document(f"{aid}_{user_id}")
+    t = ref.get().to_dict()
+    if not t:
+        raise ValueError("선생님을 찾을 수 없습니다.")
+    if limit != "keep":
+        if ctx.get("director") != handler._uid:
+            raise PermissionError("원장 포인트 한도는 원장만 정합니다.")
+        if limit in (None, ""):
+            lim = None
         else:
-            doc.reference.delete()
-    handler._acad["must_change"] = False
+            try:
+                lim = int(limit)
+            except (TypeError, ValueError):
+                raise ValueError("한도는 숫자로 적어 주세요.")
+            if lim < 0 or lim > ACADEMY_LIMIT_MAX:
+                raise ValueError("한도가 너무 큽니다.")
+        ref.update({"limit": lim})
+    if role is not None or manager is not None:
+        if not ctx.get("manager"):
+            raise PermissionError("역할은 학원 관리자가 정합니다.")
+        if manager is False and t.get("manager"):
+            if not [1 for _m, d in _academy_members(aid) if d.get("manager") and d.get("user_id") != user_id]:
+                raise ValueError("학원 관리자는 한 명 이상 있어야 합니다.")
+            ref.update({"manager": False})
+        elif manager is True:
+            ref.update({"manager": True})
+        if role == "director":
+            _academy_set_director(aid, user_id)
+        elif role == "teacher" and t.get("role") == "director":
+            raise ValueError("원장은 다른 선생님을 원장으로 정하면 강사가 됩니다(원장 포인트가 그 사람 것으로 바뀝니다).")
+    _academy_cache_clear()
 
 
-def academy_change_password(handler, current, password):
-    m = _academy_member_of(handler)
-    if not m:
-        raise ValueError("학원 계정으로 로그인해 주세요.")
-    mid, d = m
-    if d.get("linked_user") or not d.get("pw_hash"):
-        raise ValueError("이 학원 계정은 개인 계정 로그인으로 들어오므로 따로 비밀번호가 없습니다.")
-    if not _verify_password_hash(current or "", d["pw_salt"], d["pw_hash"]):
-        raise ValueError("지금 비밀번호가 맞지 않습니다.")
-    _check_academy_pw(password, d.get("login_id", ""))
-    salt, digest = _hash_password(password)
-    DB.collection(ACADEMY_MEMBERS).document(mid).update(
-        {"pw_salt": salt, "pw_hash": digest, "pw_updated_at": _now_iso(), "pw_set_by": "self"})
-    token = _parse_cookies(handler.headers.get("Cookie", "")).get("session")
-    for doc in DB.collection("sessions").where("member_id", "==", mid).select(["member_id"]).stream():
-        if doc.id != token:
-            doc.reference.delete()
-
-
-def academy_list_members(handler):
-    mid, d = _academy_manager_of(handler)
-    aid = d.get("academy_id")
-    a = _academy_doc(aid)
-    month = datetime.now(timezone.utc).astimezone(KST).strftime("%Y-%m")
-    usage = {}
-    try:
-        q = (DB.collection(USAGE_RECORDS).where("user_id", "==", a.get("user_id") or _academy_uid(aid))
-             .where("month", "==", month).select(["member_id", "points"]))
-        for doc in q.stream():
-            r = doc.to_dict() or {}
-            usage[r.get("member_id") or ""] = usage.get(r.get("member_id") or "", 0) + int(r.get("points") or 0)
-    except Exception:
-        traceback.print_exc()   # 사용량은 곁들이라 못 읽어도 목록은 보여 준다
-    rows = sorted((_academy_member_row(x, y, usage) for x, y in _academy_members(aid)),
-                  key=lambda r: r["createdAt"])
-    return {"academy": a.get("name", ""), "month": month, "me": mid, "members": rows,
-            "otherPoints": int(usage.get("", 0)), "invites": academy_list_invites(aid)}
-
-
-def academy_create_member(handler, name, login_id, password, role, manager):
-    mid, d = _academy_manager_of(handler)
-    return _academy_new_member(d.get("academy_id"), name, login_id, password, role, manager, mid)
-
-
-def _academy_target(d_actor, member_id):
-    snap = DB.collection(ACADEMY_MEMBERS).document(member_id or "_").get()
-    t = snap.to_dict() if snap.exists else None
-    if not t or t.get("academy_id") != d_actor.get("academy_id"):
-        raise ValueError("계정을 찾을 수 없습니다.")
-    return t
-
-
-def academy_update_member(handler, member_id, name=None, login_id=None, password=None, role=None, manager=None):
-    """학원 관리자가 이름·아이디·비밀번호·역할·관리자 여부를 고친다. 원장은 한 명, 학원 관리자는 한 명 이상 남는다."""
-    me, d = _academy_manager_of(handler)
-    t = _academy_target(d, member_id)
-    aid = d.get("academy_id")
-    if t.get("linked_user") and (password or (login_id is not None and login_id != "")):
-        raise ValueError("기존 회원 계정으로 들어오는 사람은 아이디·비밀번호가 없습니다(본인 이메일·구글 로그인을 씁니다).")
-    if t.get("linked_user"):
-        login_id = None
-    upd = {}
-    if name is not None:
-        name = _norm_text(name)[:30]
-        if not name:
-            raise ValueError("이름을 입력하세요.")
-        upd["name"] = name
-    if manager is not None and not manager and t.get("manager"):
-        others = [x for x, y in _academy_members(aid) if y.get("manager") and x != member_id]
-        if not others:
-            raise ValueError("학원 관리자는 한 명 이상 있어야 합니다.")
-        upd["manager"] = False
-    elif manager:
-        upd["manager"] = True
-    if role is not None:
-        if role not in ACADEMY_ROLES:
-            raise ValueError("역할이 올바르지 않습니다.")
-        upd["role"] = role
-    new_id = None
-    if login_id is not None:
-        new_id = _norm_login_id(login_id)
-        _check_login_id(new_id)
-        if new_id == t.get("login_id"):
-            new_id = None
-    if password:
-        _check_academy_pw(password, new_id or t.get("login_id", ""))
-    if new_id:
-        _academy_claim_login_id(new_id, member_id)
-        upd["login_id"] = new_id
-    if upd:
-        try:
-            DB.collection(ACADEMY_MEMBERS).document(member_id).update(upd)
-        except Exception:
-            if new_id:
-                _academy_release_login_id(new_id, member_id)
-            raise
-    if new_id:
-        _academy_release_login_id(t.get("login_id"), member_id)
-    if upd.get("role") == "director":
-        for x, y in _academy_members(aid):
-            if x != member_id and y.get("role") == "director":
-                DB.collection(ACADEMY_MEMBERS).document(x).update({"role": "teacher"})
-    if password:
-        _academy_set_pw(member_id, password, new_id or t.get("login_id", ""))   # 로그인도 끊긴다
-    elif new_id:
-        _academy_drop_sessions(member_id)
-    elif "name" in upd:
-        for doc in DB.collection("sessions").where("member_id", "==", member_id).select(["member_id"]).stream():
-            doc.reference.update({"member_name": upd["name"]})
-
-
-def academy_delete_member(handler, member_id):
-    """계정만 지운다 — 그 사람이 만든 자료·반·학생은 학원에 그대로 남는다."""
-    me, d = _academy_manager_of(handler)
-    if member_id == me:
-        raise ValueError("내 계정은 지울 수 없습니다. 다른 학원 관리자에게 부탁하세요.")
-    t = _academy_target(d, member_id)
-    if t.get("manager") and not [x for x, y in _academy_members(d.get("academy_id"))
-                                  if y.get("manager") and x != member_id]:
+def academy_remove_member(handler, user_id):
+    """학원 관리자가 선생님을 내보내거나, 본인이 나간다. 원장은 먼저 다른 원장을 정해야 한다."""
+    ctx = getattr(handler, "_acad", None)
+    if not ctx:
+        raise PermissionError("학원 링크로 열어 주세요.")
+    aid = ctx["aid"]
+    if user_id != handler._uid and not ctx.get("manager"):
+        raise PermissionError("학원 관리자만 내보낼 수 있습니다.")
+    t = DB.collection(ACADEMY_MEMBERS).document(f"{aid}_{user_id}").get().to_dict()
+    if not t:
+        raise ValueError("선생님을 찾을 수 없습니다.")
+    if t.get("role") == "director":
+        raise ValueError("원장은 내보낼 수 없습니다. 먼저 다른 선생님을 원장으로 정하세요.")
+    if t.get("manager") and not [1 for _m, d in _academy_members(aid) if d.get("manager") and d.get("user_id") != user_id]:
         raise ValueError("학원 관리자는 한 명 이상 있어야 합니다.")
-    _academy_drop_sessions(member_id)
-    _academy_release_login_id(t.get("login_id"), member_id)
-    DB.collection(ACADEMY_MEMBERS).document(member_id).delete()
+    DB.collection(ACADEMY_MEMBERS).document(f"{aid}_{user_id}").delete()
+    _academy_cache_clear()
+
+
+def leave_all_academies(user_id):
+    """회원 탈퇴 때 — 들어가 있던 학원에서 빠진다(원장이면 호출부가 먼저 막는다)."""
+    for doc in DB.collection(ACADEMY_MEMBERS).where("user_id", "==", user_id).stream():
+        doc.reference.delete()
+    _academy_cache_clear()
+
+
+def director_academies(user_id):
+    return [(DB.collection(ACADEMIES).document((doc.to_dict() or {}).get("academy_id") or "_").get().to_dict() or {}).get("name", "")
+            for doc in DB.collection(ACADEMY_MEMBERS).where("user_id", "==", user_id).stream()
+            if (doc.to_dict() or {}).get("role") == "director"]
+
+
+def personal_classes(user_id):
+    """학원으로 옮길 수 있는 내 개인 반(주인인 반만) — 학생 수와 함께."""
+    rows = []
+    for doc in DB.collection("classes").where("teacher_id", "==", user_id).stream():
+        d = doc.to_dict() or {}
+        n = sum(1 for _ in DB.collection("students").where("class_id", "==", doc.id).select(["class_id"]).stream())
+        rows.append({"id": doc.id, "name": d.get("name", ""), "students": n, "createdAt": d.get("created_at", "")})
+    rows.sort(key=lambda r: r["createdAt"])
+    return rows
+
+
+def move_class_to_academy(handler, class_id):
+    """개인 반을 학원 반으로 옮긴다(사용자) — 반·학생·시험·답안·보충 학습의 주인을 학원 몫 id로 바꾼다.
+    학생 아이디·비밀번호·성적은 그대로라 학생은 아무것도 바뀌지 않는다. 반 공유(공동 선생님)는 풀린다 —
+    학원 선생님 모두가 함께 쓰기 때문이다. 되돌리는 길은 없다."""
+    ctx = getattr(handler, "_acad", None)
+    if not ctx:
+        raise PermissionError("학원 링크로 열어 주세요.")
+    uid, new_owner = handler._uid, _academy_uid(ctx["aid"])
+    ref = DB.collection("classes").document(class_id or "_")
+    c = ref.get().to_dict()
+    if not c or c.get("teacher_id") != uid:
+        raise ValueError("옮길 수 있는 내 반이 아닙니다.")
+    ref.update({"teacher_id": new_owner, "members": [], "share_code": None, "moved_from": uid,
+                "moved_at": _now_iso()})
+    n = {"students": 0, "tests": 0}
+    for doc in DB.collection("students").where("class_id", "==", class_id).stream():
+        doc.reference.update({"teacher_id": new_owner})
+        n["students"] += 1
+    for doc in DB.collection("test_assignments").where("class_id", "==", class_id).stream():
+        doc.reference.update({"teacher_id": new_owner})
+        n["tests"] += 1
+        for col in ("test_attempts", "quiz_retries"):
+            for x in DB.collection(col).where("assignment_id", "==", doc.id).stream():
+                if (x.to_dict() or {}).get("teacher_id"):
+                    x.reference.update({"teacher_id": new_owner})
+    return n
+
+
+# --- 저장함 공유 폴더 ---
+def _item_access(d, user_id, acad):
+    """저장본 d를 이 사람이 보고 고칠 수 있나 — 내 것이거나, 학원 모드에서 그 학원 공유 폴더에 있는 것."""
+    return bool(d) and (d.get("user_id") == user_id or bool(acad and d.get("shared_academy") == acad["aid"]))
+
+
+def share_saved_item(handler, item_id, share):
+    """공유 폴더에 넣기/빼기 — 만든 사람(빼기는 원장도)."""
+    ctx = getattr(handler, "_acad", None)
+    if not ctx:
+        raise PermissionError("학원 링크로 열어 주세요.")
+    ref = DB.collection("saved_items").document(item_id or "_")
+    d = ref.get().to_dict()
+    if not d:
+        raise ValueError("저장본을 찾을 수 없습니다.")
+    mine = d.get("user_id") == handler._uid
+    if share:
+        if not mine:
+            raise PermissionError("내가 만든 자료만 공유 폴더에 넣을 수 있습니다.")
+        if d.get("shared_academy") and d.get("shared_academy") != ctx["aid"]:
+            raise ValueError("이미 다른 학원 공유 폴더에 있는 자료입니다.")
+        ref.update({"shared_academy": ctx["aid"], "shared_by": ctx.get("member_name", ""), "shared_at": _now_iso()})
+    else:
+        if d.get("shared_academy") != ctx["aid"] or not (mine or ctx.get("director") == handler._uid):
+            raise PermissionError("공유를 뺄 수 없습니다.")
+        ref.update({"shared_academy": None, "shared_by": None})
 
 
 # --- 관리자 로그인 (일반 회원 로그인과 완전히 별개) ---------------------------
@@ -16859,7 +16720,7 @@ def list_all_users():
     _require_db()
     rows = []
     try:
-        acad_of = admin_user_academies()   # 학원 관리자로 이어 붙은 회원 — 회원 줄에 학원 이름을 보인다
+        acad_of = admin_user_academies()   # 회원 줄에 들어가 있는 학원을 보인다
     except Exception:
         traceback.print_exc()
         acad_of = {}
@@ -17077,15 +16938,22 @@ def list_usage(user_id, limit=50, before=None):
     return rows
 
 
-def list_saved_items(user_id):
+def list_saved_items(user_id, acad=None):
+    """내 저장본 + (학원 모드면) 그 학원 공유 폴더에 남이 넣은 저장본. 공유 것은 shared·by가 붙는다."""
     _require_db()
     q = (
         DB.collection("saved_items")
         .where("user_id", "==", user_id)
         .order_by("updated_at", direction=firestore.Query.DESCENDING)
     )
+    docs = list(q.stream())
+    if acad:
+        # 정렬은 파이썬에서 — where + order_by를 다른 칸에 걸면 복합 색인이 따로 필요하다
+        others = [doc for doc in DB.collection("saved_items").where("shared_academy", "==", acad["aid"]).stream()
+                  if (doc.to_dict() or {}).get("user_id") != user_id]
+        docs = sorted(docs + others, key=lambda x: (x.to_dict() or {}).get("updated_at") or "", reverse=True)
     out = []
-    for doc in q.stream():
+    for doc in docs:
         d = doc.to_dict() or {}
         row = {
             "id": doc.id,
@@ -17093,7 +16961,13 @@ def list_saved_items(user_id):
             "title": d.get("title"),
             "updated_at": d.get("updated_at"),
         }
-        if d.get("folder"):
+        if acad and d.get("shared_academy") == acad["aid"]:
+            row["shared"] = True
+            row["mine"] = d.get("user_id") == user_id
+            row["by"] = d.get("shared_by") or ""
+        elif d.get("shared_academy"):
+            row["sharedElsewhere"] = True   # 개인 모드에서 — 어느 학원 공유 폴더에 들어가 있는 내 자료
+        if d.get("folder") and d.get("user_id") == user_id:
             row["folder"] = d["folder"]
         # 지문 저장본은 지문 개수를 함께 준다 — 저장함에서 여러 개를 골라 불러올 때 입력칸 상한을 미리 알려 주려고.
         # 문서는 이미 통째로 읽혀 있어 따로 드는 비용이 없다.
@@ -17103,25 +16977,26 @@ def list_saved_items(user_id):
     return out
 
 
-def get_saved_item(item_id, user_id):
+def get_saved_item(item_id, user_id, acad=None):
     _require_db()
     snap = DB.collection("saved_items").document(item_id).get()
     if not snap.exists:
         return None
     d = snap.to_dict()
-    if d.get("user_id") != user_id:
+    if not _item_access(d, user_id, acad):
         return None
     return d
 
 
-def save_item(item_id, user_id, tab, title, payload):
-    """item_id가 있으면 그 항목을 덮어쓰고(소유자 확인), 없으면 새로 만든다."""
+def save_item(item_id, user_id, tab, title, payload, acad=None):
+    """item_id가 있으면 그 항목을 덮어쓰고(내 것이거나 학원 공유 폴더의 것), 없으면 새로 만든다.
+    공유 폴더 자료를 남이 고쳐 저장해도 원본 그대로(만든 사람·공유 표시는 그대로) 바뀐다(사용자)."""
     _require_db()
     now = _now_iso()
     if item_id:
         ref = DB.collection("saved_items").document(item_id)
         snap = ref.get()
-        if not snap.exists or snap.to_dict().get("user_id") != user_id:
+        if not snap.exists or not _item_access(snap.to_dict(), user_id, acad):
             raise PermissionError("저장 항목을 찾을 수 없습니다.")
         ref.set({"tab": tab, "title": title, "payload": payload, "updated_at": now}, merge=True)
         # 덮어쓴 저장본에 이제 없는 그림은 지운다 — 안 지우면 보이지 않는 용량이 쌓인다
@@ -17183,12 +17058,12 @@ def clean_saved_images_meta(payload):
     return out
 
 
-def _owned_item(item_id, user_id):
+def _owned_item(item_id, user_id, acad=None):
     snap = DB.collection("saved_items").document(item_id).get()
-    return snap.exists and snap.to_dict().get("user_id") == user_id
+    return snap.exists and _item_access(snap.to_dict(), user_id, acad)
 
 
-def save_item_image(item_id, user_id, key, mime, b64):
+def save_item_image(item_id, user_id, key, mime, b64, acad=None):
     """저장본에 그림 한 장을 담는다(같은 key면 덮어쓴다). 반환: 오류 문구 또는 None."""
     _require_db()
     if not item_id or not _SAVED_IMG_KEY_RE.match(key or ""):
@@ -17203,7 +17078,7 @@ def save_item_image(item_id, user_id, key, mime, b64):
         return "그림 데이터가 올바르지 않습니다."
     if not any(head.startswith(m) for m in _SAVED_IMG_MAGIC[mime]):
         return "그림 데이터가 올바르지 않습니다."
-    if not _owned_item(item_id, user_id):
+    if not _owned_item(item_id, user_id, acad):
         return "저장 항목을 찾을 수 없습니다."
     ref = DB.collection(SAVED_IMAGES).document(f"{item_id}__{key}")
     # 있는지·몇 장인지만 본다 — 그림 문서는 한 장이 700KB 남짓이라 통째로 읽으면
@@ -17218,7 +17093,7 @@ def save_item_image(item_id, user_id, key, mime, b64):
     return None
 
 
-def get_item_image(item_id, user_id, key):
+def get_item_image(item_id, user_id, key, acad=None):
     _require_db()
     if not _SAVED_IMG_KEY_RE.match(key or ""):
         return None
@@ -17226,7 +17101,8 @@ def get_item_image(item_id, user_id, key):
     if not snap.exists:
         return None
     d = snap.to_dict()
-    if d.get("user_id") != user_id:
+    # 그림을 올린 사람이 아니어도 그 저장본을 볼 수 있으면 된다(학원 공유 폴더 — 남이 고쳐 올린 그림)
+    if d.get("user_id") != user_id and not _owned_item(item_id, user_id, acad):
         return None
     return {"image": d.get("data", ""), "mime": d.get("mime", "image/jpeg")}
 
@@ -17238,12 +17114,12 @@ def prune_item_images(item_id, keep_keys):
             doc.reference.delete()
 
 
-def rename_saved_item(item_id, user_id, title):
-    """저장 항목의 이름만 바꾼다(내용·수정 시각은 그대로). 남의 항목이면 False."""
+def rename_saved_item(item_id, user_id, title, acad=None):
+    """저장 항목의 이름만 바꾼다(내용·수정 시각은 그대로). 남의 항목이면 False(학원 공유 폴더 것은 고칠 수 있다)."""
     _require_db()
     ref = DB.collection("saved_items").document(item_id)
     snap = ref.get()
-    if not snap.exists or snap.to_dict().get("user_id") != user_id:
+    if not snap.exists or not _item_access(snap.to_dict(), user_id, acad):
         return False
     ref.update({"title": title})
     return True
@@ -17264,11 +17140,14 @@ def set_saved_folder(item_ids, user_id, folder):
     return n
 
 
-def delete_saved_item(item_id, user_id):
+def delete_saved_item(item_id, user_id, acad=None):
+    """지우기는 만든 사람, 그리고 학원 공유 폴더의 것이면 그 학원 원장도(사용자)."""
     _require_db()
     ref = DB.collection("saved_items").document(item_id)
     snap = ref.get()
-    if not snap.exists or snap.to_dict().get("user_id") != user_id:
+    d = snap.to_dict() if snap.exists else None
+    if not d or not (d.get("user_id") == user_id or
+                     (acad and d.get("shared_academy") == acad["aid"] and acad.get("director") == user_id)):
         return False
     prune_item_images(item_id, set())   # 딸린 그림도 함께 지운다
     ref.delete()
@@ -19882,9 +19761,10 @@ def start_quiz_retry(assignment_id, student_id):
     if not gram and not quiz:
         raise ValueError("이 문제는 새 문제를 만들 수 있는 모양이 아니에요.")
     teacher_id = assignment.get("teacher_id")
-    if get_user_krw(teacher_id) < _qr_estimate(gram, quiz):
+    payer = _payer_for(teacher_id)   # 학원 반이면 원장이 낸다
+    if get_user_krw(payer) < _qr_estimate(gram, quiz):
         raise ValueError("선생님의 포인트가 부족해 새 문제를 만들 수 없어요. 선생님께 알려 주세요.")
-    _request_track(teacher_id, "retry")   # 학생 요청이지만 값은 선생님이 낸다
+    _request_track(payer, "retry")   # 학생 요청이지만 값은 선생님이 낸다
     ref = _qr_ref(assignment_id, student_id, rnd)
     try:
         ref.create({"assignment_id": assignment_id, "student_id": student_id, "teacher_id": teacher_id,
@@ -19899,7 +19779,7 @@ def start_quiz_retry(assignment_id, student_id):
         concepts = _qr_make_concepts(gram, quiz_topics, passages)
         if concepts:
             cost += PRICE_RETRY_CONCEPT_KRW   # 개념 설명을 못 만들었으면 그 값은 받지 않는다
-        charge_krw(teacher_id, cost, f"보충 학습 · {len(questions)}문항" + (" + 개념 설명" if concepts else ""))
+        charge_krw(payer, cost, f"보충 학습 · {len(questions)}문항" + (" + 개념 설명" if concepts else ""))
     except Exception:
         ref.delete()
         raise
@@ -20945,7 +20825,12 @@ class Handler(BaseHTTPRequestHandler):
             # 바뀌었을 수 있어, 받기 직전에 상한까지 남은 값을 한 번 더 센다.
             self._pending_charge = _exam_run_capped(
                 self._auth_user_id, self._exam_run, self._pending_charge)
-        charge_krw(self._auth_user_id, self._pending_charge, self._pending_label)
+        charge_krw(self._payer or self._auth_user_id, self._pending_charge, self._pending_label)
+        if self._acad and self._payer and self._payer != self._auth_user_id:
+            try:   # 원장 포인트를 쓴 양 — 월 한도를 센다(기록이 실패해도 만든 것은 돌려준다)
+                academy_add_spend(self._acad["aid"], self._auth_user_id, self._pending_charge)
+            except Exception:
+                traceback.print_exc()
         if self._exam_run:
             try:
                 _exam_run_record(self._auth_user_id, self._exam_run, self._pending_charge)
@@ -21036,7 +20921,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_get(self):
         path = self.path.split("?", 1)[0]
-        self._acad = None   # 학원 계정 — _session_user가 채운다
+        self._acad = None   # 학원 모드 — _session_user가 채운다
+        self._uid = None
 
         if path == "/api/pricing":
             # 비밀값이 아니다 — 화면이 '만들기' 누르기 전에 예상 비용을 보여주는 데 쓴다.
@@ -21110,30 +20996,39 @@ class Handler(BaseHTTPRequestHandler):
             if not user_id:
                 self._send_json({"loggedIn": False})
                 return
-            self._send_json(academy_payload(self, user_id) if self._acad else _account_payload(user_id))
+            if (self.headers.get("X-Academy") or "").strip() and not self._acad:
+                # 학원 링크로 열었는데 이 학원 선생님이 아니다 — 화면이 알리고 개인 모드로 돌아간다
+                out = _account_payload(user_id)
+                out["academyDenied"] = True
+                self._send_json(out)
+                return
+            self._send_json(academy_me(self, user_id) if self._acad else _account_payload(user_id))
             return
 
-        if path == "/api/academy/members":
+        if path == "/api/academy/overview":
             user_id = _session_user(self)
-            if not user_id or not self._acad:
-                self._send_json({"error": "학원 계정으로 로그인해 주세요."}, 401)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
                 return
             try:
-                self._send_json(academy_list_members(self))
+                self._send_json(academy_overview(self))
             except PermissionError as e:
                 self._send_json({"error": str(e)}, 403)
-            except ValueError as e:
-                self._send_json({"error": str(e)}, 400)
+            return
+
+        if path == "/api/academy/personal-classes":
+            user_id = _session_user(self)
+            if not user_id or not self._acad:
+                self._send_json({"error": "학원 링크로 열어 주세요."}, 401)
+                return
+            self._send_json({"classes": personal_classes(user_id)})
             return
 
         if path == "/api/admin/academies":
             if not _admin_session_valid(self):
                 self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
                 return
-            try:
-                self._send_json({"academies": admin_list_academies()})
-            except Exception as e:
-                self._send_json({"error": str(e) or "학원 목록을 읽지 못했습니다."}, 500)
+            self._send_json({"academies": admin_list_academies()})
             return
 
         if path == "/api/admin/me":
@@ -21202,7 +21097,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "로그인이 필요합니다."}, 401)
                 return
             try:
-                self._send_json({"items": list_saved_items(user_id)})
+                self._send_json({"items": list_saved_items(user_id, self._acad)})
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
             return
@@ -21226,7 +21121,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             parts = path[len("/api/saved-image/"):].split("/")
             try:
-                img = get_item_image(parts[0], user_id, parts[1]) if len(parts) == 2 else None
+                img = get_item_image(parts[0], user_id, parts[1], self._acad) if len(parts) == 2 else None
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
                 return
@@ -21243,7 +21138,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             item_id = path[len("/api/saved/"):]
             try:
-                item = get_saved_item(item_id, user_id)
+                item = get_saved_item(item_id, user_id, self._acad)
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
                 return
@@ -21522,7 +21417,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/student":   # 학생 사이트 — .html 없이 englishlab.ai.kr/student 로도 열린다
             path = "/student.html"
 
-        if path == "/":
+        # 학원 링크(/academy?k=<학원 주소>) — 화면은 같은 index.html이고 주소의 k로 학원 모드가 된다
+        if path == "/" or path == "/academy":
             path = "/index.html"
         target = (PUBLIC_DIR / path.lstrip("/")).resolve()
         if not str(target).startswith(str(PUBLIC_DIR.resolve())) or not target.is_file():
@@ -21572,7 +21468,6 @@ class Handler(BaseHTTPRequestHandler):
         여기서 터지면 화면은 'JSON 대신 HTML' 같은 엉뚱한 메시지밖에 볼 수 없어
         원인을 찾기가 매우 어렵다(실제로 그런 사고가 있었다)."""
         self._inflight_key = None
-        self._acad = None   # 학원 계정 — _session_user가 채운다(keep-alive로 지난 요청 값이 남지 않게)
         _VERTEX_CALLS.n = 0   # 이번 요청의 Vertex 호출 차례를 처음부터 센다(_vertex_try)
         _vertex_set_labels(None)   # 지난 요청의 회원 라벨이 남지 않게(keep-alive는 스레드를 다시 쓴다)
         started = _timing_begin(self)
@@ -21596,6 +21491,9 @@ class Handler(BaseHTTPRequestHandler):
         # 처리할 수 있다 — 지난 요청의 흔적이 이번 요청으로 새어 들어오지 않도록
         # 요청마다 맨 먼저 초기화한다(안 하면 엉뚱한 사용자·가격이 새어 들어올 수 있다).
         self._auth_user_id = None
+        self._payer = None      # 값을 낼 회원 — 학원 모드면 원장
+        self._acad = None       # 학원 모드 — _session_user가 채운다
+        self._uid = None
         self._pending_charge = 0
         self._pending_label = "사용"
         self._exam_run = None
@@ -21608,16 +21506,13 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/auth/reset-request", "/api/auth/reset-confirm",
                         "/api/logout", "/api/auth/delete",
-                        "/api/academy/login", "/api/academy/first-password", "/api/academy/password",
-                        "/api/academy/switch", "/api/academy/back",
-                        "/api/academy/invite", "/api/academy/invite/cancel", "/api/academy/invite/answer",
-                        "/api/academy/members", "/api/academy/members/update", "/api/academy/members/delete",
-                        "/api/admin/academies", "/api/admin/academies/manager",
-                        "/api/admin/academies/reset-password", "/api/admin/academies/delete",
                         "/api/account/recharge", "/api/account/recharge/confirm",
                         "/api/account/ack-update", "/api/portone/webhook",
                         "/api/saved", "/api/saved/delete", "/api/saved/rename", "/api/saved/folder",
-                        "/api/saved-image", "/api/brand",
+                        "/api/saved-image", "/api/brand", "/api/saved/share",
+                        "/api/academy/invite", "/api/academy/invite/cancel", "/api/academy/invite/answer",
+                        "/api/academy/member/update", "/api/academy/member/remove", "/api/academy/move-class",
+                        "/api/admin/academies", "/api/admin/academies/manager", "/api/admin/academies/delete",
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
                         "/api/admin/approve-exam",
@@ -21711,10 +21606,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "로그인이 필요한 서비스입니다."}, 401)
                 return
             self._auth_user_id = user_id
-            _request_track(user_id, path.rsplit("/", 1)[-1].lower())
-            if self._acad and _usage_tally():   # 학원 계정 — 학원 잔액 안에서 누가 썼는지
-                _usage_tally().member_id = self._acad["member_id"]
-                _usage_tally().member_name = self._acad["name"]
+            # 학원 모드면 원장 포인트로 만든다 — 토큰·포인트 기록도 원장 앞으로, 쓴 사람은 member로 남긴다
+            self._payer = (self._acad.get("director") or user_id) if self._acad else user_id
+            _request_track(self._payer, path.rsplit("/", 1)[-1].lower())
+            if self._acad and _usage_tally():
+                _usage_tally().member_id = user_id
+                _usage_tally().member_name = self._acad.get("member_name", "")
             # 끊겼던 요청을 다시 묻는 것이라면, 만들어 둔 것을 그대로 돌려준다.
             # 새로 만들지 않으므로 Gemini 요금도 회원 차감도 다시 일어나지 않는다.
             # 잔액 확인보다 앞에 두는 것이 중요하다 — 이미 값을 낸 결과를 받아 가는
@@ -21864,16 +21761,26 @@ class Handler(BaseHTTPRequestHandler):
                 else:  # /api/ocr
                     cost = PRICE_OCR_KRW
                     self._pending_label = "사진에서 지문 옮기기"
-                remaining = get_user_krw(user_id)
+                remaining = get_user_krw(self._payer)
                 if remaining < cost:
                     self._send_json(
                         {
-                            "error": f"잔액이 부족합니다 (필요 {cost:,}원 / 보유 {remaining:,}원). "
-                                     "관리자에게 충전을 요청하세요.",
+                            "error": (f"원장 포인트가 부족합니다 (필요 {cost:,}P / 남은 {remaining:,}P). 원장님께 충전을 부탁하세요."
+                                      if self._acad else
+                                      f"잔액이 부족합니다 (필요 {cost:,}원 / 보유 {remaining:,}원). "
+                                      "관리자에게 충전을 요청하세요."),
                             "code": "no_tokens",
                         },
                         402,
                     )
+                    return
+                left = academy_limit_left(self._acad, user_id) if self._acad else None
+                if left is not None and left < cost:
+                    self._send_json({
+                        "error": f"이번 달 원장 포인트 한도를 넘습니다 (필요 {cost:,}P / 이번 달 남은 한도 {left:,}P). "
+                                 "원장님께 한도를 늘려 달라고 하거나 개인 모드(내 포인트)로 만드세요.",
+                        "code": "no_tokens",
+                    }, 402)
                     return
                 self._pending_charge = cost
 
@@ -21961,142 +21868,6 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        # --- 학원 계정 ---
-        if path == "/api/academy/login":
-            try:
-                mid, d, a = login_academy(req.get("loginId") or "", req.get("password") or "", _client_ip(self))
-                token = create_academy_session(mid, d, a)
-            except ValueError as e:
-                self._send_json({"error": str(e)}, 401)
-                return
-            except Exception as e:
-                self._send_json({"error": f"로그인에 실패했습니다: {e}"}, 500)
-                return
-            self._acad = {"member_id": mid, "name": d.get("name", ""),
-                          "academy_id": d.get("academy_id", ""), "must_change": bool(d.get("must_change"))}
-            self._send_json(academy_payload(self, a.get("user_id") or _academy_uid(d.get("academy_id"))),
-                            cookies=[self._session_cookie(token)])
-            return
-
-        # 학원 초대에 답하기 — 개인 계정으로 로그인한 초대받은 사람
-        if path == "/api/academy/invite/answer":
-            user_id = _session_user(self) if DB is not None else None
-            if not user_id or self._acad:
-                self._send_json({"error": "초대받은 이메일 계정으로 로그인해 주세요."}, 401)
-                return
-            try:
-                answer_invite(user_id, req.get("inviteId"), bool(req.get("accept")))
-            except ValueError as e:
-                self._send_json({"error": str(e)}, 400)
-                return
-            self._send_json(_account_payload(user_id))
-            return
-
-        # 기존 회원 계정 ↔ 이어 붙은 학원 (방법 B)
-        if path in ("/api/academy/switch", "/api/academy/back"):
-            if DB is None:
-                self._send_json({"error": "로그인 기능이 아직 설정되지 않았습니다."}, 503)
-                return
-            user_id = _session_user(self)
-            if not user_id:
-                self._send_json({"error": "로그인이 필요합니다."}, 401)
-                return
-            old_token = _parse_cookies(self.headers.get("Cookie", "")).get("session")
-            try:
-                if path == "/api/academy/switch":
-                    if self._acad:
-                        raise ValueError("이미 학원 계정입니다. 먼저 개인 계정으로 돌아가세요.")
-                    token = academy_switch_in(user_id, req.get("memberId"))
-                    delete_session(old_token)
-                    sess = DB.collection("sessions").document(token).get().to_dict() or {}
-                    self._acad = {"member_id": sess.get("member_id"), "name": sess.get("member_name", ""),
-                                  "academy_id": sess.get("academy_id", ""), "must_change": False, "back": True}
-                    payload = academy_payload(self, sess.get("user_id"))
-                else:
-                    if not self._acad:
-                        raise ValueError("학원 계정이 아닙니다.")
-                    back, token = academy_switch_out(self)
-                    self._acad = None
-                    payload = _account_payload(back)
-            except ValueError as e:
-                self._send_json({"error": str(e)}, 400)
-                return
-            self._send_json(payload, cookies=[self._session_cookie(token)])
-            return
-
-        if path in ("/api/academy/first-password", "/api/academy/password", "/api/academy/members",
-                    "/api/academy/members/update", "/api/academy/members/delete",
-                    "/api/academy/invite", "/api/academy/invite/cancel"):
-            if DB is None:
-                self._send_json({"error": "로그인 기능이 아직 설정되지 않았습니다."}, 503)
-                return
-            user_id = _session_user(self)
-            if not user_id or not self._acad:
-                self._send_json({"error": "학원 계정으로 로그인해 주세요."}, 401)
-                return
-            try:
-                if path == "/api/academy/first-password":
-                    academy_first_password(self, req.get("password") or "", req.get("agree"))
-                    self._send_json(academy_payload(self, user_id))
-                    return
-                if path == "/api/academy/password":
-                    academy_change_password(self, req.get("current") or "", req.get("password") or "")
-                    result = {"ok": True}
-                elif path == "/api/academy/members":
-                    result = {"memberId": academy_create_member(
-                        self, req.get("name"), req.get("loginId"), req.get("password") or "",
-                        req.get("role"), bool(req.get("manager")))}
-                elif path == "/api/academy/invite":
-                    academy_invite(self, req.get("email"), req.get("role"), bool(req.get("manager")))
-                    result = {"ok": True}
-                elif path == "/api/academy/invite/cancel":
-                    academy_cancel_invite(self, req.get("inviteId"))
-                    result = {"ok": True}
-                elif path == "/api/academy/members/update":
-                    academy_update_member(
-                        self, req.get("memberId"), name=req.get("name"), login_id=req.get("loginId"),
-                        password=req.get("password") or None, role=req.get("role"),
-                        manager=req.get("manager") if isinstance(req.get("manager"), bool) else None)
-                    result = {"ok": True}
-                else:
-                    academy_delete_member(self, req.get("memberId"))
-                    result = {"ok": True}
-            except PermissionError as e:
-                self._send_json({"error": str(e)}, 403)
-                return
-            except ValueError as e:
-                self._send_json({"error": str(e)}, 400)
-                return
-            self._send_json(result)
-            return
-
-        if path in ("/api/admin/academies", "/api/admin/academies/manager",
-                    "/api/admin/academies/reset-password", "/api/admin/academies/delete"):
-            if not _admin_session_valid(self):
-                self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
-                return
-            try:
-                if path == "/api/admin/academies":
-                    result = admin_create_academy(req.get("name"), req.get("managerName"), req.get("loginId"),
-                                                  req.get("password") or "", req.get("director", True) is not False,
-                                                  link_email=(req.get("email") or "").strip())
-                elif path == "/api/admin/academies/manager":
-                    result = {"memberId": admin_academy_add_manager(
-                        req.get("academyId"), req.get("name"), req.get("loginId"), req.get("password") or "",
-                        link_email=(req.get("email") or "").strip())}
-                elif path == "/api/admin/academies/reset-password":
-                    admin_academy_reset_password(req.get("memberId"), req.get("password") or "")
-                    result = {"ok": True}
-                else:
-                    admin_delete_academy(req.get("academyId"), req.get("confirmName") or "")
-                    print(f"[관리자] 학원 삭제: {req.get('academyId')}", flush=True)
-                    result = {"ok": True}
-            except ValueError as e:
-                self._send_json({"error": str(e)}, 400)
-                return
-            self._send_json(result)
-            return
-
         if path == "/api/auth/reset-request":
             try:
                 start_password_reset((req.get("email") or "").strip())
@@ -22148,13 +21919,12 @@ class Handler(BaseHTTPRequestHandler):
             if not user_id:
                 self._send_json({"error": "로그인이 필요한 서비스입니다."}, 401)
                 return
-            if self._acad:   # 학원 계정을 지우면 학원 전체가 사라진다 — 학원 관리자가 계정만 지운다
-                self._send_json({"error": "학원 계정은 탈퇴할 수 없습니다. 학원 관리자에게 계정 삭제를 부탁하세요."}, 403)
+            led = director_academies(user_id)
+            if led:   # 원장 — 학원 선생님들이 이 계정 포인트로 일한다
+                self._send_json({"error": f"{', '.join(led)}의 원장입니다. 학원 관리에서 다른 선생님을 원장으로 정한 뒤 탈퇴해 주세요."}, 409)
                 return
-            sole = academy_sole_manager_of(user_id)
-            if sole:   # 혼자 학원 관리자인데 탈퇴하면 그 학원을 아무도 다룰 수 없다
-                self._send_json({"error": f"{', '.join(sole)}의 학원 관리자가 나 혼자입니다. "
-                                          "학원 관리에서 다른 사람을 학원 관리자로 정한 뒤 탈퇴해 주세요."}, 409)
+            if self._acad:
+                self._send_json({"error": "학원 링크로 연 화면에서는 탈퇴할 수 없습니다. 개인 모드에서 해 주세요."}, 403)
                 return
             try:
                 delete_user_account(user_id)
@@ -22187,13 +21957,6 @@ class Handler(BaseHTTPRequestHandler):
             if amount not in RECHARGE_AMOUNTS:
                 self._send_json({"error": "충전 금액이 올바르지 않습니다."}, 400)
                 return
-            paid_by = None
-            if self._acad:   # 학원 잔액은 원장·학원 관리자만 충전한다
-                m = _academy_member_of(self)
-                if not m or not (m[1].get("role") == "director" or m[1].get("manager")):
-                    self._send_json({"error": "학원 포인트 충전은 원장이나 학원 관리자만 할 수 있습니다."}, 403)
-                    return
-                paid_by = {"member_id": m[0], "name": m[1].get("name", "")}
             if not (PORTONE_STORE_ID and PORTONE_CHANNEL_KEY_CARD and PORTONE_API_SECRET):
                 self._send_json({"error": "결제 기능이 아직 설정되지 않았습니다."}, 503)
                 return
@@ -22206,7 +21969,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 method = "card"
                 channel_key = PORTONE_CHANNEL_KEY_CARD
-            payment_id = create_payment_intent(user_id, amount, paid_by)
+            payment_id = create_payment_intent(user_id, amount)
             self._send_json({
                 "paymentId": payment_id,
                 "storeId": PORTONE_STORE_ID,
@@ -22815,7 +22578,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             clean_saved_images_meta(payload)   # 그림 목록은 모양을 다듬어 담는다(그림 본체는 따로)
             try:
-                new_id = save_item(item_id, user_id, tab, title, payload)
+                new_id = save_item(item_id, user_id, tab, title, payload, self._acad)
             except PermissionError as e:
                 self._send_json({"error": str(e)}, 404)
                 return
@@ -22834,7 +22597,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 err = save_item_image(str(req.get("id") or ""), user_id,
                                       str(req.get("key") or ""), str(req.get("mime") or ""),
-                                      req.get("image"))
+                                      req.get("image"), self._acad)
             except Exception as e:
                 self._send_json({"error": f"그림 저장에 실패했습니다: {e}"}, 500)
                 return
@@ -22872,7 +22635,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "새 이름을 적어 주세요."}, 400)
                 return
             try:
-                ok = rename_saved_item(item_id, user_id, title)
+                ok = rename_saved_item(item_id, user_id, title, self._acad)
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
                 return
@@ -22908,14 +22671,72 @@ class Handler(BaseHTTPRequestHandler):
                 return
             item_id = req.get("id") or ""
             try:
-                ok = delete_saved_item(item_id, user_id)
+                ok = delete_saved_item(item_id, user_id, self._acad)
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
                 return
             if not ok:
-                self._send_json({"error": "저장한 항목을 찾을 수 없습니다."}, 404)
+                self._send_json({"error": "저장한 항목을 찾을 수 없습니다(지우기는 만든 사람과 원장만 할 수 있습니다)."}, 404)
                 return
             self._send_json({"ok": True})
+            return
+
+        # --- 학원 ---
+        if path in ("/api/saved/share", "/api/academy/invite", "/api/academy/invite/cancel",
+                    "/api/academy/invite/answer", "/api/academy/member/update",
+                    "/api/academy/member/remove", "/api/academy/move-class"):
+            user_id = _session_user(self) if DB is not None else None
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                result = {"ok": True}
+                if path == "/api/saved/share":
+                    share_saved_item(self, req.get("id"), bool(req.get("share")))
+                elif path == "/api/academy/invite":
+                    academy_invite(self, req.get("email"), req.get("role"), bool(req.get("manager")))
+                elif path == "/api/academy/invite/cancel":
+                    academy_cancel_invite(self, req.get("inviteId"))
+                elif path == "/api/academy/invite/answer":
+                    answer_invite(user_id, req.get("inviteId"), bool(req.get("accept")))
+                    result = _account_payload(user_id)
+                elif path == "/api/academy/member/update":
+                    academy_update_member(
+                        self, req.get("userId"),
+                        role=req.get("role") if req.get("role") in ACADEMY_ROLES else None,
+                        manager=req.get("manager") if isinstance(req.get("manager"), bool) else None,
+                        limit=req.get("limit") if "limit" in req else "keep")
+                elif path == "/api/academy/member/remove":
+                    academy_remove_member(self, req.get("userId") or user_id)
+                else:
+                    result = move_class_to_academy(self, req.get("classId"))
+            except PermissionError as e:
+                self._send_json({"error": str(e)}, 403)
+                return
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json(result)
+            return
+
+        if path in ("/api/admin/academies", "/api/admin/academies/manager", "/api/admin/academies/delete"):
+            if not _admin_session_valid(self):
+                self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
+                return
+            try:
+                if path == "/api/admin/academies":
+                    result = admin_create_academy(req.get("name"), req.get("email"), req.get("director", True) is not False)
+                elif path == "/api/admin/academies/manager":
+                    admin_academy_add_manager(req.get("academyId"), req.get("email"))
+                    result = {"ok": True}
+                else:
+                    admin_delete_academy(req.get("academyId"), req.get("confirmName") or "")
+                    print(f"[관리자] 학원 닫기: {req.get('academyId')}", flush=True)
+                    result = {"ok": True}
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json(result)
             return
 
         if path == "/api/models":
@@ -23530,7 +23351,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/studentcomment":
             # 반·학생 기능(성적표)에 딸린 기능이라 같은 승인을 요구한다.
-            if not _classroom_approved(self._auth_user_id):
+            if not (self._acad or _classroom_approved(self._auth_user_id)):   # 학원 모드면 학원 반이 허용돼 있다
                 self._send_json({"error": "학생 관리 기능은 관리자 승인이 필요합니다."}, 403)
                 return
             data = req.get("data")

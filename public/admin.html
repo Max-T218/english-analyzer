@@ -64,22 +64,10 @@
       <button type="button" class="btn ghost small" id="viewAcademiesBtn">학원</button>
     </div>
 
-    <!-- 학원 — 사이트 관리자가 학원을 열고 첫 학원 관리자 계정을 만든다. 그 뒤 원장·강사 계정은 학원 관리자가
-         앱의 [🏫 학원 관리]에서 만든다. 학원 잔액 충전·학생기능 허용은 회원 목록의 '학원' 줄에서 한다. -->
+    <!-- 학원 — 학원은 회원 목록 줄의 [🏫 학원 열기]로 연다(그 회원이 학원 관리자·원장). 여기서는 목록·관리자 더하기·닫기 -->
     <div class="panel" id="academiesView" hidden>
-      <form id="academyCreateForm" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px;">
-        <b style="font-size:13px; width:100%;">＋ 학원 열기</b>
-        <input type="text" id="acName" placeholder="학원 이름" maxlength="40" style="flex:1 1 160px;">
-        <input type="email" id="acMgrEmail" placeholder="기존 회원 이메일 (넣으면 오른쪽 세 칸은 비워 둠)" style="flex:1 1 220px;">
-        <input type="text" id="acMgrName" placeholder="학원 관리자 이름" maxlength="30" style="flex:1 1 120px;">
-        <input type="text" id="acMgrId" placeholder="아이디(영문 소문자·숫자 3~20자)" maxlength="20" autocapitalize="none" style="flex:1 1 160px;">
-        <input type="text" id="acMgrPw" placeholder="처음 비밀번호(8자 이상)" maxlength="64" autocomplete="off" style="flex:1 1 140px;">
-        <label style="font-size:12.5px; display:flex; gap:4px; align-items:center;"><input type="checkbox" id="acMgrDirector" checked> 이 사람이 원장</label>
-        <button type="submit" class="btn small">학원 열기</button>
-        <span class="hint" style="width:100%; margin:0;"><b>기존 회원</b>을 학원 관리자로 정하려면 그 회원의 이메일만 넣으세요 — 평소 로그인 그대로 들어와 위쪽 [🏫 ○○(으)로 전환]을 눌러 학원으로 넘어갑니다(개인 자료·잔액은 개인 계정에 그대로).
-          <b>새 아이디</b>를 만들려면 이메일을 비우고 이름·아이디·처음 비밀번호를 넣으세요 — 처음 비밀번호는 그 사람에게 따로 알려 주고, 첫 로그인 때 본인이 바꾸고 약관에 동의해야 쓸 수 있습니다.
-          학원을 열면 <b>학생 관리가 바로 열립니다</b>(원장·강사 모두). 학원 잔액 충전·레벨테스트 허용·학생 관리 끄기는 회원 목록의 '학원' 줄에서 합니다.</span>
-      </form>
+      <p class="hint" style="margin-top:0;">학원은 <b>회원 목록</b> 줄의 <b>[🏫 학원 열기]</b>로 엽니다 — 그 회원이 학원 관리자(원장 겸임 가능)가 되어 다른 선생님을 이메일로 초대합니다.
+        학원 선생님은 학원 링크로 열면 원장 포인트로 만들고 학원 공유 폴더·학원 반을 함께 씁니다. 학원 닫기는 위쪽 '탈퇴 잠금 해제'를 켜야 보입니다.</p>
       <div class="error" id="academiesError"></div>
       <div id="academiesList" style="font-size:13px;"></div>
     </div>
@@ -258,8 +246,6 @@ $("viewUsersBtn").addEventListener("click", () => showView("users"));
 $("viewCountsBtn").addEventListener("click", () => showView("counts"));
 $("viewAcademiesBtn").addEventListener("click", () => showView("academies"));
 
-/* 학원 목록 — 학원마다 계정 표. 사이트 관리자는 학원 관리자 계정을 더 만들거나(관리자가 모두 비밀번호를
-   잊었을 때) 비밀번호를 새로 정해 주고, 학원을 닫을 수 있다. 원장·강사 계정 관리는 학원 관리자 몫이다. */
 let currentAcademies = [];
 async function loadAcademies() {
   $("academiesError").textContent = "";
@@ -270,23 +256,13 @@ async function loadAcademies() {
       <div class="panel" data-aid="${esc(a.id)}" style="margin:8px 0; padding:10px 12px;">
         <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
           <b>🏫 ${esc(a.name)}</b>
-          <span class="hint" style="margin:0;">잔액 ${Number(a.krwRemaining || 0).toLocaleString()}원 · ${esc(fmtDate(a.createdAt))} 개설
-            · 학생기능 ${a.classroomApproved ? "허용됨" : "미허용"}</span>
+          <span class="hint" style="margin:0;">${esc(fmtDate(a.createdAt))} · 링크 <code>${esc(location.origin)}/academy?k=${esc(a.slug)}</code></span>
           <span style="flex:1;"></span>
-          <button type="button" class="btn ghost small ac-add-mgr">＋ 학원 관리자 계정</button>
-          <button type="button" class="btn ghost small danger delete-btn ac-del-academy">학원 삭제</button>
+          <button type="button" class="btn ghost small ac-add-mgr">＋ 학원 관리자</button>
+          <button type="button" class="btn ghost small danger delete-btn ac-del-academy">학원 닫기</button>
         </div>
-        <table style="width:100%; border-collapse:collapse; margin-top:6px;">
-          ${(a.members || []).map((m) => `
-            <tr data-mid="${esc(m.id)}" style="border-top:1px solid var(--line-soft);">
-              <td style="padding:5px 4px;">${esc(m.name)}</td>
-              <td style="padding:5px 4px; font-family:monospace;">${m.linked ? "📧 " + esc(m.email) : esc(m.loginId)}</td>
-              <td style="padding:5px 4px;">${esc(m.roleLabel)}${m.manager ? " · 학원 관리자" : ""}</td>
-              <td style="padding:5px 4px; color:var(--ink-soft);">${m.mustChange ? "첫 로그인 전" : "최근 " + esc(m.lastLogin || "-")}</td>
-              <td style="padding:5px 4px; text-align:right;">${m.linked ? `<span class="hint" style="margin:0;">기존 회원 로그인</span>`
-                : `<button type="button" class="btn ghost small ac-reset" style="padding:3px 7px;">비밀번호 새로</button>`}</td>
-            </tr>`).join("")}
-        </table>
+        <div style="margin-top:6px; line-height:1.8;">${(a.members || []).map((m) =>
+          `${esc(m.name)} <span style="color:var(--ink-soft);">${esc(m.email)}</span> · ${esc(m.roleLabel)}${m.manager ? " · 학원 관리자" : ""}`).join("<br>")}</div>
       </div>`).join("") || `<p class="hint">아직 연 학원이 없습니다.</p>`;
   } catch (err) {
     if (/로그인/.test(err.message || "")) { showGate(); return; }
@@ -294,76 +270,28 @@ async function loadAcademies() {
     $("academiesError").textContent = err.message || "학원 목록을 불러오지 못했습니다.";
   }
 }
-$("academyCreateForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const body = {
-    name: $("acName").value.trim(), email: $("acMgrEmail").value.trim(), managerName: $("acMgrName").value.trim(),
-    loginId: $("acMgrId").value.trim(), password: $("acMgrPw").value, director: $("acMgrDirector").checked,
-  };
-  if (!body.name) { alert("학원 이름을 입력하세요."); return; }
-  if (!body.email) {
-    if (!body.managerName || !body.loginId) { alert("기존 회원 이메일을 넣거나, 관리자 이름·아이디·처음 비밀번호를 넣으세요."); return; }
-    if (body.password.length < 8) { alert("처음 비밀번호는 8자 이상으로 정해 주세요."); return; }
-  }
-  try {
-    await postJson("/api/admin/academies", body);
-    alert(body.email
-      ? `${body.name} 학원을 열었습니다.\n${body.email} 회원이 다음 로그인부터 [🏫 ${body.name}(으)로 전환] 단추를 봅니다.`
-      : `${body.name} 학원을 열었습니다.\n학원 관리자 아이디: ${body.loginId}\n처음 비밀번호는 그 사람에게 따로 알려 주세요.`);
-    ["acName", "acMgrEmail", "acMgrName", "acMgrId", "acMgrPw"].forEach((id) => { $(id).value = ""; });
-    loadAcademies();
-    loadUsers();
-  } catch (err) {
-    alert(err.message || "학원을 열지 못했습니다.");
-  }
-});
 $("academiesList").addEventListener("click", async (e) => {
   const box = e.target.closest("[data-aid]");
-  if (!box) return;
-  const a = currentAcademies.find((x) => x.id === box.dataset.aid);
+  const a = box && currentAcademies.find((x) => x.id === box.dataset.aid);
   if (!a) return;
   if (e.target.closest(".ac-add-mgr")) {
-    const email = prompt(`${a.name} — 학원 관리자로 정할 기존 회원의 이메일\n(새 아이디를 만들려면 비워 두고 확인)`, "");
-    if (email === null) return;
-    let body = { academyId: a.id, email: email.trim() };
-    if (!body.email) {
-      const name = prompt(`${a.name} — 새 학원 관리자 이름`);
-      if (!name) return;
-      const loginId = prompt("아이디 (영문 소문자·숫자 3~20자)");
-      if (!loginId) return;
-      const password = prompt("처음 비밀번호 (8자 이상) — 그 사람에게 따로 알려 주세요");
-      if (!password) return;
-      body = { academyId: a.id, name, loginId, password };
-    }
+    const email = prompt(`${a.name} — 학원 관리자로 넣을 회원의 이메일`);
+    if (!email || !email.trim()) return;
     try {
-      await postJson("/api/admin/academies/manager", body);
-      loadAcademies();
-    } catch (err) { alert(err.message || "만들지 못했습니다."); }
-    return;
-  }
-  if (e.target.closest(".ac-reset")) {
-    const mid = e.target.closest("tr[data-mid]").dataset.mid;
-    const m = (a.members || []).find((x) => x.id === mid);
-    const password = prompt(`${m ? m.name : ""}님의 새 비밀번호 (8자 이상)\n첫 로그인 때 본인이 다시 바꿔야 쓸 수 있고, 지금 로그인은 끊깁니다.`);
-    if (!password) return;
-    try {
-      await postJson("/api/admin/academies/reset-password", { memberId: mid, password });
-      alert("새 비밀번호를 정했습니다.");
-      loadAcademies();
-    } catch (err) { alert(err.message || "바꾸지 못했습니다."); }
+      await postJson("/api/admin/academies/manager", { academyId: a.id, email: email.trim() });
+      loadAcademies(); loadUsers();
+    } catch (err) { alert(err.message || "넣지 못했습니다."); }
     return;
   }
   if (e.target.closest(".ac-del-academy")) {
-    if (!confirm(`${a.name} 학원을 닫습니다.\n\n학원 계정 모두, 학원이 저장한 자료·반·학생·시험·성적, 남은 잔액 ${Number(a.krwRemaining || 0).toLocaleString()}원이 함께 사라집니다.\n되돌릴 수 없습니다. 계속할까요?`)) return;
+    if (!confirm(`${a.name} 학원을 닫습니다.\n\n선생님 명단·초대가 지워지고 공유 폴더 표시가 풀리며, 학원 반·학생·시험·성적이 함께 지워집니다.\n선생님들의 개인 자료와 포인트는 그대로입니다. 되돌릴 수 없습니다. 계속할까요?`)) return;
     const typed = prompt(`확인을 위해 학원 이름을 그대로 입력하세요.\n\n${a.name}`);
     if (typed === null) return;
     try {
       await postJson("/api/admin/academies/delete", { academyId: a.id, confirmName: typed });
       alert(`${a.name} 학원을 닫았습니다.`);
-      lockDanger();
-      loadAcademies();
-      loadUsers();
-    } catch (err) { alert(err.message || "지우지 못했습니다."); }
+      lockDanger(); loadAcademies(); loadUsers();
+    } catch (err) { alert(err.message || "닫지 못했습니다."); }
   }
 });
 
@@ -540,11 +468,11 @@ function renderUsers() {
   $("userTableBody").innerHTML = sortedUsers().map((u) => `
     <tr style="border-bottom:1px solid var(--line-soft);" data-uid="${esc(u.id)}">
       <td style="padding:8px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-          title="${esc(u.email)}">${u.provider === "academy" ? "🏫 학원 계정" : esc(u.email)}${u.costTag ? `<div style="font-size:11px; color:var(--ink-soft); font-family:monospace;"
+          title="${esc(u.email)}">${u.provider === "academy" ? "🏫 학원 반 보관용" : esc(u.email)}${u.costTag ? `<div style="font-size:11px; color:var(--ink-soft); font-family:monospace;"
             title="구글 결제 보고서 → 그룹화 기준 → 라벨 → teacher에서 이 값이 이 회원입니다">${esc(u.costTag)}</div>` : ""}</td>
       <td style="padding:8px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
           title="${esc(u.name)}">${esc(u.name)}${(u.academies || []).map((a) =>
-            `<div style="font-size:11px; color:var(--g);" title="이 회원이 들어가 있는 학원">🏫 ${esc(a.name)}${a.manager ? " (관리자)" : ""}</div>`).join("")}</td>
+            `<div style="font-size:11px; color:var(--g);" title="이 회원이 들어가 있는 학원">🏫 ${esc(a.name)}${a.director ? " 원장" : ""}${a.manager ? " (관리자)" : ""}</div>`).join("")}</td>
       <td style="padding:8px 6px; white-space:nowrap;">${u.provider === "google" ? "구글" : u.provider === "academy" ? "학원" : "이메일"}</td>
       <td style="padding:8px 6px; white-space:nowrap; color:var(--ink-soft); font-size:12px;">${esc(fmtDate(u.createdAt))}</td>
       <td style="padding:8px 6px; white-space:nowrap; color:var(--ink-soft); font-size:12px;">${dormancyCell(u)}</td>
@@ -580,7 +508,7 @@ function renderUsers() {
           <button type="button" class="btn ghost small recharge-btn" style="padding:4px 7px;">충전</button>
           <button type="button" class="btn ghost small usage-btn" style="padding:4px 7px;">내역</button>
           ${u.provider === "academy" ? "" : `<button type="button" class="btn ghost small academy-open-btn" style="padding:4px 7px;"
-                  title="이 회원을 학원 관리자로 정하고 학원을 엽니다 — 학원 관리자는 원장·강사를 초대합니다">🏫 학원 열기</button>`}
+                  title="이 회원을 학원 관리자로 정하고 학원을 엽니다">🏫 학원 열기</button>`}
           <!-- 되돌릴 수 없는 작업이라 평소에는 위쪽 '탈퇴 잠금 해제'를 켜기 전까지
                화면에 아예 없다(<head>의 danger-on 규칙). 나타났을 때도 옆 단추와
                헷갈리지 않게 간격을 넉넉히 벌린다. -->
@@ -734,11 +662,11 @@ $("userTableBody").addEventListener("click", async (e) => {
     if (!u) return;
     const name = prompt(`${u.email} 회원을 학원 관리자로 정하고 학원을 엽니다.\n\n학원 이름`, "");
     if (!name || !name.trim()) return;
-    const director = confirm(`${u.name || u.email}님이 원장도 맡나요?\n\n[확인] 원장 겸 학원 관리자 / [취소] 학원 관리자만`);
+    const director = confirm(`${u.name || u.email}님이 원장도 맡나요?\n원장 포인트(학원 모드에서 자료 만들 때 쓰는 포인트)가 이분 잔액에서 나갑니다.\n\n[확인] 원장 겸 학원 관리자 / [취소] 학원 관리자만`);
     acOpenBtn.disabled = true;
     try {
       await postJson("/api/admin/academies", { name: name.trim(), email: u.email, director });
-      alert(`${name.trim()} 학원을 열었습니다.\n${u.email}님이 다음 로그인부터 [🏫 ${name.trim()}(으)로 전환]을 눌러 학원에 들어가고, 학원 관리에서 원장·강사를 초대할 수 있습니다.`);
+      alert(`${name.trim()} 학원을 열었습니다.\n${u.email}님이 로그인하면 위쪽에 [🏫 ${name.trim()} 열기]가 보이고, 학원 모드의 [🏫 학원 관리]에서 선생님을 초대할 수 있습니다.`);
       loadUsers();
     } catch (err) {
       alert(err.message || "학원을 열지 못했습니다.");
