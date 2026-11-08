@@ -512,8 +512,8 @@ function renderUsers() {
           <!-- 되돌릴 수 없는 작업이라 평소에는 위쪽 '탈퇴 잠금 해제'를 켜기 전까지
                화면에 아예 없다(<head>의 danger-on 규칙). 나타났을 때도 옆 단추와
                헷갈리지 않게 간격을 넉넉히 벌린다. -->
-          ${u.provider === "academy" ? "" : `<button type="button" class="btn ghost small danger delete-btn"
-                  style="padding:4px 7px; margin-left:16px;">탈퇴</button>`}
+          <button type="button" class="btn ghost small danger delete-btn"
+                  style="padding:4px 7px; margin-left:16px;">${u.provider === "academy" ? "지우기" : "탈퇴"}</button>
         </div>
       </td>
     </tr>
@@ -531,6 +531,20 @@ async function forceDelete(row) {
   const uid = row.dataset.uid;
   const user = currentUsers.find((x) => x.id === uid);
   if (!user) return;
+
+  if (user.provider === "academy") {
+    if (!confirm(`학원 몫 계정 '${user.name}'을(를) 지웁니다.\n\n그 학원이 남아 있으면 함께 닫히고, 학원 반·학생·시험·성적이 지워집니다.\n선생님들의 개인 자료와 포인트는 그대로입니다. 되돌릴 수 없습니다. 계속할까요?`)) return;
+    const typed = prompt(`확인을 위해 이름을 그대로 입력하세요.\n\n${user.name}`);
+    if (typed === null) return;
+    try {
+      await postJson("/api/admin/delete-user", { userId: uid, academy: true, name: typed });
+      alert("지웠습니다.");
+      lockDanger();
+      loadUsers();
+      if (typeof loadAcademies === "function") loadAcademies();
+    } catch (err) { alert(err.message || "지우지 못했습니다."); }
+    return;
+  }
 
   const balance = Number(user.krwRemaining || 0).toLocaleString();
   if (!confirm(

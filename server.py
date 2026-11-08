@@ -22095,6 +22095,27 @@ class Handler(BaseHTTPRequestHandler):
                 return
             user_id = (req.get("userId") or "").strip()
             confirm_email = (req.get("email") or "").strip().lower()
+            # 학원 몫 계정(이메일 없음) — 학원 이름으로 확인하고, 학원이 남아 있으면 함께 닫는다.
+            # 첫 판(학원 전용 아이디)에서 만든 것은 [학원] 목록에 없을 수 있어 여기서도 지운다.
+            if user_id and req.get("academy"):
+                try:
+                    d = DB.collection("users").document(user_id).get().to_dict()
+                    if not d or d.get("provider") != "academy":
+                        self._send_json({"error": "학원 몫 계정이 아닙니다. 목록을 새로 고쳐 주세요."}, 409)
+                        return
+                    if _norm_text(req.get("name") or "") != (d.get("name") or ""):
+                        self._send_json({"error": "이름이 맞지 않아 지우지 않았습니다."}, 400)
+                        return
+                    aid = d.get("academy_id") or ""
+                    if aid and DB.collection(ACADEMIES).document(aid).get().exists:
+                        _close_academy(aid)
+                    delete_user_account(user_id, by_admin=True)
+                except Exception as e:
+                    self._send_json({"error": f"지우지 못했습니다: {e}"}, 500)
+                    return
+                print(f"[관리자] 학원 몫 계정 삭제: {user_id}", flush=True)
+                self._send_json({"deleted": True})
+                return
             if not user_id or not confirm_email:
                 self._send_json({"error": "회원과 이메일을 지정하세요."}, 400)
                 return
