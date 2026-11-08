@@ -838,6 +838,23 @@
         </div>
         <div class="error" id="loginError"></div>
         <p class="auth-forgot"><button type="button" class="link-btn" id="loginForgotBtn">비밀번호를 잊으셨나요?</button></p>
+        <p class="auth-forgot"><button type="button" class="link-btn" id="academyLoginOpen">🏫 학원에서 받은 아이디로 로그인</button></p>
+      </form>
+
+      <!-- 학원 계정 — 학원 관리자가 만들어 준 아이디·비밀번호(server.py login_academy). 이메일이 없어
+           비밀번호 찾기는 없고, 잊으면 학원 관리자가 새로 정해 준다. -->
+      <form class="auth-panel" id="academyLoginPanel" hidden>
+        <p class="hint">학원 관리자에게 받은 아이디와 비밀번호를 입력하세요. 비밀번호를 잊었으면 학원 관리자가 새로 정해 줍니다.</p>
+        <label for="academyLoginId">아이디</label>
+        <input type="text" id="academyLoginId" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="학원에서 받은 아이디">
+        <label for="academyLoginPw">비밀번호</label>
+        <input type="password" id="academyLoginPw" autocomplete="current-password" placeholder="비밀번호">
+        <div class="gate-actions">
+          <button type="submit" class="btn" id="academyLoginBtn">로그인</button>
+          <button type="button" class="btn ghost small" id="academyLoginBack">이메일·구글 로그인으로</button>
+          <span class="gate-status" id="academyLoginStatus"></span>
+        </div>
+        <div class="error" id="academyLoginError"></div>
       </form>
 
       <!-- 비밀번호 찾기 — 로그인 창 안에서 '이메일 → 인증코드 + 새 비밀번호' 두 단계 -->
@@ -969,6 +986,12 @@
           · <a href="https://pf.kakao.com/_xiexdJX/chat" target="_blank" rel="noopener">문의하기</a></span>
       </div>
 
+      <!-- 학원 계정은 이메일이 없다 — 결제창이 구매자 이메일을 요구해 이때만 받는다 -->
+      <div class="field" id="rechargeEmailField" hidden>
+        <label for="rechargeEmail">결제 확인 메일을 받을 이메일</label>
+        <input type="email" id="rechargeEmail" placeholder="you@example.com" autocomplete="email">
+      </div>
+
       <div class="field">
         <label for="rechargePhone">연락처(휴대폰 번호)</label>
         <input type="tel" id="rechargePhone" placeholder="010-1234-5678" autocomplete="tel">
@@ -995,6 +1018,96 @@
            결제'를 받지 않는다(2026-09-27). 서버도 RECHARGE_AMOUNTS 밖의 금액은 거부한다. -->
       <span class="gate-status" id="rechargeStatus"></span>
       <div class="error" id="rechargeError"></div>
+    </div>
+  </div>
+
+  <!-- ══════════ 학원 계정 첫 로그인 — 새 비밀번호 + 동의(닫기 단추 없음, 마치기 전에는 다른 기능이 막힌다) ══════════ -->
+  <div class="modal-overlay" id="academyFirstOverlay" hidden>
+    <div class="modal-box">
+      <h3 class="modal-title">처음 오셨네요 — 비밀번호를 새로 정해 주세요</h3>
+      <form class="auth-panel" id="academyFirstForm">
+        <p class="hint" id="academyFirstLead">학원 관리자가 정해 준 비밀번호는 관리자도 알고 있으니 나만 아는 비밀번호로 바꿔야 쓸 수 있습니다.</p>
+        <label for="academyFirstPw">새 비밀번호 <span class="opt-sub">(8자 이상, 대소문자 구분)</span></label>
+        <input type="password" id="academyFirstPw" autocomplete="new-password" placeholder="새 비밀번호">
+        <label for="academyFirstPw2">새 비밀번호 한 번 더</label>
+        <input type="password" id="academyFirstPw2" autocomplete="new-password" placeholder="새 비밀번호 확인">
+        <div id="academyFirstAgree">
+          <label class="chk"><input type="checkbox" id="acAgreeTerms"> (필수) <a href="/terms.html" target="_blank" rel="noopener">이용약관</a>에 동의합니다</label>
+          <label class="chk"><input type="checkbox" id="acAgreePrivacy"> (필수) <a href="/privacy.html" target="_blank" rel="noopener">개인정보 수집·이용</a>에 동의합니다</label>
+          <label class="chk"><input type="checkbox" id="acAgreeAge14"> (필수) 만 14세 이상입니다</label>
+        </div>
+        <div class="gate-actions">
+          <button type="submit" class="btn" id="academyFirstBtn">바꾸고 시작하기</button>
+          <button type="button" class="btn ghost small" id="academyFirstLogout">로그아웃</button>
+          <span class="gate-status" id="academyFirstStatus"></span>
+        </div>
+        <div class="error" id="academyFirstError"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ══════════ 학원 계정 비밀번호 바꾸기 ══════════ -->
+  <div class="modal-overlay" id="academyPwOverlay" hidden>
+    <div class="modal-box">
+      <button type="button" class="modal-close" id="academyPwClose" aria-label="닫기">&times;</button>
+      <h3 class="modal-title">비밀번호 바꾸기</h3>
+      <form class="auth-panel" id="academyPwForm">
+        <label for="academyPwCur">지금 비밀번호</label>
+        <input type="password" id="academyPwCur" autocomplete="current-password">
+        <label for="academyPwNew">새 비밀번호 <span class="opt-sub">(8자 이상, 대소문자 구분)</span></label>
+        <input type="password" id="academyPwNew" autocomplete="new-password">
+        <label for="academyPwNew2">새 비밀번호 한 번 더</label>
+        <input type="password" id="academyPwNew2" autocomplete="new-password">
+        <div class="gate-actions">
+          <button type="submit" class="btn" id="academyPwBtnSave">바꾸기</button>
+          <span class="gate-status" id="academyPwStatus"></span>
+        </div>
+        <div class="error" id="academyPwError"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ══════════ 학원 관리 — 학원 관리자가 원장·강사 계정을 만들고 고친다 ══════════ -->
+  <div class="modal-overlay" id="academyOverlay" hidden>
+    <div class="modal-box" style="max-width:880px;">
+      <button type="button" class="modal-close" id="academyClose" aria-label="닫기">&times;</button>
+      <h3 class="modal-title" id="academyTitle">학원 관리</h3>
+      <p class="hint">학원 계정으로 만든 자료·반·학생과 포인트는 <b>모두 학원 것</b>입니다. 계정을 지워도 그 사람이 만든 것은 학원에 남습니다.
+        새로 만든 계정(또는 비밀번호를 새로 정해 준 계정)은 첫 로그인 때 본인이 비밀번호를 바꿔야 쓸 수 있습니다.</p>
+      <div class="error" id="academyError"></div>
+      <div style="overflow-x:auto;">
+        <table class="ac-table" id="academyTable">
+          <thead><tr><th>이름</th><th>아이디</th><th>역할</th><th>학원 관리자</th><th>최근 로그인</th><th style="text-align:right;" id="academyMonthTh">이번 달 사용</th><th>관리</th></tr></thead>
+          <tbody id="academyBody"></tbody>
+        </table>
+      </div>
+      <p class="hint" id="academyUsageNote"></p>
+      <!-- 기존 회원 초대 — 이메일로 초대장을 남기면 그 회원이 로그인해 [수락]을 눌러야 들어온다(server.py academy_invite).
+           가입 여부는 알려 주지 않는다 — 아직 가입 안 한 이메일이면 그 이메일로 가입했을 때 초대가 보인다. -->
+      <form class="auth-panel ac-add" id="academyInviteForm">
+        <b>📧 원장·강사 초대하기 <span class="opt-sub">(이미 이 사이트를 쓰는 선생님)</span></b>
+        <div class="ac-add-row">
+          <input type="text" id="acInvEmail" placeholder="초대할 선생님의 가입 이메일" autocapitalize="none" spellcheck="false" style="flex:2 1 220px;">
+          <select id="acInvRole"><option value="teacher">강사</option><option value="director">원장</option></select>
+          <label class="chk"><input type="checkbox" id="acInvManager"> 학원 관리자</label>
+          <button type="submit" class="btn small" id="acInvBtn">초대</button>
+        </div>
+        <p class="hint">초대받은 선생님이 평소 쓰던 계정으로 로그인하면 위쪽에 초대가 보이고, [수락]을 누르면 학원에 들어옵니다(30일 안에). 그 선생님의 개인 자료·포인트는 개인 계정에 그대로 있습니다.</p>
+        <div id="academyInviteList"></div>
+      </form>
+      <form class="auth-panel ac-add" id="academyAddForm">
+        <b>＋ 학원 아이디 만들기 <span class="opt-sub">(이 사이트 계정이 없는 선생님)</span></b>
+        <div class="ac-add-row">
+          <input type="text" id="acAddName" placeholder="이름" maxlength="30">
+          <input type="text" id="acAddId" placeholder="아이디 (영문 소문자·숫자 3~20자)" autocapitalize="none" spellcheck="false" maxlength="20">
+          <input type="text" id="acAddPw" placeholder="처음 비밀번호 (8자 이상)" autocomplete="off" maxlength="64">
+          <select id="acAddRole"><option value="teacher">강사</option><option value="director">원장</option></select>
+          <label class="chk"><input type="checkbox" id="acAddManager"> 학원 관리자</label>
+          <button type="submit" class="btn small" id="acAddBtn">만들기</button>
+        </div>
+        <p class="hint">처음 비밀번호는 본인에게 따로 알려 주세요(화면에 다시 보이지 않습니다). 원장은 한 명이라 새 원장을 정하면 이전 원장은 강사가 됩니다.</p>
+        <span class="gate-status" id="acAddStatus"></span>
+      </form>
     </div>
   </div>
 
@@ -1152,6 +1265,12 @@
         <button type="button" class="btn ghost small" id="materialLibraryBtn">📦 제작 자료 저장함</button>
         <button type="button" class="btn ghost small" id="usageHistoryBtn">🧾 이용 내역</button>
         <button type="button" class="btn small" id="openRechargeBtn">💳 충전</button>
+        <!-- 학원 계정에서만 보인다(renderAccount) — 학원 관리는 학원 관리자만 -->
+        <!-- 학원 관리자로 지정된 기존 회원 — 평소 로그인 그대로 학원 작업 공간으로 넘어간다(app.js academySwitch) -->
+        <span id="academySwitchWrap" hidden></span>
+        <button type="button" class="btn ghost small" id="academyBackBtn" hidden>↩ 개인 계정으로</button>
+        <button type="button" class="btn ghost small" id="academyManageBtn" hidden>🏫 학원 관리</button>
+        <button type="button" class="btn ghost small" id="academyPwBtn" hidden>🔑 비밀번호 바꾸기</button>
         <button type="button" class="btn ghost small" id="logoutBtn">로그아웃</button>
         <button type="button" class="btn ghost small danger" id="deleteAccountBtn">회원 탈퇴</button>
       </div>

@@ -650,6 +650,7 @@ function closeAllModals() {
   closeModal(signupModalEl);
   closeModal(rechargeModalEl);
   closeModal(assignModalEl);
+  ["academyOverlay", "academyPwOverlay"].forEach((id) => { if ($(id)) closeModal($(id)); });
 }
 function showSignupStep(step) {
   signupPanelEl.hidden = step !== "form";
@@ -990,8 +991,37 @@ let isClassroomApproved = false; // 관리자가 반/학생 등록 기능을 켜
 // 관리자가 켜 준 선생님만 참이 되므로, 탭을 감추는 길은 그대로 둔다.
 let isExamApproved = false;
 
+// 학원 계정이면 /api/me의 academy(학원 이름·내 이름·역할·충전 가능 여부). 개인 계정이면 null.
+// 잔액만 다시 그리는 호출(renderAccount({loggedIn, krwRemaining}))에는 이 칸이 없으므로, 계정 정보 전체가 온 때
+// ('email' 칸이 있는 응답 — 학원 계정은 null로 온다)만 바꾼다.
+let currentAcademy = null;
+let linkedAcademies = [];   // 개인 계정이 학원 관리자로 이어 붙은 학원들(/api/me의 academies)
+let academyInvites = [];    // 이 계정 이메일로 온 학원 초대(/api/me의 invites)
+function syncAcademyAccount() {
+  const a = currentAcademy;
+  $("academyManageBtn").hidden = !(a && a.manager);
+  $("academyPwBtn").hidden = !a || !!a.linked;   // 기존 회원 계정으로 들어온 학원 계정은 비밀번호가 없다
+  $("academyBackBtn").hidden = !(a && a.canGoBack);
+  const wrap = $("academySwitchWrap");
+  wrap.hidden = !!a || !(linkedAcademies.length || academyInvites.length);
+  wrap.innerHTML = a ? "" : academyInvites.map((x) =>
+    `<span class="ac-invite">📩 <b>${esc(x.academy)}</b> ${esc(x.roleLabel)}${x.manager ? "·관리자" : ""} 초대
+      <button type="button" class="btn small academy-invite-ans" data-id="${esc(x.id)}" data-ok="1">수락</button>
+      <button type="button" class="btn ghost small academy-invite-ans" data-id="${esc(x.id)}">거절</button></span>`).join(" ")
+    + linkedAcademies.map((x) =>
+    `<button type="button" class="btn ghost small academy-switch" data-mid="${esc(x.memberId)}">🏫 ${esc(x.name)}(으)로 전환</button>`).join(" ");
+  $("deleteAccountBtn").hidden = !!a;   // 학원 계정은 탈퇴하지 않는다 — 학원 관리자가 계정만 지운다
+  $("openRechargeBtn").hidden = !!a && !a.canRecharge;
+}
+
 function renderAccount(info) {
   isLoggedIn = !!(info && info.loggedIn);
+  if (info && (!isLoggedIn || "email" in info)) {
+    currentAcademy = isLoggedIn && info.academy ? info.academy : null;
+    linkedAcademies = isLoggedIn && Array.isArray(info.academies) ? info.academies : [];
+    academyInvites = isLoggedIn && Array.isArray(info.invites) ? info.invites : [];
+    syncAcademyAccount();
+  }
   if (!isLoggedIn) {
     currentKrw = null;
     currentKrwFree = currentKrwPaid = null;
@@ -1004,7 +1034,8 @@ function renderAccount(info) {
     brandClearLocal();   // 공용 PC — 다음 사람 인쇄물에 이 계정의 학원 마크가 찍히지 않게
     return;
   }
-  brandPull();   // 계정에 저장해 둔 학원 마크(로그인마다 한 번)
+  // 계정에 저장해 둔 학원 마크(로그인마다 한 번). 학원 계정이 첫 비밀번호를 바꾸기 전에는 서버가 막으므로 그 뒤에 받는다
+  if (!(currentAcademy && currentAcademy.mustChange)) brandPull();
   const krw = Number(info.krwRemaining);
   currentKrw = Number.isFinite(krw) ? krw : null;
   const free = Number(info.krwFree);
@@ -1012,8 +1043,14 @@ function renderAccount(info) {
   currentKrwFree = Number.isFinite(free) ? free : null;
   currentKrwPaid = Number.isFinite(paid) ? paid : null;
   if (info.name || info.email) lastAccountLabel = info.name || info.email;
+  if (currentAcademy && "email" in info) {
+    const a = currentAcademy;
+    lastAccountLabel = `${a.name} · ${a.memberName}(${a.roleLabel}${a.manager ? "·관리자" : ""})`;
+    currentAccountEmail = "";
+    currentAccountName = a.memberName || "";
+  }
   if (info.email) currentAccountEmail = info.email;
-  if (info.name) currentAccountName = info.name;
+  if (info.name && !currentAcademy) currentAccountName = info.name;
   isClassroomApproved = !!info.classroomApproved;
   studentsTabBtn.hidden = !isClassroomApproved;
   if (info.leveltestApproved) $("leveltestTabBtn").hidden = false;
@@ -1078,8 +1115,10 @@ async function refreshAccount() {
   try {
     const info = await getJson("/api/me", "로그인 상태를 확인하지 못했습니다.");
     renderAccount(info);
-    // 세션이 살아 있으면(예: 새로고침) 로그인 화면을 다시 거치지 않고 바로 들여보낸다
-    if (info.loggedIn) enterWorkspace();
+    // 세션이 살아 있으면(예: 새로고침) 로그인 화면을 다시 거치지 않고 바로 들여보낸다.
+    // 학원 계정이 아직 첫 비밀번호를 안 바꿨으면 그 창부터(서버도 그 전에는 다른 요청을 막는다)
+    if (info.loggedIn && info.academy && info.academy.mustChange) showAcademyFirst();
+    else if (info.loggedIn) enterWorkspace();
     else { showGate(); openAuthFromUrl(); }
   } catch (_) {
     renderAccount({ loggedIn: false });
@@ -1170,6 +1209,12 @@ async function submitRecharge(amount) {
     return;
   }
   // 이니시스 V2 일반결제는 구매자 이메일·휴대폰 번호가 없으면 결제창 자체를 못 띄운다
+  // 학원 계정은 이메일이 없어 이 창에서 받는다(rechargeEmailField)
+  const buyerEmail = currentAccountEmail || ($("rechargeEmail").value || "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(buyerEmail)) {
+    rechargeErrorEl.textContent = "결제 확인 메일을 받을 이메일을 입력하세요.";
+    return;
+  }
   const phoneDigits = (rechargePhoneEl.value || "").replace(/\D/g, "");
   if (phoneDigits.length < 9) {
     rechargeErrorEl.textContent = "결제 확인 문자를 받을 휴대폰 번호를 입력하세요.";
@@ -1195,9 +1240,9 @@ async function submitRecharge(amount) {
       payMethod: intent.method === "kakaopay" ? "EASY_PAY" : "CARD",
       ...(intent.method === "kakaopay" ? { easyPay: { easyPayProvider: "KAKAOPAY" } } : {}),
       customer: {
-        email: currentAccountEmail || undefined,
+        email: buyerEmail,
         phoneNumber: phoneDigits,
-        fullName: currentAccountName || currentAccountEmail || undefined,
+        fullName: currentAccountName || buyerEmail,
       },
     });
     if (result && result.code) {
@@ -1226,6 +1271,7 @@ if (openRechargeBtn) {
     rechargeErrorEl.textContent = "";
     const methodField = $("rechargeMethodField");
     if (methodField) methodField.hidden = !(PRICING && PRICING.kakaopay);
+    $("rechargeEmailField").hidden = !!currentAccountEmail;
     openModal(rechargeModalEl);
   });
 }
@@ -1262,6 +1308,292 @@ loginPanelEl.addEventListener("submit", async (e) => {
   }
 });
 
+/* ══════ 학원 계정 (server.py '학원 계정') ══════
+   학원 관리자가 만들어 준 아이디로 로그인한다. 처음(또는 관리자가 비밀번호를 새로 정해 준 뒤)에는
+   새 비밀번호 + 동의 창(academyFirstOverlay)을 마쳐야 쓸 수 있다 — 닫기 단추가 없고, 서버도 그 전에는
+   다른 요청을 로그인 안 된 것으로 본다. 학원 관리 창은 학원 관리자만 연다. */
+const academyFirstEl = $("academyFirstOverlay");
+function showAcademyFirst() {
+  showGate();
+  // 동의 칸은 늘 보인다 — 이미 동의한 계정(비밀번호를 새로 받은 경우)이면 서버가 다시 적지 않는다
+  ["academyFirstPw", "academyFirstPw2"].forEach((id) => { $(id).value = ""; });
+  $("academyFirstError").textContent = "";
+  openModal(academyFirstEl);
+  $("academyFirstPw").focus();
+}
+$("academyLoginOpen").addEventListener("click", () => {
+  showLoginStep("academy");
+  $("academyLoginId").focus();
+});
+$("academyLoginBack").addEventListener("click", () => showLoginStep("login"));
+$("academyLoginPanel").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const loginId = $("academyLoginId").value.trim();
+  const password = $("academyLoginPw").value;
+  const errEl = $("academyLoginError");
+  errEl.textContent = "";
+  if (!loginId || !password) { errEl.textContent = "아이디와 비밀번호를 입력하세요."; return; }
+  $("academyLoginBtn").disabled = true;
+  $("academyLoginStatus").textContent = "로그인 중…";
+  try {
+    const info = await postJson("/api/academy/login", { loginId, password }, "로그인에 실패했습니다.");
+    $("academyLoginPw").value = "";
+    renderAccount(info);
+    if (info.academy && info.academy.mustChange) { closeModal(loginModalEl); showAcademyFirst(); }
+    else enterWorkspace();
+  } catch (err) {
+    errEl.textContent = err.message || "로그인에 실패했습니다.";
+  } finally {
+    $("academyLoginBtn").disabled = false;
+    $("academyLoginStatus").textContent = "";
+  }
+});
+$("academyFirstForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const pw = $("academyFirstPw").value;
+  const errEl = $("academyFirstError");
+  errEl.textContent = "";
+  if (pw.length < 8) { errEl.textContent = "비밀번호는 8자 이상으로 정해 주세요."; return; }
+  if (pw !== $("academyFirstPw2").value) { errEl.textContent = "두 비밀번호가 다릅니다."; return; }
+  const agree = { terms: $("acAgreeTerms").checked, privacy: $("acAgreePrivacy").checked, age14: $("acAgreeAge14").checked };
+  $("academyFirstBtn").disabled = true;
+  $("academyFirstStatus").textContent = "저장 중…";
+  try {
+    const info = await postJson("/api/academy/first-password", { password: pw, agree }, "비밀번호를 바꾸지 못했습니다.");
+    closeModal(academyFirstEl);
+    renderAccount(info);
+    enterWorkspace();
+  } catch (err) {
+    errEl.textContent = err.message || "비밀번호를 바꾸지 못했습니다.";
+  } finally {
+    $("academyFirstBtn").disabled = false;
+    $("academyFirstStatus").textContent = "";
+  }
+});
+$("academyFirstLogout").addEventListener("click", async () => {
+  try { await postJson("/api/logout", {}, ""); } catch (_) { /* 쿠키는 만료되면 어차피 무효 */ }
+  closeModal(academyFirstEl);
+  renderAccount({ loggedIn: false });
+  showGate();
+});
+
+/* 기존 회원 계정 ↔ 학원 작업 공간. 저장함·잔액·학원 마크가 통째로 바뀌므로 화면을 새로 띄운다 —
+   앞 계정의 결과물이 화면에 남아 다른 쪽에 저장되는 일이 없게. */
+async function academySwitch(url, body) {
+  if (!confirm("작업 공간을 바꿉니다. 화면에 있는 저장하지 않은 결과물은 사라집니다. 계속할까요?")) return;
+  try {
+    await postJson(url, body, "바꾸지 못했습니다.");
+    location.reload();
+  } catch (err) {
+    alert(err.message || "바꾸지 못했습니다.");
+  }
+}
+$("academySwitchWrap").addEventListener("click", async (e) => {
+  const b = e.target.closest(".academy-switch");
+  if (b) { academySwitch("/api/academy/switch", { memberId: b.dataset.mid }); return; }
+  const ans = e.target.closest(".academy-invite-ans");
+  if (!ans) return;
+  const inv = academyInvites.find((x) => x.id === ans.dataset.id);
+  const accept = !!ans.dataset.ok;
+  if (accept && !confirm(`${inv ? inv.academy : "학원"} 초대를 수락합니다.\n\n수락하면 위쪽 [🏫 학원(으)로 전환]으로 학원 작업 공간에 들어갈 수 있습니다. 학원에서 만든 자료·반·학생은 학원 것이고, 내 개인 자료·포인트는 개인 계정에 그대로 있습니다.`)) return;
+  if (!accept && !confirm("이 초대를 거절할까요?")) return;
+  try {
+    renderAccount(await postJson("/api/academy/invite/answer", { inviteId: ans.dataset.id, accept }, "처리하지 못했습니다."));
+  } catch (err) {
+    alert(err.message || "처리하지 못했습니다.");
+    refreshTokenDisplay();
+  }
+});
+$("academyBackBtn").addEventListener("click", () => academySwitch("/api/academy/back", {}));
+
+const academyPwEl = $("academyPwOverlay");
+$("academyPwBtn").addEventListener("click", () => {
+  ["academyPwCur", "academyPwNew", "academyPwNew2"].forEach((id) => { $(id).value = ""; });
+  $("academyPwError").textContent = "";
+  openModal(academyPwEl);
+});
+$("academyPwClose").addEventListener("click", () => closeModal(academyPwEl));
+$("academyPwForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errEl = $("academyPwError");
+  const pw = $("academyPwNew").value;
+  errEl.textContent = "";
+  if (pw.length < 8) { errEl.textContent = "비밀번호는 8자 이상으로 정해 주세요."; return; }
+  if (pw !== $("academyPwNew2").value) { errEl.textContent = "두 비밀번호가 다릅니다."; return; }
+  $("academyPwStatus").textContent = "저장 중…";
+  try {
+    await postJson("/api/academy/password", { current: $("academyPwCur").value, password: pw }, "비밀번호를 바꾸지 못했습니다.");
+    closeModal(academyPwEl);
+    alert("비밀번호를 바꿨습니다. 다른 기기에 로그인해 둔 것은 끊어졌습니다.");
+  } catch (err) {
+    errEl.textContent = err.message || "비밀번호를 바꾸지 못했습니다.";
+  } finally {
+    $("academyPwStatus").textContent = "";
+  }
+});
+
+const academyEl = $("academyOverlay");
+let academyRows = [];
+let academyMe = "";
+async function loadAcademy() {
+  const errEl = $("academyError");
+  errEl.textContent = "";
+  $("academyBody").innerHTML = `<tr><td colspan="7">불러오는 중…</td></tr>`;
+  try {
+    const data = await getJson("/api/academy/members", "학원 계정 목록을 불러오지 못했습니다.");
+    academyRows = data.members || [];
+    academyMe = data.me || "";
+    $("academyTitle").textContent = `🏫 ${data.academy || "학원"} 관리`;
+    $("academyMonthTh").textContent = `${String(data.month || "").slice(5).replace(/^0/, "")}월 사용`;
+    $("academyUsageNote").textContent = data.otherPoints
+      ? `계정이 정해지지 않은 사용(학생 보충 학습 등) ${pt(data.otherPoints)}는 위 표에 넣지 않았습니다.` : "";
+    renderAcademyRows();
+    const inv = data.invites || [];
+    $("academyInviteList").innerHTML = inv.length
+      ? `<div class="hint" style="margin:4px 0 2px;"><b>답을 기다리는 초대</b></div>` + inv.map((x) =>
+        `<div class="ac-inv-row" data-id="${esc(x.id)}">📧 ${esc(x.email)} · ${esc(x.roleLabel)}${x.manager ? "·관리자" : ""}
+          ${x.expired ? `<span class="ac-me">(기간 지남)</span>` : ""}
+          <button type="button" class="btn ghost small ac-inv-cancel">초대 취소</button></div>`).join("")
+      : "";
+  } catch (err) {
+    $("academyBody").innerHTML = "";
+    errEl.textContent = err.message || "학원 계정 목록을 불러오지 못했습니다.";
+  }
+}
+function renderAcademyRows() {
+  $("academyBody").innerHTML = academyRows.map((r) => `
+    <tr data-id="${esc(r.id)}">
+      <td>${esc(r.name)}${r.id === academyMe ? ` <span class="ac-me">(나)</span>` : ""}${r.mustChange ? ` <span class="ac-me">· 첫 로그인 전</span>` : ""}</td>
+      <td>${r.linked ? `<span title="이 사람은 평소 쓰는 이메일·구글 로그인으로 들어와 학원으로 전환합니다">📧 ${esc(r.email)}</span>` : esc(r.loginId)}</td>
+      <td><select class="ac-role">
+        <option value="teacher"${r.role === "teacher" ? " selected" : ""}>강사</option>
+        <option value="director"${r.role === "director" ? " selected" : ""}>원장</option></select></td>
+      <td><input type="checkbox" class="ac-mgr"${r.manager ? " checked" : ""}></td>
+      <td>${esc(r.lastLogin || "-")}</td>
+      <td class="ac-num">${pt(r.monthPoints || 0)}</td>
+      <td>
+        <button type="button" class="btn ghost small ac-edit">${r.linked ? "이름" : "이름·아이디"}</button>
+        ${r.linked ? "" : `<button type="button" class="btn ghost small ac-pw">비밀번호 새로</button>`}
+        ${r.id === academyMe ? "" : `<button type="button" class="btn ghost small danger ac-del">삭제</button>`}
+      </td>
+    </tr>`).join("") || `<tr><td colspan="7">계정이 없습니다.</td></tr>`;
+}
+async function academyUpdate(body, okMsg) {
+  try {
+    await postJson("/api/academy/members/update", body, "고치지 못했습니다.");
+    if (okMsg) alert(okMsg);
+  } catch (err) {
+    alert(err.message || "고치지 못했습니다.");
+  }
+  await loadAcademy();
+  refreshTokenDisplay();   // 내 역할이 바뀌었을 수 있다
+}
+$("academyManageBtn").addEventListener("click", () => { openModal(academyEl); loadAcademy(); });
+$("academyClose").addEventListener("click", () => closeModal(academyEl));
+$("academyBody").addEventListener("change", (e) => {
+  const tr = e.target.closest("tr[data-id]");
+  if (!tr) return;
+  const r = academyRows.find((x) => x.id === tr.dataset.id);
+  if (!r) return;
+  if (e.target.classList.contains("ac-role")) {
+    const role = e.target.value;
+    if (role === "director" && !confirm(`${r.name}님을 원장으로 정합니다.\n원장은 한 명이라 지금 원장은 강사가 됩니다.`)) {
+      e.target.value = r.role; return;
+    }
+    academyUpdate({ memberId: r.id, role });
+  } else if (e.target.classList.contains("ac-mgr")) {
+    const manager = e.target.checked;
+    if (!manager && r.id === academyMe && !confirm("내 학원 관리자 권한을 끕니다. 그러면 이 창을 더는 열 수 없습니다. 계속할까요?")) {
+      e.target.checked = true; return;
+    }
+    academyUpdate({ memberId: r.id, manager });
+  }
+});
+$("academyBody").addEventListener("click", async (e) => {
+  const tr = e.target.closest("tr[data-id]");
+  if (!tr) return;
+  const r = academyRows.find((x) => x.id === tr.dataset.id);
+  if (!r) return;
+  if (e.target.closest(".ac-edit")) {
+    const name = prompt("이름", r.name);
+    if (name === null) return;
+    if (r.linked) { academyUpdate({ memberId: r.id, name: name.trim() }); return; }
+    const loginId = prompt("아이디 (바꾸면 그 계정의 로그인이 끊깁니다)", r.loginId);
+    if (loginId === null) return;
+    academyUpdate({ memberId: r.id, name: name.trim(), loginId: loginId.trim() });
+  } else if (e.target.closest(".ac-pw")) {
+    const pw = prompt(`${r.name}님의 새 비밀번호 (8자 이상)\n\n본인에게 알려 주세요. 첫 로그인 때 본인이 다시 바꿔야 쓸 수 있고, 지금 로그인은 끊깁니다.`);
+    if (pw === null) return;
+    if (pw.length < 8) { alert("비밀번호는 8자 이상으로 정해 주세요."); return; }
+    academyUpdate({ memberId: r.id, password: pw }, "새 비밀번호를 정했습니다.");
+  } else if (e.target.closest(".ac-del")) {
+    if (!confirm(`${r.name}(${r.loginId}) 계정을 지웁니다.\n\n이 사람이 만든 자료·반·학생은 학원에 그대로 남습니다.\n지운 계정은 되돌릴 수 없습니다. 계속할까요?`)) return;
+    try {
+      await postJson("/api/academy/members/delete", { memberId: r.id }, "지우지 못했습니다.");
+    } catch (err) {
+      alert(err.message || "지우지 못했습니다.");
+    }
+    loadAcademy();
+  }
+});
+$("academyInviteForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = { email: $("acInvEmail").value.trim(), role: $("acInvRole").value, manager: $("acInvManager").checked };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) { alert("초대할 선생님의 가입 이메일을 정확히 입력하세요."); return; }
+  if (body.role === "director" && !confirm("원장으로 초대합니다. 수락하면 지금 원장은 강사가 됩니다. 계속할까요?")) return;
+  $("acInvBtn").disabled = true;
+  try {
+    await postJson("/api/academy/invite", body, "초대하지 못했습니다.");
+    $("acInvEmail").value = "";
+    $("acInvManager").checked = false;
+    $("acInvRole").value = "teacher";
+    alert(`${body.email}로 초대했습니다.\n그 이메일로 가입한 선생님이 로그인하면 초대가 보입니다(아직 가입하지 않았다면 가입한 뒤에 보입니다).`);
+  } catch (err) {
+    alert(err.message || "초대하지 못했습니다.");
+  } finally {
+    $("acInvBtn").disabled = false;
+  }
+  loadAcademy();
+});
+$("academyInviteList").addEventListener("click", async (e) => {
+  const b = e.target.closest(".ac-inv-cancel");
+  if (!b) return;
+  if (!confirm("이 초대를 취소할까요?")) return;
+  try {
+    await postJson("/api/academy/invite/cancel", { inviteId: b.closest(".ac-inv-row").dataset.id }, "취소하지 못했습니다.");
+  } catch (err) {
+    alert(err.message || "취소하지 못했습니다.");
+  }
+  loadAcademy();
+});
+$("academyAddForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = {
+    name: $("acAddName").value.trim(), loginId: $("acAddId").value.trim(), password: $("acAddPw").value,
+    role: $("acAddRole").value, manager: $("acAddManager").checked,
+  };
+  if (!body.name || !body.loginId) { alert("이름과 아이디를 입력하세요."); return; }
+  if (body.password.length < 8) { alert("처음 비밀번호는 8자 이상으로 정해 주세요."); return; }
+  if (body.role === "director" && academyRows.some((r) => r.role === "director")
+      && !confirm("새 원장을 정하면 지금 원장은 강사가 됩니다. 계속할까요?")) return;
+  $("acAddBtn").disabled = true;
+  $("acAddStatus").textContent = "만드는 중…";
+  try {
+    await postJson("/api/academy/members", body, "계정을 만들지 못했습니다.");
+    ["acAddName", "acAddId", "acAddPw"].forEach((id) => { $(id).value = ""; });
+    $("acAddManager").checked = false;
+    $("acAddRole").value = "teacher";
+    alert(`${body.name}님 계정을 만들었습니다.\n아이디: ${body.loginId}\n처음 비밀번호는 본인에게 따로 알려 주세요.`);
+  } catch (err) {
+    alert(err.message || "계정을 만들지 못했습니다.");
+  } finally {
+    $("acAddBtn").disabled = false;
+    $("acAddStatus").textContent = "";
+  }
+  loadAcademy();
+  refreshTokenDisplay();
+});
+
 /* ── 비밀번호 찾기 — 로그인 창 안에서 로그인 칸 ↔ 이메일 칸 ↔ 코드·새 비밀번호 칸을 오간다 ── */
 const resetPanelEl = $("resetPanel");
 const resetVerifyPanelEl = $("resetVerifyPanel");
@@ -1270,7 +1602,12 @@ function showLoginStep(step) {
   loginPanelEl.hidden = step !== "login";
   resetPanelEl.hidden = step !== "email";
   resetVerifyPanelEl.hidden = step !== "code";
-  ["resetError", "resetVerifyError"].forEach((id) => { $(id).textContent = ""; });
+  $("academyLoginPanel").hidden = step !== "academy";
+  // 학원 계정 칸에서는 구글·'또는' 줄을 감춘다 — 학원 아이디로는 구글 로그인을 쓰지 않는다
+  loginModalEl.querySelectorAll(".auth-google, .auth-divider, .auth-switch").forEach((el) => {
+    el.hidden = step === "academy";
+  });
+  ["resetError", "resetVerifyError", "academyLoginError"].forEach((id) => { $(id).textContent = ""; });
 }
 $("loginForgotBtn").addEventListener("click", () => {
   $("resetEmail").value = $("loginEmail").value.trim();

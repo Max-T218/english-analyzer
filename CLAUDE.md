@@ -62,7 +62,25 @@ foreach ($n in 'GEMINI_API_KEY','GOOGLE_APPLICATION_CREDENTIALS_JSON','GOOGLE_CL
 
 dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를 로컬 서버와 배포 서버가
 똑같이 바라봅니다 — 컬렉션은 `users`, `sessions`, `saved_items`, `pending_signups`,
-`deleted_accounts`, `admin_sessions`, `payment_intents`, `usage_records`(요청 한 건의 토큰·포인트 — 코드 지도 참고), `saved_images`(요약 이미지 — 저장본에 딸린 그림), `brand_marks`(학원 마크 — 문서 `{uid}`=학원명, `{uid}__logo`·`{uid}__wm`=그림. `/api/brand` GET/POST, 화면 `brandPull`(로그인 때 받기)·`brandPush`(**[💾 계정에 저장] 단추를 눌렀을 때만** 바꾼 칸을 올린다 — 2026-10-19 사용자 결정, 처음엔 바꿀 때마다 저절로 올렸다)·`brandClearLocal`(로그아웃 때 화면에서 지우기), 그림은 `shrinkBrandImage`로 줄여 보낸다. 탈퇴 때 함께 지운다), `leveltest_sets`·`leveltest_media`(레벨테스트 시험지·음성·그림 — `tools/leveltest_import.py`로만 올린다), `leveltest_links`(레벨테스트 출제 — 학생 한 명 × 시험지 하나)·`leveltest_results`(응시 결과)·`leveltest_students`·`leveltest_login_ids`·`leveltest_sessions`(레벨테스트 학생 계정·아이디·로그인 — 학생 관리의 `students`와 따로다. 모두 탈퇴 때 함께 지운다).
+`deleted_accounts`, `admin_sessions`, `payment_intents`, `usage_records`(요청 한 건의 토큰·포인트 — 코드 지도 참고), `saved_images`(요약 이미지 — 저장본에 딸린 그림), `brand_marks`(학원 마크 — 문서 `{uid}`=학원명, `{uid}__logo`·`{uid}__wm`=그림. `/api/brand` GET/POST, 화면 `brandPull`(로그인 때 받기)·`brandPush`(**[💾 계정에 저장] 단추를 눌렀을 때만** 바꾼 칸을 올린다 — 2026-10-19 사용자 결정, 처음엔 바꿀 때마다 저절로 올렸다)·`brandClearLocal`(로그아웃 때 화면에서 지우기), 그림은 `shrinkBrandImage`로 줄여 보낸다. 탈퇴 때 함께 지운다), `leveltest_sets`·`leveltest_media`(레벨테스트 시험지·음성·그림 — `tools/leveltest_import.py`로만 올린다), `leveltest_links`(레벨테스트 출제 — 학생 한 명 × 시험지 하나)·`leveltest_results`(응시 결과)·`leveltest_students`·`leveltest_login_ids`·`leveltest_sessions`(레벨테스트 학생 계정·아이디·로그인 — 학생 관리의 `students`와 따로다. 모두 탈퇴 때 함께 지운다), `academies`·`academy_members`·`academy_login_ids`·`academy_invites`(학원 계정 — 아래 '학원 계정').
+
+### 학원 계정(원장·강사, 2026-11-08 사용자 — 1단계, 실서비스 확인 전. 남은 일은 `TODO.md`)
+
+사이트 관리자가 `admin.html`의 [학원]에서 학원을 열며 첫 **학원 관리자** 계정을 만들고(`admin_create_academy`), 학원 관리자가 앱의
+[🏫 학원 관리] 창(`academyOverlay`)에서 원장·강사 계정을 만든다(`academy_create_member`·`academy_update_member`·`academy_delete_member`).
+**학원 하나 = `users/academy:<학원id>` 회원 하나**(이메일 없음, `provider:"academy"`, 가입 축하 포인트 없음)이고 원장·강사는 그 회원으로
+일한다 — 세션 문서에 `user_id`(학원)와 `member_id`·`member_name`이 함께 들고, `_session_user`가 학원 id를 돌려주며 누가 로그인했는지는
+`handler._acad`에 둔다. 그래서 저장함·포인트·반/학생·학원 마크·레벨테스트가 **코드를 안 고치고도** 학원 안에서 공유되고, 계정을 지워도
+자료는 학원에 남는다(사용자: 학원이 준 아이디로 입력한 것은 모두 학원 것). 개인 계정의 학생 관리(반 공유 포함)와는 섞지 않는다.
+- 로그인은 아이디+비밀번호(`login_academy`, 로그인 창의 [🏫 학원에서 받은 아이디로 로그인]). 아이디는 학생과 같은 형식이고 `academy_login_ids`로 따로 유일하다. 비밀번호 8자 이상·대소문자 구분. 실패 제한은 `_student_login_blocked`(열쇠 `ac:`).
+- **처음(또는 누가 비밀번호를 새로 정해 준 뒤)은 `must_change`** — 새 비밀번호 + 약관·개인정보·만14세 동의(`academy_first_password`)를 마치기 전에는 `ACADEMY_PENDING_PATHS`(`/api/me`·첫 비밀번호·로그아웃) 밖의 요청을 로그인 안 된 것으로 본다. 화면은 닫기 없는 `academyFirstOverlay`.
+- **학원을 열면 학생 관리가 바로 켜진다**(2026-11-08 사용자 — `admin_create_academy`가 학원 회원 문서에 `classroom_approved: True`). 원장·강사·학원 관리자가 모두 같은 학원 회원으로 일하므로 학원 관리자가 만든 계정도 따로 승인이 필요 없고, 반·학생·시험이 학원 안에서 공유된다. 끄려면 관리자 회원 목록의 '학원' 줄. 레벨테스트는 여전히 따로 켠다.
+- 역할: 원장(`director`, 한 명 — 새 원장을 정하면 이전 원장은 강사)·강사(`teacher`), 그와 별개로 학원 관리자(`manager`, 한 명 이상 남아야 한다). 충전은 원장·학원 관리자만(결제 요청에 결제한 사람을 남긴다), 탈퇴(`/api/auth/delete`)는 학원 계정에서 막힌다. 역할은 요청마다 읽지 않고 필요한 곳에서만 `_academy_member_of`로 읽는다(서버–Firestore 왕복이 비싸다).
+- 비밀번호를 바꾸거나 아이디가 바뀌거나 계정이 지워지면 그 사람의 세션을 지운다(`_academy_drop_sessions`). 학원 삭제(`admin_delete_academy`)는 계정을 모두 지우고 학원 회원을 `delete_user_account`로 지운다.
+- 쓴 사람 기록: `_UsageTally.member_id`/`member_name` → `usage_records.member_id`(학원 관리 창의 '이번 달 사용'), 이용 내역 항목 이름 뒤 ' · 이름'(`charge_krw`).
+- **기존 회원을 학원 관리자로**(방법 B, 2026-11-08 사용자): 관리자가 학원을 열 때나 [＋ 학원 관리자 계정]에서 기존 회원의 **이메일**을 넣으면 아이디·비밀번호 없는 학원 계정이 생긴다(`_academy_link_member` — 문서에 `linked_user`·`link_email`). 그 회원은 평소 로그인 그대로 들어와 계정 줄의 [🏫 ○○(으)로 전환](`/api/academy/switch` → `academy_switch_in`, `/api/me`의 `academies` ← `linked_academies`)으로 학원 세션을 받고, [↩ 개인 계정으로](`/api/academy/back` → `academy_switch_out`, 세션의 `back_user`)로 돌아간다. 전환하면 화면을 새로 띄운다(앞 계정의 결과물이 다른 쪽에 저장되지 않게). **개인 자료·잔액은 학원으로 옮기지 않는다.** 이 계정은 비밀번호 바꾸기·비밀번호 새로 정하기가 없다. 개인 계정을 탈퇴하면 학원 연결만 떨어지고(`unlink_user_from_academies`), 혼자 학원 관리자이면 탈퇴를 막는다(`academy_sole_manager_of`). 관리자 회원 목록의 줄마다 **[🏫 학원 열기]**가 있어 그 회원을 학원 관리자로 정하며 학원을 연다(학원 이름·원장 겸임만 묻는다, 이름 아래 들어가 있는 학원이 보인다 — `admin_user_academies`).
+- **원장·강사 초대**(2026-11-08 사용자): 학원 관리자는 학원 관리 창의 [📧 원장·강사 초대하기]로 기존 회원을 이메일로 초대한다(`academy_invite` → `academy_invites/{학원}_{이메일 해시}`, 30일 `ACADEMY_INVITE_DAYS`). 초대받은 회원이 로그인하면 계정 줄에 [수락]/[거절]이 뜨고(`/api/me`의 `invites` ← `invites_for_user`, `/api/academy/invite/answer` → `answer_invite`), 수락하면 이어 붙은 학원 계정이 된다. **가입 여부를 알려 주지 않는다** — 가입하지 않은 이메일도 같은 답을 하고, 그 이메일로 나중에 가입하면 초대가 보인다(그래서 학원 관리자가 이메일로 바로 이어 붙이는 길은 두지 않았다). 이 사이트 계정이 없는 선생님은 지금처럼 [＋ 학원 아이디 만들기].
+- 화면: `app.js`의 '학원 계정' 묶음(`currentAcademy`·`linkedAcademies`·`syncAcademyAccount`·`academySwitch`·`showAcademyFirst`·`loadAcademy`), 학원 계정은 충전 창에서 이메일을 따로 받는다(`rechargeEmailField`). 시험은 실제 저장소 없이 가짜 저장소로 서버를 띄워서 했다.
 
 따라서 로컬 테스트가 곧 실데이터 조작입니다.
 
@@ -467,6 +485,10 @@ GET=조회/POST=생성. `/api/vocab-tests`에 `studentId`를 실으면 그 학�
 `/api/student/tests/submit`
 `/api/quiz-tests`(문제 시험 내기) `/api/quiz-tests/grade`(확인 대기 칸 채점) — GET `/api/quiz-tests/attempt`(학생 한 명 답안) · GET `/api/quiz-tests/retry`(학생 한 명의 보충 학습 한 회차)
 `/api/student/retry/start`(보충 문제 만들기·이어 풀기) `/api/student/retry/submit`(보충 문제 제출)
+
+**학원 계정** — POST `/api/academy/login` `/api/academy/first-password` `/api/academy/password` `/api/academy/switch` `/api/academy/back` `/api/academy/invite` `/api/academy/invite/cancel` `/api/academy/invite/answer` `/api/academy/members`(만들기)
+`/api/academy/members/update` `/api/academy/members/delete` · GET `/api/academy/members`(학원 관리자만) · 관리자 GET/POST `/api/admin/academies`
+POST `/api/admin/academies/manager` `/api/admin/academies/reset-password` `/api/admin/academies/delete`.
 
 **레벨테스트** — 선생님(로그인 + `_leveltest_approved`): GET `/api/leveltest/sets` `/api/leveltest/links`
 `/api/leveltest/results` `/api/leveltest/result?id=` `/api/leveltest/students` · POST `/api/leveltest/links`(시험 출제)
