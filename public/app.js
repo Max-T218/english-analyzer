@@ -358,7 +358,7 @@ function pairHwpxBtn(docxBtn, getOpts, after) {
   btn.className = docxBtn.className;
   btn.id = docxBtn.id.replace(/Docx/, "Hwpx");
   btn.textContent = "📄 한글 다운로드";
-  btn.title = "한글(아래아한글 2014 이후)에서 직접 고칠 수 있는 .hwpx 파일로 내려받습니다. 학원 마크 칸에 넣은 학원명·로고(쪽 아래)와 워터마크(쪽 뒷배경)도 인쇄물처럼 함께 들어갑니다.";
+  btn.title = "한글(아래아한글 2014 이후)에서 직접 고칠 수 있는 .hwpx 파일로 내려받습니다. 문항마다 정답·해설이 미주로 달리고(발문 끝 번호, 내용은 정답표 아래), 학원 마크 칸에 넣은 학원명·로고(쪽 아래)와 워터마크(쪽 뒷배경)도 인쇄물처럼 함께 들어갑니다.";
   docxBtn.after(btn);
   let busy = false;
   const sync = () => {

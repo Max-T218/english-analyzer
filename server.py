@@ -13531,6 +13531,14 @@ class _QuizDocxParser(HTMLParser):
         # 묶음으로 나누고 정답표 제목에서 읽은 시험지 이름을 묶음 머리에 단다(_box_groups)
         self._saw_list = False  # 새 답지 목록(ol.qz-anslist)을 보았는가
         self._qk_tbl = None     # 빠른 정답표를 읽는 중이면 "mc"(객관식 격자)·"sa"(주관식)
+        # 문항별 정답 미주(한글, 2026-11-10 사용자 시험): (본문 안 번호 줄 자리, '정답 ②') — quiz_html_to_hwpx가 단다
+        self.notes = []
+        self._instr_wait = False
+        self._hold_head = False   # 문항 번호를 발문과 한 줄로 잇는 중
+        self._card_first = None
+        self._box_txt = ""
+        self._box_split = None
+        self._box_cap = False
         self._box_marks = []    # (box_answers 안의 자리, 문항 번호)
         self._sec_labels = []   # 정답표 제목 글자들(차례대로)
         self._cap_sec = False
@@ -13554,7 +13562,13 @@ class _QuizDocxParser(HTMLParser):
             return
         xml = self.w.para("".join(self._runs), style=style or self._pending,
                           space_after=space_after)
-        self._target().append(xml)
+        target = self._target()
+        if self._instr_wait and target is self.body:
+            # 문항의 발문(.qz-instruction, '다음 글의 주제로 가장 적절한 것은?') — 미주(정답)를 그 끝에 단다
+            # (2026-11-10 사용자: 번호 뒤도, 보기 뒤도 아니고 발문 뒤에)
+            self._card_first = len(self.body)
+            self._instr_wait = False
+        target.append(xml)
         self._runs = []
         self._pending = None
 
@@ -13625,8 +13639,16 @@ class _QuizDocxParser(HTMLParser):
         elif tag == "br":
             # 문단 안 줄바꿈
             self._runs.append(self.w.br())
+            if self._box_cap and self._box_split is None:
+                self._box_split = len(self._box_txt)   # 정답 상자: 첫 줄 = '정답 ②', 그 뒤 = 해설
         elif tag in ("div", "p", "li", "tr", "h1", "h2", "h3", "section", "ul", "ol", "table", "caption"):
-            self._flush()
+            if self._hold_head and "qz-instruction" in cls:
+                # 문항 번호('1. ')를 내보내지 않고 들고 있다가 발문을 그 뒤에 이어 한 줄로 만든다
+                # (2026-11-10 사용자 — '1.'과 발문이 두 줄로 갈라져 있었다)
+                self._hold_head = False
+            else:
+                self._hold_head = False
+                self._flush()
             if any(c in self.PAGE_START_CLASSES for c in cls):
                 self._new_page()
                 self._fresh_page = True   # 이 쪽의 첫 단계는 제목 아래에 이어 붙인다
@@ -13659,6 +13681,9 @@ class _QuizDocxParser(HTMLParser):
                 self._in_answer += 1
                 if "qz-answer-box" in cls:
                     self._in_box += 1
+                    self._box_txt = ""
+                    self._box_split = None
+                    self._box_cap = True
                     if self._last_no:
                         self._box_marks.append((len(self.box_answers), self._last_no))
                         self._runs.append(self.w.run(f"{self._last_no}. ", bold=True))
@@ -13678,7 +13703,11 @@ class _QuizDocxParser(HTMLParser):
                 self._pending = "QNo"
             if "qz-card" in cls or "wb-q" in cls:
                 self._pending = None
-        self._depth_stack.append((None, tag))
+            if "qz-card" in cls:
+                self._card_first = None
+            if "qz-instruction" in cls and self._card_first is None:
+                self._instr_wait = True
+        self._depth_stack.append(("head" if "qz-head" in cls else None, tag))
 
     def handle_endtag(self, tag):
         if tag == "h3":
@@ -13715,6 +13744,12 @@ class _QuizDocxParser(HTMLParser):
                 self._target().extend(self.w.table(self._tbl, quick=self._qk_tbl))
             self._tbl = None
             self._qk_tbl = None
+        if tag == "div" and self._depth_stack and self._depth_stack[-1] == ("head", "div") and self._runs:
+            # 문항 머리(번호)가 끝났다 — 바로 내보내지 않고 발문과 한 줄로 잇는다(위 handle_starttag)
+            self._depth_stack.pop()
+            self._hold_head = True
+            self._skip_ws = True   # 두 div 사이의 줄바꿈이 빈칸 하나를 더 붙이지 않게
+            return
         if tag in ("div", "p", "li", "tr", "h1", "h2", "h3", "section", "ul", "ol", "table", "caption"):
             self._flush()
             while self._depth_stack:
@@ -13739,10 +13774,20 @@ class _QuizDocxParser(HTMLParser):
                         self._in_answer = max(0, self._in_answer - 1)
                         if kind == "answer_box":
                             self._in_box = max(0, self._in_box - 1)
+                            self._box_cap = False
+                            # 미주 내용 = 지금 답지와 같은 모양 — 굵은 '정답 ②' 다음 줄에 해설(2026-11-10 사용자:
+                            # 해설 모양은 참고 자료처럼 바꾸지 말고, 답지와 두 번 나오지 않게)
+                            cut = self._box_split if self._box_split is not None else len(self._box_txt)
+                            ans = re.sub(r"\s+", " ", self._box_txt[:cut]).strip()
+                            exp = re.sub(r"\s+", " ", self._box_txt[cut:]).strip()
+                            if ans and self._card_first is not None:
+                                self.notes.append((self._card_first, ans, exp))
                     break
 
     def handle_data(self, data):
         text = re.sub(r"\s+", " ", data)
+        if self._box_cap:
+            self._box_txt += text
         if self._cap_sec and self._sec_labels:
             self._sec_labels[-1] += text
         if self._cap_no and text.strip():
@@ -13872,6 +13917,7 @@ HWPX_NS = (
 _HWPX_CHARS = [
     (1000, False, False), (1000, True, False), (1000, False, True), (1000, True, True),
     (1100, True, False), (1100, True, True), (1600, True, False), (1400, True, False),
+    (700, True, False),   # 8 좁은 정답표 칸의 '주관식'(_hwpx_fit_table) — 7pt라야 한 줄에 든다
 ]
 # 문항 번호 줄(QNo)은 줄 전체를 굵게 11pt로 — 워드의 QNo 스타일과 같다
 _HWPX_QNO_CHAR = {"0": "4", "1": "4", "2": "5", "3": "5"}
@@ -13890,10 +13936,12 @@ _HWPX_PARAS = [
     (150, 0, 0, False, 2),    # 6 정답표 칸 — 왼쪽 맞춤(양쪽 맞춤이면 좁은 칸의 긴 정답이 띄엄띄엄 벌어진다)
     (160, 0, 600, False, 2),  # 7 줄바꿈이 든 문단 — 0번과 같되 왼쪽 맞춤
     (150, 0, 0, False, 2),    # 8 빠른 정답표의 객관식 정답 칸 — 가운데 맞춤
+    (150, 0, 0, False, 2),    # 9 미주 — 내어쓰기(둘째 줄부터 '20) ' 뒤로 들여 쓴다, 참고 자료와 같게)
 ]
+_HWPX_PARA_HANG = {9: 1700}   # 내어쓰기 폭(HWPUNIT, 약 6mm) — 왼쪽 여백을 주고 첫 줄만 그만큼 당긴다
 # 나머지는 양쪽 맞춤. 한글은 양쪽 맞춤 문단에서 강제 줄바꿈 앞 줄도 끝까지 벌려
 # '1.   정답   ①'처럼 띄엄띄엄 찍혀서, 줄바꿈이 든 문단은 7번(왼쪽 맞춤)으로 바꾼다.
-_HWPX_PARA_ALIGN = {1: "LEFT", 6: "LEFT", 7: "LEFT", 8: "CENTER"}   # 1 = 문항 번호 줄·답지 '1. 정답 …' 줄
+_HWPX_PARA_ALIGN = {1: "LEFT", 6: "LEFT", 7: "LEFT", 8: "CENTER", 9: "LEFT"}   # 1 = 문항 번호 줄·답지 '1. 정답 …' 줄
 
 
 def _hwpx_border(kind, color="#000000", width="0.1 mm"):
@@ -13954,7 +14002,8 @@ def _hwpx_header(wm=None):
             '<hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" '
             f'widowOrphan="0" keepWithNext="{1 if keep else 0}" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>'
             '<hh:autoSpacing eAsianEng="0" eAsianNum="0"/>'
-            '<hh:margin><hc:intent value="0" unit="HWPUNIT"/><hc:left value="0" unit="HWPUNIT"/>'
+            f'<hh:margin><hc:intent value="{-_HWPX_PARA_HANG.get(i, 0)}" unit="HWPUNIT"/>'
+            f'<hc:left value="{_HWPX_PARA_HANG.get(i, 0)}" unit="HWPUNIT"/>'
             f'<hc:right value="0" unit="HWPUNIT"/><hc:prev value="{prev}" unit="HWPUNIT"/>'
             f'<hc:next value="{nxt}" unit="HWPUNIT"/></hh:margin>'
             f'<hh:lineSpacing type="PERCENT" value="{line}" unit="HWPUNIT"/>'
@@ -14122,8 +14171,8 @@ _HWPX_SECPR = (
     "</hp:footNotePr>"
     '<hp:endNotePr><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/>'
     '<hp:noteLine length="14692344" type="SOLID" width="0.12 mm" color="#000000"/>'
-    '<hp:noteSpacing betweenNotes="0" belowLine="567" aboveLine="850"/>'
-    '<hp:numbering type="CONTINUOUS" newNum="1"/><hp:placement place="END_OF_DOCUMENT" beneathText="0"/>'
+    '<hp:noteSpacing betweenNotes="567" belowLine="567" aboveLine="850"/>'
+    '<hp:numbering type="CONTINUOUS" newNum="1"/><hp:placement place="END_OF_DOCUMENT" beneathText="1"/>'
     "</hp:endNotePr>"
     + "".join(
         f'<hp:pageBorderFill type="{t}" borderFillIDRef="1" textBorder="PAPER" headerInside="0" '
@@ -14226,7 +14275,52 @@ def _hwpx_brand_footer(name, logo):
     )
 
 
-def quiz_html_to_hwpx(result_html, title, answer_heading="정답 및 해설", columns=2, brand=None):
+def _hwpx_fit_table(xml, width):
+    """전체 폭(_HWPX_TEXT_W)으로 만든 표를 width 폭으로 줄인다 — 칸 폭을 같은 비율로, 칸 안 여백을 좁게,
+    '주관식' 같은 칸 글씨는 작게(charPr 8). 미주 2단 답지(참고 자료처럼 정답표가 한 단에 든다)에 쓴다."""
+    m = re.search(r'colCnt="(\d+)"', xml)
+    ncol = int(m.group(1)) if m else 2
+    num_w = 1750   # 번호 칸 — 굵은 '13.'이 잘리지 않는 폭(비율로 줄였더니 '11'·'12'가 잘렸다), 남는 폭은 '주관식' 칸에
+    if ncol >= 2 and ncol % 2 == 0:
+        pairs = ncol // 2
+        ans_w = max(1200, (width - num_w * pairs) // pairs)
+        widths = [num_w, ans_w] * pairs
+    else:
+        widths = [width // max(1, ncol)] * ncol
+
+    def tc(mm):
+        block = mm.group(0)
+        c = int(re.search(r'colAddr="(\d+)"', block).group(1))
+        w = widths[c] if c < len(widths) else widths[-1]
+        return re.sub(r'(<hp:cellSz width=")(\d+)', lambda x: f"{x.group(1)}{w}", block)
+    xml = re.sub(r"<hp:tc .*?</hp:tc>", tc, xml, flags=re.S)
+    xml = re.sub(r'(<hp:sz width=")(\d+)', lambda x: f"{x.group(1)}{sum(widths)}", xml)
+    # 칸 안 여백 — 칸(hasMargin="0")은 표의 inMargin을 따르므로 표 쪽 값을 좁혀야 한다
+    xml = xml.replace('<hp:cellMargin left="510" right="510"', '<hp:cellMargin left="141" right="141"')
+    xml = xml.replace('<hp:inMargin left="510" right="510"', '<hp:inMargin left="141" right="141"')
+    return re.sub(r'charPrIDRef="1"><hp:t>주관식</hp:t>', 'charPrIDRef="8"><hp:t>주관식</hp:t>', xml)
+
+
+def _hwpx_endnote(n, text, exp=""):
+    """미주 하나 — 본문 자리에는 위첨자 번호(1))가 찍히고, 내용은 문서 맨 끝 미주 칸에 모인다.
+    미주 번호 모양은 secPr의 endNotePr(숫자 + ')')를 따른다. 내용: 굵은 '정답 ②', 해설은 다음 줄."""
+    tail = (f'<hp:run charPrIDRef="0"><hp:t><hp:lineBreak/>{_docx_esc(exp)}</hp:t></hp:run>' if exp else "")
+    return (
+        f'<hp:run charPrIDRef="0"><hp:ctrl><hp:endNote number="{n}" suffixChar="41" instId="{900000 + n}">'
+        '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" linkListIDRef="0" '
+        'linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
+        '<hp:p id="0" paraPrIDRef="9" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
+        f'<hp:run charPrIDRef="0"><hp:ctrl><hp:autoNum num="{n}" numType="ENDNOTE">'
+        '<hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/>'
+        '</hp:autoNum></hp:ctrl></hp:run>'
+        f'<hp:run charPrIDRef="1"><hp:t> {_docx_esc(text)}</hp:t></hp:run>'
+        f"{tail}"
+        "</hp:p></hp:subList></hp:endNote></hp:ctrl></hp:run>"
+    )
+
+
+def quiz_html_to_hwpx(result_html, title, answer_heading="정답 및 해설", columns=2, brand=None,
+                      endnotes=False):
     """결과 HTML → .hwpx bytes. 쪽 구성은 quiz_html_to_docx와 같다:
     제목(1단) → 본문(columns단) → 새 쪽 → 답지(1단).
 
@@ -14241,6 +14335,19 @@ def quiz_html_to_hwpx(result_html, title, answer_heading="정답 및 해설", co
     parser = _QuizDocxParser(_HwpxWriter)
     parser.feed(result_html or "")
     body, answers = parser.result()
+    # 문제 탭 답지('1. 정답 / 해설' 목록)가 있는 문서에서만 — 워크북처럼 다른 답지를 쓰는 문서는 그대로 둔다
+    note_mode = bool(endnotes and parser.notes and parser._saw_list)
+    if note_mode:
+        # 문항 발문 끝('…가장 적절한 것은?')에 그 문항의 정답·해설을 미주로 단다(참고 자료 — 학원 예상문제
+        # hwp와 같은 자리). 미주는 문서 맨 끝에 모이므로 답지에서는 '1. 정답 / 해설' 목록을 빼고 빠른 정답표만
+        # 남긴다 — 둘 다 두면 같은 해설이 두 번 나온다(2026-11-10 사용자). 정답 상자가 없는 문항은 달리지 않는다.
+        for n, (idx, ans, exp) in enumerate(parser.notes, 1):
+            if 0 <= idx < len(body) and body[idx].endswith("</hp:p>"):
+                body[idx] = body[idx][: -len("</hp:p>")] + _hwpx_endnote(n, ans, exp) + "</hp:p>"
+        if HWPX_COLS_MARK in answers:
+            # 해설 목록과 함께 다단 시작 표시도 뺀다 — 남겨 두면 빈 다단 칸이 생겨 미주가 정답표 바로 아래가
+            # 아니라 다음 쪽부터 시작했다(2026-11-10 사용자: 띄우지 말고 바로 아래에)
+            answers = answers[: answers.index(HWPX_COLS_MARK)]
 
     secpr = _HWPX_SECPR
     if b_wm:
@@ -14256,14 +14363,25 @@ def quiz_html_to_hwpx(result_html, title, answer_heading="정답 및 해설", co
     out.extend(body or [_hwpx_p(_HwpxWriter.run("(내용이 없습니다)"))])
     # 3) 답지 — 새 쪽, 1단
     if answers:
+        # 미주 2단(note_mode) 답지는 단을 바꾸지 않는다 — '정답 및 해설' 머리부터 본문의 2단 흐름 그대로 두고
+        # 정답표를 한 단 폭으로 줄인다(참고 자료와 같다). 답지 쪽에서 단을 바꾸면(1단 머리 → 2단) 한글이 미주를
+        # 다음 쪽부터 시작했다(2026-11-10 실측).
+        keep_flow = note_mode and columns == 2
         out.append(_hwpx_p(
-            f'<hp:run charPrIDRef="7">{_hwpx_cols(1)}</hp:run>'
-            f'<hp:run charPrIDRef="7"><hp:t>{_docx_esc(answer_heading)}</hp:t></hp:run>',
+            ("" if keep_flow else f'<hp:run charPrIDRef="7">{_hwpx_cols(1)}</hp:run>')
+            + f'<hp:run charPrIDRef="7"><hp:t>{_docx_esc(answer_heading)}</hp:t></hp:run>',
             2, page_break=True))
         # 답지도 본문과 같은 단 수로(문제지 2단이면 답지도 2단 — 2026-11-10 사용자). 제목은 위에서 1단으로 걸쳐 둔다.
         # 빠른 정답표가 있으면 그 표들은 1단 그대로 두고, 해설 목록이 시작하는 자리(HWPX_COLS_MARK)부터 다단이다.
         cols_para = _hwpx_p(f'<hp:run charPrIDRef="0">{_hwpx_cols(columns)}</hp:run>', 4)
-        if HWPX_COLS_MARK in answers:
+        if note_mode:
+            # 미주를 달면 답지는 빠른 정답표뿐이고 미주가 그 아래에서 이어진다(2026-11-10 사용자: 띄우지 말고
+            # 바로 아래, 미주도 2단). 2단이면 본문 흐름 그대로(위 keep_flow) 정답표만 한 단 폭으로 줄인다.
+            # 1단 문제지(문법문제 1단)면 답지도 1단 그대로 둔다.
+            if keep_flow:
+                col_w = (_HWPX_TEXT_W - 2268) // 2
+                answers = [_hwpx_fit_table(a, col_w) if "<hp:tbl" in a else a for a in answers]
+        elif HWPX_COLS_MARK in answers:
             answers = [cols_para if (a == HWPX_COLS_MARK and columns == 2) else a
                        for a in answers if a != HWPX_COLS_MARK or columns == 2]
         elif columns == 2:
@@ -15878,6 +15996,7 @@ CHANGELOG = [
             "인쇄물처럼 함께 들어갑니다. 문법문제에는 워드 다운로드도 생겼습니다.",
             "문제지의 정답 및 해설이 표 대신 '1. 정답 ② / 해설' 꼴의 2단으로 바뀌었습니다(화면·인쇄·한글·워드 모두). "
             "그 앞에는 정답만 모은 표(객관식 5문항씩 · 주관식 따로)가 붙습니다.",
+            "한글 파일로 받으면 문항마다 발문 끝에 미주 번호가 달리고, 정답과 해설은 정답표 아래 미주로 모여 2단으로 나옵니다.",
         ],
     },
 ]
@@ -24102,7 +24221,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if is_hwpx:
                     # 학원 마크(학원명·로고·워터마크) — 화면의 학원 마크 칸에 넣은 것을 함께 보내온다
-                    blob = quiz_html_to_hwpx(source, title, answer_heading, columns, req.get("brand"))
+                    # 정답·해설은 늘 미주로(2026-11-10 사용자 — 한글 파일은 무조건 이 방식)
+                    blob = quiz_html_to_hwpx(source, title, answer_heading, columns, req.get("brand"),
+                                             endnotes=True)
                 else:
                     blob = quiz_html_to_docx(source, title, answer_heading, columns)
             except Exception as e:
