@@ -9840,7 +9840,7 @@ function setupQuizTab({ prefix, types, footer }) {
   QUIZ_ASSIGN_SYNC.push(syncAssignBtn);
   if ($(prefix + "AssignBtn")) {
     $(prefix + "AssignBtn").addEventListener("click", () =>
-      openQuizAssign(quizQuestionsFromEntries(lastEntries), sheetTitle, "quiz"));
+      openQuizAssign(quizQuestionsFromEntries(lastEntries), sheetTitle, "quiz", prefix));
   }
 
   if (shuffleBtn) shuffleBtn.addEventListener("click", reshuffle);
@@ -11888,7 +11888,7 @@ function syncWbAssignBtn() {
 QUIZ_ASSIGN_SYNC.push(syncWbAssignBtn);
 $("wbAssignBtn").addEventListener("click", () => {
   const stages = wbPickedStages();
-  openQuizAssign(wbQuestionsForStudents(lastWorkbookEntries, stages), wbTitleEl.value, "workbook");
+  openQuizAssign(wbQuestionsForStudents(lastWorkbookEntries, stages), wbTitleEl.value, "workbook", "workbook");
 });
 
 /* ── 워크북 마크업 파서 & 렌더 도우미 ── */
@@ -20195,12 +20195,43 @@ async function loadAssignedTests() {
 
 $("refreshAssignedBtn").addEventListener("click", loadAssignedTests);
 
+// 시험 목록 종류 거르개(2026-11-09 사용자 — 단어시험·문제 시험·워크북이 섞여 찾기 어렵다).
+// 문제 시험은 만든 탭(origin)으로 나눈다. origin이 없는 것은 이 기능 전에 낸 시험이라 '그 밖의 문제 시험'에 모인다.
+const ASSIGNED_KINDS = [
+  { id: "all", label: "전체" },
+  { id: "vocab", label: "📖 단어시험" },
+  { id: "mcq", label: "📝 객관식" },
+  { id: "saq", label: "✍️ 주관식" },
+  { id: "mix", label: "🧩 객관식+주관식" },
+  { id: "grammar", label: "📐 문법 문제" },
+  { id: "workbook", label: "📚 워크북" },
+  { id: "quiz", label: "📝 그 밖의 문제 시험" },
+];
+let assignedKind = "all";
+let assignedTestsCache = [];
+function assignedKindOf(t) {
+  if (t.kind !== "quiz") return "vocab";
+  if (t.source === "workbook") return "workbook";
+  return ["mcq", "saq", "mix", "grammar"].includes(t.origin) ? t.origin : "quiz";
+}
+
 function renderAssignedTests(tests) {
+  assignedTestsCache = tests;
   if (!tests.length) {
     assignedTestListEl.innerHTML = `<p class="hint">아직 낸 시험이 없습니다.</p>`;
     return;
   }
-  assignedTestListEl.innerHTML = tests
+  const counts = { all: tests.length };
+  tests.forEach((t) => { const k = assignedKindOf(t); counts[k] = (counts[k] || 0) + 1; });
+  if (assignedKind !== "all" && !counts[assignedKind]) assignedKind = "all";
+  const kindsHere = ASSIGNED_KINDS.filter((k) => k.id !== "all" && counts[k.id]).length;
+  const bar = kindsHere < 2 ? "" : `<div class="assigned-kind-bar" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">
+    ${ASSIGNED_KINDS.filter((k) => counts[k.id]).map((k) => `
+      <button type="button" class="btn small ${assignedKind === k.id ? "" : "ghost"} assigned-kind-btn"
+              data-kind="${k.id}" aria-pressed="${assignedKind === k.id}">${k.label} ${counts[k.id]}</button>`).join("")}
+  </div>`;
+  const shown = assignedKind === "all" ? tests : tests.filter((t) => assignedKindOf(t) === assignedKind);
+  assignedTestListEl.innerHTML = bar + shown
     .map(
       (t) => `
     <div class="panel" data-aid="${esc(t.id)}" style="margin-bottom:10px;">
@@ -20230,6 +20261,12 @@ function renderAssignedTests(tests) {
 }
 
 assignedTestListEl.addEventListener("click", async (e) => {
+  const kindBtn = e.target.closest(".assigned-kind-btn");
+  if (kindBtn) {
+    assignedKind = kindBtn.dataset.kind;
+    renderAssignedTests(assignedTestsCache);
+    return;
+  }
   // 문제 시험 — 학생 답안 펼치기 / 선생님 채점
   const ansBtn = e.target.closest(".quiz-answers-btn");
   if (ansBtn) {
@@ -20919,7 +20956,7 @@ async function submitAssignQuiz(classId) {
     const retry = source === "workbook" ? null : retryOption("assignRetryChk", "assignRetryPer");
     const r = await postForTargets(assignTargetSelectEl, (studentId) => postJson("/api/quiz-tests", {
       classId, studentId,
-      title: $("assignTitle").value, questions: withoutRetrySource(questions, retry), source, retry,
+      title: $("assignTitle").value, questions: withoutRetrySource(questions, retry), source, retry, origin: assignKind,
     }, "시험 내기에 실패했습니다."));
     closeModal(assignModalEl);
     if (classId === selectedClassId) loadAssignedTests();   // 낸 시험이 바로 목록에 뜨게
@@ -20975,8 +21012,10 @@ async function refreshQuizAssignTargets() {
 }
 quizAssignClassEl.addEventListener("change", refreshQuizAssignTargets);
 
-async function openQuizAssign(questions, title, source) {
+let quizAssignOrigin = "";   // 만든 탭(mcq·saq·mix·grammar·workbook) — 시험 목록 종류 거르개용
+async function openQuizAssign(questions, title, source, origin) {
   quizAssignQuestions = questions || [];
+  quizAssignOrigin = origin || "";
   quizAssignSource = source === "workbook" ? "workbook" : "quiz";
   $("quizAssignRetryWrap").hidden = quizAssignSource === "workbook";
   $("quizAssignRetryChk").checked = false;
@@ -21023,7 +21062,7 @@ $("quizAssignForm").addEventListener("submit", async (e) => {
     const r = await postForTargets(quizAssignTargetEl, (studentId) => postJson("/api/quiz-tests", {
       classId, studentId,
       title: $("quizAssignTitle").value, questions: withoutRetrySource(quizAssignQuestions, retry),
-      source: quizAssignSource, retry,
+      source: quizAssignSource, retry, origin: quizAssignOrigin,
     }, "시험 내기에 실패했습니다."));
     closeModal(quizAssignModalEl);
     alert(`${r.questions}${quizAssignSource === "workbook" ? "단계" : "문항"}을 냈습니다.` +

@@ -15189,6 +15189,14 @@ CHANGELOG = [
             "임시 저장하고, 제출하면 바로, 제출하지 않아도 마지막 저장 후 3일이 지나면 파기한다는 내용을 더했습니다.",
         ],
     },
+    {
+        "version": 124,
+        "date": "2026-11-09",
+        "items": [
+            "학생 관리 — 낸 시험 목록을 단어시험·객관식·주관식·객관식+주관식·문법·워크북으로 골라 볼 수 있습니다. "
+            "오늘 전에 낸 문제 시험은 '그 밖의 문제 시험'에 모입니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -18156,7 +18164,7 @@ def list_assignments_for_class(teacher_id, class_id):
             "by": names.get(by, ""), "mine": by == teacher_id,
             "canDelete": by == teacher_id or is_owner,
             "id": aid, "title": d.get("title", ""), "format": d.get("format"),
-            "kind": d.get("kind") or "vocab", "source": d.get("source") or "",
+            "kind": d.get("kind") or "vocab", "source": d.get("source") or "", "origin": d.get("origin") or "",
             "questionCount": d.get("n_questions") or 0, "unitCount": d.get("unit_count") or 0,
             "wordCount": d.get("n_words") or 0, "createdAt": d.get("created_at", ""),
             "maxWrong": d.get("max_wrong"),
@@ -18422,7 +18430,7 @@ def get_test_vocab_for_student(student_id, assignment_id):
 # 학생 시험 목록이 읽는 칸. 문항·단어·지문을 빼야 한다 — 시험 문서는 한 개에 40KB 안팎(큰 것은 100KB)이라 시험이 36개인
 # 반은 목록 한 번에 1.6MB를 받았다. 개수는 시험을 낼 때 n_questions·n_words에 적어 둔다.
 _TEST_LIST_FIELDS = ["title", "format", "kind", "source", "student_id", "student_name", "teacher_id", "unit_count",
-                     "max_wrong", "created_at", "retakes", "retry", "n_questions", "n_words"]
+                     "max_wrong", "created_at", "retakes", "retry", "n_questions", "n_words", "origin"]
 _ATTEMPT_LIST_FIELDS = ["assignment_id", "student_id", "round", "passed", "pending", "qdetails", "score", "total",
                         "wrong", "submitted_at"]
 
@@ -19321,7 +19329,12 @@ def _qt_student_view(q, seed):
     return v
 
 
-def create_quiz_assignment(teacher_id, class_id, title, questions, student_id=None, source="quiz", retry=None):
+# 문제 시험을 만든 탭 — 선생님 시험 목록의 종류 거르개용 표시일 뿐이다(2026-11-09 사용자). 이 기능 전에 낸 시험에는 없다
+QUIZ_TEST_ORIGINS = ("mcq", "saq", "mix", "grammar", "workbook")
+
+
+def create_quiz_assignment(teacher_id, class_id, title, questions, student_id=None, source="quiz", retry=None,
+                           origin=""):
     _require_db()
     _own_class(teacher_id, class_id)
     student_name = None
@@ -19375,6 +19388,7 @@ def create_quiz_assignment(teacher_id, class_id, title, questions, student_id=No
         "skipped": len(raw) - len(clean),
         "max_wrong": None, "created_at": _now_iso(),
         "retry": retry_cfg, "src_passages": kept if retry_cfg else {},
+        "origin": "workbook" if source == "workbook" else (origin if origin in QUIZ_TEST_ORIGINS else ""),
     })
     return ref.id, len(clean), len(raw) - len(clean), retry_ok
 
@@ -22766,7 +22780,7 @@ class Handler(BaseHTTPRequestHandler):
                     aid, made, skipped, retry_ok = create_quiz_assignment(
                         user_id, req.get("classId"), req.get("title"), req.get("questions"),
                         student_id=(req.get("studentId") or None), source=req.get("source") or "quiz",
-                        retry=req.get("retry"),
+                        retry=req.get("retry"), origin=str(req.get("origin") or ""),
                     )
                     self._send_json({"assignmentId": aid, "questions": made, "skipped": skipped,
                                      "retryQuestions": retry_ok})

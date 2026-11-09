@@ -1036,7 +1036,7 @@ grEl("grAssignBtn").addEventListener("click", () =>
   // 보충 학습이 같은 항목·레벨·난이도로 새 문제를 만드는 재료다(서버가 src로 바꿔 담고 학생에게는 안 보낸다).
   // 배열 영작은 looseOrder를 달아 같은 단어·다른 어순이면 틀림 대신 '확인 대기'로 채점되게 한다.
   openQuizAssign(grState.questions.map(({ gkind, gshape, ...rest }) =>
-    rest.format === "write" ? { ...rest, looseOrder: true } : rest), grSheetName(), "quiz"));
+    rest.format === "write" ? { ...rest, looseOrder: true } : rest), grSheetName(), "quiz", "grammar"));
 // 🔀 문제 섞기 — 서버는 항목별로 모아 내므로(같은 항목 문제가 줄줄이 나온다) 순서만 무작위로 섞는다.
 // 실제 시험지처럼 객관식이 앞, 주관식이 뒤인 것은 지킨다. 문항 값은 그대로라 저장·시험 내기도 이 순서를 쓴다.
 grEl("grShuffleBtn").addEventListener("click", () => {
