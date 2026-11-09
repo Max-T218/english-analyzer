@@ -15178,6 +15178,17 @@ CHANGELOG = [
             "둘째 쪽은 스스로 확인하기와 그림입니다. 인쇄할 때 그림이 3쪽으로 밀리던 문제도 고쳤습니다.",
         ],
     },
+    {
+        "version": 123,
+        "date": "2026-11-09",
+        "items": [
+            "학생 시험 — 풀던 답을 학생 아이디로 임시 저장합니다. 학원 태블릿에서 풀다 나가도 휴대폰으로 "
+            "로그인하면 쓰던 답과 풀던 문항부터 이어 풉니다. 단어시험도 이어 풀 수 있게 됐고, "
+            "임시 저장은 마지막으로 푼 때부터 3일이 지나면 지워집니다. 공용 기기에서는 다른 학생의 답이 보이지 않습니다.",
+            "개인정보처리방침 개정 안내 — 2026년 11월 16일부터 적용됩니다. 학생이 제출하기 전에 풀던 답을 학생 아이디별로 "
+            "임시 저장하고, 제출하면 바로, 제출하지 않아도 마지막 저장 후 3일이 지나면 파기한다는 내용을 더했습니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -17845,6 +17856,7 @@ def delete_student(teacher_id, student_id):
     _release_login_id(cur.get("login_id"), student_id)
     for doc in DB.collection("quiz_retries").where("student_id", "==", student_id).stream():
         doc.reference.delete()
+    _drop_drafts("student_id", student_id)
     ref.delete()
 
 
@@ -18610,6 +18622,7 @@ def grade_and_submit_attempt(assignment_id, student_id, answers):
             "wrong": d.get("wrong", 0), "passed": d.get("passed", True),
             "round": d.get("round", round), "noCriterion": max_wrong is None,
         }
+    _drop_draft(assignment_id, student_id, f"v{round}")
     # noCriterion — 합격 기준(max_wrong) 없이 낸 시험. 화면이 '합격' 대신 '시험을 마쳤습니다'로 쓴다(2026-10-28 사용자)
     return {"score": score, "total": total, "wrong": wrong, "passed": passed, "round": round,
             "noCriterion": max_wrong is None, "wrongItems": _wrong_items(details)}
@@ -18937,7 +18950,124 @@ def delete_assignment(teacher_id, assignment_id):
         doc.reference.delete()
     for doc in DB.collection("quiz_retries").where("assignment_id", "==", assignment_id).stream():
         doc.reference.delete()
+    _drop_drafts("assignment_id", assignment_id)
     ref.delete()
+
+
+# ══════ 풀던 답 임시 저장(2026-11-09 사용자) ══════
+# 학원 공용 기기와 휴대폰을 오가며 시험을 보므로, 풀던 답을 기기가 아니라 학생 아이디로 서버에 둔다 —
+# 태블릿에서 풀다 나가도 폰으로 로그인하면 이어 푼다. 문서 하나 = 학생 × 시험 × 회차
+# (단어시험은 회차마다 문항 순서·보기를 다시 섞으므로 회차까지 나눈다 — v{회차}, 문제 시험 q, 보충 학습 r{회차}).
+# 마지막으로 저장한 때부터 TEST_DRAFT_DAYS(3일)가 지나면 버린다 — cron이 없어 학생이 로그인할 때 그 학생 것을 훑고
+# (sweep_student_drafts), 읽을 때도 지난 것은 없는 것으로 본다. expire_at은 Firestore TTL 정책을 켜면 저절로 지우게 둔 칸이다.
+# 제출하면 지우고, 시험·학생을 지울 때(반 삭제·선생님 탈퇴·학원 닫기도 이 두 길을 탄다) 함께 지운다.
+# 학생이 쓴 답만 담는다 — 정답은 없다. 이미 낸 회차·내 시험이 아닌 것은 받지 않는다.
+TEST_DRAFTS = "test_drafts"
+TEST_DRAFT_DAYS = 3
+TEST_DRAFT_MAX_CHARS = 120_000   # 답 JSON 글자 수 상한(100문항 서술형도 넉넉하다, 문서 1MB 한도보다 훨씬 작다)
+
+
+def _draft_part(kind, round_no):
+    try:
+        n = int(round_no or 0)
+    except (TypeError, ValueError):
+        raise ValueError("회차를 찾을 수 없어요.")
+    if kind == "vocab" and 1 <= n <= 100:
+        return f"v{n}"
+    if kind == "quiz":
+        return "q"
+    if kind == "retry" and 1 <= n <= QUIZ_RETRY_MAX_ROUNDS:
+        return f"r{n}"
+    raise ValueError("잘못된 요청입니다.")
+
+
+def _draft_ref(assignment_id, student_id, part):
+    return DB.collection(TEST_DRAFTS).document(f"{assignment_id}_{student_id}_{part}")
+
+
+def _drop_draft(assignment_id, student_id, part):
+    """제출한 뒤 그 회차의 임시 저장을 지운다 — 실패해도 제출은 그대로(3일 뒤 저절로 버려진다)."""
+    try:
+        _draft_ref(assignment_id, student_id, part).delete()
+    except Exception as e:
+        print(f"[draft] 지우기 실패: {e}", flush=True)
+
+
+def _drop_drafts(field, value):
+    for doc in DB.collection(TEST_DRAFTS).where(field, "==", value).select(["part"]).stream():
+        doc.reference.delete()
+
+
+def _draft_expired(d):
+    try:
+        at = datetime.fromisoformat(d.get("updated_at", ""))
+    except (TypeError, ValueError):
+        return True
+    return datetime.now(timezone.utc) - at > timedelta(days=TEST_DRAFT_DAYS)
+
+
+def save_test_draft(student_id, assignment_id, kind, round_no, answers, index):
+    part = _draft_part(kind, round_no)
+    if not isinstance(answers, list):
+        raise ValueError("잘못된 요청입니다.")
+    if len(json.dumps(answers, ensure_ascii=False)) > TEST_DRAFT_MAX_CHARS:
+        raise ValueError("답이 너무 길어 임시 저장하지 못했어요.")
+    try:
+        index = max(0, min(1000, int(index or 0)))
+    except (TypeError, ValueError):
+        index = 0
+    assignment, _ = _qt_load(student_id, assignment_id)
+    if (kind == "vocab") == (assignment.get("kind") == "quiz"):
+        raise ValueError("잘못된 요청입니다.")
+    if kind == "retry":
+        snap = _qr_ref(assignment_id, student_id, int(part[1:])).get()
+        closed = not snap.exists or (snap.to_dict() or {}).get("status") != "open"
+    else:   # 그 회차 답안이 이미 있으면 낸 것이다(문제 시험은 늘 1회차)
+        n = int(part[1:]) if kind == "vocab" else 1
+        closed = DB.collection("test_attempts").document(f"{assignment_id}_{student_id}_{n}").get().exists
+    if closed:
+        return {"saved": False, "closed": True}
+    now = datetime.now(timezone.utc)
+    _draft_ref(assignment_id, student_id, part).set({
+        "assignment_id": assignment_id, "student_id": student_id, "part": part,
+        "answers": answers, "index": index, "updated_at": now.isoformat(),
+        "expire_at": now + timedelta(days=TEST_DRAFT_DAYS),
+    })
+    return {"saved": True, "updatedAt": now.isoformat()}
+
+
+def get_test_draft(student_id, assignment_id, kind, round_no):
+    """문서 이름에 학생 id가 들어 있어 남의 것은 읽을 수 없다 — 시험을 다시 확인하지 않아 한 번 왕복으로 끝난다."""
+    _require_db()
+    part = _draft_part(kind, round_no)
+    if not assignment_id:
+        raise ValueError("시험을 지정하세요.")
+    ref = _draft_ref(assignment_id, student_id, part)
+    snap = ref.get()
+    d = (snap.to_dict() or {}) if snap.exists else None
+    if not d:
+        return {}
+    if _draft_expired(d):
+        ref.delete()
+        return {}
+    return {"answers": d.get("answers") or [], "index": d.get("index") or 0, "updatedAt": d.get("updated_at", "")}
+
+
+def sweep_student_drafts(student_id):
+    """로그인할 때 그 학생의 3일 지난 임시 저장을 치운다 — 응답을 늦추지 않게 따로 돈다."""
+    def run():
+        try:
+            for doc in DB.collection(TEST_DRAFTS).where("student_id", "==", student_id).select(["updated_at"]).stream():
+                if _draft_expired(doc.to_dict() or {}):
+                    doc.reference.delete()
+        except Exception as e:
+            print(f"[draft] 훑기 실패: {e}", flush=True)
+    threading.Thread(target=run, daemon=True).start()
+
+
+def student_draft_key(student_id):
+    """화면이 기기에 잠깐 적어 두는 임시 저장의 이름표 — 학생 id를 그대로 남기지 않도록 해시만 쓴다."""
+    return hashlib.sha256(f"draft:{student_id}".encode()).hexdigest()[:16]
 
 
 # ══════ 문제 시험 — 객관식·주관식·혼합 탭에서 만든 문제를 학생이 사이트에서 푼다 ══════
@@ -19379,6 +19509,7 @@ def submit_quiz_attempt(assignment_id, assignment, student_id, student, answers)
         ref.create(row)          # 이미 있으면(두 번 누름) 처음 낸 것을 그대로 둔다
     except Exception:
         pass
+    _drop_draft(assignment_id, student_id, "q")
     out = quiz_review(assignment_id, assignment, ref.get().to_dict() or row)
     out["retry"] = _qr_state(assignment_id, assignment, student_id)
     return out
@@ -19840,6 +19971,11 @@ def _qr_review(assignment_id, assignment, doc):
     return out
 
 
+class RetryMaking(ValueError):
+    """보충 문제를 다른 요청(같은 학생이 새로고침 전에 누른 것 등)이 아직 만드는 중이다.
+    화면은 이 답(409 + making)을 받으면 오류를 띄우지 않고 잠시 뒤 다시 물어 다 만든 문제를 이어 받는다."""
+
+
 def start_quiz_retry(assignment_id, student_id):
     """[비슷한 새 문제 풀기] — 풀던 회차가 있으면 그대로 돌려주고, 없으면 새 회차를 만들어 선생님 잔액에서 값을 받는다."""
     assignment, student = _qt_load(student_id, assignment_id)
@@ -19859,7 +19995,7 @@ def start_quiz_retry(assignment_id, student_id):
         except ValueError:
             age = QUIZ_RETRY_MAKING_STALE + 1
         if age < QUIZ_RETRY_MAKING_STALE:
-            raise ValueError("새 문제를 만드는 중이에요. 잠시 뒤에 다시 눌러 주세요.")
+            raise RetryMaking("새 문제를 만드는 중이에요. 잠시 뒤에 다시 눌러 주세요.")
         _qr_ref(assignment_id, student_id, last.get("round")).delete()
         docs.pop()
         last = docs[-1] if docs else None
@@ -19886,7 +20022,7 @@ def start_quiz_retry(assignment_id, student_id):
                     "student_name": student.get("name", ""), "round": rnd, "status": "making",
                     "created_at": _now_iso()})
     except Exception:
-        raise ValueError("새 문제를 만드는 중이에요. 잠시 뒤에 다시 눌러 주세요.")
+        raise RetryMaking("새 문제를 만드는 중이에요. 잠시 뒤에 다시 눌러 주세요.")
     try:
         questions, cost = _qr_generate(gram, quiz, passages)
         if not questions:
@@ -19925,6 +20061,7 @@ def submit_quiz_retry(assignment_id, student_id, round_no, answers):
     done = {"status": "done", "qdetails": qdetails, "score": score, "total": total,
             "wrong": total - score - pending, "submitted_at": _now_iso()}
     ref.update(done)
+    _drop_draft(assignment_id, student_id, f"r{rnd}")
     d.update(done)
     out = _qr_review(assignment_id, assignment, d)
     out["retry"] = _qr_state(assignment_id, assignment, student_id)
@@ -21395,7 +21532,21 @@ class Handler(BaseHTTPRequestHandler):
             if not snap or not snap.exists:
                 self._send_json({"loggedIn": False})
                 return
-            self._send_json({"loggedIn": True, "name": snap.to_dict().get("name", "")})
+            self._send_json({"loggedIn": True, "name": snap.to_dict().get("name", ""),
+                             "dk": student_draft_key(student_id)})
+            return
+
+        if path == "/api/student/draft":
+            student_id = _student_session_user(self)
+            if not student_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            try:
+                self._send_json(get_test_draft(student_id, (query.get("assignmentId") or [""])[0],
+                                               (query.get("kind") or [""])[0], (query.get("round") or ["0"])[0]))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
             return
 
         if path == "/api/student/tests":
@@ -21649,6 +21800,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/quiz-tests", "/api/quiz-tests/grade",
                         "/api/student/login", "/api/student/logout", "/api/student/tests/submit",
                         "/api/student/tests/studied", "/api/student/retry/start", "/api/student/retry/submit",
+                        "/api/student/draft",
                         "/api/admin/approve-leveltest",
                         "/api/leveltest/links", "/api/leveltest/links/update", "/api/leveltest/links/delete",
                         "/api/leveltest/grade", "/api/leveltest/results/delete",
@@ -22640,8 +22792,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 401)
                 return
             token = create_student_session(student_id)
-            self._send_json({"loggedIn": True, "name": name, "pwChanged": pw_changed},
-                             cookies=[self._student_session_cookie(token)])
+            sweep_student_drafts(student_id)   # 3일 지난 임시 저장 치우기(따로 돈다)
+            self._send_json({"loggedIn": True, "name": name, "pwChanged": pw_changed,
+                             "dk": student_draft_key(student_id)},
+                            cookies=[self._student_session_cookie(token)])
+            return
+
+        if path == "/api/student/draft":
+            student_id = _student_session_user(self)
+            if not student_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                self._send_json(save_test_draft(student_id, req.get("assignmentId"), req.get("kind"),
+                                                req.get("round"), req.get("answers"), req.get("index")))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
             return
 
         if path == "/api/student/password":
@@ -22674,6 +22840,8 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self._send_json(submit_quiz_retry(
                         req.get("assignmentId"), student_id, req.get("round"), req.get("answers") or []))
+            except RetryMaking as e:
+                self._send_json({"error": str(e), "making": True}, 409)
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
             except Exception as e:

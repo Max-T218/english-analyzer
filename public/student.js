@@ -11,7 +11,11 @@ async function postJson(url, payload) {
   let data = null;
   try { data = JSON.parse(text); } catch {}
   if (!data) throw new Error(`서버 오류 (HTTP ${res.status})`);
-  if (!res.ok) throw new Error(data.error || "요청에 실패했습니다.");
+  if (!res.ok) {
+    const err = new Error(data.error || "요청에 실패했습니다.");
+    if (data.making) err.making = true;   // 보충 문제를 다른 요청이 아직 만드는 중
+    throw err;
+  }
   return data;
 }
 async function getJson(url) {
@@ -29,6 +33,129 @@ async function getJson(url) {
 }
 const esc = (s) => String(s == null ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/* ══════ 풀던 답 임시 저장(2026-11-09 사용자) ══════
+   학원 공용 기기와 휴대폰을 오가며 보므로 풀던 답을 학생 아이디로 서버(/api/student/draft)에 둔다.
+   글자마다 보내면 느려서(서버는 미국·저장소는 서울) 쓰고 잠시 쉬었을 때·문항을 옮길 때·창을 나갈 때만 보낸다.
+   인터넷이 끊겨도 잃지 않게 이 기기에도 학생별 이름표(dk — 서버가 준 해시)로 함께 적어 두고, 다시 열 때 서버 것과
+   기기 것 중 더 최근 것을 쓴다. 기기에 적은 것은 로그아웃할 때 지운다(공용 기기). 3일 지난 것은 버린다(서버도 같다). */
+const DRAFT_DAYS = 3;
+const DRAFT_PREFIX = "stdraft:";
+const DRAFT_IDLE_MS = 3000;
+let draftDk = "";   // /api/student/me·로그인 응답의 dk
+const draft = { ctx: null, last: null, dirty: false, timer: null, edited: false, saving: null };
+
+function draftLocalKey(ctx) { return `${DRAFT_PREFIX}${draftDk}:${ctx.aid}:${ctx.kind}:${ctx.round || 0}`; }
+function draftOld(t) { return !t || Date.now() - t > DRAFT_DAYS * 86400000; }
+function draftLocalGet(ctx) {
+  try {
+    const k = draftLocalKey(ctx);
+    const d = JSON.parse(localStorage.getItem(k) || "null");
+    if (d && draftOld(d.t)) { localStorage.removeItem(k); return null; }
+    return d;
+  } catch (_) { return null; }
+}
+function draftLocalPut(ctx, v) {
+  try { localStorage.setItem(draftLocalKey(ctx), JSON.stringify({ answers: v.answers, index: v.index, t: Date.now() })); } catch (_) {}
+}
+function draftLocalDrop(ctx) { try { localStorage.removeItem(draftLocalKey(ctx)); } catch (_) {} }
+// keep: 남길 것을 고르는 함수 — 없으면 모두 지운다. 학생 구분 없이 적던 옛 판(qt_draft_)은 누구 것인지 몰라 늘 지운다.
+function draftLocalSweep(keep) {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      if (k.startsWith("qt_draft_")) { localStorage.removeItem(k); continue; }
+      if (!k.startsWith(DRAFT_PREFIX)) continue;
+      let d = null;
+      try { d = JSON.parse(localStorage.getItem(k) || "null"); } catch (_) {}
+      if (!keep || !d || draftOld(d.t)) localStorage.removeItem(k);
+    }
+  } catch (_) {}
+}
+function draftSetDk(dk) { draftDk = dk || ""; draftLocalSweep(true); }
+
+async function draftFlush(keepalive) {
+  clearTimeout(draft.timer);
+  const ctx = draft.ctx;
+  if (!ctx || !draft.dirty || !draft.last) return;
+  if (draft.saving && !keepalive) { await draft.saving; if (!draft.dirty) return; }
+  draft.dirty = false;
+  const body = JSON.stringify({ assignmentId: ctx.aid, kind: ctx.kind, round: ctx.round,
+                                answers: draft.last.answers, index: draft.last.index });
+  draft.saving = fetch("/api/student/draft", { method: "POST", headers: { "content-type": "application/json" },
+                                               body, keepalive: !!keepalive && body.length < 60000 })
+    .then((r) => { if (!r.ok && r.status >= 500) draft.dirty = true; })
+    .catch(() => { if (draft.ctx === ctx) draft.dirty = true; })   // 인터넷이 끊겼다 — 다음 기회에 다시 보낸다(기기에는 남아 있다)
+    .finally(() => { draft.saving = null; });
+  await draft.saving;
+}
+function draftBegin(aid, kind, round) {
+  draftFlush();
+  draft.ctx = { aid, kind, round: round || 0 };
+  draft.last = null; draft.dirty = false; draft.edited = false;
+  return draft.ctx;
+}
+// 답이 바뀌었다 — 기기에는 바로, 서버에는 잠시 쉬었을 때
+function draftChanged(answers, index) {
+  if (!draft.ctx) return;
+  draft.last = { answers, index };
+  draft.dirty = true; draft.edited = true;
+  draftLocalPut(draft.ctx, draft.last);
+  clearTimeout(draft.timer);
+  draft.timer = setTimeout(() => draftFlush(), DRAFT_IDLE_MS);
+}
+// 문항을 옮겼다 — 답한 것이 있을 때만 곧바로 보낸다
+function draftMoved(index) {
+  if (!draft.ctx || !draft.last) return;
+  draft.last.index = index;
+  draft.dirty = true;
+  draftLocalPut(draft.ctx, draft.last);
+  draftFlush();
+}
+// 제출했다 — 서버는 제출할 때 지운다
+function draftDone() {
+  clearTimeout(draft.timer);
+  if (draft.ctx) draftLocalDrop(draft.ctx);
+  draft.ctx = null; draft.last = null; draft.dirty = false;
+}
+// 서버 것과 기기 것 중 더 최근 것. 화면을 먼저 기기 것으로 채워 두고, 서버 것이 더 최근이며 학생이 아직 손대지 않았으면 apply로 바꾼다.
+function draftRestore(ctx, apply) {
+  const local = draftLocalGet(ctx);
+  if (local) { draft.last = { answers: local.answers, index: local.index }; apply(local, false); }
+  getJson(`/api/student/draft?assignmentId=${encodeURIComponent(ctx.aid)}&kind=${ctx.kind}&round=${ctx.round || 0}`)
+    .then((srv) => {
+      if (draft.ctx !== ctx || draft.edited) return;
+      if (!srv || !Array.isArray(srv.answers)) {   // 서버에 없다 — 이 기기에만 있는 답(끊겼을 때 쓴 것)을 올린다
+        if (local) { draft.dirty = true; draftFlush(); }
+        return;
+      }
+      const st = Date.parse(srv.updatedAt || "") || 0;
+      if (local && local.t >= st) {   // 이 기기 것이 더 최근 — 서버에 못 보낸 것이면 지금 보낸다
+        if (JSON.stringify(local.answers) !== JSON.stringify(srv.answers)) { draft.dirty = true; draftFlush(); }
+        return;
+      }
+      draft.last = { answers: srv.answers, index: srv.index };
+      draftLocalPut(ctx, draft.last);
+      apply(srv, true);
+    })
+    .catch(() => {
+      if (local && draft.ctx === ctx) { draft.dirty = true; draft.timer = setTimeout(() => draftFlush(), DRAFT_IDLE_MS); }
+    });
+}
+function draftNote(beforeEl, text) {
+  let el = beforeEl.parentElement.querySelector(":scope > .draft-note");
+  if (!el) {
+    el = document.createElement("p");
+    el.className = "hint draft-note";
+    el.style.cssText = "margin:0 0 8px; color:var(--accent,#2563eb);";
+    beforeEl.before(el);
+  }
+  el.textContent = text || "";
+  el.hidden = !text;
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") draftFlush(true); });
+window.addEventListener("pagehide", () => draftFlush(true));
 
 const codeGateEl = $("codeGate");
 const listWorkspaceEl = $("listWorkspace");
@@ -54,6 +181,7 @@ function showOnly(el) {
   try {
     const info = await getJson("/api/student/me");
     if (info.loggedIn) {
+      draftSetDk(info.dk);
       $("studentGreeting").textContent = `${info.name}님, 안녕하세요`;
       showOnly(listWorkspaceEl);
       loadTests();
@@ -82,6 +210,7 @@ $("codeForm").addEventListener("submit", async (e) => {
   codeStatus.textContent = "확인 중…";
   try {
     const info = await postJson("/api/student/login", { loginId, password });
+    draftSetDk(info.dk);
     $("studentGreeting").textContent = `${info.name}님, 안녕하세요`;
     $("loginIdInput").value = "";
     $("loginPwInput").value = "";
@@ -153,6 +282,9 @@ $("pwForm").addEventListener("submit", async (e) => {
 });
 
 $("logoutBtn").addEventListener("click", async () => {
+  await draftFlush();          // 못 보낸 답을 먼저 서버에 — 그래야 다른 기기에서 이어 푼다
+  draftDone();
+  draftLocalSweep(false);      // 공용 기기에 남기지 않는다
   try { await postJson("/api/student/logout"); } catch (_) {}
   showOnly(codeGateEl);
 });
@@ -343,7 +475,18 @@ async function openTest(assignmentId) {
     currentAnswers = currentQuestions.map(() => "");
     currentOut = [];
     currentIndex = 0;
+    draftNote($("takeForm"), "");
     renderQuestion();
+    // 풀던 답 — 회차마다 문항 순서가 달라 회차별로 따로 둔다. 문항 수가 다르면(선생님이 고친 시험) 버린다
+    const ctx = draftBegin(assignmentId, "vocab", data.round || 1);
+    draftRestore(ctx, (saved, fromServer) => {
+      if (takeWorkspaceEl.hidden || draft.ctx !== ctx) return;
+      if (!Array.isArray(saved.answers) || saved.answers.length !== currentQuestions.length) return;
+      currentAnswers = saved.answers.map((a) => (typeof a === "string" ? a : ""));
+      currentIndex = Math.min(Number(saved.index) || 0, currentQuestions.length - 1);
+      renderQuestion();
+      draftNote($("takeForm"), fromServer ? "💾 저장해 둔 답을 불러왔어요. 이어서 풀면 돼요." : "");
+    });
   } catch (err) {
     if (err.needStudy) {     // 이 회차의 단어 학습을 아직 안 했다 — 학습 화면으로 보낸다
       openStudy(assignmentId, "시험을 보기 전에 단어 학습을 먼저 마쳐 주세요.");
@@ -395,7 +538,7 @@ function readCurrentAnswer() {
   return input ? input.value.trim() : "";
 }
 
-$("backToListBtn").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
+$("backToListBtn").addEventListener("click", () => { draftFlush(); showOnly(listWorkspaceEl); loadTests(); });
 $("backToListBtn2").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
 $("retryBtn").addEventListener("click", () => openTest(currentAssignmentId));
 
@@ -446,6 +589,7 @@ async function submitTest() {
     const result = await postJson("/api/student/tests/submit", {
       assignmentId: currentAssignmentId, answers: currentAnswers,
     });
+    draftDone();
     showResultScreen(result);
   } catch (err) {
     errEl.textContent = err.message || "제출에 실패했습니다.";
@@ -480,14 +624,22 @@ $("submitConfirmYesBtn").addEventListener("click", () => {
   else submitTest();
 });
 
+// 단어시험 임시 저장 — 문항을 옮길 때는 곧바로 서버에 보낸다
+function vocabDraftSave(moved) {
+  draftChanged(currentAnswers.slice(), currentIndex);
+  if (moved) draftFlush();
+}
+
 function goNext() {
   currentAnswers[currentIndex] = readCurrentAnswer();
   if (currentIndex === currentQuestions.length - 1) {
+    vocabDraftSave(true);
     openSubmitConfirm();
     return;
   }
   currentIndex++;
   renderQuestion();
+  vocabDraftSave(true);
 }
 
 nextBtn.addEventListener("click", goNext);
@@ -508,6 +660,14 @@ $("prevBtn").addEventListener("click", () => {
   currentAnswers[currentIndex] = readCurrentAnswer();   // 지금 문항 답도 보관
   currentIndex--;
   renderQuestion();
+  vocabDraftSave(true);
+});
+
+// 주관식 칸에 쓰는 중 — 기기에는 바로, 서버에는 잠시 쉬었을 때
+$("takeForm").addEventListener("input", (e) => {
+  if (e.target.id !== "qCurrentInput") return;
+  currentAnswers[currentIndex] = e.target.value.trim();
+  vocabDraftSave(false);
 });
 
 // 객관식: 보기를 눌러도 자동으로 넘어가지 않는다(2026-10-27 사용자 — 자동으로 넘어가면 검토가
@@ -526,13 +686,19 @@ $("takeForm").addEventListener("click", (e) => {
     const out = at < 0;
     lab.classList.toggle("out", out);
     xb.classList.toggle("on", out);
-    if (out && input.checked) { input.checked = false; lab.classList.remove("sel"); }
+    if (out && input.checked) {
+      input.checked = false; lab.classList.remove("sel");
+      currentAnswers[currentIndex] = "";
+      vocabDraftSave(false);
+    }
     return;
   }
   const opt = e.target.closest("label.st-opt");
   const input = opt && opt.querySelector('input[name="qCurrent"]');
   if (!input) return;
   input.checked = true;
+  currentAnswers[currentIndex] = input.value;
+  vocabDraftSave(false);
   const list = currentOut[currentIndex];
   if (list) { const at = list.indexOf(input.value); if (at >= 0) list.splice(at, 1); }
   opt.classList.remove("out");
@@ -561,13 +727,12 @@ function quizListRowHtml(t) {
 
 let quizQuestions = [];
 let quizDraftTimer = null;
-const quizDraftKey = () => `qt_draft_${currentAssignmentId}${quizRetryRound ? `_r${quizRetryRound}` : ""}`;
 
 function saveQuizDraft() {
   clearTimeout(quizDraftTimer);
   quizDraftTimer = setTimeout(() => {
     const answers = QT.collect($("quizBody"), quizQuestions);
-    try { localStorage.setItem(quizDraftKey(), JSON.stringify(answers)); } catch (_) {}
+    draftChanged(answers, quizIndex);   // 기기에는 바로, 서버에는 잠시 쉬었을 때
     updateQuizProgress(answers);
   }, 300);
 }
@@ -590,7 +755,11 @@ function showQuizStep(i) {
   $("quizSubmitBtn").hidden = !last;
   updateQuizProgress();
   window.scrollTo(0, 0);
+  // 어디까지 풀었는지도 함께 — 다른 기기에서 그 문항부터 연다. 처음 그릴 때는 보내지 않는다
+  // (기기에 남은 옛 답을 서버의 더 최근 답보다 먼저 덮어쓰지 않게)
+  if (!quizDrawing) draftMoved(quizIndex);
 }
+let quizDrawing = false;
 $("quizPrevBtn").addEventListener("click", () => { clearTimeout(quizAutoTimer); showQuizStep(quizIndex - 1); });
 $("quizNextBtn").addEventListener("click", () => { clearTimeout(quizAutoTimer); showQuizStep(quizIndex + 1); });
 // 객관식도 보기를 눌러도 자동으로 넘어가지 않는다 — 보기를 하나씩 지워 가며(✕) 검토하고
@@ -603,17 +772,33 @@ function openQuiz(assignmentId, data) {
   quizQuestions = data.questions || [];
   $("quizTitle").textContent = data.title || "문제 시험";
   $("quizError").textContent = "";
-  $("quizBody").innerHTML = quizQuestions.map((q, i) => QT.questionHtml(q, i, "take")).join("");
-  let draft = null;
-  try { draft = JSON.parse(localStorage.getItem(quizDraftKey()) || "null"); } catch (_) {}
-  if (draft) QT.restore($("quizBody"), quizQuestions, draft);
   clearTimeout(quizAutoTimer); quizAutoTimer = null;
-  showQuizStep(0);
+  clearTimeout(quizDraftTimer);
+  const ctx = draftBegin(assignmentId, quizRetryRound ? "retry" : "quiz", quizRetryRound);
+  const draw = (saved) => {
+    $("quizBody").innerHTML = quizQuestions.map((q, i) => QT.questionHtml(q, i, "take")).join("");
+    if (saved && Array.isArray(saved.answers)) QT.restore($("quizBody"), quizQuestions, saved.answers);
+    quizIndex = saved ? Math.min(Number(saved.index) || 0, Math.max(0, quizQuestions.length - 1)) : 0;
+    quizDrawing = true;
+    try { showQuizStep(quizIndex); } finally { quizDrawing = false; }
+  };
+  draftNote($("quizBody"), "");
+  draw(null);
   showOnly(quizWorkspaceEl);
+  draftRestore(ctx, (saved, fromServer) => {
+    if (quizWorkspaceEl.hidden || draft.ctx !== ctx) return;
+    draw(saved);
+    draftNote($("quizBody"), fromServer ? "💾 저장해 둔 답을 불러왔어요. 이어서 풀면 돼요." : "");
+  });
 }
 
 QT.bind($("quizBody"), saveQuizDraft);
-$("quizBackBtn").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
+$("quizBackBtn").addEventListener("click", () => {
+  clearTimeout(quizDraftTimer);
+  if (draft.ctx && draft.edited) draftChanged(QT.collect($("quizBody"), quizQuestions), quizIndex);
+  draftFlush();
+  showOnly(listWorkspaceEl); loadTests();
+});
 $("quizResultBackBtn").addEventListener("click", () => { showOnly(listWorkspaceEl); loadTests(); });
 
 $("quizSubmitBtn").addEventListener("click", () => {
@@ -636,7 +821,7 @@ async function submitQuiz() {
     const r = quizRetryRound
       ? await postJson("/api/student/retry/submit", { assignmentId: currentAssignmentId, round: quizRetryRound, answers })
       : await postJson("/api/student/tests/submit", { assignmentId: currentAssignmentId, answers });
-    try { localStorage.removeItem(quizDraftKey()); } catch (_) {}
+    draftDone();
     showQuizResult(r);
   } catch (err) {
     $("quizError").textContent = err.message || "제출에 실패했습니다.";
@@ -701,12 +886,32 @@ function renderQuizRetryBox(r) {
   }
 }
 
+// 새로고침 전에 누른 요청이 아직 문제를 만드는 중이면 서버가 making으로 답한다 — 오류를 띄우지 않고
+// 잠시 뒤 다시 물어 다 만든 문제를 이어 받는다(2026-11-09 사용자: 기다리다 새로고침한 학생이 오류만 봤다).
+// 다시 묻기만 하므로 값이 또 나가지 않는다. 다른 화면으로 가면 그만 묻는다.
+const RETRY_MAKING_POLL_MS = 4000;
+const RETRY_MAKING_POLL_MAX = 70;
 async function startQuizRetry(statusEl, errEl, btn) {
   errEl.textContent = "";
   btn.disabled = true;
   statusEl.textContent = "새 문제를 만드는 중이에요…";
+  const aid = currentAssignmentId;
+  // 단추가 든 화면이 아직 보이고 같은 시험이어야 이어 받는다(목록으로 갔으면 그만둔다)
+  const stillHere = () => currentAssignmentId === aid && btn.offsetParent !== null;
   try {
-    const data = await postJson("/api/student/retry/start", { assignmentId: currentAssignmentId });
+    let data = null;
+    for (let tries = 0; ; tries++) {
+      try {
+        data = await postJson("/api/student/retry/start", { assignmentId: aid });
+        break;
+      } catch (err) {
+        if (!err.making || tries >= RETRY_MAKING_POLL_MAX) throw err;
+        statusEl.textContent = "새 문제를 만드는 중이에요… 창을 닫지 말고 기다려 주세요.";
+        await new Promise((r) => setTimeout(r, RETRY_MAKING_POLL_MS));
+        if (!stillHere()) return;   // 그사이 다른 화면으로 갔다
+      }
+    }
+    if (!stillHere()) return;
     if ((data.concepts || []).length) showQuizConcepts(data);   // 개념 정리를 읽어야 새 문제로 넘어간다
     else openQuiz(currentAssignmentId, data);
   } catch (err) {
