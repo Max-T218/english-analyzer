@@ -15194,7 +15194,7 @@ CHANGELOG = [
         "date": "2026-11-09",
         "items": [
             "학생 관리 — 낸 시험 목록을 단어시험·객관식·주관식·객관식+주관식·문법·워크북으로 골라 볼 수 있습니다. "
-            "오늘 전에 낸 문제 시험은 '그 밖의 문제 시험'에 모입니다.",
+            "이미 낸 시험도 문항을 보고 종류를 찾아 나눕니다.",
         ],
     },
 ]
@@ -18156,6 +18156,7 @@ def list_assignments_for_class(teacher_id, class_id):
     tests = {doc.id: doc.to_dict() or {} for doc in
              DB.collection("test_assignments").where("class_id", "==", class_id).select(_TEST_LIST_FIELDS).stream()}
     _fill_test_counts(tests)
+    _fill_test_origins(tests)
     for aid, d in tests.items():
         by = d.get("teacher_id") or ""
         if c.get("members") and by not in names:
@@ -18463,6 +18464,36 @@ def _fill_test_counts(tests):
         tests[aid].setdefault("n_questions", 0)
         tests[aid].setdefault("n_words", 0)
     _save_test_counts(counts)
+
+
+def _guess_test_origin(d):
+    """origin이 적히기 전에 낸 문제 시험이 어느 탭에서 왔는지 문항으로 짐작한다(2026-11-09 사용자 — 옛 시험이
+    모두 '그 밖의 문제 시험'에 모였다). 문법 마법사 문항은 유형 자리에 항목 이름이 들고(목록 밖), 배열 영작에
+    looseOrder·보충 재료에 src.k=g가 붙는다. 나머지는 객관식(mc)만이면 객관식, mc가 없으면 주관식, 섞였으면 혼합."""
+    if d.get("source") == "workbook":
+        return "workbook"
+    qs = [q for q in (d.get("questions") or []) if isinstance(q, dict)]
+    if not qs:
+        return "quiz"
+    labels = set(QUIZ_TYPE_LABELS)
+    if any(q.get("looseOrder") or (q.get("src") or {}).get("k") == "g" for q in qs) \
+            or not any(str(q.get("type") or "").strip() in labels for q in qs):
+        return "grammar"
+    mc = sum(1 for q in qs if (q.get("format") or "mc") == "mc")
+    return "mcq" if mc == len(qs) else "saq" if mc == 0 else "mix"
+
+
+def _fill_test_origins(tests):
+    """origin이 없는 옛 문제 시험만 통째로 읽어 짐작해 적어 둔다 — 한 번 적으면 다음부터는 안 읽는다."""
+    missing = [aid for aid, d in tests.items() if d.get("kind") == "quiz" and not d.get("origin")]
+    if not missing:
+        return
+    found = {}
+    for snap in DB.get_all([DB.collection("test_assignments").document(aid) for aid in missing]):
+        if snap.exists:
+            found[snap.id] = {"origin": _guess_test_origin(snap.to_dict() or {})}
+            tests[snap.id].update(found[snap.id])
+    _save_test_counts(found)   # 같은 방식으로 문서에 덧적는다(실패해도 목록은 나간다)
 
 
 def _retry_todo_map(tests, attempts_by, student_id):
