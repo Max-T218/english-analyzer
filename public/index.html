@@ -1040,6 +1040,16 @@
     </div>
   </div>
 
+  <!-- ══════════ 학원 반 → 개인 반 돌려보내기 ══════════ -->
+  <div class="modal-overlay" id="academyReturnOverlay" hidden>
+    <div class="modal-box">
+      <button type="button" class="modal-close" id="academyReturnClose" aria-label="닫기">&times;</button>
+      <h3 class="modal-title">↩ 개인 반으로 돌려보내기</h3>
+      <p class="hint">학원 반을 선생님 한 분의 개인 반으로 돌려보냅니다. 학생·시험·성적이 함께 가고 학생 아이디·비밀번호는 그대로입니다. 돌려보낸 반은 학원 모드에서 보이지 않습니다. 개인 반에서 가져온 반은 가져온 선생님이, 학원에서 만든 반은 원장이 기본으로 받습니다.</p>
+      <div id="academyReturnList"></div>
+    </div>
+  </div>
+
   <!-- ══════════ 반에 시험 내기 창(플로팅) ══════════ -->
   <div class="modal-overlay" id="assignModalOverlay" hidden>
     <div class="modal-box">
@@ -2725,6 +2735,7 @@
           <button type="button" class="btn ghost small" id="joinClassBtn">공유 코드로 반 참여</button>
           <!-- 학원 모드에서만 보인다 — 개인 모드에서 만든 반을 학원 반으로 옮긴다(app.js academyMove) -->
           <button type="button" class="btn ghost small" id="academyMoveBtn" hidden>📥 개인 반 가져오기</button>
+          <button type="button" class="btn ghost small" id="academyReturnBtn" hidden>↩ 개인 반으로 돌려보내기</button>
         </div>
       </div>
       <div class="error" id="classError"></div>

@@ -16163,7 +16163,8 @@ def _touch_active(user_id):
 #   · 저장함은 내 것 그대로 다 보이고, 학원 **공유 폴더**에 넣은 자료(원본)는 학원 선생님 모두가 보고 고쳐 저장한다.
 #     지우기는 원장과 만든 사람만(saved_items의 shared_academy).
 #   · 학생 관리는 학원 반을 함께 쓴다 — 학원 몫 id(users/academy:<학원id>, 이메일 없는 문서)가 반·학생·시험의 주인이다.
-#     개인 모드에서 만든 반은 [학원으로 옮기기]로 가져온다(move_class_to_academy).
+#     개인 모드에서 만든 반은 [학원으로 옮기기]로 가져오고(move_class_to_academy), [개인 반으로 돌려보내기]로
+#     되돌린다(return_class_from_academy — 학원을 닫을 때도 고르면 모두 돌려보낸다).
 # 사이트 관리자가 회원 목록에서 [학원 열기]로 기존 회원을 학원 관리자(기본 원장 겸임)로 정하면, 학원 관리자가 다른
 # 회원을 이메일로 초대한다(상대가 로그인해 수락). 화면은 fetch에 X-Academy 머리를 실어 보내고, 서버는 요청마다
 # 회원 자격을 확인한다(_academy_ctx — 30초 캐시).
@@ -16370,17 +16371,21 @@ def _close_academy(aid):
     _academy_cache_clear()
 
 
-def admin_delete_academy(aid, confirm_name):
-    """학원을 닫는다 — 선생님 명단·초대·공유 표시와 **학원 반·학생·시험·성적**을 지운다. 선생님 개인 자료·포인트는 남는다."""
+def admin_delete_academy(aid, confirm_name, return_classes=False):
+    """학원을 닫는다 — 선생님 명단·초대·공유 표시를 지운다. 학원 반·학생·시험·성적은 return_classes면 선생님 개인 반으로
+    돌려보내고(return_all_academy_classes — 가져온 반은 가져온 선생님, 학원에서 만든 반은 원장), 아니면 함께 지운다.
+    선생님 개인 자료·포인트는 남는다."""
     _require_db()
     a = DB.collection(ACADEMIES).document(aid or "_").get().to_dict()
     if not a:
         raise ValueError("학원을 찾을 수 없습니다.")
     if _norm_text(confirm_name) != a.get("name", ""):
         raise ValueError("학원 이름이 맞지 않아 지우지 않았습니다.")
+    returned = return_all_academy_classes(aid) if return_classes else 0
     _close_academy(aid)
     if DB.collection("users").document(_academy_uid(aid)).get().exists:
         delete_user_account(_academy_uid(aid), by_admin=True)
+    return returned
 
 
 def my_academies(user_id):
@@ -16578,7 +16583,7 @@ def personal_classes(user_id):
 def move_class_to_academy(handler, class_id):
     """개인 반을 학원 반으로 옮긴다(사용자) — 반·학생·시험·답안·보충 학습의 주인을 학원 몫 id로 바꾼다.
     학생 아이디·비밀번호·성적은 그대로라 학생은 아무것도 바뀌지 않는다. 반 공유(공동 선생님)는 풀린다 —
-    학원 선생님 모두가 함께 쓰기 때문이다. 되돌리는 길은 없다."""
+    학원 선생님 모두가 함께 쓰기 때문이다. 되돌리기는 return_class_from_academy(moved_from을 보고 가져온 선생님에게)."""
     ctx = getattr(handler, "_acad", None)
     if not ctx:
         raise PermissionError("학원 링크로 열어 주세요.")
@@ -16601,6 +16606,111 @@ def move_class_to_academy(handler, class_id):
                 if (x.to_dict() or {}).get("teacher_id"):
                     x.reference.update({"teacher_id": new_owner})
     return n
+
+
+def _set_class_owner(class_id, new_owner, extra=None):
+    """반·학생·시험·답안·보충 학습의 주인(teacher_id)을 한꺼번에 바꾼다 — 학원 반 → 개인 반 돌려보내기."""
+    upd = {"teacher_id": new_owner, "members": [], "share_code": None}
+    upd.update(extra or {})
+    DB.collection("classes").document(class_id).update(upd)
+    n = {"students": 0, "tests": 0}
+    for doc in DB.collection("students").where("class_id", "==", class_id).stream():
+        doc.reference.update({"teacher_id": new_owner})
+        n["students"] += 1
+    for doc in DB.collection("test_assignments").where("class_id", "==", class_id).stream():
+        doc.reference.update({"teacher_id": new_owner})
+        n["tests"] += 1
+        for col in ("test_attempts", "quiz_retries"):
+            for x in DB.collection(col).where("assignment_id", "==", doc.id).stream():
+                if (x.to_dict() or {}).get("teacher_id"):
+                    x.reference.update({"teacher_id": new_owner})
+    return n
+
+
+def _user_name(user_id):
+    u = DB.collection("users").document(user_id or "_").get().to_dict()
+    return (u.get("name") or u.get("email") or "") if u else None
+
+
+def _return_target(c, director_uid):
+    """돌려받을 선생님 기본값 — 개인 반에서 가져온 반은 가져온 선생님, 학원에서 만든 반(또는 그 선생님이 탈퇴했으면)은 원장."""
+    mf = c.get("moved_from") or ""
+    if mf and _user_name(mf) is not None:
+        return mf
+    return director_uid or ""
+
+
+def academy_classes_for_return(handler):
+    """학원 모드 [↩ 개인 반으로 돌려보내기] 목록 — 학원 반마다 기본으로 돌려받을 선생님, 그리고 고를 수 있는 학원 선생님."""
+    ctx = getattr(handler, "_acad", None)
+    if not ctx:
+        raise PermissionError("학원 링크로 열어 주세요.")
+    is_boss = ctx.get("manager") or ctx.get("director") == handler._uid
+    members = [{"id": d.get("user_id"), "name": d.get("name", ""), "roleLabel": ACADEMY_ROLES.get(d.get("role"), "강사")}
+               for _m, d in _academy_members(ctx["aid"]) if d.get("user_id")]
+    rows = []
+    for doc in DB.collection("classes").where("teacher_id", "==", _academy_uid(ctx["aid"])).stream():
+        c = doc.to_dict() or {}
+        mf = c.get("moved_from") or ""
+        if not is_boss and mf != handler._uid:
+            continue   # 강사는 자기가 가져온 반만 돌려받을 수 있다
+        target = _return_target(c, ctx.get("director"))
+        n = sum(1 for _ in DB.collection("students").where("class_id", "==", doc.id).select(["class_id"]).stream())
+        rows.append({"id": doc.id, "name": c.get("name", ""), "students": n, "createdAt": c.get("created_at", ""),
+                     "movedFrom": mf, "movedFromName": _user_name(mf) if mf else "",
+                     "target": target, "targetName": _user_name(target) or ""})
+    rows.sort(key=lambda r: r["createdAt"])
+    return {"classes": rows, "members": members if is_boss else [], "canPick": bool(is_boss)}
+
+
+def return_class_from_academy(handler, class_id, to_user=None):
+    """학원 반을 선생님 개인 반으로 돌려보낸다(사용자) — move_class_to_academy의 반대.
+    학생 아이디·비밀번호·시험·성적은 그대로 따라간다. 학원 관리자·원장은 어느 반이든, 받을 선생님(학원 선생님 중)도 고를 수 있다.
+    강사는 자기가 가져온 반만 자기에게 돌려받는다. 받는 선생님은 반/학생 관리 승인(classroom_approved)이 있어야 한다."""
+    ctx = getattr(handler, "_acad", None)
+    if not ctx:
+        raise PermissionError("학원 링크로 열어 주세요.")
+    ref = DB.collection("classes").document(class_id or "_")
+    c = ref.get().to_dict()
+    if not c or c.get("teacher_id") != _academy_uid(ctx["aid"]):
+        raise ValueError("이 학원의 반이 아닙니다.")
+    is_boss = ctx.get("manager") or ctx.get("director") == handler._uid
+    if is_boss:
+        target = to_user or _return_target(c, ctx.get("director"))
+        if to_user and to_user != c.get("moved_from") and \
+                not DB.collection(ACADEMY_MEMBERS).document(f"{ctx['aid']}_{to_user}").get().exists:
+            raise ValueError("받을 선생님은 이 학원 선생님(또는 반을 가져온 선생님) 중에서 고르세요.")
+    else:
+        if c.get("moved_from") != handler._uid:
+            raise PermissionError("내가 가져온 반만 돌려받을 수 있습니다(다른 반은 학원 관리자·원장이 돌려보냅니다).")
+        target = handler._uid
+    if not target or _user_name(target) is None:
+        raise ValueError("돌려받을 선생님이 없습니다 — 받을 선생님을 골라 주세요.")
+    if not _classroom_approved(target):
+        raise ValueError(f"{_user_name(target) or '그 선생님'} 계정은 반/학생 관리 승인을 받지 않아 돌려보낼 수 없습니다. 사이트 관리자에게 승인을 요청하세요.")
+    n = _set_class_owner(class_id, target, {"moved_from": None, "returned_from": ctx["aid"], "returned_at": _now_iso()})
+    n["to"] = _user_name(target) or ""
+    return n
+
+
+def return_all_academy_classes(aid):
+    """학원을 닫기 전 — 학원 반을 모두 기본 선생님에게 돌려보낸다. 하나라도 못 돌려보내면 아무것도 바꾸지 않고 까닭을 알린다."""
+    a = DB.collection(ACADEMIES).document(aid).get().to_dict() or {}
+    plan, bad = [], []
+    for doc in DB.collection("classes").where("teacher_id", "==", _academy_uid(aid)).stream():
+        c = doc.to_dict() or {}
+        t = _return_target(c, a.get("director_uid"))
+        if not t or _user_name(t) is None:
+            bad.append(f"'{c.get('name', '')}' 반 — 돌려받을 선생님(원장)이 없습니다")
+        elif not _classroom_approved(t):
+            bad.append(f"'{c.get('name', '')}' 반 — {_user_name(t)} 계정에 반/학생 관리 승인이 없습니다")
+        else:
+            plan.append((doc.id, t))
+    if bad:
+        raise ValueError("반을 돌려보내지 못해 학원을 닫지 않았습니다.\n" + "\n".join(bad))
+    for cid, t in plan:
+        _set_class_owner(cid, t, {"moved_from": None, "returned_from": aid, "returned_at": _now_iso()})
+    return len(plan)
 
 
 # --- 저장함 공유 폴더 ---
@@ -21029,6 +21139,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"classes": personal_classes(user_id)})
             return
 
+        if path == "/api/academy/academy-classes":
+            user_id = _session_user(self)
+            if not user_id or not self._acad:
+                self._send_json({"error": "학원 링크로 열어 주세요."}, 401)
+                return
+            self._send_json(academy_classes_for_return(self))
+            return
+
         if path == "/api/admin/academies":
             if not _admin_session_valid(self):
                 self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
@@ -21517,6 +21635,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/saved-image", "/api/brand", "/api/saved/share",
                         "/api/academy/invite", "/api/academy/invite/cancel", "/api/academy/invite/answer",
                         "/api/academy/member/update", "/api/academy/member/remove", "/api/academy/move-class",
+                        "/api/academy/return-class",
                         "/api/admin/academies", "/api/admin/academies/manager", "/api/admin/academies/delete",
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
@@ -22710,7 +22829,7 @@ class Handler(BaseHTTPRequestHandler):
         # --- 학원 ---
         if path in ("/api/saved/share", "/api/academy/invite", "/api/academy/invite/cancel",
                     "/api/academy/invite/answer", "/api/academy/member/update",
-                    "/api/academy/member/remove", "/api/academy/move-class"):
+                    "/api/academy/member/remove", "/api/academy/move-class", "/api/academy/return-class"):
             user_id = _session_user(self) if DB is not None else None
             if not user_id:
                 self._send_json({"error": "로그인이 필요합니다."}, 401)
@@ -22734,6 +22853,8 @@ class Handler(BaseHTTPRequestHandler):
                         limit=req.get("limit") if "limit" in req else "keep")
                 elif path == "/api/academy/member/remove":
                     academy_remove_member(self, req.get("userId") or user_id)
+                elif path == "/api/academy/return-class":
+                    result = return_class_from_academy(self, req.get("classId"), req.get("toUserId") or None)
                 else:
                     result = move_class_to_academy(self, req.get("classId"))
             except PermissionError as e:
@@ -22756,9 +22877,10 @@ class Handler(BaseHTTPRequestHandler):
                     admin_academy_add_manager(req.get("academyId"), req.get("email"))
                     result = {"ok": True}
                 else:
-                    admin_delete_academy(req.get("academyId"), req.get("confirmName") or "")
-                    print(f"[관리자] 학원 닫기: {req.get('academyId')}", flush=True)
-                    result = {"ok": True}
+                    returned = admin_delete_academy(req.get("academyId"), req.get("confirmName") or "",
+                                                    return_classes=bool(req.get("returnClasses")))
+                    print(f"[관리자] 학원 닫기: {req.get('academyId')} (돌려보낸 반 {returned})", flush=True)
+                    result = {"ok": True, "returned": returned}
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
                 return

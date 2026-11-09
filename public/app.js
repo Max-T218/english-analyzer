@@ -1103,6 +1103,7 @@ function syncAcademyBar(info) {
   $("deleteAccountBtn").hidden = !!a;
   $("openRechargeBtn").hidden = !!a && !a.isDirector;
   $("academyMoveBtn").hidden = !a;
+  $("academyReturnBtn").hidden = !a;
   $("academySharedBtn").hidden = !a;
 }
 $("academySharedBtn").addEventListener("click", () => openSavedList("shared"));
@@ -1265,7 +1266,7 @@ $("academyMoveList").addEventListener("click", async (e) => {
   if (!b) return;
   const row = b.closest("[data-id]");
   const name = row.querySelector("b").textContent;
-  if (!confirm(`'${name}' 반을 ${currentAcademy ? currentAcademy.name : "학원"}으로 옮깁니다.\n\n학생·시험·성적이 함께 옮겨져 학원 선생님 모두가 함께 봅니다. 학생 아이디·비밀번호는 그대로입니다.\n개인 모드에서는 더는 보이지 않고, 되돌릴 수 없습니다. 계속할까요?`)) return;
+  if (!confirm(`'${name}' 반을 ${currentAcademy ? currentAcademy.name : "학원"}으로 옮깁니다.\n\n학생·시험·성적이 함께 옮겨져 학원 선생님 모두가 함께 봅니다. 학생 아이디·비밀번호는 그대로입니다.\n개인 모드에서는 더는 보이지 않습니다([↩ 개인 반으로 돌려보내기]로 되돌릴 수 있습니다). 계속할까요?`)) return;
   b.disabled = true;
   try {
     const r = await postJson("/api/academy/move-class", { classId: row.dataset.id }, "옮기지 못했습니다.");
@@ -1273,6 +1274,56 @@ $("academyMoveList").addEventListener("click", async (e) => {
     if (typeof window.reloadStudentsTab === "function") window.reloadStudentsTab();
   } catch (err) {
     alert(err.message || "옮기지 못했습니다.");
+    b.disabled = false;
+  }
+});
+
+/* 학원 반 → 개인 반 돌려보내기(학생 관리 탭의 [↩ 개인 반으로 돌려보내기], 학원 모드에서만).
+   학원 관리자·원장은 모든 학원 반을 받을 선생님을 골라 돌려보내고, 강사는 자기가 가져온 반만 자기에게 돌려받는다. */
+const academyReturnEl = $("academyReturnOverlay");
+async function loadAcademyReturn() {
+  const box = $("academyReturnList");
+  box.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  try {
+    const { classes, members, canPick } = await getJson("/api/academy/academy-classes", "반 목록을 불러오지 못했습니다.");
+    if (!classes.length) {
+      box.innerHTML = `<p class="hint">${canPick ? "돌려보낼 학원 반이 없습니다." : "돌려받을 반이 없습니다(내가 개인 반에서 가져온 반만 돌려받을 수 있습니다)."}</p>`;
+      return;
+    }
+    box.innerHTML = classes.map((c) => {
+      const from = c.movedFrom ? `${esc(c.movedFromName || "탈퇴한 선생님")} 선생님이 가져온 반` : "학원에서 만든 반";
+      const pick = canPick
+        ? `<select class="ac-ret-to">${(c.target ? "" : `<option value="">받을 선생님 고르기</option>`)
+            + members.map((m) => `<option value="${esc(m.id)}"${m.id === c.target ? " selected" : ""}>${esc(m.name)} (${esc(m.roleLabel)})</option>`).join("")
+            + (c.movedFrom && !members.some((m) => m.id === c.movedFrom) && c.movedFromName
+              ? `<option value="${esc(c.movedFrom)}"${c.movedFrom === c.target ? " selected" : ""}>${esc(c.movedFromName)} (학원을 나감)</option>` : "")}</select>`
+        : `<span class="ac-me">나에게 돌려받기</span>`;
+      return `<div class="ac-inv-row" data-id="${esc(c.id)}"><b>${esc(c.name)}</b>
+        <span class="ac-me">학생 ${c.students}명 · ${from}</span> ${pick}
+        <button type="button" class="btn small ac-return">돌려보내기</button></div>`;
+    }).join("");
+  } catch (err) {
+    box.innerHTML = `<p class="error">${esc(err.message || "반 목록을 불러오지 못했습니다.")}</p>`;
+  }
+}
+$("academyReturnBtn").addEventListener("click", () => { openModal(academyReturnEl); loadAcademyReturn(); });
+$("academyReturnClose").addEventListener("click", () => closeModal(academyReturnEl));
+$("academyReturnList").addEventListener("click", async (e) => {
+  const b = e.target.closest(".ac-return");
+  if (!b) return;
+  const row = b.closest("[data-id]");
+  const name = row.querySelector("b").textContent;
+  const sel = row.querySelector(".ac-ret-to");
+  if (sel && !sel.value) { alert("받을 선생님을 골라 주세요."); return; }
+  const toName = sel ? sel.options[sel.selectedIndex].textContent.replace(/\s*\(.*\)$/, "") : "나";
+  if (!confirm(`'${name}' 반을 ${toName}${sel ? " 선생님" : ""}의 개인 반으로 돌려보냅니다.\n\n학생·시험·성적이 함께 가고 학생 아이디·비밀번호는 그대로입니다. 학원 모드에서는 더는 보이지 않습니다. 계속할까요?`)) return;
+  b.disabled = true;
+  try {
+    const r = await postJson("/api/academy/return-class", { classId: row.dataset.id, toUserId: sel ? sel.value : "" }, "돌려보내지 못했습니다.");
+    row.innerHTML = `<b>${esc(name)}</b> <span class="ac-me">${esc(r.to)} 선생님에게 돌려보냈습니다 — 학생 ${r.students}명 · 시험 ${r.tests}개</span>`;
+    if (typeof window.reloadStudentsTab === "function") window.reloadStudentsTab();
+  } catch (err) {
+    alert(err.message || "돌려보내지 못했습니다.");
     b.disabled = false;
   }
 });
