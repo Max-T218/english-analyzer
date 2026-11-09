@@ -3039,6 +3039,21 @@ function passageDropNote(added, dropped, limit) {
     `뒤쪽 ${dropped}개는 들어가지 않았습니다. 필요한 지문만 남겨 다시 저장하거나` + elsewhere;
 }
 
+/* 목표 어법 칸에 다른 저장본의 어법을 더한다 — 이미 있는 것은 그대로 두고 없는 것만 뒤에 붙인다.
+   단원별로 저장한 지문을 하나씩 이어 불러올 때, 예전에는 칸이 비어 있을 때만 채워
+   맨 처음 불러온 저장본의 어법만 남았다(2026-11-09). 항목은 쉼표로 가른다. */
+function splitGrammarList(text) {
+  return String(text || "").split(/[,，、]/).map((t) => t.trim()).filter(Boolean);
+}
+function mergeGrammarInto(el, text) {
+  if (!el) return;
+  const have = splitGrammarList(el.value);
+  const add = splitGrammarList(text).filter((t) => !have.includes(t));
+  if (!add.length) return;
+  el.value = have.concat(add).join(", ");
+  el.dispatchEvent(new Event("input"));
+}
+
 TAB_SAVE.passage = {
   saveBtn: $("passageSaveBtn"),
   canSave: () => (passageSaveMgr().getJobs().length ? "" : "저장할 지문이 없습니다. 지문을 먼저 입력해 주세요."),
@@ -3050,11 +3065,11 @@ TAB_SAVE.passage = {
   }),
   /* mode "append"면 지금 입력칸을 비우지 않고 뒤에 이어 붙인다 (저장함의 [뒤에 붙이기]).
      목표 어법은 그때 덮어쓰지 않는다 — 이어 붙이는 저장본의 값으로 지금 것을 바꾸면,
-     앞서 불러온 지문에 맞춰 적어 둔 어법이 조용히 사라진다. 비어 있을 때만 채운다. */
+     앞서 불러온 지문에 맞춰 적어 둔 어법이 조용히 사라진다. 없는 것만 뒤에 더한다. */
   applyPayload: (payload, mode, info) => {
     if (mode === "append") {
       const { added, full } = passageMgr.appendJobs(payload.passages || []);
-      if (!grammarEl.value.trim()) grammarEl.value = payload.targetGrammar || "";
+      mergeGrammarInto(grammarEl, payload.targetGrammar);
       if (payload.targetVocab) quizVocab.append(parseVocabLines(payload.targetVocab).map((e) => ({
         word: e.word, meaning: e.meaning, synonym: e.syn })));
       const total = passageMgr.getJobs().length;
@@ -14425,18 +14440,13 @@ async function loadSavedItem(id, mode, preItem) {
       const raw = (item.payload || {}).passages || [];
       const list = passageLoadTo.prepare ? passageLoadTo.prepare(raw, item) : raw;
       /* 목표 어법도 지문과 한 벌이라 함께 되살린다. 뒤에 이어 붙일 때는 덮어쓰지
-         않는다 — 앞서 불러온 지문에 맞춰 적어 둔 어법이 조용히 사라진다
-         (공용 지문칸의 applyPayload와 같은 규칙). */
+         않고 없는 것만 더한다 — 앞서 불러온 지문에 맞춰 적어 둔 어법이 조용히 사라진다
+         (공용 지문칸의 applyPayload와 같은 규칙). 시험지 분석 리포트처럼 여러 단원을
+         차례로 불러오는 칸(grammarMerge)은 새로 넣을 때도 더한다. */
       const gEl = passageLoadTo.grammarEl;
       const tg = String((item.payload || {}).targetGrammar || "").trim();
-      if (gEl && passageLoadTo.grammarMerge) {
-        // 시험지 분석 리포트처럼 여러 단원을 차례로 불러오는 칸은 덮어쓰지 않고 없는 것만 더한다
-        const have = gEl.value.split(/[,，、]/).map((t) => t.trim()).filter(Boolean);
-        const add = tg.split(/[,，、]/).map((t) => t.trim()).filter((t) => t && !have.includes(t));
-        if (add.length) { gEl.value = have.concat(add).join(", "); gEl.dispatchEvent(new Event("input")); }
-      } else if (gEl && (!append || !gEl.value.trim())) {
-        gEl.value = tg;
-      }
+      if (gEl && (append || passageLoadTo.grammarMerge)) mergeGrammarInto(gEl, tg);
+      else if (gEl) gEl.value = tg;
       // 단어장 칸 — 통째로 바꿀 때는 갈아 끼우고, 이어 붙일 때는 없는 단어만 더한다
       const vBox = passageLoadTo.vocab;
       const tv = (item.payload || {}).targetVocab || "";
@@ -14568,8 +14578,8 @@ async function loadPickedItems(ids, mode) {
   }
   const ps = items.map((it) => it.payload || {});
   const grammar = [];
-  ps.forEach((p) => String(p.targetGrammar || "").split(/[,，、]/).map((t) => t.trim()).forEach((t) => {
-    if (t && !grammar.includes(t)) grammar.push(t);
+  ps.forEach((p) => splitGrammarList(p.targetGrammar).forEach((t) => {
+    if (!grammar.includes(t)) grammar.push(t);
   }));
   const merged = {
     ...items[0],
