@@ -8277,19 +8277,29 @@ function setupQuizTab({ prefix, types, footer }) {
   /* 유형 칩 생성 — 체크박스(선택)와 스테퍼(문항 수)를 형제로 둔다.
      스테퍼를 <label> 안에 넣으면 +/− 를 누를 때마다 라벨이 체크박스를 토글해 버리므로,
      라벨은 '체크박스 + 유형 이름'까지만 감싼다. */
+  /* 묶음(group)이 있으면 묶음 머리마다 '전체 선택 / 해제'를 달고 맨 위의 것은 감춘다
+     (2026-11-09 사용자 — 혼합 탭에서 객관식 고등·중학교·주관식을 한꺼번에 켜고 끄는 것이 불편했다). */
   let lastGroup = null;
+  let groupNo = -1;
   types.forEach((t) => {
     const max = TYPE_MAX[t.id] || 1;
     if (t.group && t.group !== lastGroup) {
       lastGroup = t.group;
+      groupNo++;
       const head = document.createElement("div");
       head.className = "type-group-head";
-      head.textContent = t.group;
+      const name = document.createElement("span");
+      name.textContent = t.group;
+      const tog = document.createElement("label");
+      tog.className = "chk toggle-all";
+      tog.innerHTML = `<input type="checkbox" class="group-all" data-group="${groupNo}"> 전체 선택 / 해제`;
+      head.append(name, tog);
       gridEl.appendChild(head);
     }
     const chip = document.createElement("div");
     chip.className = "type-chip";
     chip.dataset.id = t.id;
+    if (groupNo >= 0) chip.dataset.group = groupNo;
     // label이 있으면 칸에는 그것만 보이고, 실제 유형 이름(t.id)은 값·상한 조회·서버
     // 전송에만 쓴다 — 화면 표시와 데이터를 분리해 표시만 줄여도 안전하게 한다.
     const shown = t.label || t.id;
@@ -8932,16 +8942,23 @@ function setupQuizTab({ prefix, types, footer }) {
   }
 
   // 전체 선택 / 전체 해제 (일부만 선택된 상태는 '중간' 표시)
-  function syncAll() {
+  const groupAlls = [...gridEl.querySelectorAll("input.group-all")];
+  // 묶음마다 따로 고른다 — .chk의 display가 hidden 속성을 이겨서 style로 감춘다
+  if (groupAlls.length) allEl.closest("label").style.display = "none";
+  const chipsOf = (g) => [...gridEl.querySelectorAll(g == null ? ".type-chip" : `.type-chip[data-group="${g}"]`)];
+  function syncOne(el, chips) {
     // 고난도로 막아 둔 유형(꺼져 있고 고를 수 없는 것)은 세지 않는다
-    const boxes = [...gridEl.querySelectorAll("input")].filter((b) => b.checked || !b.disabled);
+    const boxes = chips.map((c) => c.querySelector("input")).filter((b) => b.checked || !b.disabled);
     const on = boxes.filter((b) => b.checked).length;
-    allEl.checked = on === boxes.length;
-    allEl.indeterminate = on > 0 && on < boxes.length;
+    el.checked = boxes.length > 0 && on === boxes.length;
+    el.indeterminate = on > 0 && on < boxes.length;
   }
-  allEl.addEventListener("change", () => {
-    const check = allEl.checked;
-    gridEl.querySelectorAll(".type-chip").forEach((chip) => {
+  function syncAll() {
+    syncOne(allEl, chipsOf(null));
+    groupAlls.forEach((el) => syncOne(el, chipsOf(el.dataset.group)));
+  }
+  function toggleChips(chips, check) {
+    chips.forEach((chip) => {
       // '고난도만'일 때 막아 둔 유형은 전체 선택으로도 켜지 않는다
       if (check && hardOnly() && !hardOk(chip.dataset.id)) return;
       chip.querySelector("input").checked = check;
@@ -8949,8 +8966,13 @@ function setupQuizTab({ prefix, types, footer }) {
     });
     syncAll();
     syncTypeChips();
-  });
+  }
+  allEl.addEventListener("change", () => toggleChips(chipsOf(null), allEl.checked));
   gridEl.addEventListener("change", (e) => {
+    if (e.target.classList && e.target.classList.contains("group-all")) {
+      toggleChips(chipsOf(e.target.dataset.group), e.target.checked);
+      return;
+    }
     // 체크를 켜면 문항 수는 1로 되돌린다 — 껐다 켰는데 예전 숫자가 살아 있으면
     // 몇 개를 만드는지 화면만 보고 알 수 없다.
     const chip = e.target.closest && e.target.closest(".type-chip");

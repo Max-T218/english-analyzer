@@ -814,6 +814,9 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .type-group-head{grid-column:1 / -1; font-weight:800; font-size:15px; color:var(--ink);
   margin-top:14px; padding-left:9px; border-left:4px solid var(--accent, #2f6fde); line-height:1.3;}
 .type-group-head:first-child{margin-top:0;}
+/* 묶음마다 '전체 선택 / 해제' — 머리 오른쪽 끝에 둔다 */
+.type-group-head{display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;}
+.type-group-head .toggle-all{font-weight:600; font-size:13px; margin-left:auto;}
 .type-chip{
   display:flex; align-items:flex-start; gap:5px;
   background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:4px 6px 4px 9px;
