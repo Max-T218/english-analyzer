@@ -272,8 +272,14 @@ function printDoc(nameFn, opts) {
    따라서 '지금 화면에 보이는 그대로' 담긴다. 워크북의 '정답 표시'처럼 화면 상태를 바꾸는
    설정은 누르기 전에 맞춰 두면 그대로 반영된다.
 
-   AI를 부르지 않으므로 요금도, 비용 확인 창도 없다. */
-async function downloadDocx({ resultEl, name, answerHeading, btn, errorEl, strip, columns }) {
+   AI를 부르지 않으므로 요금도, 비용 확인 창도 없다.
+
+   format: "hwpx"면 같은 HTML을 /api/hwpx로 보내 한글 파일(.hwpx)로 받는다(2026-11-10 사용자).
+   서버가 워드와 같은 규칙으로 골라내므로 strip·columns도 그대로 통한다. 한글 단추는
+   pairHwpxBtn이 워드 단추 옆에 붙이고 보임·막힘을 워드 단추에 맞춘다. */
+async function downloadDocx({ resultEl, name, answerHeading, btn, errorEl, strip, columns, format }) {
+  const fmt = format === "hwpx" ? "hwpx" : "docx";
+  const kindName = fmt === "hwpx" ? "한글" : "워드";
   if (errorEl) errorEl.textContent = "";
   if (!resultEl || !resultEl.innerHTML.trim()) {
     if (errorEl) errorEl.textContent = "먼저 자료를 만들어 주세요.";
@@ -300,7 +306,7 @@ async function downloadDocx({ resultEl, name, answerHeading, btn, errorEl, strip
     btn.textContent = "만드는 중…";
   }
   try {
-    const res = await fetch("/api/docx", {
+    const res = await fetch(`/api/${fmt}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -309,11 +315,13 @@ async function downloadDocx({ resultEl, name, answerHeading, btn, errorEl, strip
         filename: name,
         answerHeading: answerHeading || "정답 및 해설",
         columns: columns === 1 ? 1 : 2,
+        // 한글 파일에는 학원 마크(학원명·로고·워터마크)를 인쇄물과 같은 자리에 넣는다(brandForExport)
+        brand: fmt === "hwpx" ? await brandForExport() : undefined,
       }),
     });
     if (!res.ok) {
       // 실패는 JSON으로 온다 (성공했을 때만 파일이 온다)
-      let msg = "워드 파일을 만들지 못했습니다.";
+      let msg = `${kindName} 파일을 만들지 못했습니다.`;
       try {
         msg = (await res.json()).error || msg;
       } catch (_) {}
@@ -322,7 +330,7 @@ async function downloadDocx({ resultEl, name, answerHeading, btn, errorEl, strip
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${name}.docx`;
+    a.download = `${name}.${fmt}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -336,6 +344,39 @@ async function downloadDocx({ resultEl, name, answerHeading, btn, errorEl, strip
       btn.textContent = label;
     }
   }
+}
+
+/* 워드 단추 옆에 [📄 한글 다운로드]를 붙인다(2026-11-10 사용자).
+   보임·막힘은 워드 단추를 그대로 따라간다 — 워드 단추를 켜고 끄고 잠그는 곳이 탭마다 여럿이라
+   (결과가 생길 때, 지울 때, 워크북 단계를 바꿨을 때…) 그곳마다 한글 단추를 따로 적으면 한쪽이
+   빠지기 쉽다. getOpts는 누를 때마다 downloadDocx에 넘길 값(이름·정답 표시 등은 그때 정해진다),
+   after는 다 받은 뒤 부를 것. 워드 단추가 없거나(id가 틀리면) 아무것도 하지 않는다. */
+function pairHwpxBtn(docxBtn, getOpts, after) {
+  if (!docxBtn || !docxBtn.parentNode) return null;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = docxBtn.className;
+  btn.id = docxBtn.id.replace(/Docx/, "Hwpx");
+  btn.textContent = "📄 한글 다운로드";
+  btn.title = "한글(아래아한글 2014 이후)에서 직접 고칠 수 있는 .hwpx 파일로 내려받습니다. 학원 마크 칸에 넣은 학원명·로고(쪽 아래)와 워터마크(쪽 뒷배경)도 인쇄물처럼 함께 들어갑니다.";
+  docxBtn.after(btn);
+  let busy = false;
+  const sync = () => {
+    btn.style.display = docxBtn.style.display;
+    btn.hidden = docxBtn.hidden;
+    if (!busy) btn.disabled = docxBtn.disabled;
+  };
+  new MutationObserver(sync).observe(docxBtn, { attributes: true, attributeFilter: ["style", "disabled", "hidden"] });
+  sync();
+  btn.addEventListener("click", () => {
+    busy = true;
+    downloadDocx(Object.assign({}, getOpts(), { btn, format: "hwpx" })).finally(() => {
+      busy = false;
+      sync();
+      if (after) after();
+    });
+  });
+  return btn;
 }
 
 /* ── 제작 완료 안내 ──
@@ -1754,6 +1795,34 @@ function fadeWatermark(src, done) {
     done(wmFaded.out);
   };
   img.src = src;
+}
+
+/* 한글(.hwpx) 내려받기에 실을 학원 마크(2026-11-10 사용자). 인쇄와 같은 것을 같은 자리에 —
+   학원명·로고는 쪽 아래(꼬리말), 워터마크는 쪽 뒷배경. 워터마크는 인쇄용으로 옅게 바꾼 그림(fadeWatermark)을
+   보내고, 로고가 webp면 한글 2018이 못 읽어 PNG로 바꿔 보낸다. 칸이 비었으면 그 항목은 빈 글자. */
+function brandPngDataUrl(src) {
+  if (!src || /^data:image\/(png|jpe?g);/i.test(src)) return Promise.resolve(src || "");
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth || img.width;
+      c.height = img.naturalHeight || img.height;
+      c.getContext("2d").drawImage(img, 0, 0);
+      try { resolve(c.toDataURL("image/png")); } catch (_) { resolve(""); }
+    };
+    img.onerror = () => resolve("");
+    img.src = src;
+  });
+}
+async function brandForExport() {
+  const get = (k) => { try { return localStorage.getItem(k) || ""; } catch (_) { return ""; } };
+  const wmRaw = get(BRAND_WM_STORE);
+  // fadeWatermark는 그림을 못 읽으면 답을 안 주므로 5초에서 끊는다(워터마크만 빠진다)
+  const wm = wmRaw
+    ? await Promise.race([new Promise((r) => fadeWatermark(wmRaw, r)), new Promise((r) => setTimeout(() => r(""), 5000))])
+    : "";
+  return { name: get(BRAND_NAME_STORE).trim(), logo: await brandPngDataUrl(get(BRAND_IMG_STORE)), wm };
 }
 
 function renderBrand() {
@@ -7944,7 +8013,7 @@ function createSheetStyle(boxId, resultEl, kind) {
       </div>` : ""}
       <label>글꼴 <select data-k="font">${opts(SHEET_FONTS, "")}</select></label>
       ${isDoc ? `<label>인쇄 크기 <select data-k="scale">${opts(SHEET_PRINT_SCALES, "")}</select></label>` : ""}
-      ${isDoc ? `<div class="hint"><b>인쇄 크기</b>를 줄이면 인쇄할 때만 글씨와 칸이 함께 작아져 쪽 수가 줄어듭니다(화면은 그대로 — 지문 3개 기준 92%는 약 5%, 88%는 약 10% 적게). 테마 색은 표지·지문 머리·문장 번호·소제목·흐름도·배경지식 카드 같은 꾸밈 자리에만 들어가고, 어법(빨강)·어휘(파랑)·병렬구조 표시 색은 뜻을 담고 있어 그대로입니다. 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다 — 자주 쓰는 색 동그라미는 문제 탭의 시험지 꾸미기와 같이 씁니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글꼴마다 글자 폭이 달라 쪽 수가 조금 달라질 수 있으니 인쇄 전에 <b>[📄 쪽 구성]</b>으로 확인하세요. 워드 다운로드에는 들어가지 않습니다.</div>` : `<div class="hint">색은 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다. 자주 쓰는 색은 네모를 눌러 연 색 판의 <b>＋ 색 추가</b>로 동그라미에 더하고 <b>－ 빼기</b>로 뺍니다 — 계정에 저장되어 모든 탭과 다음 로그인에도 남습니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 글자 크기는 숫자를 적거나 칸의 ▲▼(또는 키보드 ↑↓)로 1px씩 바꿉니다 — 처음 숫자는 인쇄되는 크기이고, 바꾸면 화면도 그 크기로 보입니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글자를 키우면 쪽 수가 늘어납니다. 워드 다운로드에는 들어가지 않습니다.</div>`}`;
+      ${isDoc ? `<div class="hint"><b>인쇄 크기</b>를 줄이면 인쇄할 때만 글씨와 칸이 함께 작아져 쪽 수가 줄어듭니다(화면은 그대로 — 지문 3개 기준 92%는 약 5%, 88%는 약 10% 적게). 테마 색은 표지·지문 머리·문장 번호·소제목·흐름도·배경지식 카드 같은 꾸밈 자리에만 들어가고, 어법(빨강)·어휘(파랑)·병렬구조 표시 색은 뜻을 담고 있어 그대로입니다. 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다 — 자주 쓰는 색 동그라미는 문제 탭의 시험지 꾸미기와 같이 씁니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글꼴마다 글자 폭이 달라 쪽 수가 조금 달라질 수 있으니 인쇄 전에 <b>[📄 쪽 구성]</b>으로 확인하세요. 워드·한글 다운로드에는 들어가지 않습니다.</div>` : `<div class="hint">색은 동그라미를 누르거나, 왼쪽 네모를 눌러 색 판에서 고르거나, 코드(예: #ef8dbb)를 적습니다. 자주 쓰는 색은 네모를 눌러 연 색 판의 <b>＋ 색 추가</b>로 동그라미에 더하고 <b>－ 빼기</b>로 뺍니다 — 계정에 저장되어 모든 탭과 다음 로그인에도 남습니다. 연한 색을 고르면 글자가 읽히도록 같은 색조로 조금 진하게 찍힙니다. 글자 크기는 숫자를 적거나 칸의 ▲▼(또는 키보드 ↑↓)로 1px씩 바꿉니다 — 처음 숫자는 인쇄되는 크기이고, 바꾸면 화면도 그 크기로 보입니다. 만든 뒤에 바꿔도 화면과 인쇄에 바로 반영되고 요금은 없습니다. [💾 사이트 저장]에 함께 담깁니다. 글자를 키우면 쪽 수가 늘어납니다. 워드·한글 다운로드에는 들어가지 않습니다.</div>`}`;
     const changed = () => { if (box.onSheetStyle) box.onSheetStyle(); };
     box.addEventListener("change", (e) => {
       const k = e.target && e.target.dataset && e.target.dataset.k;
@@ -10105,6 +10174,12 @@ function setupQuizTab({ prefix, types, footer }) {
       errorEl,
     })
   );
+  pairHwpxBtn(docxBtn, () => ({
+    resultEl,
+    name: passageBasedName(docName),
+    answerHeading: prefix === "saq" ? "정답" : "정답 및 해설",
+    errorEl,
+  }));
 
   // 기출 유형 분석 탭이 분석 결과대로 이 탭의 유형 칸을 채울 수 있게 손잡이를 내준다.
   // 문제 생성 자체는 여기 있는 것을 그대로 쓴다 — 만드는 길이 둘이 되면 한쪽만 고쳐져
@@ -10131,10 +10206,6 @@ const QUIZ_TABS = {
 
 // 한 문항의 '정답' 표기를 형식에 맞게 만든다
 // (객관식=①, 서술형=문장, OX=O/X 나열, 선택형=고른 낱말, 오류찾기=틀린말→바른말)
-/* 정답을 '긴 문장'으로 볼 기준 글자 수. ①②③은 1자, "(1) O (2) X (3) O"처럼
-   O/X를 늘어놓는 답도 스무 자 안쪽이라 좁은 칸에 들어간다. 그보다 길면 영어
-   문장이라고 보고 칸을 넓힌다. */
-const ANSWERKEY_LONG_CHARS = 24;
 
 function quizAnswerLabel(q) {
   const fmt = q.format || "mc";
@@ -10546,42 +10617,28 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true, st
   let answerHtml = "";
   let hasExpCol = false;   // 이 답지에 '해설' 열이 실렸는가 — 부르는 쪽이 제목을 정하는 데 쓴다
   if (d.questions && d.questions.length) {
-    // 해설이 하나도 없으면 '해설' 열 자체를 만들지 않는다 — 머리글만 있고 내용은
-    // 텅 빈 열이 지면을 먹고, 지문마다 표 모양이 달라 보이는 것을 막는다.
-    // 일부만 빠진 경우에는 열을 유지하되 빈 칸을 '—'로 표시해 누락이 드러나게 한다.
+    // 해설이 하나도 없으면 해설을 아예 싣지 않는다. 일부만 빠진 경우에는 '—'로 표시해 누락이 드러나게 한다.
     const hasExp = (q) =>
       String(q.explanation || "").replace(/<[^>]*>/g, "").trim().length > 0;
-    // 주관식 해설지는 '정답'만 싣는다 (해설 열 제외) — 해설까지 넣으면 글씨가 작아져
-    // 안 보인다는 이유로 2026-09-01에 그렇게 정했다. 객관식은 탭의 체크를 따른다.
+    // 주관식 해설지는 '정답'만 싣는다 — 해설까지 넣으면 글씨가 작아져 안 보인다는 이유로
+    // 2026-09-01에 그렇게 정했다. 객관식은 탭의 체크를 따른다.
     const wantExp = kind !== "saq" && showExp;
     const anyExp = wantExp && d.questions.some(hasExp);
-    hasExpCol = anyExp;
-    const expHead = anyExp ? `<th>해설</th>` : "";
-    const expCell = (q) =>
-      anyExp ? `<td>${hasExp(q) ? safeHTML(q.explanation) : "—"}</td>` : "";
+    hasExpCol = anyExp;   // 부르는 쪽이 답지 제목('정답 및 해설'/'정답')을 정하는 데 쓴다
 
-    /* 답지 열은 번호·정답·해설 셋뿐이다. '유형' 열은 2026-09-15에 뺐다 — 유형은
-       시험지의 문항 머리(.qz-type)에 이미 찍혀 있어 답지에서 또 적을 까닭이 없는데,
-       19%를 차지해 정작 넓어야 할 해설 칸을 좁히고 있었다. 좁은 칸에 접힌 해설이
-       세로로 길어져 답지 쪽수를 늘리던 것이 실제 이유다.
-       with-exp는 아래 인쇄 CSS가 열 폭을 나누는 데 쓴다(해설이 있으면 정답 칸을
-       ①②③ 폭으로 좁히고, 해설이 없는 주관식이면 정답 칸이 지면을 다 쓴다). */
-    /* 정답이 긴 문장인 문항(조건 영작·요약문·문장 전환 등)이 하나라도 섞였는지.
-       섞였으면 정답 칸을 넓혀야 한다 — with-exp의 기본 폭은 ①②③만 들어갈 8%라,
-       영어 한 문장이 들어오면 글자 단위로 접혀 세로로 늘어진다. 동형 모의고사처럼
-       객관식과 서술형이 한 표에 섞이는 자리에서 실제로 답 하나가 한 쪽을 통째로
-       먹었다. 지면을 아끼려고 좁힌 칸이 거꾸로 지면을 잡아먹은 셈이다. */
-    const ansPlain = (q) => String(quizAnswerLabel(q)).replace(/<[^>]*>/g, "");
-    const longAns = d.questions.some((q) => ansPlain(q).trim().length > ANSWERKEY_LONG_CHARS);
-
-    const rows = d.questions
-      .map(
-        (q, i) => `
-      <tr>
-        <td>${startNo + i + 1}</td>
-        <td>${quizAnswerLabel(q)}</td>${expCell(q)}
-      </tr>`
-      )
+    /* 답지 모양(2026-11-10 사용자): 예전의 표(번호 · 정답 · 해설)를 그만두고 문항마다
+         1. 정답 ②
+         해설 …
+       꼴로 늘어놓아 2단으로 싣는다(.qz-anslist — style.css). 한글 내려받기 답지와 같은 모양이다.
+       해설을 안 싣는 경우(주관식, '답지에 해설' 끔)는 '1. 정답 …' 한 줄씩. 표일 때는 좁은 정답 칸에
+       긴 영어 정답이 접혀 세로로 늘어지는 문제(그래서 칸 폭을 정답 길이로 바꿨다)가 있었는데
+       이 모양에서는 생기지 않는다. */
+    const items = d.questions
+      .map((q, i) => `
+      <li class="qz-ak">
+        <div class="qz-ak-head">${startNo + i + 1}. 정답 <span class="qz-ak-ans">${quizAnswerLabel(q)}</span></div>${
+          anyExp ? `<div class="qz-ak-exp">${hasExp(q) ? safeHTML(q.explanation) : "—"}</div>` : ""}
+      </li>`)
       .join("");
 
     /* 답지에 '지문 변형 내역' 표를 붙이던 자리다. 2026-09-15에 뺐다 — 어차피 보지
@@ -10594,10 +10651,7 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true, st
       <div class="qz-ab-passage">
         ${abLabel}
         <h3 class="section"><span class="num">📌</span> ${anyExp ? "정답 및 해설" : "정답"}</h3>
-        <div class="table-wrap"><table class="answerkey${anyExp ? " with-exp" : ""}${longAns ? " long-ans" : ""}">
-          <thead><tr><th>번호</th><th>정답</th>${expHead}</tr></thead>
-          <tbody>${rows}</tbody>
-        </table></div>
+        <ol class="qz-anslist${anyExp ? " with-exp" : ""}">${items}</ol>
       </div>`;
   }
 
@@ -11308,6 +11362,15 @@ workbookDocxBtn.addEventListener("click", () =>
     columns: 1,
   }).finally(() => syncWbActions())   // 내려받는 동안 단계를 바꿨으면 끝난 뒤 단추를 다시 맞춘다
 );
+// 한글 — 워드와 같은 값으로(정답 표시가 꺼져 있으면 정답을 덜어 낸다). 잠금은 워드 단추를 따라간다.
+pairHwpxBtn(workbookDocxBtn, () => ({
+  resultEl: workbookDocEl,
+  name: titledName("워크북", "wbTitle"),
+  answerHeading: "정답",
+  errorEl: wbErrorEl,
+  strip: wbAnswerChk.checked ? [] : [".wb-ans"],
+  columns: 1,
+}), () => syncWbActions());
 
 // 답지만 — 문제 내용을 감추고 뒤쪽 '정답' 모음만 지면에 올린다.
 // 다시 그리지 않고 클래스만 바꾸므로, 섞인 보기·순서가 학생용 문제지와 정확히 일치한다.
@@ -11648,7 +11711,7 @@ function wbSetTitle(btn, text) {
   if (btn.dataset.title0 === undefined) btn.dataset.title0 = btn.title || "";
   btn.title = text || btn.dataset.title0;
 }
-const WB_LOCK_BTNS = () => [workbookPrintBtn, wbAnswerPrintBtn, workbookSaveBtn, workbookDocxBtn, $("wbAssignBtn")];
+const WB_LOCK_BTNS = () => [workbookPrintBtn, wbAnswerPrintBtn, workbookSaveBtn, workbookDocxBtn, $("workbookHwpxBtn"), $("wbAssignBtn")];
 
 function syncWbActions() {
   if (wbGenerating) return;
@@ -18664,6 +18727,12 @@ $("examPaperDocxBtn").addEventListener("click", () =>
     errorEl: $("examPaperError") || null,
   })
 );
+pairHwpxBtn($("examPaperDocxBtn"), () => ({
+  resultEl: examPaperResultEl,
+  name: ["시험지", todayStr()].filter(Boolean).join("_"),
+  answerHeading: "정답 및 해설",
+  errorEl: $("examPaperError") || null,
+}));
 
 /* ══════════════ 기출 구성표 — 저장할 수 있는 모양으로 ══════════════
 

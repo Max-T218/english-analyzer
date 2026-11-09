@@ -1117,7 +1117,18 @@ table.answerkey td:nth-child(1),table.answerkey td:nth-child(2){font-weight:700;
   font-weight:800; font-size:13px; color:var(--accent);
   margin:14px 0 8px; break-after:avoid; page-break-after:avoid;
 }
-.qz-ab-passage{margin-bottom:20px; break-inside:avoid; page-break-inside:avoid;}
+.qz-ab-passage{margin-bottom:20px;}
+/* 답지 — 문항마다 '1. 정답 ②' 줄 + 해설, 2단(2026-11-10 사용자, 예전엔 번호·정답·해설 표였다).
+   한 문항의 정답·해설은 단·쪽 사이에서 쪼개지지 않게 둔다. 한글 내려받기 답지도 같은 모양이다. */
+.qz-anslist{list-style:none; margin:0; padding:0; column-count:2; column-gap:26px; column-rule:1px solid var(--line, #dde3ea);}
+.qz-anslist .qz-ak{break-inside:avoid; page-break-inside:avoid; margin:0 0 10px; line-height:1.6;}
+.qz-ak-head{font-weight:700; color:var(--accent);}
+.qz-ak-exp{margin-top:2px;}
+/* 해설이 없으면(주관식) 줄이 짧아 간격을 좁힌다 */
+.qz-anslist:not(.with-exp) .qz-ak{margin-bottom:5px;}
+/* 문법문제에서 1단을 고르면 답지도 1단, 좁은 화면도 1단 */
+.gr-1col .qz-anslist{column-count:1;}
+@media (max-width:640px){ .qz-anslist{column-count:1;} }
 
 /* ── 답지만 인쇄 ──
    문제지를 통째로 감추고 뒤쪽 답지만 남긴다. 인쇄가 끝나면 .answers-only가 떨어진다
@@ -1695,7 +1706,7 @@ table.wb-page > tbody td{padding:0; border:none; vertical-align:top;}
 #workbookDoc.fs-p .qz-choices li{font-size:var(--fs-p);}
 /* 워크북의 내용 O/X 칸은 문제 탭 모양(.qz-choices)을 빌려 쓰지만 영어 문장이라 '보기'가 아니라 위 p를 따른다 */
 .fs-c:not(#workbookDoc) .qz-choices li, .fs-c .qz-findline, .fs-c .wb-ko, .fs-c .wb-lr-ko{font-size:var(--fs-c);}
-.fs-a table.answerkey, .fs-a .wb-ab-stage li, .fs-a .wb-ab-stage h3{font-size:var(--fs-a);}
+.fs-a table.answerkey, .fs-a .qz-anslist, .fs-a .wb-ab-stage li, .fs-a .wb-ab-stage h3{font-size:var(--fs-a);}
 .fs-a .exam-plan table.answerkey{font-size:13px;}   /* 동형 모의고사 배분표(화면 전용)는 정답표와 class만 같다 */
 .fs-w table.vocab td.v-word{font-size:var(--fs-w);}
 .fs-m table.vocab td:not(.v-no):not(.v-word){font-size:var(--fs-m);}

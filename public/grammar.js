@@ -922,7 +922,7 @@ function grRender() {
 
 function grSyncButtons() {
   const has = grState.questions.length > 0;
-  ["grPrintBtn", "grAnswerPrintBtn", "grSaveBtn", "grShuffleBtn", "grNewBtn"].forEach((id) => { grEl(id).style.display = has ? "inline-flex" : "none"; });
+  ["grPrintBtn", "grAnswerPrintBtn", "grSaveBtn", "grDocxBtn", "grShuffleBtn", "grNewBtn"].forEach((id) => { grEl(id).style.display = has ? "inline-flex" : "none"; });
   grEl("grAssignBtn").style.display = has && typeof isClassroomApproved !== "undefined" && isClassroomApproved ? "inline-flex" : "none";
   if (typeof syncFloatPrint === "function") syncFloatPrint();
 }
@@ -1031,6 +1031,20 @@ grEl("grAnswerPrintBtn").addEventListener("click", () =>
     after: () => grEl("grResult").classList.remove("answers-only"),
   }));
 grEl("grSaveBtn").addEventListener("click", () => openSaveDialog("grammar"));
+/* 워드·한글로 내려받기(2026-11-10 사용자) — 다른 문제 탭과 같은 downloadDocx/pairHwpxBtn.
+   화면 전용 조각(시험지 탭·[✏️ 고치기]·난이도 이름표 = .no-print)과, 서버가 제목을 따로 붙이는
+   시험지명 띠는 덜어 내고 보낸다(안 덜면 두 번 찍힌다 — 답지 제목·꼬리말은 서버가 뺀다). 단 수는 인쇄 칸의 1단/2단을 따른다. */
+const grDocxOpts = () => ({
+  resultEl: grEl("grResult"),
+  name: `문법문제_${sanitizeFilename(grSheetName())}_${todayStr()}`,
+  answerHeading: "정답 및 해설",
+  errorEl: grEl("grError"),
+  strip: [".no-print", ".qz-sheet-title"],
+  columns: grState.cols === 1 ? 1 : 2,
+});
+grEl("grDocxBtn").addEventListener("click", () =>
+  downloadDocx(Object.assign(grDocxOpts(), { btn: grEl("grDocxBtn") })));
+pairHwpxBtn(grEl("grDocxBtn"), grDocxOpts);
 grEl("grAssignBtn").addEventListener("click", () =>
   // gkind(값 셈용)와 옛 저장본의 gshape는 학생 시험에 싣지 않는다. gitem·ggrade·gdiff는 보내야 한다 —
   // 보충 학습이 같은 항목·레벨·난이도로 새 문제를 만드는 재료다(서버가 src로 바꿔 담고 학생에게는 안 보낸다).

@@ -30,6 +30,7 @@ import secrets
 import smtplib
 import socket
 import ssl
+import struct
 import sys
 import threading
 import time
@@ -13413,6 +13414,24 @@ _DOCX_DOC_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </Relationships>"""
 
 
+class _DocxWriter:
+    """_QuizDocxParser가 워드 문단을 쓸 때 부르는 쪽. 위의 _docx_* 함수를 그대로 잇는다."""
+    run = staticmethod(_docx_run)
+    para = staticmethod(_docx_para)
+    blank_line = staticmethod(_docx_blank_line)
+
+    @staticmethod
+    def br():
+        return "<w:r><w:br/></w:r>"
+
+    @staticmethod
+    def table(rows):
+        """정답표 — 워드는 예전처럼 줄마다 한 문단으로 펴고 칸 사이를 띄운다
+        (표는 워드에서 고치기 성가시고, 답지는 읽기만 하면 된다)."""
+        sep = _docx_run("   ")
+        return [_docx_para("".join(cell + sep for cell, _th in row)) for row in rows]
+
+
 class _QuizDocxParser(HTMLParser):
     """화면이 그린 문제지 HTML을 훑어 Word 문단 목록으로 옮긴다.
 
@@ -13433,8 +13452,13 @@ class _QuizDocxParser(HTMLParser):
     #   exam-plan   배분표. '어느 문항을 어느 지문으로 만들었나'를 적은 제작 기록이라
     #               인쇄에서도 빠진다(examPlanTableHtml 주석 참고) — 워드도 같이 뺀다
     #   wb-answerbook-head  워크북 정답 별지의 '정답' 제목. 위 section과 같은 이유로 뺀다
+    #   qz-answerbook-head · qz-footer  문제 탭 인쇄용 답지 제목('정답')과 꼬리말('… · 자동 생성').
+    #               본문 끝에 글자로 남아 답지 제목이 두 번 찍혔다(2026-11-10 한글 내려받기 실측)
+    #   qz-type     문항 유형 이름표('빈칸(구)'·'관계사 › 주격 관계대명사'). 인쇄에서도 빼는 것이라
+    #               (style.css `.qz-cards .qz-type`) 내려받는 파일에도 싣지 않는다(2026-11-10 사용자)
     SKIP_CLASSES = ("qz-reveal-btn", "print-foot", "legend", "qz-scramble-tag",
-                    "section", "exam-plan", "wb-answerbook-head")
+                    "section", "exam-plan", "wb-answerbook-head",
+                    "qz-answerbook-head", "qz-footer", "qz-type")
 
     # 뒤에 구분 문자를 붙여야 하는 조각들 — 화면에서는 CSS 여백으로 떨어져 있지만
     # 글자만 뽑으면 "1주제", "①the value of travel"처럼 달라붙는다.
@@ -13449,7 +13473,9 @@ class _QuizDocxParser(HTMLParser):
 
     # 맨 뒤 별지로 모을 것들. 문항 사이에 끼우지 않는 이유는 학생용으로 뒷장만
     # 떼어 낼 수 있게 하기 위해서다.
-    ANSWER_CLASSES = ("qz-answer-box", "answerkey", "wb-answerbook")
+    #   qz-answerbook  문제 탭 답지 전체(2026-11-10부터 안에 표 대신 ol.qz-anslist가 든다). 지문 이름표(.qz-ab-label)도
+    #                  답지 쪽에 남도록 통째로 답지로 담는다
+    ANSWER_CLASSES = ("qz-answer-box", "answerkey", "wb-answerbook", "qz-answerbook")
 
     # 새 쪽에서 시작할 것들. 워크북은 지문 하나가 section.wb-passage 한 벌이고
     # 그 안이 '제목(wb-titlebar) → 단계들(table.wb-page)'로 되어 있다.
@@ -13467,8 +13493,11 @@ class _QuizDocxParser(HTMLParser):
     # 따로 그려 주면 두 벌이 된다.
     INLINE_BLANK_CLASSES = ("wb-blank", "qz-fillrule")
 
-    def __init__(self):
+    def __init__(self, writer=None):
         super().__init__(convert_charrefs=True)
+        # 문단·글자를 실제 파일 모양으로 쓰는 쪽. 워드(_DocxWriter)와 한글(_HwpxWriter)이
+        # 같은 메서드(run·para·blank_line·br)를 가져, 골라내는 이 파서는 한 벌로 둔다.
+        self.w = writer or _DocxWriter
         self.body = []        # 문항 쪽 문단
         self.answers = []     # 답지 쪽 문단
         self._runs = []       # 지금 쌓는 중인 문단의 run들
@@ -13480,29 +13509,57 @@ class _QuizDocxParser(HTMLParser):
         self._depth_stack = []
         self._pages = 0       # 새 쪽에서 시작한 덩어리 수 (첫 덩어리 판별용)
         self._fresh_page = False  # 방금 지문 제목으로 쪽을 열었는가 (첫 단계 판별용)
+        # 문항마다 붙은 정답 상자(.qz-answer-box)는 따로 모은다 — 뒤쪽 정답표(table.answerkey)가
+        # 있으면 버린다. 인쇄도 상자는 숨기고 정답표만 싣는데(style.css), 둘 다 담았더니 답지에
+        # 같은 정답·해설이 두 번 찍혔다(2026-11-10 사용자). 정답표가 없을 때만 상자를 답지로 쓴다.
+        self.box_answers = []
+        self._in_box = 0
+        self._saw_key = False
+        # 정답표는 칸째 모아 writer.table로 넘긴다(워드는 예전처럼 줄로 펴고, 한글은 표로 그린다)
+        self._tbl = None      # [[(칸 글자 run들, 머리칸?), …], …]
+        self._row = None
+        self._in_cell = False
+        # 답지 모양(2026-11-10 사용자): 정답표에 해설 칸이 있으면(객관식·혼합·문법) 표 대신 문항별
+        # 정답 상자를 '번호. 정답 ② / 해설' 꼴로 싣는다. 해설 칸이 없으면(주관식, '답지에 해설'을 끈 때)
+        # 정답표 줄을 '번호. 정답 …' 한 줄씩으로 편다 — 화면에서 해설을 뺀 뜻을 지킨다.
+        self._key_exp = False   # 해설 칸이 있는 정답표를 보았는가
+        self._last_no = ""      # 지금 문항 번호(.qz-no) — 정답 상자 앞에 붙인다
+        self._cap_no = False
+        self._skip_ws = False
+        # 동형 모의고사처럼 시험지가 여럿(A형·B형)이면 번호가 1부터 다시 시작한다 — 정답 상자를 그 자리에서
+        # 묶음으로 나누고 정답표 제목에서 읽은 시험지 이름을 묶음 머리에 단다(_box_groups)
+        self._saw_list = False  # 새 답지 목록(ol.qz-anslist)을 보았는가
+        self._box_marks = []    # (box_answers 안의 자리, 문항 번호)
+        self._sec_labels = []   # 정답표 제목 글자들(차례대로)
+        self._cap_sec = False
+
+    def _target(self):
+        if self._in_box:
+            return self.box_answers
+        return self.answers if self._in_answer else self.body
 
     def _new_page(self):
         """여기서부터 새 쪽. 맨 처음에는 넣지 않는다 — 빈 쪽이 생긴다."""
         if self._pages:
-            (self.answers if self._in_answer else self.body).append(
-                _docx_para("", page_break=True, space_after=0)
+            self._target().append(
+                self.w.para("", page_break=True, space_after=0)
             )
         self._pages += 1
 
     # ── 문단 경계 ────────────────────────────────────────────────
     def _flush(self, style=None, space_after=120):
-        if not self._runs:
+        if not self._runs or self._in_cell:   # 정답표 칸 안의 글자는 칸이 끝날 때 가져간다
             return
-        xml = _docx_para("".join(self._runs), style=style or self._pending,
-                         space_after=space_after)
-        (self.answers if self._in_answer else self.body).append(xml)
+        xml = self.w.para("".join(self._runs), style=style or self._pending,
+                          space_after=space_after)
+        self._target().append(xml)
         self._runs = []
         self._pending = None
 
     def _add(self, text):
         if self._skip or not text:
             return
-        self._runs.append(_docx_run(text, bold=self._bold > 0, under=self._under > 0))
+        self._runs.append(self.w.run(text, bold=self._bold > 0, under=self._under > 0))
 
     def _classes(self, attrs):
         d = dict(attrs)
@@ -13531,6 +13588,10 @@ class _QuizDocxParser(HTMLParser):
     # ── 태그 ─────────────────────────────────────────────────────
     def handle_starttag(self, tag, attrs):
         cls = self._classes(attrs)
+        if tag == "h3" and "section" in cls and not self._skip:
+            # 정답표 제목('📌 A형 정답 및 해설')은 찍지 않지만, 시험지 이름(A형·B형)을 답지 묶음 제목으로 쓰려고 읽어 둔다
+            self._sec_labels.append("")
+            self._cap_sec = True
         if self._skip or any(c in self.SKIP_CLASSES for c in cls):
             self._skip += 1
             return
@@ -13543,19 +13604,26 @@ class _QuizDocxParser(HTMLParser):
                 # 문장 한가운데라 문단 테두리를 쓸 수 없다 — 밑줄 문자로 그린다
                 # (_blank_text에 왜 공백이 아닌지 적어 두었다).
                 # 밑줄 문자 자체가 선이므로 under는 걸지 않는다(걸면 선이 두 겹이 된다).
-                self._runs.append(_docx_run(self._blank_text(attrs)))
+                self._runs.append(self.w.run(self._blank_text(attrs)))
+            if "qz-no" in cls:
+                self._cap_no = True
             sep = next((self.SEP_AFTER[c] for c in cls if c in self.SEP_AFTER), None)
             self._depth_stack.append((("sep", sep) if sep else None, tag))
             return
         elif tag in ("td", "th"):
-            # 답지표의 칸. 표를 만들지 않고 한 줄로 펴므로 칸 사이를 띄워 준다
-            # (표는 워드에서 고치기 성가시고, 답지는 읽기만 하면 된다).
+            if self._row is not None:
+                # 정답표의 칸 — 글자를 모았다가 칸이 끝나면 줄(row)에 넣는다
+                self._in_cell = True
+                self._runs = []
+                self._depth_stack.append((("cell", tag == "th"), tag))
+                return
+            # 정답표 밖의 표 칸(없을 텐데 혹시) — 예전처럼 한 줄로 펴고 칸 사이를 띄운다
             self._depth_stack.append((("sep", "   "), tag))
             return
         elif tag == "br":
             # 문단 안 줄바꿈
-            self._runs.append('<w:r><w:br/></w:r>')
-        elif tag in ("div", "p", "li", "tr", "h1", "h2", "h3", "section", "ul", "table"):
+            self._runs.append(self.w.br())
+        elif tag in ("div", "p", "li", "tr", "h1", "h2", "h3", "section", "ul", "ol", "table"):
             self._flush()
             if any(c in self.PAGE_START_CLASSES for c in cls):
                 self._new_page()
@@ -13565,13 +13633,33 @@ class _QuizDocxParser(HTMLParser):
                     self._fresh_page = False
                 else:
                     self._new_page()
+            if tag == "tr" and self._tbl is not None:
+                self._row = []
+            if tag == "ol" and "qz-anslist" in cls:
+                # 새 답지 목록 — 이게 있으면 문항별 정답 상자는 버린다(result). 시험지가 여럿(A형·B형)이면
+                # 정답 제목에서 읽은 이름을 목록 앞에 '[A형]'으로 단다(지문 하나짜리 탭은 이름이 비어 안 붙는다)
+                self._saw_list = True
+                name = re.sub(r"📌|정답\s*및\s*해설|정답", "", self._sec_labels[-1] if self._sec_labels else "").strip(" ·-—")
+                if name:
+                    self.answers.append(self.w.para(self.w.run(f"[{name}]", bold=True), style="QNo"))
+            if "qz-ak-head" in cls:
+                self._pending = "QNo"   # '1. 정답 ②' 줄 — 굵게, 해설과 떨어지지 않게
             if any(c in self.ANSWER_CLASSES for c in cls):
                 self._in_answer += 1
-                self._depth_stack.append(("answer", tag))
+                if "qz-answer-box" in cls:
+                    self._in_box += 1
+                    if self._last_no:
+                        self._box_marks.append((len(self.box_answers), self._last_no))
+                        self._runs.append(self.w.run(f"{self._last_no}. ", bold=True))
+                        self._skip_ws = True   # 상자 HTML 머리의 줄바꿈·들여쓰기가 빈칸 하나를 더 붙인다
+                if tag == "table" and "answerkey" in cls:
+                    self._tbl = []
+                    self._saw_key = True
+                self._depth_stack.append(("answer_box" if "qz-answer-box" in cls else "answer", tag))
                 return
             if any(c in self.BLANK_CLASSES for c in cls):
                 # 글자가 아니라 테두리로 그린다 (_docx_blank_line 참고)
-                (self.answers if self._in_answer else self.body).append(_docx_blank_line())
+                self._target().append(self.w.blank_line())
                 return
             if "qz-no" in cls or "wb-no" in cls:
                 self._pending = "QNo"
@@ -13582,6 +13670,8 @@ class _QuizDocxParser(HTMLParser):
         self._depth_stack.append((None, tag))
 
     def handle_endtag(self, tag):
+        if tag == "h3":
+            self._cap_sec = False
         if self._skip:
             self._skip -= 1
             return
@@ -13597,25 +13687,95 @@ class _QuizDocxParser(HTMLParser):
                 if name == tag:
                     if isinstance(kind, tuple) and kind[0] == "sep":
                         self._add(kind[1])
+                    elif isinstance(kind, tuple) and kind[0] == "cell":
+                        self._in_cell = False
+                        if self._row is not None:
+                            self._row.append(("".join(self._runs), kind[1]))
+                        self._runs = []
                     break
             return
-        if tag in ("div", "p", "li", "tr", "h1", "h2", "h3", "section", "ul", "table"):
+        if tag == "tr" and self._row is not None:
+            if self._row:
+                self._tbl.append(self._row)
+            self._row = None
+            # 아래의 일반 처리로 스택만 정리한다(모은 글자가 없어 문단은 생기지 않는다)
+        if tag in ("div", "p", "li", "tr", "h1", "h2", "h3", "section", "ul", "ol", "table"):
             self._flush()
             while self._depth_stack:
                 kind, name = self._depth_stack.pop()
                 if name == tag:
-                    if kind == "answer":
+                    if kind in ("answer", "answer_box"):
+                        if tag == "table" and self._tbl is not None:
+                            if self._tbl:
+                                head = [c for c, th in self._tbl[0] if th]
+                                if any("해설" in c for c in head):
+                                    self._key_exp = True
+                                    self.answers.extend(self.w.table(self._tbl))   # 정답 상자가 없을 때만 쓴다
+                                else:
+                                    for row in self._tbl:
+                                        if any(th for _c, th in row) or len(row) < 2:
+                                            continue
+                                        no = re.sub(r"<[^>]+>", "", row[0][0]).strip()
+                                        self.answers.append(self.w.para(
+                                            self.w.run(f"{no}. 정답 ", bold=True)
+                                            + "".join(c for c, _th in row[1:])))
+                            self._tbl = None
                         self._in_answer = max(0, self._in_answer - 1)
+                        if kind == "answer_box":
+                            self._in_box = max(0, self._in_box - 1)
                     break
 
     def handle_data(self, data):
         text = re.sub(r"\s+", " ", data)
+        if self._cap_sec and self._sec_labels:
+            self._sec_labels[-1] += text
+        if self._cap_no and text.strip():
+            self._last_no = text.strip()
+            self._cap_no = False
+        if self._skip_ws:
+            text = text.lstrip()
+            if not text:
+                return
+            self._skip_ws = False
         if text.strip() or (self._runs and text == " "):
             self._add(text)
 
     def result(self):
         self._flush()
+        if self._saw_list:
+            # 화면이 그린 답지('1. 정답 ② / 해설' 목록)를 그대로 옮긴다 — 2026-11-10 이후 화면의 모양
+            return self.body, self.answers
+        if not self._saw_key:
+            return self.body, self.box_answers + self.answers
+        if self._key_exp and self.box_answers:
+            return self.body, self._box_groups()
         return self.body, self.answers
+
+    def _box_groups(self):
+        """번호가 1부터 다시 시작하는 자리마다 정답 상자를 끊고, 묶음이 둘 이상이면 머리('A형' 등)를 단다."""
+        def num(s):
+            m = re.match(r"\d+", s)
+            return int(m.group()) if m else None
+        starts, prev = [], None
+        for pos, no in self._box_marks:
+            n = num(no)
+            if n is not None and (prev is None or n <= prev):
+                starts.append(pos)
+            if n is not None:
+                prev = n
+        if len(starts) < 2:
+            return self.box_answers
+        labels = []
+        for raw in self._sec_labels:
+            t = re.sub(r"📌|정답\s*및\s*해설|정답", "", raw).strip(" ·-—")
+            labels.append(t)
+        out = []
+        for gi, s in enumerate(starts):
+            e = starts[gi + 1] if gi + 1 < len(starts) else len(self.box_answers)
+            name = labels[gi] if gi < len(labels) and labels[gi] else f"시험지 {gi + 1}"
+            out.append(self.w.para(self.w.run(f"[{name}]", bold=True), style="QNo"))
+            out.extend(self.box_answers[s:e])
+        return out
 
 
 def quiz_html_to_docx(result_html, title, answer_heading="정답 및 해설", columns=2):
@@ -13664,6 +13824,478 @@ def build_docx(body_xml):
         z.writestr("word/_rels/document.xml.rels", _DOCX_DOC_RELS)
         z.writestr("word/styles.xml", _DOCX_STYLES)
         z.writestr("word/document.xml", document)
+    return buf.getvalue()
+
+
+# ══════════════ 한글(.hwpx)로 내려받기 ══════════════
+#
+# 워드 내려받기와 같은 길이다 — 화면이 그린 HTML을 _QuizDocxParser가 훑고, 문단을 쓰는 쪽만
+# _HwpxWriter로 바꾼다. 그래서 문항을 골라내는 규칙(답지를 맨 뒤로, 답 쓰는 줄, 빈칸 길이…)은
+# 워드와 한 벌이고, 한쪽을 고치면 둘 다 바뀐다.
+#
+# HWPX는 한글 2014 이후의 개방형 형식(KS X 6101, OWPML)이다. 워드처럼 XML 몇 개를 zip으로
+# 묶은 것이라 표준 라이브러리만으로 만든다. 한글은 형식이 조금만 어긋나도 '파일이 손상되었다'며
+# 열지 않으므로, 여기를 고치면 반드시 실제 한글에서 열어 볼 것.
+#
+# 단위: HWPUNIT = 1/7200인치. 1mm ≈ 283.46, 글자 크기·문단 간격은 1pt = 100.
+
+HWPX_NS = (
+    'xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" '
+    'xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" '
+    'xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" '
+    'xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core" '
+    'xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" '
+    'xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf" '
+    'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+    'xmlns:opf="http://www.idpf.org/2007/opf/"'
+)
+
+# 글자 모양 번호(charPr id). 크기는 1/100pt.
+#   0 보통 10pt   1 굵게   2 밑줄   3 굵게+밑줄
+#   4 문항 번호 줄 11pt 굵게   5 그 밑줄   6 제목 16pt 굵게   7 답지 제목 14pt 굵게
+_HWPX_CHARS = [
+    (1000, False, False), (1000, True, False), (1000, False, True), (1000, True, True),
+    (1100, True, False), (1100, True, True), (1600, True, False), (1400, True, False),
+]
+# 문항 번호 줄(QNo)은 줄 전체를 굵게 11pt로 — 워드의 QNo 스타일과 같다
+_HWPX_QNO_CHAR = {"0": "4", "1": "4", "2": "5", "3": "5"}
+
+# 문단 모양 번호(paraPr id): (줄 간격 %, 앞 간격, 뒤 간격, 다음 문단과 함께, 아래 테두리 borderFill)
+#   0 보통   1 문항 번호 줄   2 제목   3 답 쓰는 줄(아래 회색 줄)   4 간격 없음
+# 제목에는 워드처럼 아래 줄을 긋지 않는다 — 한글 2018에서 쪽 넘김 뒤 제목의 아래 줄이
+# 다음 줄 글자 위로 겹쳐 그려졌다(2026-11-10 실측).
+_HWPX_PARAS = [
+    (160, 0, 600, False, 2),
+    (160, 900, 300, True, 2),
+    (160, 0, 1200, False, 2),
+    (180, 600, 0, False, 3),
+    (160, 0, 0, False, 2),
+    (60, 0, 0, False, 2),     # 5 답 쓰는 줄 뒤의 얇은 빈 문단(_HwpxWriter.blank_line)
+    (150, 0, 0, False, 2),    # 6 정답표 칸 — 왼쪽 맞춤(양쪽 맞춤이면 좁은 칸의 긴 정답이 띄엄띄엄 벌어진다)
+    (160, 0, 600, False, 2),  # 7 줄바꿈이 든 문단 — 0번과 같되 왼쪽 맞춤
+]
+# 나머지는 양쪽 맞춤. 한글은 양쪽 맞춤 문단에서 강제 줄바꿈 앞 줄도 끝까지 벌려
+# '1.   정답   ①'처럼 띄엄띄엄 찍혀서, 줄바꿈이 든 문단은 7번(왼쪽 맞춤)으로 바꾼다.
+_HWPX_PARA_ALIGN = {1: "LEFT", 6: "LEFT", 7: "LEFT"}   # 1 = 문항 번호 줄·답지 '1. 정답 …' 줄
+
+
+def _hwpx_border(kind, color="#000000", width="0.1 mm"):
+    return f'<hh:{kind} type="{"NONE" if color is None else "SOLID"}" width="{width}" color="{color or "#000000"}"/>'
+
+
+def _hwpx_border_fill(fid, bottom=None, image=None, grid=None, face=None):
+    """borderFill 한 벌. bottom에 색을 주면 아래쪽에만 선을 긋는다(문단 아래 줄).
+    image에 그림 id를 주면 그 그림으로 채운다(쪽 배경 = 워터마크, 비율을 지켜 쪽에 맞춘다).
+    grid에 색을 주면 네 변 모두 선(정답표 칸), face는 칸 바탕색(정답표 머리줄)."""
+    fill = ""
+    if image:
+        fill = (f'<hc:fillBrush><hc:imgBrush mode="ZOOM"><hc:img binaryItemIDRef="{image}" '
+                'bright="0" contrast="0" effect="REAL_PIC" alpha="0"/></hc:imgBrush></hc:fillBrush>')
+    elif face:
+        fill = f'<hc:fillBrush><hc:winBrush faceColor="{face}" hatchColor="#999999" alpha="0"/></hc:fillBrush>'
+    side = (lambda k: _hwpx_border(k, grid, "0.12 mm")) if grid else (lambda k: _hwpx_border(k, None))
+    return (
+        f'<hh:borderFill id="{fid}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">'
+        '<hh:slash type="NONE" Crooked="0" isCounter="0"/>'
+        '<hh:backSlash type="NONE" Crooked="0" isCounter="0"/>'
+        + side("leftBorder") + side("rightBorder") + side("topBorder")
+        + (_hwpx_border("bottomBorder", bottom, "0.12 mm") if bottom else side("bottomBorder"))
+        + '<hh:diagonal type="SOLID" width="0.1 mm" color="#000000"/>'
+        + fill
+        + "</hh:borderFill>"
+    )
+
+
+def _hwpx_header(wm=None):
+    langs = ("HANGUL", "LATIN", "HANJA", "JAPANESE", "OTHER", "SYMBOL", "USER")
+    faces = "".join(
+        f'<hh:fontface lang="{lg}" fontCnt="1"><hh:font id="0" face="맑은 고딕" type="TTF" isEmbedded="0"/></hh:fontface>'
+        for lg in langs
+    )
+    seven = lambda v: " ".join(f'{a}="{v}"' for a in ("hangul", "latin", "hanja", "japanese", "other", "symbol", "user"))
+    chars = []
+    for i, (size, bold, under) in enumerate(_HWPX_CHARS):
+        chars.append(
+            f'<hh:charPr id="{i}" height="{size}" textColor="#000000" shadeColor="none" '
+            'useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="2">'
+            f'<hh:fontRef {seven(0)}/><hh:ratio {seven(100)}/><hh:spacing {seven(0)}/>'
+            f'<hh:relSz {seven(100)}/><hh:offset {seven(0)}/>'
+            + ("<hh:bold/>" if bold else "")
+            + (f'<hh:underline type="BOTTOM" shape="SOLID" color="#000000"/>' if under
+               else '<hh:underline type="NONE" shape="SOLID" color="#000000"/>')
+            + '<hh:strikeout shape="NONE" color="#000000"/><hh:outline type="NONE"/>'
+            '<hh:shadow type="NONE" color="#B2B2B2" offsetX="10" offsetY="10"/>'
+            "</hh:charPr>"
+        )
+    paras = []
+    for i, (line, prev, nxt, keep, bf) in enumerate(_HWPX_PARAS):
+        paras.append(
+            f'<hh:paraPr id="{i}" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" '
+            'suppressLineNumbers="0" checked="0">'
+            f'<hh:align horizontal="{_HWPX_PARA_ALIGN.get(i, "JUSTIFY")}" vertical="BASELINE"/>'
+            '<hh:heading type="NONE" idRef="0" level="0"/>'
+            '<hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" '
+            f'widowOrphan="0" keepWithNext="{1 if keep else 0}" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>'
+            '<hh:autoSpacing eAsianEng="0" eAsianNum="0"/>'
+            '<hh:margin><hc:intent value="0" unit="HWPUNIT"/><hc:left value="0" unit="HWPUNIT"/>'
+            f'<hc:right value="0" unit="HWPUNIT"/><hc:prev value="{prev}" unit="HWPUNIT"/>'
+            f'<hc:next value="{nxt}" unit="HWPUNIT"/></hh:margin>'
+            f'<hh:lineSpacing type="PERCENT" value="{line}" unit="HWPUNIT"/>'
+            f'<hh:border borderFillIDRef="{bf}" offsetLeft="0" offsetRight="0" offsetTop="0" '
+            'offsetBottom="0" connect="0" ignoreMargin="0"/>'
+            "</hh:paraPr>"
+        )
+    fills = (_hwpx_border_fill(1) + _hwpx_border_fill(2)
+             + _hwpx_border_fill(3, "#808080") + _hwpx_border_fill(4, "#BFBFBF")
+             + _hwpx_border_fill(5, image="wm" if wm else None)    # 5 쪽 배경(워터마크가 있을 때만 그림)
+             + _hwpx_border_fill(6, grid="#9AA3AF")                # 6 정답표 칸
+             + _hwpx_border_fill(7, grid="#9AA3AF", face="#EEF1F6"))   # 7 정답표 머리줄
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>'
+        f'<hh:head {HWPX_NS} version="1.4" secCnt="1">'
+        '<hh:beginNum page="1" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/>'
+        "<hh:refList>"
+        f'<hh:fontfaces itemCnt="7">{faces}</hh:fontfaces>'
+        f'<hh:borderFills itemCnt="7">{fills}</hh:borderFills>'
+        f'<hh:charProperties itemCnt="{len(chars)}">{"".join(chars)}</hh:charProperties>'
+        '<hh:tabProperties itemCnt="1"><hh:tabPr id="0" autoTabLeft="0" autoTabRight="0"/></hh:tabProperties>'
+        f'<hh:paraProperties itemCnt="{len(paras)}">{"".join(paras)}</hh:paraProperties>'
+        '<hh:styles itemCnt="1"><hh:style id="0" type="PARA" name="바탕글" engName="Normal" '
+        'paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/></hh:styles>'
+        "</hh:refList>"
+        '<hh:compatibleDocument targetProgram="HWP201X"><hh:layoutCompatibility/></hh:compatibleDocument>'
+        '<hh:docOption><hh:linkinfo path="" pageInherit="0" footnoteInherit="0"/></hh:docOption>'
+        '<hh:trackchageConfig flags="56"/>'
+        "</hh:head>"
+    )
+
+
+class _HwpxWriter:
+    """_QuizDocxParser가 한글 문단을 쓸 때 부르는 쪽(_DocxWriter와 같은 메서드)."""
+
+    @staticmethod
+    def run(text, bold=False, under=False):
+        if not text:
+            return ""
+        cid = (1 if bold else 0) + (2 if under else 0)
+        return f'<hp:run charPrIDRef="{cid}"><hp:t>{_docx_esc(text)}</hp:t></hp:run>'
+
+    @staticmethod
+    def br():
+        return '<hp:run charPrIDRef="0"><hp:t><hp:lineBreak/></hp:t></hp:run>'
+
+    @staticmethod
+    def para(runs_xml, style=None, space_after=120, page_break=False, **_):
+        pid = 0
+        if style == "QNo":
+            pid = 1
+            runs_xml = re.sub(r'charPrIDRef="([0-3])"',
+                              lambda m: f'charPrIDRef="{_HWPX_QNO_CHAR[m.group(1)]}"', runs_xml)
+        elif not space_after:
+            pid = 4
+        elif "<hp:lineBreak/>" in runs_xml:
+            pid = 7
+        return _hwpx_p(runs_xml, pid, page_break=page_break)
+
+    @staticmethod
+    def table(rows):
+        """정답표를 한글 표로 — 인쇄물의 정답표(번호 · 정답 · 해설)와 같은 모양. 머리줄은 옅은 바탕에 굵게,
+        쪽을 넘기면 머리줄을 되풀이한다. 칸 폭: 번호는 좁게, 정답 칸은 해설이 있으면 30%쯤, 나머지는 해설."""
+        ncol = max(len(r) for r in rows)
+        num_w = 3400
+        rest = _HWPX_TEXT_W - num_w
+        if ncol == 1:
+            widths = [_HWPX_TEXT_W]
+        elif ncol == 2:
+            widths = [num_w, rest]
+        else:
+            ans_w = round(rest * 0.3)
+            widths = [num_w, ans_w] + [round((rest - ans_w) / (ncol - 2))] * (ncol - 2)
+        row_h = 1600
+        trs = []
+        for ri, row in enumerate(rows):
+            tcs = []
+            for ci in range(ncol):
+                runs, th = row[ci] if ci < len(row) else ("", False)
+                if th:
+                    runs = re.sub(r'charPrIDRef="([02])"', lambda m: f'charPrIDRef="{int(m.group(1)) + 1}"', runs)
+                tcs.append(
+                    f'<hp:tc name="" header="{1 if th else 0}" hasMargin="0" protect="0" editable="0" dirty="0" '
+                    f'borderFillIDRef="{7 if th else 6}">'
+                    '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" '
+                    'linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
+                    f'{_hwpx_p(runs, 6)}</hp:subList>'
+                    f'<hp:cellAddr colAddr="{ci}" rowAddr="{ri}"/><hp:cellSpan colSpan="1" rowSpan="1"/>'
+                    f'<hp:cellSz width="{widths[ci]}" height="{row_h}"/>'
+                    '<hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>'
+                )
+            trs.append(f"<hp:tr>{''.join(tcs)}</hp:tr>")
+        tbl = (
+            f'<hp:tbl id="2000" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" '
+            f'lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" rowCnt="{len(rows)}" colCnt="{ncol}" '
+            'cellSpacing="0" borderFillIDRef="6" noAdjust="0">'
+            f'<hp:sz width="{sum(widths)}" widthRelTo="ABSOLUTE" height="{row_h * len(rows)}" heightRelTo="ABSOLUTE" protect="0"/>'
+            '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" '
+            'vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+            '<hp:outMargin left="0" right="0" top="0" bottom="0"/>'
+            '<hp:inMargin left="510" right="510" top="141" bottom="141"/>'
+            f"{''.join(trs)}</hp:tbl>"
+        )
+        return [_hwpx_p(f'<hp:run charPrIDRef="0">{tbl}<hp:t/></hp:run>', 0)]
+
+    @staticmethod
+    def blank_line():
+        # 워드와 같이 글자가 아니라 문단 아래 테두리로 긋는다(_docx_blank_line 참고).
+        # 줄 바로 뒤에 테두리 없는 빈 문단을 하나 더 둔다 — 한글 2018에서 테두리 문단 다음 문단의
+        # 위 간격이 먹지 않아, 두 번째 줄이 다음 문항 제목에 바짝 붙어 겹쳐 보였다(2026-11-10 실측).
+        # 빈 문단은 줄 간격을 줄인 5번이다 — 보통 줄 높이로 두면 줄마다 여백이 늘어 워크북 해석 연습
+        # 단계의 마지막 줄 하나가 다음 쪽으로 넘어가 거의 빈 쪽이 생겼다.
+        return _hwpx_p("", 3) + _hwpx_p("", 5)
+
+
+def _hwpx_p(runs_xml, para_id=0, page_break=False):
+    # 글자가 없는 문단도 run 하나는 있어야 한다
+    inner = runs_xml or '<hp:run charPrIDRef="0"/>'
+    return (f'<hp:p id="0" paraPrIDRef="{para_id}" styleIDRef="0" '
+            f'pageBreak="{1 if page_break else 0}" columnBreak="0" merged="0">{inner}</hp:p>')
+
+
+def _hwpx_cols(cols):
+    """단 정의. 문단의 첫 run 안에 넣으면 그 문단부터 이 단 수가 된다(한글의 '다단 설정 나누기')."""
+    line = '<hp:colLine type="SOLID" width="0.12 mm" color="#A0A0A0"/>' if cols == 2 else ""
+    return (f'<hp:ctrl><hp:colPr id="" type="NEWSPAPER" layout="LEFT" colCount="{cols}" '
+            f'sameSz="1" sameGap="2268">{line}</hp:colPr></hp:ctrl>')
+
+
+# 쪽 설정 — A4 세로, 여백 2cm (워드와 같다). landscape="WIDELY"가 한글에서는 '세로'다.
+_HWPX_SECPR = (
+    '<hp:secPr id="" textDirection="HORIZONTAL" spaceColumns="1134" tabStop="8000" '
+    'tabStopVal="4000" tabStopUnit="HWPUNIT" outlineShapeIDRef="0" memoShapeIDRef="0" '
+    'textVerticalWidthHead="0" masterPageCnt="0">'
+    '<hp:grid lineGrid="0" charGrid="0" wonggojiFormat="0"/>'
+    '<hp:startNum pageStartsOn="BOTH" page="0" pic="0" tbl="0" equation="0"/>'
+    '<hp:visibility hideFirstHeader="0" hideFirstFooter="0" hideFirstMasterPage="0" '
+    'border="SHOW_ALL" fill="SHOW_ALL" hideFirstPageNum="0" hideFirstEmptyLine="0" showLineNumber="0"/>'
+    '<hp:lineNumberShape restartType="0" countBy="0" distance="0" startNumber="0"/>'
+    '<hp:pagePr landscape="WIDELY" width="59528" height="84186" gutterType="LEFT_ONLY">'
+    '<hp:margin header="2835" footer="2835" gutter="0" left="5669" right="5669" top="5669" bottom="5669"/>'
+    "</hp:pagePr>"
+    '<hp:footNotePr><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/>'
+    '<hp:noteLine length="-1" type="SOLID" width="0.12 mm" color="#000000"/>'
+    '<hp:noteSpacing betweenNotes="283" belowLine="567" aboveLine="850"/>'
+    '<hp:numbering type="CONTINUOUS" newNum="1"/><hp:placement place="EACH_COLUMN" beneathText="0"/>'
+    "</hp:footNotePr>"
+    '<hp:endNotePr><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/>'
+    '<hp:noteLine length="14692344" type="SOLID" width="0.12 mm" color="#000000"/>'
+    '<hp:noteSpacing betweenNotes="0" belowLine="567" aboveLine="850"/>'
+    '<hp:numbering type="CONTINUOUS" newNum="1"/><hp:placement place="END_OF_DOCUMENT" beneathText="0"/>'
+    "</hp:endNotePr>"
+    + "".join(
+        f'<hp:pageBorderFill type="{t}" borderFillIDRef="1" textBorder="PAPER" headerInside="0" '
+        'footerInside="0" fillArea="PAPER"><hp:offset left="1417" right="1417" top="1417" bottom="1417"/>'
+        "</hp:pageBorderFill>"
+        for t in ("BOTH", "EVEN", "ODD")
+    )
+    + "</hp:secPr>"
+)
+
+
+def _image_from_data_url(url, max_chars=2_000_000):
+    """'data:image/png;base64,…' → (bytes, 확장자, 가로px, 세로px). PNG·JPEG만 받는다 —
+    한글 2018이 못 여는 형식(webp 등)은 화면이 PNG로 바꿔 보낸다. 모르는 것은 None."""
+    if not isinstance(url, str) or len(url) > max_chars:
+        return None
+    m = re.match(r"data:image/(png|jpeg|jpg);base64,(.+)$", url.strip(), re.S)
+    if not m:
+        return None
+    try:
+        data = base64.b64decode(m.group(2), validate=False)
+    except Exception:
+        return None
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 24:
+        w, h = struct.unpack(">II", data[16:24])
+        return data, "png", w, h
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            seg = struct.unpack(">H", data[i + 2:i + 4])[0]
+            if marker in (0xC0, 0xC1, 0xC2):
+                h, w = struct.unpack(">HH", data[i + 5:i + 9])
+                return data, "jpg", w, h
+            i += 2 + seg
+    return None
+
+
+def _hwpx_pic(item_id, w, h, px_w, px_h, pos):
+    """그림 개체(hp:pic). w·h는 찍힐 크기(HWPUNIT), px_w·px_h는 원본 픽셀(96dpi = 75 HWPUNIT/px)."""
+    ow, oh = px_w * 75, px_h * 75
+    return (
+        f'<hp:pic id="{1000 + len(item_id)}" zOrder="0" numberingType="PICTURE" textWrap="SQUARE" '
+        'textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="0" reverse="0">'
+        '<hp:offset x="0" y="0"/>'
+        f'<hp:orgSz width="{w}" height="{h}"/><hp:curSz width="{w}" height="{h}"/>'
+        '<hp:flip horizontal="0" vertical="0"/>'
+        f'<hp:rotationInfo angle="0" centerX="{w // 2}" centerY="{h // 2}" rotateimage="1"/>'
+        '<hp:renderingInfo><hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
+        '<hc:scaMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
+        '<hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/></hp:renderingInfo>'
+        f'<hc:img binaryItemIDRef="{item_id}" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/>'
+        f'<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="{w}" y="0"/><hc:pt2 x="{w}" y="{h}"/><hc:pt3 x="0" y="{h}"/></hp:imgRect>'
+        f'<hp:imgClip left="0" right="{ow}" top="0" bottom="{oh}"/>'
+        '<hp:inMargin left="0" right="0" top="0" bottom="0"/>'
+        f'<hp:imgDim dimwidth="{ow}" dimheight="{oh}"/>'
+        '<hp:effects/>'
+        f'<hp:sz width="{w}" widthRelTo="ABSOLUTE" height="{h}" heightRelTo="ABSOLUTE" protect="0"/>'
+        f"{pos}"
+        '<hp:outMargin left="0" right="0" top="0" bottom="0"/>'
+        "</hp:pic>"
+    )
+
+
+# 꼬리말에 찍는 학원 로고의 최대 크기 — 인쇄 CSS(.print-foot .brand-mark img: 높이 10mm·폭 38mm)와 같게
+_HWPX_LOGO_MAX_H = 2835   # 10mm
+_HWPX_LOGO_MAX_W = 10772  # 38mm
+_HWPX_TEXT_W = 59528 - 5669 * 2
+
+
+def _hwpx_brand_footer(name, logo):
+    """꼬리말 — 인쇄물과 같이 학원명은 왼쪽 아래, 로고는 오른쪽 아래. 둘 다 없으면 빈 글자."""
+    if not name and not logo:
+        return ""
+    runs = ""
+    if logo:
+        _data, _ext, pw, ph = logo
+        h = _HWPX_LOGO_MAX_H
+        w = max(1, round(h * pw / max(1, ph)))
+        if w > _HWPX_LOGO_MAX_W:
+            w = _HWPX_LOGO_MAX_W
+            h = max(1, round(w * ph / max(1, pw)))
+        # 글 앞에 뜬 그림으로 꼬리말 단의 오른쪽 끝에 붙인다(학원명과 같은 줄)
+        pos = ('<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="1" '
+               'holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="BOTTOM" '
+               'horzAlign="RIGHT" vertOffset="0" horzOffset="0"/>')
+        runs += f'<hp:run charPrIDRef="1">{_hwpx_pic("logo", w, h, pw, ph, pos)}</hp:run>'
+    if name:
+        runs += f'<hp:run charPrIDRef="1"><hp:t>{_docx_esc(name)}</hp:t></hp:run>'
+    return (
+        '<hp:ctrl><hp:footer id="1" applyPageType="BOTH">'
+        '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="BOTTOM" '
+        f'linkListIDRef="0" linkListNextIDRef="0" textWidth="{_HWPX_TEXT_W}" textHeight="{_HWPX_LOGO_MAX_H}" '
+        'hasTextRef="0" hasNumRef="0">'
+        f'{_hwpx_p(runs, 4)}'
+        "</hp:subList></hp:footer></hp:ctrl>"
+    )
+
+
+def quiz_html_to_hwpx(result_html, title, answer_heading="정답 및 해설", columns=2, brand=None):
+    """결과 HTML → .hwpx bytes. 쪽 구성은 quiz_html_to_docx와 같다:
+    제목(1단) → 본문(columns단) → 새 쪽 → 답지(1단).
+
+    brand: 학원 마크 {"name": 학원명, "logo": data URL, "wm": data URL} — 화면의 학원 마크 칸에 넣은 것.
+    인쇄물과 같게 학원명은 왼쪽 아래·로고는 오른쪽 아래(꼬리말), 워터마크는 쪽마다 뒷배경
+    (한글의 '쪽 배경' 그림 — 화면이 이미 옅게 만든 그림을 보낸다)."""
+    columns = 1 if columns == 1 else 2
+    brand = brand if isinstance(brand, dict) else {}
+    b_name = str(brand.get("name") or "").strip()[:60]
+    b_logo = _image_from_data_url(brand.get("logo"))
+    b_wm = _image_from_data_url(brand.get("wm"))
+    parser = _QuizDocxParser(_HwpxWriter)
+    parser.feed(result_html or "")
+    body, answers = parser.result()
+
+    secpr = _HWPX_SECPR
+    if b_wm:
+        # 쪽 배경 그림 — 쪽 테두리/배경(borderFill 5번)을 쪽마다 깐다
+        secpr = secpr.replace('borderFillIDRef="1" textBorder="PAPER"', 'borderFillIDRef="5" textBorder="PAPER"')
+    out = []
+    # 1) 제목 — 첫 문단의 첫 run에 쪽 설정과 1단 정의를 함께 둔다(한글 문서의 약속)
+    out.append(_hwpx_p(
+        f'<hp:run charPrIDRef="6">{secpr}{_hwpx_cols(1)}{_hwpx_brand_footer(b_name, b_logo)}</hp:run>'
+        f'<hp:run charPrIDRef="6"><hp:t>{_docx_esc(title)}</hp:t></hp:run>', 2))
+    # 2) 본문 — 여기서부터 columns단
+    out.append(_hwpx_p(f'<hp:run charPrIDRef="0">{_hwpx_cols(columns)}</hp:run>', 4))
+    out.extend(body or [_hwpx_p(_HwpxWriter.run("(내용이 없습니다)"))])
+    # 3) 답지 — 새 쪽, 1단
+    if answers:
+        out.append(_hwpx_p(
+            f'<hp:run charPrIDRef="7">{_hwpx_cols(1)}</hp:run>'
+            f'<hp:run charPrIDRef="7"><hp:t>{_docx_esc(answer_heading)}</hp:t></hp:run>',
+            2, page_break=True))
+        # 답지도 본문과 같은 단 수로(문제지 2단이면 답지도 2단 — 2026-11-10 사용자). 제목은 위에서 1단으로 걸쳐 둔다.
+        if columns == 2:
+            out.append(_hwpx_p(f'<hp:run charPrIDRef="0">{_hwpx_cols(2)}</hp:run>', 4))
+        out.extend(answers)
+    section = ('<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>'
+               f'<hs:sec {HWPX_NS}>{"".join(out)}</hs:sec>')
+    images = {}
+    if b_logo:
+        images["logo"] = b_logo
+    if b_wm:
+        images["wm"] = b_wm
+    return build_hwpx(section, title, images)
+
+
+def build_hwpx(section_xml, title="", images=None):
+    """본문(section0.xml)을 받아 .hwpx 한 벌(bytes)로 묶는다.
+    mimetype은 맨 앞에, 압축하지 않고 넣어야 한글이 HWPX로 알아본다(EPUB과 같은 약속).
+    images: {"logo"|"wm": (bytes, 확장자, 가로, 세로)} — BinData/에 넣고 content.hpf 목록에 적는다.
+    본문의 그림은 이 목록의 id(logo·wm)로 가리킨다(binaryItemIDRef)."""
+    images = images or {}
+    version = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>'
+        '<hv:HCFVersion xmlns:hv="http://www.hancom.co.kr/hwpml/2011/version" '
+        'tagetApplication="WORDPROCESSOR" major="5" minor="0" micro="5" buildNumber="0" '
+        'os="1" xmlVersion="1.4" application="Hancom Office Hangul" appVersion="10, 0, 0, 0"/>'
+    )
+    container = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>'
+        '<ocf:container xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container" '
+        'xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf"><ocf:rootfiles>'
+        '<ocf:rootfile full-path="Contents/content.hpf" media-type="application/hwpml-package+xml"/>'
+        "</ocf:rootfiles></ocf:container>"
+    )
+    manifest = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>'
+        '<odf:manifest xmlns:odf="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>'
+    )
+    content = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>'
+        f'<opf:package {HWPX_NS} version="" unique-identifier="" id="">'
+        f"<opf:metadata><opf:title>{_docx_esc(title)}</opf:title><opf:language>ko</opf:language></opf:metadata>"
+        "<opf:manifest>"
+        '<opf:item id="header" href="Contents/header.xml" media-type="application/xml"/>'
+        '<opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/>'
+        '<opf:item id="settings" href="settings.xml" media-type="application/xml"/>'
+        + "".join(
+            f'<opf:item id="{k}" href="BinData/{k}.{v[1]}" '
+            f'media-type="image/{"png" if v[1] == "png" else "jpeg"}" isEmbeded="1"/>'
+            for k, v in images.items())
+        + "</opf:manifest>"
+        '<opf:spine><opf:itemref idref="header" linear="yes"/><opf:itemref idref="section0" linear="yes"/></opf:spine>'
+        "</opf:package>"
+    )
+    settings = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>'
+        '<ha:HWPApplicationSetting xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" '
+        'xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0">'
+        '<ha:CaretPosition listIDRef="0" paraIDRef="0" pos="0"/></ha:HWPApplicationSetting>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(zipfile.ZipInfo("mimetype"), "application/hwp+zip", compress_type=zipfile.ZIP_STORED)
+        z.writestr("version.xml", version)
+        z.writestr("Contents/header.xml", _hwpx_header(images.get("wm")))
+        z.writestr("Contents/section0.xml", section_xml)
+        z.writestr("Contents/content.hpf", content)
+        z.writestr("settings.xml", settings)
+        z.writestr("META-INF/container.xml", container)
+        z.writestr("META-INF/manifest.xml", manifest)
+        for k, v in images.items():
+            z.writestr(f"BinData/{k}.{v[1]}", v[0])
     return buf.getvalue()
 
 
@@ -15195,6 +15827,16 @@ CHANGELOG = [
         "items": [
             "학생 관리 — 낸 시험 목록을 단어시험·객관식·주관식·객관식+주관식·문법·워크북으로 골라 볼 수 있습니다. "
             "이미 낸 시험도 문항을 보고 종류를 찾아 나눕니다.",
+        ],
+    },
+    {
+        "version": 125,
+        "date": "2026-11-10",
+        "items": [
+            "객관식·주관식·객관식+주관식·문법문제·워크북·동형 모의고사를 한글 파일(.hwpx)로도 내려받을 수 있습니다. "
+            "워드 다운로드 옆의 [📄 한글 다운로드]를 누르세요(한글 2014 이후에서 열립니다). 학원 마크에 넣은 학원명·로고·워터마크도 "
+            "인쇄물처럼 함께 들어갑니다. 문법문제에는 워드 다운로드도 생겼습니다.",
+            "문제지의 정답 및 해설이 표 대신 '1. 정답 ② / 해설' 꼴의 2단으로 바뀌었습니다(화면·인쇄·한글·워드 모두).",
         ],
     },
 ]
@@ -21821,7 +22463,7 @@ class Handler(BaseHTTPRequestHandler):
         if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                         "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
-                        "/api/infographic", "/api/docx", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
+                        "/api/infographic", "/api/docx", "/api/hwpx", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/auth/reset-request", "/api/auth/reset-confirm",
                         "/api/logout", "/api/auth/delete",
@@ -21914,9 +22556,9 @@ class Handler(BaseHTTPRequestHandler):
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                            "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract")
-        # /api/docx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
+        # /api/docx·/api/hwpx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
         # 않는다(그래서 GENERATE_PATHS가 아니라 여기 따로 붙는다).
-        if path in GENERATE_PATHS + ("/api/models", "/api/docx"):
+        if path in GENERATE_PATHS + ("/api/models", "/api/docx", "/api/hwpx"):
             if DB is None:
                 self._send_json(
                     {"error": "로그인 기능이 아직 설정되지 않았습니다 (관리자에게 문의하세요)."}, 503
@@ -23398,7 +24040,12 @@ class Handler(BaseHTTPRequestHandler):
         # 만든 문제지를 워드로 내려준다. AI를 부르지 않으므로 요금도 대기도 없다.
         # 화면이 이미 그려 놓은 HTML을 그대로 보내온다 — 왜 데이터가 아니라 HTML인지는
         # quiz_html_to_docx 위의 주석 참고.
-        if path == "/api/docx":
+        # /api/hwpx는 같은 HTML을 한글(.hwpx)로 — 골라내는 규칙은 워드와 한 벌이다
+        # (quiz_html_to_hwpx 위의 주석 참고).
+        if path in ("/api/docx", "/api/hwpx"):
+            is_hwpx = path == "/api/hwpx"
+            kind_name = "한글" if is_hwpx else "워드"
+            ext = "hwpx" if is_hwpx else "docx"
             source = req.get("html")
             if not isinstance(source, str) or not source.strip():
                 self._send_json({"error": "내보낼 내용이 없습니다. 먼저 문제를 만들어 주세요."}, 400)
@@ -23412,23 +24059,28 @@ class Handler(BaseHTTPRequestHandler):
             # 단 수는 화면이 정한다 — 워크북만 1단이고 나머지는 2단이다
             columns = 1 if req.get("columns") == 1 else 2
             try:
-                blob = quiz_html_to_docx(source, title, answer_heading, columns)
+                if is_hwpx:
+                    # 학원 마크(학원명·로고·워터마크) — 화면의 학원 마크 칸에 넣은 것을 함께 보내온다
+                    blob = quiz_html_to_hwpx(source, title, answer_heading, columns, req.get("brand"))
+                else:
+                    blob = quiz_html_to_docx(source, title, answer_heading, columns)
             except Exception as e:
                 traceback.print_exc()
-                self._send_json({"error": f"워드 파일을 만들지 못했습니다: {e}"}, 500)
+                self._send_json({"error": f"{kind_name} 파일을 만들지 못했습니다: {e}"}, 500)
                 return
             # 파일명에 한글이 들어가므로 RFC 5987로도 함께 적는다. filename= 쪽은 옛
             # 브라우저용이라 아스키만 남기고, 실제로 쓰이는 것은 filename*= 쪽이다.
             ascii_name = re.sub(r"[^A-Za-z0-9._-]", "_", filename) or "document"
-            quoted = urllib.parse.quote(f"{filename}.docx")
+            quoted = urllib.parse.quote(f"{filename}.{ext}")
             self.send_response(200)
             self.send_header(
                 "content-type",
+                "application/hwp+zip" if is_hwpx else
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
             self.send_header(
                 "content-disposition",
-                f'attachment; filename="{ascii_name}.docx"; filename*=UTF-8\'\'{quoted}',
+                f'attachment; filename="{ascii_name}.{ext}"; filename*=UTF-8\'\'{quoted}',
             )
             self.send_header("content-length", str(len(blob)))
             self.send_header("cache-control", "no-store")
