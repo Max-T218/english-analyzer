@@ -1126,6 +1126,16 @@ table.answerkey td:nth-child(1),table.answerkey td:nth-child(2){font-weight:700;
 .qz-ak-exp{margin-top:2px;}
 /* 해설이 없으면(주관식) 줄이 짧아 간격을 좁힌다 */
 .qz-anslist:not(.with-exp) .qz-ak{margin-bottom:5px;}
+/* 빠른 정답표 — '정답 및 해설' 앞에 정답만 모은 표 둘(객관식 5쌍씩 · 주관식 번호|정답). app.js quickKeyHtml */
+.qz-quick{margin:0 0 22px;}
+.qz-qk{width:100%; border-collapse:collapse; margin:0 0 14px; font-size:13px; break-inside:avoid; page-break-inside:avoid;}
+.qz-qk-cap{caption-side:top; text-align:left; font-weight:800; font-size:13.5px; padding:7px 10px;
+  background:var(--accent-soft); color:var(--ink); border:1px solid var(--line); border-bottom:0;}
+.qz-qk th, .qz-qk td{border:1px solid var(--line); padding:5px 8px; vertical-align:middle;}
+.qz-qk th{width:1%; white-space:nowrap; font-weight:700; color:var(--ink-soft); background:var(--line-soft); text-align:right;}
+.qz-qk-mc td{text-align:center; font-weight:700; color:var(--accent);}
+.qz-qk-sa{font-size:11.5px; font-weight:700; color:var(--ink-soft);}
+.qz-qk-sa-table td{text-align:left;}
 /* 문법문제에서 1단을 고르면 답지도 1단, 좁은 화면도 1단 */
 .gr-1col .qz-anslist{column-count:1;}
 @media (max-width:640px){ .qz-anslist{column-count:1;} }

@@ -9508,6 +9508,7 @@ function setupQuizTab({ prefix, types, footer }) {
     let stopErr = null;
     const entries = []; // 저장 기능이 쓸 {job, label, set, total} — 성공한 세트만
     const answerParts = []; // 지문마다 흩어지지 않게 모아뒀다 문서 맨 뒤에 한 번에 붙인다
+    const keyItems = [];    // 빠른 정답표에 쓸 번호·정답(quickKeyHtml이 번호 순으로 늘어놓는다)
     let expCol = false;     // 한 지문이라도 해설 열이 실렸으면 답지 제목에 '해설'을 넣는다
     let noSoFar = 0;        // 지금까지 찍은 문항 수 — 지문이 바뀌어도 번호를 이어 붙인다
     // 무작위 모드에서 지문을 넘어 전부 섞기 위한 모음 — 변형 세트(label)별로 담는다
@@ -9727,6 +9728,7 @@ function setupQuizTab({ prefix, types, footer }) {
                   noSoFar += (set.questions || []).length;
                   appendNow(built.html);
                   answerParts.push(built.answerHtml);
+                  keyItems.push(...built.keyItems);
                   if (built.hasExpCol) expCol = true;
                   entries.push({ job, label, set, total });
                   showFooter();
@@ -9789,6 +9791,7 @@ function setupQuizTab({ prefix, types, footer }) {
       noSoFar += (set.questions || []).length;
       append(built.html);
       answerParts.push(built.answerHtml);
+      keyItems.push(...built.keyItems);
       if (built.hasExpCol) expCol = true;
       entries.push({ job, label: "", set, total: 1 });
     });
@@ -9803,6 +9806,7 @@ function setupQuizTab({ prefix, types, footer }) {
         append(`
           <section class="qz-answerbook">
             <h2 class="qz-answerbook-head">${answerHeadLabel}</h2>
+            ${quickKeyHtml(keyItems, sheetTitle)}
             ${body}
           </section>`);
         if (answerPrintBtn) answerPrintBtn.style.display = "inline-flex";
@@ -9920,6 +9924,7 @@ function setupQuizTab({ prefix, types, footer }) {
   function renderQuizEntries(entries, opts = {}) {
     resultEl.innerHTML = "";
     const answerParts = [];
+    const keyItems = [];
     let expCol = false;
     let noSoFar = 0;
     entries.forEach(({ job, label, set, total }) => {
@@ -9927,6 +9932,7 @@ function setupQuizTab({ prefix, types, footer }) {
       noSoFar += (set.questions || []).length;
       resultEl.insertAdjacentHTML("beforeend", built.html);
       answerParts.push(built.answerHtml);
+      keyItems.push(...built.keyItems);
       if (built.hasExpCol) expCol = true;
     });
     mergeQuizColumns(resultEl);
@@ -9941,6 +9947,7 @@ function setupQuizTab({ prefix, types, footer }) {
         resultEl.insertAdjacentHTML("beforeend", `
           <section class="qz-answerbook">
             <h2 class="qz-answerbook-head">${answerHeadLabel}</h2>
+            ${quickKeyHtml(keyItems, sheetTitle)}
             ${body}
           </section>`);
       }
@@ -10121,6 +10128,7 @@ function setupQuizTab({ prefix, types, footer }) {
     // 답지에도 같은 이름을 얹어, 시험지와 답지가 흩어져도 짝을 찾을 수 있게 한다
     const ab = resultEl.querySelector(".qz-answerbook-head");
     if (ab) ab.textContent = sheetTitle ? `${sheetTitle} — ${answerHeadLabel}` : answerHeadLabel;
+    syncQuickKeyNames(resultEl, sheetTitle);
   }
   function setSheetTitle(v) {
     sheetTitle = (v || "").trim();
@@ -10655,7 +10663,51 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true, st
       </div>`;
   }
 
-  return { html: parts.join(""), answerHtml, hasExpCol };
+  // 빠른 정답표(quickKeyHtml)에 쓸 번호·정답 — 부르는 쪽이 시험지 전체를 모아 답지 맨 앞에 붙인다
+  const keyItems = (d.questions || []).map((q, i) => ({
+    no: startNo + i + 1,
+    ans: quizAnswerLabel(q),
+    mc: (q.format || "mc") === "mc",
+  }));
+  return { html: parts.join(""), answerHtml, hasExpCol, keyItems };
+}
+
+/* ── 빠른 정답표(2026-11-10 사용자) ──
+   '정답 및 해설' 앞에 시험지 전체의 정답만 모은 표 둘을 싣는다.
+     ① 객관식(선다형) — 한 줄에 '번호 | 정답' 5쌍. 주관식 문항 자리에는 '주관식'.
+     ② 주관식(서답형) — '번호 | 정답' 두 칸.
+   객관식이 하나도 없으면 ①을, 주관식이 하나도 없으면 ②를 뺀다. 표 제목 앞에는 시험지 이름이
+   붙는다 — .qz-qk-name을 시험지명을 정하는 곳(applySheetTitle 등)이 '이름 - '으로 채운다(비면 빈 칸).
+   ' - '를 CSS가 아니라 글자로 두는 까닭은 한글·워드 내려받기가 글자만 옮기기 때문이다.
+   서버의 한글 변환(_QuizDocxParser)이 같은 표(.qz-quick table)를 한글 표로 옮긴다. */
+const QUICK_KEY_PER_ROW = 5;
+function quickKeyHtml(items, name) {
+  const list = (items || []).slice().sort((a, b) => a.no - b.no);
+  if (!list.length) return "";
+  const cap = (kind) =>
+    `<caption class="qz-qk-cap"><span class="qz-qk-name">${name ? esc(name) + " - " : ""}</span>${kind}</caption>`;
+  let html = `<div class="qz-quick">`;
+  if (list.some((it) => it.mc)) {
+    const rows = [];
+    for (let i = 0; i < list.length; i += QUICK_KEY_PER_ROW) {
+      const cells = list.slice(i, i + QUICK_KEY_PER_ROW).map((it) =>
+        `<th>${it.no}.</th><td>${it.mc ? it.ans : `<span class="qz-qk-sa">주관식</span>`}</td>`);
+      while (cells.length < QUICK_KEY_PER_ROW) cells.push(`<th></th><td></td>`);
+      rows.push(`<tr>${cells.join("")}</tr>`);
+    }
+    html += `<table class="qz-qk qz-qk-mc">${cap("객관식(선다형)")}<tbody>${rows.join("")}</tbody></table>`;
+  }
+  const sa = list.filter((it) => !it.mc);
+  if (sa.length) {
+    html += `<table class="qz-qk qz-qk-sa-table">${cap("주관식(서답형)")}<tbody>${
+      sa.map((it) => `<tr><th>${it.no}.</th><td>${it.ans}</td></tr>`).join("")}</tbody></table>`;
+  }
+  return html + `</div>`;
+}
+// 빠른 정답표 제목의 시험지 이름을 채운다(시험지명을 바꿀 때마다)
+function syncQuickKeyNames(root, name) {
+  if (!root) return;
+  root.querySelectorAll(".qz-quick .qz-qk-name").forEach((el) => { el.textContent = name ? `${name} - ` : ""; });
 }
 
 // 정답/해설 토글 — 문제 탭·워크북 탭 어디에 렌더되든 동작하도록 document에 위임
@@ -18646,6 +18698,7 @@ function renderExamPaperSets() {
      답지를 빼고 인쇄해야 했다. 그리고 이 상자가 있어야 '답지만 인쇄'가 동작한다
      (.qz-result.answers-only가 .qz-block을 감추고 이 상자만 남긴다). */
   const answerParts = [];
+  const quickParts = [];
   let anyExpCol = false;
   const sheets = examPaperSets
     .map((set) => {
@@ -18674,6 +18727,8 @@ function renderExamPaperSets() {
         );
       }
       if (built.hasExpCol) anyExpCol = true;
+      // 빠른 정답표는 시험지(A형·B형)마다 따로 — 번호가 시험지마다 1부터라 합치면 섞인다
+      quickParts.push(quickKeyHtml(built.keyItems, set.label || ""));
       return (
         fails +
         built.html +
@@ -18685,6 +18740,7 @@ function renderExamPaperSets() {
   examPaperResultEl.innerHTML = sheets + (answerBody
     ? `<section class="qz-answerbook">
          <h2 class="qz-answerbook-head">${anyExpCol ? "정답 및 해설" : "정답"}</h2>
+         ${quickParts.join("")}
          ${answerBody}
        </section>`
     : "");

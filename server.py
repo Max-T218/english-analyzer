@@ -22,6 +22,7 @@ import hmac
 import html
 import http.client
 import io
+import itertools
 import json
 import os
 import random
@@ -13425,9 +13426,9 @@ class _DocxWriter:
         return "<w:r><w:br/></w:r>"
 
     @staticmethod
-    def table(rows):
+    def table(rows, quick=None):
         """정답표 — 워드는 예전처럼 줄마다 한 문단으로 펴고 칸 사이를 띄운다
-        (표는 워드에서 고치기 성가시고, 답지는 읽기만 하면 된다)."""
+        (표는 워드에서 고치기 성가시고, 답지는 읽기만 하면 된다). 빠른 정답표(quick)도 같다."""
         sep = _docx_run("   ")
         return [_docx_para("".join(cell + sep for cell, _th in row)) for row in rows]
 
@@ -13529,6 +13530,7 @@ class _QuizDocxParser(HTMLParser):
         # 동형 모의고사처럼 시험지가 여럿(A형·B형)이면 번호가 1부터 다시 시작한다 — 정답 상자를 그 자리에서
         # 묶음으로 나누고 정답표 제목에서 읽은 시험지 이름을 묶음 머리에 단다(_box_groups)
         self._saw_list = False  # 새 답지 목록(ol.qz-anslist)을 보았는가
+        self._qk_tbl = None     # 빠른 정답표를 읽는 중이면 "mc"(객관식 격자)·"sa"(주관식)
         self._box_marks = []    # (box_answers 안의 자리, 문항 번호)
         self._sec_labels = []   # 정답표 제목 글자들(차례대로)
         self._cap_sec = False
@@ -13623,7 +13625,7 @@ class _QuizDocxParser(HTMLParser):
         elif tag == "br":
             # 문단 안 줄바꿈
             self._runs.append(self.w.br())
-        elif tag in ("div", "p", "li", "tr", "h1", "h2", "h3", "section", "ul", "ol", "table"):
+        elif tag in ("div", "p", "li", "tr", "h1", "h2", "h3", "section", "ul", "ol", "table", "caption"):
             self._flush()
             if any(c in self.PAGE_START_CLASSES for c in cls):
                 self._new_page()
@@ -13635,9 +13637,18 @@ class _QuizDocxParser(HTMLParser):
                     self._new_page()
             if tag == "tr" and self._tbl is not None:
                 self._row = []
+            if tag == "table" and "qz-qk" in cls:
+                # 빠른 정답표(app.js quickKeyHtml) — 칸째 모았다가 표로 넘긴다(caption은 표 위 제목 줄)
+                self._tbl = []
+                self._qk_tbl = "mc" if "qz-qk-mc" in cls else "sa"
+            if tag == "caption":
+                self._pending = "QNo"
             if tag == "ol" and "qz-anslist" in cls:
                 # 새 답지 목록 — 이게 있으면 문항별 정답 상자는 버린다(result). 시험지가 여럿(A형·B형)이면
                 # 정답 제목에서 읽은 이름을 목록 앞에 '[A형]'으로 단다(지문 하나짜리 탭은 이름이 비어 안 붙는다)
+                if not self._saw_list:
+                    # 여기서부터 다단 — 앞의 빠른 정답표는 지면 폭을 다 쓴다(한글만, 워드는 빈 글자)
+                    self.answers.append(HWPX_COLS_MARK if self.w is _HwpxWriter else "")
                 self._saw_list = True
                 name = re.sub(r"📌|정답\s*및\s*해설|정답", "", self._sec_labels[-1] if self._sec_labels else "").strip(" ·-—")
                 if name:
@@ -13699,7 +13710,12 @@ class _QuizDocxParser(HTMLParser):
                 self._tbl.append(self._row)
             self._row = None
             # 아래의 일반 처리로 스택만 정리한다(모은 글자가 없어 문단은 생기지 않는다)
-        if tag in ("div", "p", "li", "tr", "h1", "h2", "h3", "section", "ul", "ol", "table"):
+        if tag == "table" and self._qk_tbl:
+            if self._tbl:
+                self._target().extend(self.w.table(self._tbl, quick=self._qk_tbl))
+            self._tbl = None
+            self._qk_tbl = None
+        if tag in ("div", "p", "li", "tr", "h1", "h2", "h3", "section", "ul", "ol", "table", "caption"):
             self._flush()
             while self._depth_stack:
                 kind, name = self._depth_stack.pop()
@@ -13873,10 +13889,11 @@ _HWPX_PARAS = [
     (60, 0, 0, False, 2),     # 5 답 쓰는 줄 뒤의 얇은 빈 문단(_HwpxWriter.blank_line)
     (150, 0, 0, False, 2),    # 6 정답표 칸 — 왼쪽 맞춤(양쪽 맞춤이면 좁은 칸의 긴 정답이 띄엄띄엄 벌어진다)
     (160, 0, 600, False, 2),  # 7 줄바꿈이 든 문단 — 0번과 같되 왼쪽 맞춤
+    (150, 0, 0, False, 2),    # 8 빠른 정답표의 객관식 정답 칸 — 가운데 맞춤
 ]
 # 나머지는 양쪽 맞춤. 한글은 양쪽 맞춤 문단에서 강제 줄바꿈 앞 줄도 끝까지 벌려
 # '1.   정답   ①'처럼 띄엄띄엄 찍혀서, 줄바꿈이 든 문단은 7번(왼쪽 맞춤)으로 바꾼다.
-_HWPX_PARA_ALIGN = {1: "LEFT", 6: "LEFT", 7: "LEFT"}   # 1 = 문항 번호 줄·답지 '1. 정답 …' 줄
+_HWPX_PARA_ALIGN = {1: "LEFT", 6: "LEFT", 7: "LEFT", 8: "CENTER"}   # 1 = 문항 번호 줄·답지 '1. 정답 …' 줄
 
 
 def _hwpx_border(kind, color="#000000", width="0.1 mm"):
@@ -13970,6 +13987,11 @@ def _hwpx_header(wm=None):
     )
 
 
+_HWPX_TBL_IDS = itertools.count(2000)   # 한글 표 개체마다 다른 번호
+# 답지에서 다단이 시작할 자리 — 파서가 해설 목록 앞에 넣고 quiz_html_to_hwpx가 단 정의로 바꾼다
+HWPX_COLS_MARK = "\x00HWPX_COLS\x00"
+
+
 class _HwpxWriter:
     """_QuizDocxParser가 한글 문단을 쓸 때 부르는 쪽(_DocxWriter와 같은 메서드)."""
 
@@ -13998,13 +14020,24 @@ class _HwpxWriter:
         return _hwpx_p(runs_xml, pid, page_break=page_break)
 
     @staticmethod
-    def table(rows):
+    def table(rows, quick=None):
         """정답표를 한글 표로 — 인쇄물의 정답표(번호 · 정답 · 해설)와 같은 모양. 머리줄은 옅은 바탕에 굵게,
-        쪽을 넘기면 머리줄을 되풀이한다. 칸 폭: 번호는 좁게, 정답 칸은 해설이 있으면 30%쯤, 나머지는 해설."""
+        쪽을 넘기면 머리줄을 되풀이한다. 칸 폭: 번호는 좁게, 정답 칸은 해설이 있으면 30%쯤, 나머지는 해설.
+
+        quick: 빠른 정답표(app.js quickKeyHtml). "mc"는 '번호|정답' 5쌍 격자, "sa"는 '번호|정답' 두 칸.
+        번호 칸(th)은 옅은 바탕만 깔고 머리줄로 다루지 않는다(줄마다 번호가 있어 되풀이할 머리가 없다)."""
         ncol = max(len(r) for r in rows)
         num_w = 3400
         rest = _HWPX_TEXT_W - num_w
-        if ncol == 1:
+        if quick:
+            qn = 2600   # 번호 칸 '12.'
+            if quick == "mc":
+                pairs = max(1, ncol // 2)
+                aw = round((_HWPX_TEXT_W - qn * pairs) / pairs)
+                widths = [qn, aw] * pairs + ([aw] if ncol % 2 else [])
+            else:
+                widths = [qn, _HWPX_TEXT_W - qn] + [0] * max(0, ncol - 2)
+        elif ncol == 1:
             widths = [_HWPX_TEXT_W]
         elif ncol == 2:
             widths = [num_w, rest]
@@ -14017,22 +14050,24 @@ class _HwpxWriter:
             tcs = []
             for ci in range(ncol):
                 runs, th = row[ci] if ci < len(row) else ("", False)
-                if th:
+                bold = th or quick == "mc"   # 객관식 격자는 정답도 굵게(화면과 같게)
+                if bold:
                     runs = re.sub(r'charPrIDRef="([02])"', lambda m: f'charPrIDRef="{int(m.group(1)) + 1}"', runs)
+                pid = 8 if (quick == "mc" and not th) else 6   # 객관식 정답 칸은 가운데
                 tcs.append(
-                    f'<hp:tc name="" header="{1 if th else 0}" hasMargin="0" protect="0" editable="0" dirty="0" '
+                    f'<hp:tc name="" header="{1 if (th and not quick) else 0}" hasMargin="0" protect="0" editable="0" dirty="0" '
                     f'borderFillIDRef="{7 if th else 6}">'
                     '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" '
                     'linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
-                    f'{_hwpx_p(runs, 6)}</hp:subList>'
+                    f'{_hwpx_p(runs, pid)}</hp:subList>'
                     f'<hp:cellAddr colAddr="{ci}" rowAddr="{ri}"/><hp:cellSpan colSpan="1" rowSpan="1"/>'
                     f'<hp:cellSz width="{widths[ci]}" height="{row_h}"/>'
                     '<hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>'
                 )
             trs.append(f"<hp:tr>{''.join(tcs)}</hp:tr>")
         tbl = (
-            f'<hp:tbl id="2000" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" '
-            f'lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" rowCnt="{len(rows)}" colCnt="{ncol}" '
+            f'<hp:tbl id="{next(_HWPX_TBL_IDS)}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" '
+            f'lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="{0 if quick else 1}" rowCnt="{len(rows)}" colCnt="{ncol}" '
             'cellSpacing="0" borderFillIDRef="6" noAdjust="0">'
             f'<hp:sz width="{sum(widths)}" widthRelTo="ABSOLUTE" height="{row_h * len(rows)}" heightRelTo="ABSOLUTE" protect="0"/>'
             '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" '
@@ -14226,8 +14261,13 @@ def quiz_html_to_hwpx(result_html, title, answer_heading="정답 및 해설", co
             f'<hp:run charPrIDRef="7"><hp:t>{_docx_esc(answer_heading)}</hp:t></hp:run>',
             2, page_break=True))
         # 답지도 본문과 같은 단 수로(문제지 2단이면 답지도 2단 — 2026-11-10 사용자). 제목은 위에서 1단으로 걸쳐 둔다.
-        if columns == 2:
-            out.append(_hwpx_p(f'<hp:run charPrIDRef="0">{_hwpx_cols(2)}</hp:run>', 4))
+        # 빠른 정답표가 있으면 그 표들은 1단 그대로 두고, 해설 목록이 시작하는 자리(HWPX_COLS_MARK)부터 다단이다.
+        cols_para = _hwpx_p(f'<hp:run charPrIDRef="0">{_hwpx_cols(columns)}</hp:run>', 4)
+        if HWPX_COLS_MARK in answers:
+            answers = [cols_para if (a == HWPX_COLS_MARK and columns == 2) else a
+                       for a in answers if a != HWPX_COLS_MARK or columns == 2]
+        elif columns == 2:
+            out.append(cols_para)
         out.extend(answers)
     section = ('<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>'
                f'<hs:sec {HWPX_NS}>{"".join(out)}</hs:sec>')
@@ -15836,7 +15876,8 @@ CHANGELOG = [
             "객관식·주관식·객관식+주관식·문법문제·워크북·동형 모의고사를 한글 파일(.hwpx)로도 내려받을 수 있습니다. "
             "워드 다운로드 옆의 [📄 한글 다운로드]를 누르세요(한글 2014 이후에서 열립니다). 학원 마크에 넣은 학원명·로고·워터마크도 "
             "인쇄물처럼 함께 들어갑니다. 문법문제에는 워드 다운로드도 생겼습니다.",
-            "문제지의 정답 및 해설이 표 대신 '1. 정답 ② / 해설' 꼴의 2단으로 바뀌었습니다(화면·인쇄·한글·워드 모두).",
+            "문제지의 정답 및 해설이 표 대신 '1. 정답 ② / 해설' 꼴의 2단으로 바뀌었습니다(화면·인쇄·한글·워드 모두). "
+            "그 앞에는 정답만 모은 표(객관식 5문항씩 · 주관식 따로)가 붙습니다.",
         ],
     },
 ]

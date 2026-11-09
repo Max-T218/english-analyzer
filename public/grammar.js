@@ -876,6 +876,7 @@ function grApplyTitle() {
   if (head) head.textContent = grSheetName();
   const ab = res.querySelector(".qz-answerbook-head");
   if (ab) ab.textContent = `${grSheetName()} — 정답 및 해설`;
+  if (typeof syncQuickKeyNames === "function") syncQuickKeyNames(res, grSheetName());   // 빠른 정답표 제목에도 시험지 이름
   syncDocCovers();   // 표지도 지금 제목에 맞춘다(결과를 다시 그리면 표지가 지워지므로 그때마다 얹는다)
 }
 
@@ -900,7 +901,7 @@ function grRender() {
     : "";
   res.innerHTML = tabs +
     `<div class="qz-sheet-title"></div>` + built.html +
-    `<section class="qz-answerbook"><h2 class="qz-answerbook-head"></h2>${built.answerHtml}</section>` +
+    `<section class="qz-answerbook"><h2 class="qz-answerbook-head"></h2>${quickKeyHtml(built.keyItems, "")}${built.answerHtml}</section>` +
     `<footer class="qz-footer">문법 문제 · 자동 생성</footer>`;
   res.classList.toggle("gr-1col", grState.cols === 1);
   // 문항마다 [✏️ 고치기] — 화면에서만 보인다(인쇄 안 됨). 한 문항만 AI로 다시 만들기는 2026-10-20에 뺐다
