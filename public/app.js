@@ -5507,10 +5507,30 @@ function planImgSwap(cur, want, redrawUnsure) {
 }
 // 붙은 그림 한 장의 사양 — 4컷인데 기록이 없으면 null(모름)
 const IMG_NAME_LANG = Object.fromEntries(Object.entries(IMG_LANG_NAME).map(([k, v]) => [v, k]));
+/* 깨진 그림 — 그림 주소(blob)가 이미 반납돼 화면에 안 나오는 그림. 예전에 상세분석이 요약분석 그림까지
+   반납해 이렇게 됐고(2026-11-10), 그런 그림은 저장도 못 한다. 사양을 DEAD_IMG로 돌려 [🖼 요약 이미지만 만들기]가
+   '이미 있는 그림'으로 보지 않고 빼고 다시 그리게 한다(planImgSwap에서 어떤 사양과도 같지 않다). */
+const DEAD_IMG = "dead";
+function imgIsDead(src) {
+  if (!src || !String(src).startsWith("blob:")) return false;
+  const img = [...document.querySelectorAll("img.infographic")].find((el) => el.getAttribute("src") === src);
+  return !!(img && img.complete && img.naturalWidth === 0);
+}
+// 저장할 그림을 읽는다 — 깨진 그림이면 무엇을 하면 되는지 알려 준다("Failed to fetch"만으로는 알 수 없었다)
+async function savedImgBlob(src) {
+  try {
+    return await fetch(src).then((r) => r.blob());
+  } catch (e) {
+    throw new Error("화면에서 그림이 지워져 저장할 수 없습니다. [🖼 요약 이미지만 만들기]로 다시 그린 뒤 저장해 주세요.");
+  }
+}
 function figSpec(fig) {
+  const img = fig.querySelector("img.infographic");
+  if (img && imgIsDead(img.getAttribute("src"))) return DEAD_IMG;
   return fig.dataset.spec || (fig.dataset.lang && fig.dataset.lang !== "comic" ? fig.dataset.lang : null);
 }
 function briefImgSpec(im) {
+  if (imgIsDead(im.src)) return DEAD_IMG;
   if (im.spec) return im.spec;
   if (im.lang === "comic") return null;
   return IMG_NAME_LANG[im.name] || im.lang || "?";   // 옛 저장본은 그림 이름만 있다
@@ -5965,8 +5985,7 @@ async function uploadInfographics(itemId, metas, onProgress) {
     try {
       if (!img) throw new Error("그림을 찾지 못했습니다.");
       const src = img.src;
-      const blob = await fetch(src).then((r) => r.blob());
-      const fit = await fitImageForSave(blob);
+      const fit = await fitImageForSave(await savedImgBlob(src));
       await postJson(
         "/api/saved-image",
         { id: itemId, key: m.key, mime: fit.mime, image: fit.b64 },
@@ -7138,7 +7157,7 @@ TAB_SAVE.brief = {
       try {
         const [i, j] = m.key.split("_").map(Number);
         const src = lastBriefEntries[i].images[j].src;
-        const fit = await fitImageForSave(await fetch(src).then((r) => r.blob()));
+        const fit = await fitImageForSave(await savedImgBlob(src));
         await postJson("/api/saved-image", { id: itemId, key: m.key, mime: fit.mime, image: fit.b64 },
           "그림 저장에 실패했습니다.");
         infoSavedSrc.set(itemId + "|" + m.key, src);
