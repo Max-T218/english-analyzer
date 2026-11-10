@@ -299,6 +299,8 @@ async function downloadDocx({ resultEl, name, answerHeading, btn, errorEl, strip
   if (strip && strip.length) {
     clone.querySelectorAll(strip.join(",")).forEach((el) => el.remove());
   }
+  // [정답표 만들기]를 껐으면 빠른 정답표를 빼고 보낸다(QUICK_KEY_ON)
+  if (!QUICK_KEY_ON) clone.querySelectorAll(".qz-quick").forEach((el) => el.remove());
   const source = clone.innerHTML;
   const label = btn ? btn.textContent : "";
   if (btn) {
@@ -10704,6 +10706,18 @@ function quickKeyHtml(items, name) {
   }
   return html + `</div>`;
 }
+/* [정답표 만들기] 체크(2026-11-10 사용자 — 켜면 빠른 정답표, 끄면 예전처럼 해설지만).
+   문제 탭(객관식·주관식·혼합)·문법문제·동형 모의고사에 하나씩 있고 한 값을 같이 쓴다.
+   표는 늘 그려 두고 끄면 body.no-quickkey로 화면·인쇄에서 감추며, 한글·워드는
+   downloadDocx가 보내기 전에 지운다 — 다시 그리지 않아도 바로 바뀐다. 기본은 켜짐. */
+let QUICK_KEY_ON = true;
+document.addEventListener("change", (e) => {
+  const chk = e.target.closest && e.target.closest(".qk-toggle-chk");
+  if (!chk) return;
+  QUICK_KEY_ON = chk.checked;
+  document.querySelectorAll(".qk-toggle-chk").forEach((c) => { c.checked = QUICK_KEY_ON; });
+  document.body.classList.toggle("no-quickkey", !QUICK_KEY_ON);
+});
 // 빠른 정답표 제목의 시험지 이름을 채운다(시험지명을 바꿀 때마다)
 function syncQuickKeyNames(root, name) {
   if (!root) return;

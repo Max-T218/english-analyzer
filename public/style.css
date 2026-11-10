@@ -1128,6 +1128,8 @@ table.answerkey td:nth-child(1),table.answerkey td:nth-child(2){font-weight:700;
 .qz-anslist:not(.with-exp) .qz-ak{margin-bottom:5px;}
 /* 빠른 정답표 — '정답 및 해설' 앞에 정답만 모은 표 둘(객관식 5쌍씩 · 주관식 번호|정답). app.js quickKeyHtml */
 .qz-quick{margin:0 0 22px;}
+/* [정답표 만들기]를 끄면 화면·인쇄 모두에서 감춘다(app.js QUICK_KEY_ON) */
+body.no-quickkey .qz-quick{display:none !important;}
 .qz-qk{width:100%; border-collapse:collapse; margin:0 0 14px; font-size:13px; break-inside:avoid; page-break-inside:avoid;}
 .qz-qk-cap{caption-side:top; text-align:left; font-weight:800; font-size:13.5px; padding:7px 10px;
   background:var(--accent-soft); color:var(--ink); border:1px solid var(--line); border-bottom:0;}
