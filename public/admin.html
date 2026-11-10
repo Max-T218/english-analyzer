@@ -107,6 +107,22 @@
     <!-- 가로 스크롤이 생기면 오른쪽 끝의 '탈퇴'가 화면 밖으로 밀려 보이지 않는다.
          칸마다 폭을 지정해(table-layout:fixed) 표가 화면 폭 안에 들어오게 하고,
          길어질 수 있는 값(이메일·이름)만 넘칠 때 …로 줄인다. -->
+    <!-- 학생 이용권 지급(값 0) — 판매 스위치(STUDENT_SEATS_ENABLED)가 켜져 있을 때만 보인다.
+         회원 줄의 🎫 체크로 여러 선생님을 고르고 인원·만료일을 정해 한 번에 넣는다 -->
+    <div class="panel" id="seatGrantBar" hidden style="font-size:13px;">
+      <b>🎫 학생 이용권 지급</b> — 고른 선생님 <b id="seatPickCount">0</b>명
+      <button type="button" class="btn ghost small" id="seatPickAll">학생기능 허용한 선생님 모두 고르기</button>
+      <button type="button" class="btn ghost small" id="seatPickNone">고르기 해제</button>
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px;">
+        인원 <input type="number" id="seatGrantN" step="10" min="10" value="10" style="width:80px;">명
+        <label><input type="checkbox" id="seatGrantAuto"> 각자 지금 등록한 학생 수에 맞춤(10명 단위 올림, 최소 10명)</label>
+        · 만료일 <input type="date" id="seatGrantUntil">까지
+        <button type="button" class="btn small" id="seatGrantBtn">지급</button>
+      </div>
+      <p class="hint" style="margin:6px 0 0;">값을 받지 않습니다. 이미 쓰는 이용권이 있으면 인원은 큰 쪽, 만료일은 늦은 쪽으로 맞춥니다(줄이지 않습니다).</p>
+      <div id="seatGrantResult" style="margin-top:6px;"></div>
+    </div>
+
     <div class="panel">
       <table id="userTable"
              style="width:100%; table-layout:fixed; border-collapse:collapse; font-size:13px;">
@@ -198,6 +214,7 @@ function showWorkspace() {
     // 학원 모드가 꺼져 있으면(서버 ACADEMY_ENABLED) 학원 열기·학원 목록을 감춘다
     if (!info.academyEnabled) { $("academyLockLabel").hidden = true; $("viewAcademiesBtn").hidden = true; }
     SEATS_ON = !!info.seatsEnabled;   // 학생 이용권 판매가 켜져 있을 때만 회원 줄에 이용권 칸이 보인다
+    $("seatGrantBar").hidden = !SEATS_ON;
     if (info.loggedIn) showWorkspace();
     else showGate();
   } catch (_) {
@@ -503,9 +520,9 @@ function renderUsers() {
           ${u.classroomApproved ? "허용됨" : "미허용"}
         </button>
         ${SEATS_ON && u.classroomApproved ? `<div style="font-size:11px; color:var(--ink-soft); margin-top:3px; white-space:nowrap;">
-          🎫 ${u.seats && u.seats.active ? `${u.seats.seats}명 ~${esc(u.seats.end)}` : "이용권 없음"}
-          <button type="button" class="btn ghost small seat-grant-btn" style="padding:1px 5px; font-size:11px;"
-                  title="값을 받지 않고 학생 이용권을 넣어 줍니다(시범 사용·보상)">지급</button></div>` : ""}
+          <label title="위쪽 '학생 이용권 지급'에서 한 번에 지급할 선생님으로 고릅니다" style="cursor:pointer;">
+          <input type="checkbox" class="seat-pick" ${seatPicked.has(u.id) ? "checked" : ""}>
+          🎫 ${u.seats && u.seats.active ? `${u.seats.seats}명 ~${esc(u.seats.end)}` : "이용권 없음"}</label></div>` : ""}
       </td>
       <td style="padding:8px 6px;">
         <button type="button" class="btn ${u.leveltestApproved ? "" : "ghost"} small leveltest-btn"
@@ -639,28 +656,59 @@ async function toggleUsage(row, uid) {
 }
 
 var SEATS_ON = false;
-$("userTableBody").addEventListener("click", async (e) => {
-  const seatBtn = e.target.closest(".seat-grant-btn");
-  if (seatBtn) {
-    const uid = seatBtn.closest("tr").dataset.uid;
-    const u = currentUsers.find((x) => x.id === uid);
-    if (!u) return;
-    const seats = prompt(`${u.email} 선생님에게 값을 받지 않고 넣어 줄 학생 이용권 인원(10명 단위)`, "10");
-    if (!seats) return;
-    const days = prompt("며칠 동안 쓰게 할까요? (1~366일)\n\n지금 쓰는 이용권이 있으면 인원은 큰 쪽, 끝나는 날은 늦은 쪽으로 맞춥니다.", "30");
-    if (!days) return;
-    seatBtn.disabled = true;
-    try {
-      const r = await postJson("/api/admin/seats/grant", { userId: uid, seats: Number(seats), days: Number(days) });
-      u.seats = { active: r.seats.active, seats: r.seats.seats, end: (r.seats.end || "").slice(0, 10) };
-      renderUsers();
-    } catch (err) {
-      alert(err.message || "지급하지 못했습니다.");
-    } finally {
-      seatBtn.disabled = false;
-    }
-    return;
+var seatPicked = new Set();   // 이용권을 지급할 선생님(회원 id) — 다시 그려도 남는다
+function seatPickSync() { $("seatPickCount").textContent = String(seatPicked.size); }
+function seatKstDate(plusDays) {
+  const d = new Date(Date.now() + 9 * 3600e3 + plusDays * 86400e3);
+  return d.toISOString().slice(0, 10);
+}
+$("seatGrantUntil").value = seatKstDate(30);
+$("seatGrantAuto").addEventListener("change", (e) => { $("seatGrantN").disabled = e.target.checked; });
+$("userTableBody").addEventListener("change", (e) => {
+  const box = e.target.closest(".seat-pick");
+  if (!box) return;
+  const uid = box.closest("tr").dataset.uid;
+  if (box.checked) seatPicked.add(uid); else seatPicked.delete(uid);
+  seatPickSync();
+});
+$("seatPickAll").addEventListener("click", () => {
+  currentUsers.filter((u) => u.classroomApproved).forEach((u) => seatPicked.add(u.id));
+  renderUsers(); seatPickSync();
+});
+$("seatPickNone").addEventListener("click", () => { seatPicked.clear(); renderUsers(); seatPickSync(); });
+$("seatGrantBtn").addEventListener("click", async () => {
+  const ids = [...seatPicked];
+  if (!ids.length) { alert("회원 목록에서 🎫 체크로 선생님을 골라 주세요."); return; }
+  const auto = $("seatGrantAuto").checked;
+  const n = Number($("seatGrantN").value);
+  const until = $("seatGrantUntil").value;
+  if (!until) { alert("만료일을 골라 주세요."); return; }
+  if (!confirm(`선생님 ${ids.length}명에게 학생 이용권을 ${auto ? "각자 등록 학생 수만큼" : `${n}명씩`} `
+    + `${until}까지 값 없이 넣어 줍니다. 계속할까요?`)) return;
+  const btn = $("seatGrantBtn");
+  btn.disabled = true;
+  $("seatGrantResult").textContent = "넣는 중…";
+  try {
+    const r = await postJson("/api/admin/seats/grant", { userIds: ids, seats: auto ? "auto" : n, until });
+    const bad = r.results.filter((x) => !x.ok);
+    r.results.filter((x) => x.ok).forEach((x) => {
+      const u = currentUsers.find((v) => v.id === x.userId);
+      if (u) u.seats = { active: x.active, seats: x.seats, end: x.end };
+      seatPicked.delete(x.userId);
+    });
+    renderUsers(); seatPickSync();
+    $("seatGrantResult").innerHTML = `${r.results.length - bad.length}명에게 넣었습니다.`
+      + (bad.length ? `<br><span style="color:#c62828;">못 넣은 ${bad.length}명(체크가 남아 있습니다): `
+        + bad.map((x) => esc((currentUsers.find((v) => v.id === x.userId) || {}).email || x.userId) + " — " + esc(x.error)).join(" / ")
+        + "</span>" : "");
+  } catch (err) {
+    $("seatGrantResult").textContent = "";
+    alert(err.message || "지급하지 못했습니다.");
+  } finally {
+    btn.disabled = false;
   }
+});
+$("userTableBody").addEventListener("click", async (e) => {
   const classroomBtn = e.target.closest(".classroom-btn");
   if (classroomBtn) {
     const row = classroomBtn.closest("tr");

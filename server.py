@@ -18515,6 +18515,12 @@ def _seat_dt(iso):
         return None
 
 
+def _seat_last_day(iso):
+    """화면에 '○월 ○일까지'로 보일 마지막 날(KST). 만료 시각이 그다음 날 0시일 수 있어 1초 앞으로 본다."""
+    dt = _seat_dt(iso)
+    return (dt - timedelta(seconds=1)).astimezone(KST).strftime("%Y-%m-%d") if dt else ""
+
+
 def _seat_days_left(end, now):
     return max(0, -(-int((end - now).total_seconds()) // 86400))
 
@@ -18684,24 +18690,40 @@ def seat_buy(owner, action, n):
     return seat_summary(owner, new, count)
 
 
-def admin_seat_grant(owner, seats, days):
-    """관리자가 값을 받지 않고 이용권을 넣어 준다(시범 사용·오픈 때 기존 선생님 첫 달 무료·보상).
-    지금 쓰는 이용권보다 줄이지 않는다 — 자리는 큰 쪽, 끝나는 날은 늦은 쪽."""
-    _require_db()
-    seats = _seat_check_n(seats, minimum=SEAT_UNIT)
+SEAT_GRANT_MAX_USERS = 500
+SEAT_GRANT_MAX_DAYS = 730
+
+
+def _seat_until(until):
+    """관리자가 고른 만료일(YYYY-MM-DD, 한국 날짜) → 그날이 끝나는 시각(다음 날 0시 KST)."""
     try:
-        days = int(days)
-    except (TypeError, ValueError):
-        raise ValueError("일수를 숫자로 적어 주세요.")
-    if not 1 <= days <= 366:
-        raise ValueError("일수는 1~366일로 적어 주세요.")
+        day = datetime.strptime(str(until or "").strip(), "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("만료일을 날짜(YYYY-MM-DD)로 골라 주세요.")
+    end = (day + timedelta(days=1)).replace(tzinfo=KST).astimezone(timezone.utc)
+    now = datetime.now(timezone.utc)
+    if end <= now:
+        raise ValueError("만료일은 오늘이나 그 뒤로 골라 주세요.")
+    if end > now + timedelta(days=SEAT_GRANT_MAX_DAYS):
+        raise ValueError(f"만료일은 {SEAT_GRANT_MAX_DAYS}일 안으로 골라 주세요.")
+    return end
+
+
+def admin_seat_grant(owner, seats, until):
+    """관리자가 값을 받지 않고 이용권을 넣어 준다(시범 사용·오픈 때 기존 선생님 첫 달 무료·보상).
+    seats가 "auto"면 그 선생님의 지금 등록 학생 수를 10명 단위로 올린 값(최소 10명).
+    until은 만료일(그날까지 쓴다). 지금 쓰는 이용권보다 줄이지 않는다 — 자리는 큰 쪽, 끝나는 날은 늦은 쪽."""
+    _require_db()
+    target = _seat_until(until)
     if not DB.collection("users").document(owner).get().exists:
         raise ValueError("회원을 찾을 수 없습니다.")
+    if seats == "auto":
+        seats = max(SEAT_MIN, -(-_seat_count_students(owner) // SEAT_UNIT) * SEAT_UNIT)
+    seats = _seat_check_n(seats, minimum=SEAT_UNIT)
     now = datetime.now(timezone.utc)
     ref = DB.collection(STUDENT_SEATS).document(owner)
     d = _seat_roll(_seat_doc(owner), now)
     end = _seat_dt(d.get("end"))
-    target = now + timedelta(days=days)
     if end and now < end:
         d["seats"] = max(int(d.get("seats") or 0), seats)
         if target > end:
@@ -18714,10 +18736,31 @@ def admin_seat_grant(owner, seats, days):
     d["first_at"] = d.get("first_at") or now.isoformat()
     d["updated_at"] = now.isoformat()
     d["log"] = (list(d.get("log") or []) + [{
-        "at": now.isoformat(), "kind": "grant", "n": seats, "days": days, "cost": 0,
+        "at": now.isoformat(), "kind": "grant", "n": seats, "until": str(until), "cost": 0,
         "seats": d.get("seats"), "end": d.get("end")}])[-SEAT_LOG_MAX:]
     ref.set(d)
     return seat_summary(owner, d)
+
+
+def admin_seat_grant_many(user_ids, seats, until):
+    """여러 선생님에게 한 번에. 한 명이 실패해도 나머지는 넣고, 사람마다 결과를 돌려준다."""
+    if not isinstance(user_ids, list) or not user_ids:
+        raise ValueError("지급할 선생님을 골라 주세요.")
+    ids = list(dict.fromkeys(str(x) for x in user_ids if x))
+    if len(ids) > SEAT_GRANT_MAX_USERS:
+        raise ValueError(f"한 번에 {SEAT_GRANT_MAX_USERS}명까지 지급할 수 있습니다.")
+    _seat_until(until)   # 날짜가 틀렸으면 아무것도 안 넣고 바로 알린다
+    if seats != "auto":
+        seats = _seat_check_n(seats, minimum=SEAT_UNIT)
+    out = []
+    for uid in ids:
+        try:
+            r = admin_seat_grant(uid, seats, until)
+            out.append({"userId": uid, "ok": True, "seats": r["seats"],
+                        "end": _seat_last_day(r["end"]), "active": r["active"]})
+        except ValueError as e:
+            out.append({"userId": uid, "ok": False, "error": str(e)})
+    return out
 
 
 def admin_seat_map():
@@ -18729,7 +18772,7 @@ def admin_seat_map():
         end = _seat_dt(d.get("end"))
         active = bool(end and now < end)
         out[doc.id] = {"active": active, "seats": int(d.get("seats") or 0) if active else 0,
-                       "end": _kst_date(d.get("end")) or "", "nextSeats": int(d.get("next_seats") or 0)}
+                       "end": _seat_last_day(d.get("end")), "nextSeats": int(d.get("next_seats") or 0)}
     return out
 
 
@@ -23928,11 +23971,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
                 return
             try:
-                result = admin_seat_grant(req.get("userId") or "", req.get("seats"), req.get("days"))
+                ids = req.get("userIds")
+                if ids is None and req.get("userId"):
+                    ids = [req.get("userId")]
+                result = admin_seat_grant_many(ids, req.get("seats"), req.get("until"))
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
                 return
-            self._send_json({"seats": result})
+            self._send_json({"results": result})
             return
 
         if path == "/api/admin/approve-classroom":

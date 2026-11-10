@@ -21445,7 +21445,8 @@ async function gradeQuizUnit(btn) {
 var SEAT = null;   // /api/me의 seats(seat_summary)
 function seatDate(iso) {
   if (!iso) return "";
-  const d = new Date(iso);
+  // 만료 시각이 그다음 날 0시일 수 있어(관리자 지급 — 그날까지) 1초 앞의 날짜를 '까지'로 보인다
+  const d = new Date(new Date(iso).getTime() - 1000);
   return `${d.getMonth() + 1}월 ${d.getDate()}일`;
 }
 function seatRender(info) {
