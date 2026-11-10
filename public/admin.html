@@ -197,6 +197,7 @@ function showWorkspace() {
     const info = await getJson("/api/admin/me");
     // 학원 모드가 꺼져 있으면(서버 ACADEMY_ENABLED) 학원 열기·학원 목록을 감춘다
     if (!info.academyEnabled) { $("academyLockLabel").hidden = true; $("viewAcademiesBtn").hidden = true; }
+    SEATS_ON = !!info.seatsEnabled;   // 학생 이용권 판매가 켜져 있을 때만 회원 줄에 이용권 칸이 보인다
     if (info.loggedIn) showWorkspace();
     else showGate();
   } catch (_) {
@@ -501,6 +502,10 @@ function renderUsers() {
                 title="반/학생 등록 기능을 이 선생님에게 허용할지">
           ${u.classroomApproved ? "허용됨" : "미허용"}
         </button>
+        ${SEATS_ON && u.classroomApproved ? `<div style="font-size:11px; color:var(--ink-soft); margin-top:3px; white-space:nowrap;">
+          🎫 ${u.seats && u.seats.active ? `${u.seats.seats}명 ~${esc(u.seats.end)}` : "이용권 없음"}
+          <button type="button" class="btn ghost small seat-grant-btn" style="padding:1px 5px; font-size:11px;"
+                  title="값을 받지 않고 학생 이용권을 넣어 줍니다(시범 사용·보상)">지급</button></div>` : ""}
       </td>
       <td style="padding:8px 6px;">
         <button type="button" class="btn ${u.leveltestApproved ? "" : "ghost"} small leveltest-btn"
@@ -633,7 +638,29 @@ async function toggleUsage(row, uid) {
   }
 }
 
+var SEATS_ON = false;
 $("userTableBody").addEventListener("click", async (e) => {
+  const seatBtn = e.target.closest(".seat-grant-btn");
+  if (seatBtn) {
+    const uid = seatBtn.closest("tr").dataset.uid;
+    const u = currentUsers.find((x) => x.id === uid);
+    if (!u) return;
+    const seats = prompt(`${u.email} 선생님에게 값을 받지 않고 넣어 줄 학생 이용권 인원(10명 단위)`, "10");
+    if (!seats) return;
+    const days = prompt("며칠 동안 쓰게 할까요? (1~366일)\n\n지금 쓰는 이용권이 있으면 인원은 큰 쪽, 끝나는 날은 늦은 쪽으로 맞춥니다.", "30");
+    if (!days) return;
+    seatBtn.disabled = true;
+    try {
+      const r = await postJson("/api/admin/seats/grant", { userId: uid, seats: Number(seats), days: Number(days) });
+      u.seats = { active: r.seats.active, seats: r.seats.seats, end: (r.seats.end || "").slice(0, 10) };
+      renderUsers();
+    } catch (err) {
+      alert(err.message || "지급하지 못했습니다.");
+    } finally {
+      seatBtn.disabled = false;
+    }
+    return;
+  }
   const classroomBtn = e.target.closest(".classroom-btn");
   if (classroomBtn) {
     const row = classroomBtn.closest("tr");

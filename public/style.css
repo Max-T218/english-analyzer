@@ -3334,3 +3334,13 @@ input.st-in{width:100%; box-sizing:border-box;}
 .ac-add-row .chk { display:inline-flex; gap:4px; align-items:center; margin:0; white-space:nowrap; }
 .ac-invite { display:inline-flex; gap:4px; align-items:center; padding:2px 6px; border:1px solid var(--line, #e3e7ee); border-radius:8px; font-size:12.5px; }
 .ac-inv-row { display:flex; gap:8px; align-items:center; font-size:13px; padding:4px 0; flex-wrap:wrap; }
+
+/* ── 학생 이용권(app.js seatRender) ── */
+.seat-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; padding:8px 12px;
+  border:1px solid var(--line, #ddd); border-radius:8px; font-size:14px; }
+.seat-bar.warn { border-color:#e0a100; background:rgba(224,161,0,.08); }
+.seat-actions { display:flex; flex-direction:column; gap:6px; margin:6px 0 10px; }
+.seat-act { font-size:14px; cursor:pointer; }
+.seat-quote { margin:12px 0 4px; font-size:15px; line-height:1.6; }
+.seat-short { color:#c62828; font-weight:700; }
+.seat-refund { font-size:12px; }

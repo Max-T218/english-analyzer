@@ -1050,6 +1050,29 @@
     </div>
   </div>
 
+  <!-- ══════════ 학생 이용권 사기·연장·인원 더하기(app.js seatOpen) ══════════ -->
+  <div class="modal-overlay" id="seatOverlay" hidden>
+    <div class="modal-box">
+      <button type="button" class="modal-close" id="seatClose" aria-label="닫기">&times;</button>
+      <h3 class="modal-title">🎫 학생 이용권</h3>
+      <p class="hint" id="seatReason" hidden></p>
+      <p class="hint" id="seatNow"></p>
+      <div class="seat-actions" id="seatActions"></div>
+      <label for="seatN" id="seatNLabel">인원</label>
+      <div class="row" style="align-items:center; gap:8px;">
+        <button type="button" class="btn ghost small" id="seatMinus">−</button>
+        <input type="number" id="seatN" step="10" min="10" style="width:110px;">
+        <button type="button" class="btn ghost small" id="seatPlus">＋</button>
+        <span class="hint" id="seatUnitNote" style="margin:0;"></span>
+      </div>
+      <div class="seat-quote" id="seatQuote"></div>
+      <p class="hint" id="seatTable"></p>
+      <p class="hint seat-refund">구매한 날부터 7일 안에 학생을 한 명도 등록하지 않았으면 구매를 취소하고 포인트를 돌려받을 수 있습니다(이메일로 요청). 학생을 등록해 쓰기 시작한 뒤에는 남은 기간을 환불하지 않습니다. 자동으로 연장되지 않으며, 기간이 끝나도 학생 로그인과 이미 낸 시험·성적은 그대로입니다.</p>
+      <div class="error" id="seatError"></div>
+      <button type="button" class="btn" id="seatPayBtn">구매하기</button>
+    </div>
+  </div>
+
   <!-- ══════════ 반에 시험 내기 창(플로팅) ══════════ -->
   <div class="modal-overlay" id="assignModalOverlay" hidden>
     <div class="modal-box">
@@ -2746,6 +2769,11 @@
         </div>
       </div>
       <div class="error" id="classError"></div>
+      <!-- 학생 이용권(app.js seatRender) — 서버 스위치 STUDENT_SEATS_ENABLED가 꺼져 있으면(베타) 늘 숨는다 -->
+      <div id="seatBar" class="seat-bar" hidden>
+        <span id="seatBarText"></span>
+        <button type="button" class="btn small" id="seatBuyBtn">🎫 이용권</button>
+      </div>
       <div id="classSharePanel" hidden style="margin-top:10px; padding:10px 12px; border:1px solid var(--line, #ddd); border-radius:8px; font-size:14px;"></div>
     </section>
 

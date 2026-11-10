@@ -14975,6 +14975,7 @@ def delete_user_account(user_id, by_admin=False):
     leave_all_academies(user_id)   # 들어가 있던 학원에서 빠진다(학원 반·공유 자료는 학원에 남는다)
     for sess in DB.collection("sessions").where("user_id", "==", user_id).stream():
         sess.reference.delete()
+    DB.collection(STUDENT_SEATS).document(user_id).delete()   # 학생 이용권(남은 기간은 환불하지 않는다 — 약관)
     DB.collection("users").document(user_id).delete()
     if email:
         DB.collection("deleted_accounts").document(email.strip().lower()).set({
@@ -16300,6 +16301,9 @@ def _account_payload(user_id):
         "freeExpiring": [{"amount": x["remaining"], "expiresAt": x["expires_at"]} for x in _signup_lots(info)],
         # 반/학생 관리 탭을 보여줄지 — 관리자가 켜 준 선생님만 True
         "classroomApproved": bool(info.get("classroom_approved")),
+        # 학생 이용권 — 스위치가 꺼져 있으면(베타) None이라 화면이 아무것도 안 보인다
+        "seats": (_safe_seat_summary(user_id) if STUDENT_SEATS_ENABLED and info.get("classroom_approved")
+                  else None),
         # 레벨테스트 탭 — 특정 학원 자료라 관리자가 켜 준 선생님만(_leveltest_approved)
         "leveltestApproved": bool(info.get("leveltest_approved")),
         # 동형 모의고사 제작 탭을 보여줄지 — 위와 같은 모양이지만 별개의 승인이다.
@@ -16338,6 +16342,14 @@ def academy_me(handler, user_id):
     out["krwRemaining"] = dkrw if left is None else min(dkrw, left)
     out["classroomApproved"] = True   # 학원 반은 학원 몫 문서가 허용돼 있다
     return out
+
+
+def _safe_seat_summary(user_id):
+    try:
+        return seat_summary(user_id)
+    except Exception:
+        traceback.print_exc()
+        return None
 
 
 def _split_balance(d):
@@ -16772,6 +16784,29 @@ def _log_signup_grant(user_id, amount, label="가입 축하 지급", expires_at=
         traceback.print_exc()
 
 
+def _charge_update(d, amount):
+    """회원 문서 d에서 amount를 뺄 때 쓸 (update, 유상 사용, 무상 사용, 뺀 뒤 잔액).
+    charge_krw와 학생 이용권 구매(seat_buy — 이용권 문서와 한 트랜잭션으로 묶는다)가 같이 쓴다.
+    무상분부터 깎는다 — 유상분을 남겨 둬야 환불 요청에 답할 수 있다."""
+    _total, free, paid = _split_balance(d)
+    use_free = min(free, amount)
+    use_paid = amount - use_free
+    new_free, new_paid = free - use_free, paid - use_paid
+    # 유상분을 썼으면 어느 충전 묶음에서 뺐는지도 함께 적는다 — 안 적으면
+    # 잔액만 줄고 묶음이 그대로 남아 나중에 그 묶음이 통째로 소멸 대상이 된다.
+    update = {
+        "krw_remaining": new_free + new_paid,
+        "krw_free": new_free,
+        "krw_paid": new_paid,
+    }
+    if use_paid > 0:
+        update["paid_lots"], _took = _draw_paid_lots(_paid_lots(d), use_paid)
+    # 무상분은 기간이 있는 가입 축하 포인트부터 쓴다 — 그냥 두면 소멸할 것이 먼저 쓰여야 한다
+    if use_free > 0 and d.get("signup_lots"):
+        update["signup_lots"], _took = _draw_paid_lots(_signup_lots(d), use_free)
+    return update, use_paid, use_free, new_free + new_paid
+
+
 def charge_krw(user_id, amount, label="사용", kind="use"):
     """생성이 성공했을 때만 부른다 — 정찰 가격제라 실패한 시도에는 과금하지 않는다
     (Gemini 실제 사용량과 무관하게 고정가라, 실패 시 청구하지 않는 게 정당하다).
@@ -16794,26 +16829,10 @@ def charge_krw(user_id, amount, label="사용", kind="use"):
         snap = user_ref.get(transaction=tx)
         if not snap.exists:
             raise ValueError("해당 회원을 찾을 수 없습니다.")
-        d = snap.to_dict() or {}
-        _total, free, paid = _split_balance(d)
-        use_free = min(free, amount)
-        use_paid = amount - use_free
-        new_free, new_paid = free - use_free, paid - use_paid
-        # 유상분을 썼으면 어느 충전 묶음에서 뺐는지도 함께 적는다 — 안 적으면
-        # 잔액만 줄고 묶음이 그대로 남아 나중에 그 묶음이 통째로 소멸 대상이 된다.
-        update = {
-            "krw_remaining": new_free + new_paid,
-            "krw_free": new_free,
-            "krw_paid": new_paid,
-        }
-        if use_paid > 0:
-            update["paid_lots"], _took = _draw_paid_lots(_paid_lots(d), use_paid)
-        # 무상분은 기간이 있는 가입 축하 포인트부터 쓴다 — 그냥 두면 소멸할 것이 먼저 쓰여야 한다
-        if use_free > 0 and d.get("signup_lots"):
-            update["signup_lots"], _took = _draw_paid_lots(_signup_lots(d), use_free)
+        update, use_paid, use_free, new_total = _charge_update(snap.to_dict() or {}, amount)
         tx.update(user_ref, update)
         tx.set(row_ref, _ledger_row(
-            user_id, kind, label, -amount, -use_paid, -use_free, new_free + new_paid
+            user_id, kind, label, -amount, -use_paid, -use_free, new_total
         ))
         return use_paid, use_free
 
@@ -17909,6 +17928,11 @@ def list_all_users():
     except Exception:
         traceback.print_exc()
         acad_of = {}
+    try:
+        seats_of = admin_seat_map() if STUDENT_SEATS_ENABLED else {}
+    except Exception:
+        traceback.print_exc()
+        seats_of = {}
     for doc in DB.collection("users").stream():
         d = doc.to_dict() or {}
         try:
@@ -17925,6 +17949,7 @@ def list_all_users():
             "krwRemaining": krw,
             "createdAt": d.get("created_at", ""),
             "classroomApproved": bool(d.get("classroom_approved")),
+            "seats": seats_of.get(doc.id),
             "examApproved": bool(d.get("exam_approved")),
             "leveltestApproved": bool(d.get("leveltest_approved")),
             # 모두에게 열려 있으면 회원별 허용 단추가 뜻이 없다 — 화면이 '전체 공개'로 바꿔 보인다
@@ -18448,6 +18473,289 @@ def save_brand_mark(user_id, req):
 # 같은 단어장의 다른 뜻/단어에서 뽑고, 채점은 문자열 비교로 한다.
 # =============================================================================
 
+# ══════ 학생 이용권(2026-11-11 사용자 — 2027년 유료 오픈 예정, 그 전까지 스위치 꺼 둠) ══════
+# 학생 1명 자리를 30일 쓰는 권리. 10명 단위·최소 10명, 한 번에 쓰는 자리가 50명 이상 10%·100명 이상
+# 12% 할인. 기간은 처음 산 날부터 30일이고 기간 안에 연장하면 끝나는 날부터 30일씩 이어진다.
+# 세는 기준은 지금 등록돼 있는 학생 수(students.teacher_id = 반 주인) — 지우면 자리가 빈다.
+# 기간이 끝나면 새 학생 등록과 새 시험 출제만 막고 학생 로그인·응시·성적은 그대로 둔다.
+# 약관·환불정책 개정안은 저장소의 '학생관리_이용권_약관개정안.md'. 시행일 30일 전에 공지하고 켤 것.
+STUDENT_SEATS_ENABLED = os.environ.get("STUDENT_SEATS_ENABLED", "0").strip() == "1"
+STUDENT_SEATS = "student_seats"            # 문서 id = 반 주인 회원 id
+SEAT_PRICE_KRW = int(os.environ.get("SEAT_PRICE_KRW", "1000"))   # 1명 30일
+SEAT_UNIT = 10
+SEAT_MIN = 10
+SEAT_MAX = 2000
+SEAT_DAYS = 30
+SEAT_DISCOUNTS = ((100, 12), (50, 10))    # (이 인원 이상, 할인 %) — 큰 것부터
+SEAT_NOTICE_DAYS = 7                       # 끝나기 며칠 전부터 화면이 알리나
+SEAT_LOG_MAX = 60
+
+
+class SeatRequired(ValueError):
+    """학생 이용권이 없거나 모자라 막았다 — 화면은 code 'seats'를 보고 이용권 창을 연다."""
+
+
+def _seat_rate(total):
+    for n, pct in SEAT_DISCOUNTS:
+        if total >= n:
+            return pct
+    return 0
+
+
+def _seat_unit_price(total):
+    """자리 하나 30일 값 — 할인율은 그 기간에 쓰는 전체 자리 수로 정한다."""
+    return SEAT_PRICE_KRW * (100 - _seat_rate(total)) // 100
+
+
+def _seat_dt(iso):
+    try:
+        dt = datetime.fromisoformat(iso)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _seat_days_left(end, now):
+    return max(0, -(-int((end - now).total_seconds()) // 86400))
+
+
+def _seat_roll(d, now=None):
+    """저장된 문서를 지금 시각으로 굴린다 — 끝난 기간 뒤에 미리 산 연장분이 있으면 그것이 이번 기간이다.
+    cron이 없어 읽을 때마다 계산한다(문서는 다음 구매 때 함께 정리된다)."""
+    now = now or datetime.now(timezone.utc)
+    d = dict(d or {})
+    end = _seat_dt(d.get("end"))
+    nxt = _seat_dt(d.get("next_end"))
+    if end and now >= end and nxt:
+        d["start"], d["end"] = d["end"], d["next_end"]
+        d["seats"] = int(d.get("next_seats") or 0)
+        d["next_end"] = d["next_seats"] = None
+    return d
+
+
+def _seat_doc(owner):
+    snap = DB.collection(STUDENT_SEATS).document(owner).get()
+    return snap.to_dict() if snap.exists else {}
+
+
+def _seat_count_students(owner):
+    """지금 등록된 학생 수(반 주인 기준). 집계 쿼리 한 번 — 안 되면 id만 훑는다."""
+    q = DB.collection("students").where("teacher_id", "==", owner)
+    try:
+        res = q.count().get()
+        return int(res[0][0].value)
+    except Exception:
+        return sum(1 for _ in q.select(["teacher_id"]).stream())
+
+
+def seat_summary(owner, d=None, count=None):
+    """화면·관리자용 요약. d·count를 주면 다시 읽지 않는다."""
+    now = datetime.now(timezone.utc)
+    d = _seat_roll(_seat_doc(owner) if d is None else d, now)
+    end = _seat_dt(d.get("end"))
+    active = bool(end and now < end)
+    used = _seat_count_students(owner) if count is None else count
+    days_left = _seat_days_left(end, now) if active else 0
+    has_next = bool(d.get("next_end"))
+    return {
+        "enabled": STUDENT_SEATS_ENABLED,
+        "active": active,
+        "seats": int(d.get("seats") or 0) if active else 0,
+        "used": used,
+        "start": d.get("start") if active else None,
+        "end": d.get("end") if active else None,
+        "lastEnd": d.get("end"),          # 끝난 기간도 알리려고(언제 끝났는지)
+        "daysLeft": days_left,
+        "nextSeats": int(d.get("next_seats") or 0) if has_next else 0,
+        "nextEnd": d.get("next_end") if has_next else None,
+        "endingSoon": active and not has_next and days_left <= SEAT_NOTICE_DAYS,
+        "everBought": bool(d.get("first_at")),
+    }
+
+
+def _seat_check_n(n, minimum=SEAT_MIN):
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        raise ValueError("인원을 숫자로 적어 주세요.")
+    if n < minimum or n % SEAT_UNIT or n > SEAT_MAX:
+        raise ValueError(f"학생 이용권은 {SEAT_UNIT}명 단위로" +
+                         (f", 최소 {minimum}명부터" if minimum > SEAT_UNIT else "") +
+                         f" {SEAT_MAX:,}명까지 살 수 있습니다.")
+    return n
+
+
+def _seat_plan(d, action, n, count, now):
+    """구매 하나의 값과 바뀐 문서. action: new(새로·끝난 뒤 다시) / renew(기간 안에 다음 30일) / add(이번 기간에 더하기).
+    돌려주는 값: (값, 새 문서, 이용 내역 이름)."""
+    d = _seat_roll(d, now)
+    end = _seat_dt(d.get("end"))
+    active = bool(end and now < end)
+    new = dict(d)
+    if action == "new":
+        if active:
+            raise ValueError("이미 쓰고 있는 이용권이 있습니다. 연장하거나 인원을 더해 주세요.")
+        n = _seat_check_n(n)
+        if n < count:
+            raise ValueError(f"지금 등록된 학생이 {count}명이라 {count}명 이상 사야 합니다. "
+                             "쓰지 않는 학생을 지우면 줄일 수 있습니다.")
+        cost = n * _seat_unit_price(n)
+        new.update({"seats": n, "start": now.isoformat(), "end": (now + timedelta(days=SEAT_DAYS)).isoformat(),
+                    "next_seats": None, "next_end": None})
+        label = f"학생 이용권 {n}명 · {SEAT_DAYS}일"
+    elif action == "renew":
+        if not active:
+            raise ValueError("쓰고 있는 이용권이 없습니다. 새로 사 주세요.")
+        if d.get("next_end"):
+            raise ValueError("다음 기간 이용권을 이미 샀습니다.")
+        n = _seat_check_n(n)
+        if n < count:
+            raise ValueError(f"지금 등록된 학생이 {count}명이라 {count}명 이상으로 연장해야 합니다. "
+                             "쓰지 않는 학생을 지우면 줄일 수 있습니다.")
+        cost = n * _seat_unit_price(n)
+        new.update({"next_seats": n, "next_end": (end + timedelta(days=SEAT_DAYS)).isoformat()})
+        label = f"학생 이용권 연장 {n}명 · {SEAT_DAYS}일"
+    elif action == "add":
+        if not active:
+            raise ValueError("쓰고 있는 이용권이 없습니다. 새로 사 주세요.")
+        n = _seat_check_n(n, minimum=SEAT_UNIT)
+        cur = int(d.get("seats") or 0)
+        days_left = max(1, min(SEAT_DAYS, _seat_days_left(end, now)))
+        total = cur + n
+        if total > SEAT_MAX:
+            raise ValueError(f"학생 이용권은 {SEAT_MAX:,}명까지 살 수 있습니다.")
+        cost = -(-(n * _seat_unit_price(total) * days_left) // SEAT_DAYS)   # 남은 날만큼(올림)
+        new["seats"] = total
+        if d.get("next_end"):
+            # 다음 기간을 이미 샀으면 그 기간에도 같은 인원을 더한다(그 30일 값 그대로)
+            nxt = int(d.get("next_seats") or 0) + n
+            cost += n * _seat_unit_price(nxt)
+            new["next_seats"] = nxt
+        label = f"학생 이용권 {n}명 추가 · 남은 {days_left}일"
+    else:
+        raise ValueError("잘못된 요청입니다.")
+    return cost, new, label
+
+
+def seat_quote(owner, action, n):
+    now = datetime.now(timezone.utc)
+    count = _seat_count_students(owner)
+    cost, _new, label = _seat_plan(_seat_doc(owner), action, n, count, now)
+    return {"cost": cost, "label": label, "krw": get_user_krw(owner)}
+
+
+def seat_buy(owner, action, n):
+    """이용권을 산다 — 잔액 확인·차감·원장·이용권 문서를 한 트랜잭션으로(두 번 눌러도 한 번만)."""
+    if not STUDENT_SEATS_ENABLED:
+        raise ValueError("학생 이용권은 아직 판매하지 않습니다.")
+    _require_db()
+    count = _seat_count_students(owner)
+    user_ref = DB.collection("users").document(owner)
+    seat_ref = DB.collection(STUDENT_SEATS).document(owner)
+    row_ref = DB.collection(POINT_LEDGER).document()
+
+    @firestore.transactional
+    def _apply(tx):
+        now = datetime.now(timezone.utc)
+        u = user_ref.get(transaction=tx)
+        if not u.exists:
+            raise ValueError("해당 회원을 찾을 수 없습니다.")
+        s_snap = seat_ref.get(transaction=tx)
+        d = s_snap.to_dict() if s_snap.exists else {}
+        cost, new, label = _seat_plan(d, action, n, count, now)
+        ud = u.to_dict() or {}
+        have = _split_balance(ud)[0]
+        if have < cost:
+            raise ValueError(f"포인트가 모자랍니다. 필요 {cost:,}P · 잔액 {have:,}P")
+        update, use_paid, use_free, new_total = _charge_update(ud, cost)
+        tx.update(user_ref, update)
+        tx.set(row_ref, _ledger_row(owner, "use", label, -cost, -use_paid, -use_free, new_total))
+        new["first_at"] = new.get("first_at") or now.isoformat()
+        new["updated_at"] = now.isoformat()
+        new["log"] = (list(new.get("log") or []) + [{
+            "at": now.isoformat(), "kind": action, "n": int(n), "cost": cost,
+            "paid": use_paid, "free": use_free, "seats": new.get("seats"), "end": new.get("end"),
+            "next_seats": new.get("next_seats"), "next_end": new.get("next_end"),
+        }])[-SEAT_LOG_MAX:]
+        tx.set(seat_ref, new)
+        return new
+
+    new = _apply(DB.transaction())
+    return seat_summary(owner, new, count)
+
+
+def admin_seat_grant(owner, seats, days):
+    """관리자가 값을 받지 않고 이용권을 넣어 준다(시범 사용·오픈 때 기존 선생님 첫 달 무료·보상).
+    지금 쓰는 이용권보다 줄이지 않는다 — 자리는 큰 쪽, 끝나는 날은 늦은 쪽."""
+    _require_db()
+    seats = _seat_check_n(seats, minimum=SEAT_UNIT)
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        raise ValueError("일수를 숫자로 적어 주세요.")
+    if not 1 <= days <= 366:
+        raise ValueError("일수는 1~366일로 적어 주세요.")
+    if not DB.collection("users").document(owner).get().exists:
+        raise ValueError("회원을 찾을 수 없습니다.")
+    now = datetime.now(timezone.utc)
+    ref = DB.collection(STUDENT_SEATS).document(owner)
+    d = _seat_roll(_seat_doc(owner), now)
+    end = _seat_dt(d.get("end"))
+    target = now + timedelta(days=days)
+    if end and now < end:
+        d["seats"] = max(int(d.get("seats") or 0), seats)
+        if target > end:
+            d["end"] = target.isoformat()
+            if d.get("next_end"):   # 미리 산 연장분은 늘어난 끝 뒤로 민다
+                d["next_end"] = (target + timedelta(days=SEAT_DAYS)).isoformat()
+    else:
+        d.update({"seats": seats, "start": now.isoformat(), "end": target.isoformat(),
+                  "next_seats": None, "next_end": None})
+    d["first_at"] = d.get("first_at") or now.isoformat()
+    d["updated_at"] = now.isoformat()
+    d["log"] = (list(d.get("log") or []) + [{
+        "at": now.isoformat(), "kind": "grant", "n": seats, "days": days, "cost": 0,
+        "seats": d.get("seats"), "end": d.get("end")}])[-SEAT_LOG_MAX:]
+    ref.set(d)
+    return seat_summary(owner, d)
+
+
+def admin_seat_map():
+    """관리자 회원 목록용 — 이용권 문서 전부를 한 번에(회원 수만큼 따로 읽지 않는다)."""
+    out = {}
+    now = datetime.now(timezone.utc)
+    for doc in DB.collection(STUDENT_SEATS).stream():
+        d = _seat_roll(doc.to_dict() or {}, now)
+        end = _seat_dt(d.get("end"))
+        active = bool(end and now < end)
+        out[doc.id] = {"active": active, "seats": int(d.get("seats") or 0) if active else 0,
+                       "end": _kst_date(d.get("end")) or "", "nextSeats": int(d.get("next_seats") or 0)}
+    return out
+
+
+def _seat_require(owner, teacher_id, adding=0):
+    """학생을 더 등록하거나(adding=1) 시험을 낼 때(adding=0) 반 주인의 이용권을 본다. 스위치가 꺼져 있으면 그냥 통과."""
+    if not STUDENT_SEATS_ENABLED or not owner or str(owner).startswith("academy:"):
+        return   # 학원 반은 학원 모드와 함께 정한다(지금은 학원 모드가 꺼져 있다)
+    whose = "" if owner == teacher_id else "이 반을 만든 선생님의 "
+    now = datetime.now(timezone.utc)
+    d = _seat_roll(_seat_doc(owner), now)
+    end = _seat_dt(d.get("end"))
+    if not (end and now < end):
+        raise SeatRequired(
+            f"{whose}학생 이용권이 " + ("끝났습니다" if d.get("first_at") else "없습니다") +
+            ". 학생 이용권을 사면 학생을 등록하고 시험을 낼 수 있습니다"
+            " (이미 낸 시험과 성적은 그대로 볼 수 있습니다).")
+    seats = int(d.get("seats") or 0)
+    count = _seat_count_students(owner)
+    if count + adding > seats:
+        if adding:
+            raise SeatRequired(f"{whose}학생 이용권 {seats}명을 모두 썼습니다(등록 {count}명). "
+                               "이용권 인원을 더하거나 쓰지 않는 학생을 지워 주세요.")
+        raise SeatRequired(f"등록된 학생({count}명)이 {whose}학생 이용권({seats}명)보다 많습니다. "
+                           "이용권 인원을 더하거나 쓰지 않는 학생을 지워 주세요.")
+
+
 def _classroom_approved(user_id):
     """관리자가 이 선생님에게 학생 등록 기능을 켜 줬는지. 미성년자 데이터가 걸린
     기능이라 가입만으로는 못 쓰게 막아 둔다 — admin.html에서 관리자가 켠다."""
@@ -18796,6 +19104,7 @@ def create_student(teacher_id, class_id, name, login_id, password):
     password = password or STUDENT_PW_DEFAULT
     _check_student_pw(password)
     _, c = _own_class(teacher_id, class_id)
+    _seat_require(c.get("teacher_id") or teacher_id, teacher_id, adding=1)
     ref = DB.collection("students").document()
     _claim_login_id(login_id, ref.id)
     salt, digest = _hash_password(_pw_key(password))
@@ -18834,6 +19143,9 @@ def update_student(teacher_id, student_id, name=None, login_id=None, password=No
                     "pw_default": _pw_is_default_key(_pw_key(password))})
     if class_id and class_id != cur.get("class_id"):
         _, new_c = _own_class(teacher_id, class_id)   # 옮겨 갈 반도 내가 쓰는 반이어야 한다
+        new_owner = new_c.get("teacher_id") or teacher_id
+        if new_owner != cur.get("teacher_id"):
+            _seat_require(new_owner, teacher_id, adding=1)   # 다른 선생님 반으로 가면 그 선생님 자리를 쓴다
         upd["class_id"] = class_id
         upd["teacher_id"] = new_c.get("teacher_id") or teacher_id
     new_id = None
@@ -19105,7 +19417,8 @@ def create_test_assignment(teacher_id, class_id, title, vocab, fmt, student_id=N
     _attempt_progress 참고) — 회차마다 문제를 다시 섞어 답 위치만 외워 통과하는
     것을 막는다(_build_student_questions의 round 인자)."""
     _require_db()
-    _own_class(teacher_id, class_id)
+    _, c = _own_class(teacher_id, class_id)
+    _seat_require(c.get("teacher_id") or teacher_id, teacher_id)
     if fmt not in ("mcq", "saq"):
         raise ValueError("잘못된 시험 형식입니다.")
     student_name = None
@@ -20423,7 +20736,8 @@ QUIZ_TEST_ORIGINS = ("mcq", "saq", "mix", "grammar", "workbook")
 def create_quiz_assignment(teacher_id, class_id, title, questions, student_id=None, source="quiz", retry=None,
                            origin=""):
     _require_db()
-    _own_class(teacher_id, class_id)
+    _, c = _own_class(teacher_id, class_id)
+    _seat_require(c.get("teacher_id") or teacher_id, teacher_id)
     student_name = None
     if student_id:
         s_snap = DB.collection("students").document(student_id).get()
@@ -22302,6 +22616,10 @@ class Handler(BaseHTTPRequestHandler):
                 # 끝나는 날이 지나면 서버가 event=False를 내려주므로 띠도 저절로 사라진다
                 # — 이벤트를 내리려고 사람이 화면을 고칠 일이 없어야 한다.
                 "signupBonus": _signup_grant()[0],
+                # 학생 이용권 — 1명 30일 값·단위·할인. enabled가 거짓이면(베타) 화면이 판매 창을 안 연다
+                "seat": {"enabled": STUDENT_SEATS_ENABLED, "price": SEAT_PRICE_KRW, "unit": SEAT_UNIT,
+                         "min": SEAT_MIN, "max": SEAT_MAX, "days": SEAT_DAYS,
+                         "discounts": [list(x) for x in SEAT_DISCOUNTS]},
                 "signupBonusBase": _signup_base_krw(),
                 # 가입 축하 포인트의 유효기간(개월) — 시행일 전이면 0(가입 창 안내 문구가 쓴다)
                 "signupExpireMonths": SIGNUP_POINT_EXPIRE_MONTHS if _kst_reached(SIGNUP_POINT_EXPIRE_FROM) else 0,
@@ -22361,6 +22679,24 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if path in ("/api/seats", "/api/seats/quote"):
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 관리 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            try:
+                if path == "/api/seats":
+                    self._send_json(seat_summary(user_id))
+                else:
+                    self._send_json(seat_quote(user_id, (q.get("action") or [""])[0], (q.get("n") or [""])[0]))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+            return
+
         if path == "/api/me":
             user_id = _session_user(self)
             if not user_id:
@@ -22410,7 +22746,8 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/admin/me":
-            self._send_json({"loggedIn": _admin_session_valid(self), "academyEnabled": ACADEMY_ENABLED})
+            self._send_json({"loggedIn": _admin_session_valid(self), "academyEnabled": ACADEMY_ENABLED,
+                             "seatsEnabled": STUDENT_SEATS_ENABLED})
             return
 
         if path == "/api/admin/student-counts":
@@ -22941,7 +23278,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/admin/academies", "/api/admin/academies/manager", "/api/admin/academies/delete",
                         "/api/admin/login", "/api/admin/logout", "/api/admin/recharge",
                         "/api/admin/delete-user", "/api/admin/approve-classroom",
-                        "/api/admin/approve-exam",
+                        "/api/admin/approve-exam", "/api/admin/seats/grant", "/api/seats/buy",
                         "/api/classes", "/api/classes/regenerate-code", "/api/classes/update", "/api/classes/delete",
                         "/api/classes/share", "/api/classes/join", "/api/classes/leave",
                         "/api/students",
@@ -23570,6 +23907,34 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"deleted": True, "email": actual})
             return
 
+        if path == "/api/seats/buy":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 관리 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                result = seat_buy(user_id, req.get("action"), req.get("n"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json({"seats": result, "krwRemaining": get_user_krw(user_id)})
+            return
+
+        if path == "/api/admin/seats/grant":
+            if not _admin_session_valid(self):
+                self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
+                return
+            try:
+                result = admin_seat_grant(req.get("userId") or "", req.get("seats"), req.get("days"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+                return
+            self._send_json({"seats": result})
+            return
+
         if path == "/api/admin/approve-classroom":
             if not _admin_session_valid(self):
                 self._send_json({"error": "관리자 로그인이 필요합니다."}, 401)
@@ -23783,6 +24148,9 @@ class Handler(BaseHTTPRequestHandler):
                     user_id, req.get("classId"), req.get("name"),
                     req.get("loginId"), req.get("password"),
                 )
+            except SeatRequired as e:
+                self._send_json({"error": str(e), "code": "seats"}, 402)
+                return
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
                 return
@@ -23802,6 +24170,9 @@ class Handler(BaseHTTPRequestHandler):
                     user_id, req.get("studentId"), req.get("name"),
                     req.get("loginId"), req.get("password"), req.get("classId"),
                 )
+            except SeatRequired as e:
+                self._send_json({"error": str(e), "code": "seats"}, 402)
+                return
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
                 return
@@ -23843,6 +24214,9 @@ class Handler(BaseHTTPRequestHandler):
                     student_id=(req.get("studentId") or None),
                     max_wrong=req.get("maxWrong"),
                 )
+            except SeatRequired as e:
+                self._send_json({"error": str(e), "code": "seats"}, 402)
+                return
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
                 return
@@ -23926,6 +24300,8 @@ class Handler(BaseHTTPRequestHandler):
                         user_id, req.get("assignmentId"), req.get("studentId"),
                         req.get("no"), req.get("unit"), req.get("ok"), req.get("round"),
                     ))
+            except SeatRequired as e:
+                self._send_json({"error": str(e), "code": "seats"}, 402)
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
             return

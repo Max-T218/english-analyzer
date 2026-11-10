@@ -482,6 +482,8 @@ async function postJson(url, payload, fallbackMsg) {
   if (!res.ok) {
     const err = new Error(data.error || fallbackMsg);
     err.code = data.code || "";   // 서버가 붙인 식별자 ("quota" 등)
+    // 학생 이용권이 없거나 모자라 막혔다 — 이용권 창을 함께 연다(오류 문구는 부른 쪽이 그대로 보인다)
+    if (data.code === "seats") setTimeout(() => seatOpen(data.error), 0);
     err.status = res.status;
     throw err;
   }
@@ -1083,6 +1085,7 @@ function renderAccount(info) {
   if (info.name) currentAccountName = info.name;
   isClassroomApproved = !!info.classroomApproved;
   studentsTabBtn.hidden = !isClassroomApproved;
+  if ("seats" in info) seatRender(info.seats);
   if (info.leveltestApproved) $("leveltestTabBtn").hidden = false;
   else hideLeveltestTab();
   isExamApproved = !!info.examApproved;
@@ -21435,3 +21438,136 @@ async function gradeQuizUnit(btn) {
     btn.disabled = false;
   }
 }
+
+
+/* ══════ 학생 이용권(2026-11-11 — 2027년 유료 오픈, 그 전엔 서버 스위치가 꺼져 seats가 null이라 아무것도 안 보인다) ══════
+   값은 서버만 안다 — 창의 금액은 /api/seats/quote, 할인표는 /api/pricing의 seat에서 받는다. */
+var SEAT = null;   // /api/me의 seats(seat_summary)
+function seatDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}월 ${d.getDate()}일`;
+}
+function seatRender(info) {
+  SEAT = info || null;
+  const bar = $("seatBar");
+  if (!bar) return;
+  bar.hidden = !(SEAT && SEAT.enabled);
+  if (bar.hidden) return;
+  bar.classList.toggle("warn", !SEAT.active || SEAT.endingSoon || SEAT.used > SEAT.seats);
+  let t;
+  if (!SEAT.active) {
+    t = SEAT.everBought
+      ? `🎫 학생 이용권이 ${seatDate(SEAT.lastEnd)}에 끝났습니다 — 새 학생 등록과 시험 내기가 멈췄습니다(등록된 학생 ${SEAT.used}명).`
+      : "🎫 학생 이용권이 없습니다 — 이용권을 사면 학생을 등록하고 시험을 낼 수 있습니다.";
+  } else {
+    t = `🎫 학생 이용권 ${SEAT.seats}명 중 ${SEAT.used}명 등록 · ${seatDate(SEAT.end)}까지(${SEAT.daysLeft}일 남음)`;
+    if (SEAT.nextEnd) t += ` · 연장 ${SEAT.nextSeats}명 ${seatDate(SEAT.nextEnd)}까지`;
+    else if (SEAT.endingSoon) t += " — 곧 끝납니다. 연장해 주세요.";
+  }
+  $("seatBarText").textContent = t;
+  $("seatBuyBtn").textContent = !SEAT.active ? "🎫 이용권 사기" : SEAT.endingSoon ? "🎫 연장하기" : "🎫 이용권";
+}
+var seatAction = "new";
+function seatPricing() {
+  return (PRICING && PRICING.seat) || { unit: 10, min: 10, max: 2000, days: 30, price: 1000, discounts: [] };
+}
+function seatMinFor(action) {
+  const P = seatPricing();
+  if (action === "add") return P.unit;
+  const need = Math.ceil(((SEAT && SEAT.used) || 0) / P.unit) * P.unit;
+  return Math.max(P.min, need);
+}
+function seatActions() {
+  if (!SEAT || !SEAT.active) return [["new", "새로 사기(오늘부터 30일)"]];
+  const out = [["add", `이번 기간에 인원 더하기(${seatDate(SEAT.end)}까지, 남은 날만큼만)`]];
+  if (!SEAT.nextEnd) out.unshift(["renew", `다음 30일 연장(${seatDate(SEAT.end)}부터)`]);
+  return out;
+}
+var seatQuoteTimer = 0;
+var seatLastQuote = null;
+function seatQuote() {
+  clearTimeout(seatQuoteTimer);
+  const n = Number($("seatN").value);
+  $("seatPayBtn").disabled = true;
+  seatLastQuote = null;
+  $("seatQuote").textContent = "계산 중…";
+  seatQuoteTimer = setTimeout(async () => {
+    try {
+      const q = await getJson(`/api/seats/quote?action=${seatAction}&n=${n}`, "금액을 계산하지 못했습니다.");
+      const short = q.cost > q.krw;
+      seatLastQuote = q;
+      $("seatQuote").innerHTML = `<b>${q.cost.toLocaleString()}P</b> · ${esc(q.label)}<br>`
+        + `<span class="${short ? "seat-short" : ""}">잔액 ${q.krw.toLocaleString()}P${short ? " — 포인트가 모자랍니다. 먼저 충전해 주세요." : ""}</span>`;
+      $("seatPayBtn").disabled = short;
+      $("seatError").textContent = "";
+    } catch (err) {
+      $("seatQuote").textContent = "";
+      $("seatError").textContent = err.message || "금액을 계산하지 못했습니다.";
+    }
+  }, 250);
+}
+function seatSetAction(a) {
+  seatAction = a;
+  document.querySelectorAll("#seatActions input").forEach((r) => { r.checked = r.value === a; });
+  const P = seatPricing();
+  const min = seatMinFor(a);
+  $("seatN").min = String(min);
+  $("seatN").step = String(P.unit);
+  $("seatN").value = String(a === "renew" && SEAT ? Math.max(min, SEAT.seats) : min);
+  $("seatNLabel").textContent = a === "add" ? "더할 인원" : "인원";
+  $("seatUnitNote").textContent = `${P.unit}명 단위` + (a === "add" ? "" : ` · 최소 ${min}명`)
+    + (SEAT && SEAT.used && a !== "add" ? ` (지금 등록 ${SEAT.used}명)` : "");
+  seatQuote();
+}
+async function seatOpen(reason) {
+  if (!SEAT || !SEAT.enabled) return;
+  try { seatRender(await getJson("/api/seats", "")); } catch (_) {}
+  const P = seatPricing();
+  $("seatReason").hidden = !reason;
+  $("seatReason").textContent = reason || "";
+  $("seatNow").textContent = !SEAT.active ? "지금 쓰는 이용권이 없습니다."
+    : `지금 ${SEAT.seats}명 · ${seatDate(SEAT.end)}까지 · 등록된 학생 ${SEAT.used}명`;
+  const disc = (P.discounts || []).slice().sort((a, b) => a[0] - b[0])
+    .map(([n, pct]) => `${n}명 이상 ${pct}%`).join(" · ");
+  $("seatTable").textContent = `학생 1명 ${P.days}일 ${Number(P.price).toLocaleString()}P · ${P.unit}명 단위`
+    + (disc ? ` · 할인 ${disc}` : "");
+  const acts = seatActions();
+  $("seatActions").innerHTML = acts.map(([v, t]) =>
+    `<label class="seat-act"><input type="radio" name="seatAct" value="${v}"> ${esc(t)}</label>`).join("");
+  $("seatError").textContent = "";
+  seatSetAction(SEAT.endingSoon && acts.some((x) => x[0] === "renew") ? "renew" : acts[0][0]);
+  openModal($("seatOverlay"));
+}
+$("seatBuyBtn").addEventListener("click", () => seatOpen(""));
+$("seatClose").addEventListener("click", () => closeModal($("seatOverlay")));
+$("seatActions").addEventListener("change", (e) => { if (e.target.name === "seatAct") seatSetAction(e.target.value); });
+$("seatN").addEventListener("input", seatQuote);
+function seatStep(dir) {
+  const P = seatPricing();
+  const min = seatMinFor(seatAction);
+  const v = Math.round((Number($("seatN").value) || min) / P.unit) * P.unit + dir * P.unit;
+  $("seatN").value = String(Math.min(P.max, Math.max(min, v)));
+  seatQuote();
+}
+$("seatMinus").addEventListener("click", () => seatStep(-1));
+$("seatPlus").addEventListener("click", () => seatStep(1));
+$("seatPayBtn").addEventListener("click", async () => {
+  const q = seatLastQuote;
+  if (!q) return;
+  const n = Number($("seatN").value);
+  const btn = $("seatPayBtn");
+  if (!confirm(`${q.label}\n${q.cost.toLocaleString()}P를 포인트로 결제합니다.\n\n`
+    + "학생을 등록해 쓰기 시작하면 남은 기간은 환불되지 않습니다. 계속할까요?")) return;
+  btn.disabled = true;
+  try {
+    const r = await postJson("/api/seats/buy", { action: seatAction, n }, "구매하지 못했습니다.");
+    seatRender(r.seats);
+    closeModal($("seatOverlay"));
+    refreshAccount();
+    alert(`학생 이용권 ${r.seats.seats}명 · ${seatDate(r.seats.end)}까지 쓸 수 있습니다.`);
+  } catch (err) {
+    $("seatError").textContent = err.message || "구매하지 못했습니다.";
+    btn.disabled = false;
+  }
+});
