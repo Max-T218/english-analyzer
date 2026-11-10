@@ -14102,10 +14102,14 @@ class _HwpxWriter:
             tcs = []
             for ci in range(ncol):
                 runs, th = row[ci] if ci < len(row) else ("", False)
-                bold = th or quick == "mc"   # 객관식 격자는 정답도 굵게(화면과 같게)
+                # 한 표에 번호 차례로 섞인 주관식 정답(app.js quickKeyHtml의 td.qz-qk-satd)은 글이라
+                # 왼쪽 맞춤·보통 굵기로 둔다. 객관식 정답(①~⑤, 복수 정답 '②, ④')만 가운데·굵게.
+                plain = re.sub(r"<[^>]+>", "", runs).strip()
+                mc_cell = quick == "mc" and not th and (not plain or re.fullmatch(r"[①-⑩,\s/·]+", plain))
+                bold = th or mc_cell   # 객관식 격자는 정답도 굵게(화면과 같게)
                 if bold:
                     runs = re.sub(r'charPrIDRef="([02])"', lambda m: f'charPrIDRef="{int(m.group(1)) + 1}"', runs)
-                pid = 8 if (quick == "mc" and not th) else 6   # 객관식 정답 칸은 가운데
+                pid = 8 if mc_cell else 6   # 객관식 정답 칸은 가운데
                 tcs.append(
                     f'<hp:tc name="" header="{1 if (th and not quick) else 0}" hasMargin="0" protect="0" editable="0" dirty="0" '
                     f'borderFillIDRef="{7 if th else 6}">'

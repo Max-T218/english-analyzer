@@ -10675,10 +10675,9 @@ function buildQuizHtml(d, job, total, kind, label, sheetHead, showExp = true, st
 }
 
 /* ── 빠른 정답표(2026-11-10 사용자) ──
-   '정답 및 해설' 앞에 시험지 전체의 정답만 모은 표 둘을 싣는다.
-     ① 객관식(선다형) — 한 줄에 '번호 | 정답' 5쌍. 주관식 문항 자리에는 '주관식'.
-     ② 주관식(서답형) — '번호 | 정답' 두 칸.
-   객관식이 하나도 없으면 ①을, 주관식이 하나도 없으면 ②를 뺀다. 표 제목 앞에는 시험지 이름이
+   '정답 및 해설' 앞에 시험지 전체의 정답만 모은 표 하나를 번호 차례대로 싣는다 — 한 줄에
+   '번호 | 정답' 여러 쌍, 주관식도 그 자리에 정답을 그대로(처음엔 객관식 표에 '주관식'이라고만 적고
+   주관식 표를 따로 두었다가 같은 날 사용자가 한 표로 바꿨다). 표 제목 앞에는 시험지 이름이
    붙는다 — .qz-qk-name을 시험지명을 정하는 곳(applySheetTitle 등)이 '이름 - '으로 채운다(비면 빈 칸).
    ' - '를 CSS가 아니라 글자로 두는 까닭은 한글·워드 내려받기가 글자만 옮기기 때문이다.
    서버의 한글 변환(_QuizDocxParser)이 같은 표(.qz-quick table)를 한글 표로 옮긴다. */
@@ -10688,23 +10687,25 @@ function quickKeyHtml(items, name) {
   if (!list.length) return "";
   const cap = (kind) =>
     `<caption class="qz-qk-cap"><span class="qz-qk-name">${name ? esc(name) + " - " : ""}</span>${kind}</caption>`;
-  let html = `<div class="qz-quick">`;
-  if (list.some((it) => it.mc)) {
-    const rows = [];
-    for (let i = 0; i < list.length; i += QUICK_KEY_PER_ROW) {
-      const cells = list.slice(i, i + QUICK_KEY_PER_ROW).map((it) =>
-        `<th>${it.no}.</th><td>${it.mc ? it.ans : `<span class="qz-qk-sa">주관식</span>`}</td>`);
-      while (cells.length < QUICK_KEY_PER_ROW) cells.push(`<th></th><td></td>`);
-      rows.push(`<tr>${cells.join("")}</tr>`);
+  /* 한 표에 번호 차례대로(2026-11-10 사용자 — 주관식을 따로 빼지 않는다). 주관식 칸에는 그 정답을
+     그대로 싣고, 주관식 정답이 길수록 한 줄에 놓는 쌍을 줄인다(5 → 4 → 3 → 2). */
+  const plain = (h) => String(h || "").replace(/<[^>]*>/g, "").replace(/&[a-z#0-9]+;/gi, "x").trim();
+  const saLen = Math.max(0, ...list.filter((it) => !it.mc).map((it) => plain(it.ans).length));
+  const per = !saLen ? QUICK_KEY_PER_ROW : saLen <= 12 ? 4 : saLen <= 30 ? 3 : 2;
+  /* 번호는 열마다 위에서 아래로 내려간 뒤 다음 열로(2026-11-10 사용자 — 좌우로 1·2·3이 아니라
+     왼쪽 열이 1·2·3…). 줄 수 = 문항 수 ÷ 열 수(올림), r줄 c열 칸 = c × 줄 수 + r번째 문항. */
+  const nRows = Math.ceil(list.length / per);
+  const rows = [];
+  for (let r = 0; r < nRows; r++) {
+    const cells = [];
+    for (let c = 0; c < per; c++) {
+      const it = list[c * nRows + r];
+      cells.push(it ? `<th>${it.no}.</th><td${it.mc ? "" : ` class="qz-qk-satd"`}>${it.ans}</td>` : `<th></th><td></td>`);
     }
-    html += `<table class="qz-qk qz-qk-mc">${cap("객관식(선다형)")}<tbody>${rows.join("")}</tbody></table>`;
+    rows.push(`<tr>${cells.join("")}</tr>`);
   }
-  const sa = list.filter((it) => !it.mc);
-  if (sa.length) {
-    html += `<table class="qz-qk qz-qk-sa-table">${cap("주관식(서답형)")}<tbody>${
-      sa.map((it) => `<tr><th>${it.no}.</th><td>${it.ans}</td></tr>`).join("")}</tbody></table>`;
-  }
-  return html + `</div>`;
+  const kind = list.every((it) => it.mc) ? "객관식(선다형)" : list.every((it) => !it.mc) ? "주관식(서답형)" : "정답";
+  return `<div class="qz-quick"><table class="qz-qk qz-qk-mc">${cap(kind)}<tbody>${rows.join("")}</tbody></table></div>`;
 }
 /* [정답표 만들기] 체크(2026-11-10 사용자 — 켜면 빠른 정답표, 끄면 예전처럼 해설지만).
    문제 탭(객관식·주관식·혼합)·문법문제·동형 모의고사에 하나씩 있고 한 값을 같이 쓴다.
