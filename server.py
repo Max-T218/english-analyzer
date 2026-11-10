@@ -1399,6 +1399,7 @@ MAX_RETRY_TOTAL = _env("MAX_RETRY_TOTAL", 150.0, float)
 GEMINI_TIMEOUT = _env("GEMINI_TIMEOUT", 300.0, float)
 # Flash 글자 호출 한 번을 기다리는 시간. 넘기면 한 번 다시 보낸다(_gemini_call_with_retry). 한 번에 2분 넘게 걸리는 정상 호출(큰 PDF 읽기)이 있으면 이 값을 올릴 것
 GEMINI_FLASH_ATTEMPT_TIMEOUT = _env("GEMINI_FLASH_ATTEMPT_TIMEOUT", 120.0, float)
+GEMINI_HANG_MSG = "AI가 너무 오래 답하지 않아 멈췄습니다(시간 초과). 잠시 뒤 다시 만들어 주세요."
                          # Gemini 호출 1회의 소켓 타임아웃(초)
 REFINE_BUDGET = _env("REFINE_BUDGET", 55.0 if os.environ.get("RENDER") else 86400.0, float)
                          # 이 시간(초)을 이미 쓴 뒤에는 보정 재요청을 시작하지 않는다
@@ -12752,10 +12753,9 @@ def _gemini_call_with_retry(data, api_key, model, url=None, allow_fallback=True,
         raise RuntimeError(f"네트워크 오류: {e.reason}")
     # 응답을 기다리다 GEMINI_TIMEOUT을 넘겼다. 그냥 두면 파이썬의 영어 문구
     # ("The read operation timed out")가 선생님 화면에 그대로 나갔다(2026-09-28).
+    # 분 수는 적지 않는다 — Flash는 120초씩 두 번(4분)을 기다려 '5분'이 틀린 말이었다(2026-11-10).
     except TimeoutError:
-        raise RuntimeError(
-            f"AI가 {int(GEMINI_TIMEOUT // 60)}분 안에 답하지 못했습니다(시간 초과)"
-        )
+        raise RuntimeError(GEMINI_HANG_MSG)
 
 
 def _repair_truncated_json(text):
@@ -12995,32 +12995,29 @@ def _gemini_json(payload, api_key, model, trunc_msg, salvage=False, label="", ca
         prefix = payload["contents"][0]["parts"][:cache_prefix] if cache_prefix else None
         cache = (_context_cache_name(model, payload["systemInstruction"], key, cache_system, prefix)
                  if key else None)
-    for temp in attempts:
+    # Flash가 같은 요청에 두 번(120초씩) 다 답하지 않으면 한 번만 더 보내되, 똑같이 보내지 않는다 —
+    # 온도를 올리고 캐시 없이 지시문을 실어 보낸다. 요약분석에서 같은 지문이 거듭 멈췄다(2026-11-10 로그:
+    # 1039자 지문이 06:55 한 번 멈췄다 겨우 성공, 07:37 두 번 다 멈춰 실패) — 같은 글을 되풀이하며
+    # 끝내지 못하는 것으로 보여, 똑같이 다시 보내면 또 멈춘다. Pro는 한 번에 300초를 기다리므로 넣지 않는다.
+    hang_retry = "flash" in (model or "").lower()
+    temps = list(attempts)
+    while temps:
+        temp = temps.pop(0)
         if temp is not None:
             payload.setdefault("generationConfig", {})["temperature"] = temp
-        data = json.dumps(payload).encode("utf-8")
-        if cache:
-            lean = {k: v for k, v in payload.items() if k != "systemInstruction"}
-            if cache_prefix:   # 맡긴 조각은 빼고 나머지만 보낸다
-                first = dict(payload["contents"][0], parts=payload["contents"][0]["parts"][cache_prefix:])
-                lean["contents"] = [first] + payload["contents"][1:]
-            lean["cachedContent"] = cache
-            try:
-                body = _gemini_call_with_retry(json.dumps(lean).encode("utf-8"), api_key, model,
-                                               allow_fallback=False)
-            except (QuotaExceeded, ProUnavailable):
+        try:
+            body, cache = _gemini_json_send(payload, api_key, model, cache, cache_prefix)
+        except RuntimeError as e:
+            if not (hang_retry and str(e) == GEMINI_HANG_MSG):
                 raise
-            except RuntimeError as e:
-                low = str(e).lower()
-                # 캐시가 일찍 사라졌거나 모양을 거절당했을 때만 — 시간 초과·과부하는 다시 보내 봐야 또 기다린다
-                if not ("cache" in low or any(f"오류 {c}" in low for c in (400, 403, 404))):
-                    raise
-                print(f"[cache] {model} 캐시로 보낸 요청이 거절됨 — 지시문을 실어 다시 보냅니다: {e}", flush=True)
-                _context_cache_drop(cache)
-                cache = None
-                body = _gemini_call_with_retry(data, api_key, model)
-        else:
-            body = _gemini_call_with_retry(data, api_key, model)
+            hang_retry = False
+            cache = None
+            gc = payload.setdefault("generationConfig", {})
+            gc["temperature"] = max(float(gc.get("temperature") or 0), 0.6)
+            print(f"[gemini] {label or model} 두 번 다 응답 없음 — 온도 {gc['temperature']}·캐시 없이 한 번 더 보냅니다",
+                  flush=True)
+            temps.insert(0, None)   # 방금 올린 온도 그대로 한 번 더
+            continue
         _log_usage(body, model, label)
         try:
             return _extract_gemini_json(body, trunc_msg, salvage)
@@ -13028,6 +13025,33 @@ def _gemini_json(payload, api_key, model, trunc_msg, salvage=False, label="", ca
             last = e
             continue
     raise last
+
+
+def _gemini_json_send(payload, api_key, model, cache, cache_prefix):
+    """_gemini_json의 한 번 보내기. (응답, 이후에 쓸 캐시)를 돌려준다 — 캐시로 보낸 요청이
+    거절되면 지시문을 실어 다시 보내고, 그 캐시는 더 쓰지 않는다(None)."""
+    data = json.dumps(payload).encode("utf-8")
+    if not cache:
+        return _gemini_call_with_retry(data, api_key, model), None
+    lean = {k: v for k, v in payload.items() if k != "systemInstruction"}
+    if cache_prefix:   # 맡긴 조각은 빼고 나머지만 보낸다
+        first = dict(payload["contents"][0], parts=payload["contents"][0]["parts"][cache_prefix:])
+        lean["contents"] = [first] + payload["contents"][1:]
+    lean["cachedContent"] = cache
+    try:
+        body = _gemini_call_with_retry(json.dumps(lean).encode("utf-8"), api_key, model,
+                                       allow_fallback=False)
+        return body, cache
+    except (QuotaExceeded, ProUnavailable):
+        raise
+    except RuntimeError as e:
+        low = str(e).lower()
+        # 캐시가 일찍 사라졌거나 모양을 거절당했을 때만 — 시간 초과·과부하는 다시 보내 봐야 또 기다린다
+        if not ("cache" in low or any(f"오류 {c}" in low for c in (400, 403, 404))):
+            raise
+        print(f"[cache] {model} 캐시로 보낸 요청이 거절됨 — 지시문을 실어 다시 보냅니다: {e}", flush=True)
+        _context_cache_drop(cache)
+        return _gemini_call_with_retry(data, api_key, model), None
 
 
 _ANALYZE_TRUNC_MSG = (
