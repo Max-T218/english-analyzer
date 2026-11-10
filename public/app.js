@@ -4613,6 +4613,8 @@ function clearPageMarks() {
 function layoutPages() {
   if (!pagingOn()) return 0;
   clearPageMarks();
+  // 4컷 칸이 새 쪽에 혼자 가는지가 쪽을 옮길 때마다 바뀌므로 먼저 맞춘다(크기만 바뀌고 뒤 쪽 나눔은 그대로)
+  fitComicPages(pgHost, true);
   const blks = pgBlocks();
   if (!blks.length) {
     pgUI.hint.textContent = "";
@@ -5013,7 +5015,7 @@ function applyPageBreaks(list) {
 const ROMAN = ["Ⅰ", "Ⅱ", "Ⅲ", "Ⅳ", "Ⅴ"];
 
 analyzeBtn.addEventListener("click", analyze);
-printBtn.addEventListener("click", () => printDoc(() => passageBasedName("지문분석")));
+printBtn.addEventListener("click", () => printDoc(() => passageBasedName("지문분석"), { before: () => fitComicPages(resultEl) }));
 syncFloatPrint(); // 초기 탭(지문 분석) 기준으로 상태 맞춤
 
 async function analyze() {
@@ -5340,6 +5342,50 @@ function syncInfoPair(host) {
     host.dataset.brk = "page";
     host.dataset.brkDef = "page";
   }
+  requestAnimationFrame(() => fitComicPages(host.closest("#result, #briefDoc")));
+}
+
+/* 4컷만 있는 요약 그림 칸이 앞 내용에 못 붙고 새 쪽에 혼자 가면 2×2로 크게 그린다(2026-11-11 사용자 —
+   가로 한 줄이면 새 쪽 맨 위 70mm쯤만 쓰고 나머지가 비었다). 앞 쪽에 자리가 남아 이어 붙는 때는 한 줄 그대로다.
+   새 쪽에 가는지는 layoutPages와 같은 방식으로 지문마다 덩어리 높이를 쌓아 잰다 — 그림 칸은 지문의 마지막
+   덩어리이고 다음 지문은 늘 새 쪽에서 시작하므로, 크게 바꿔도 뒤의 쪽 나눔은 바뀌지 않는다.
+   화면이 인쇄 폭과 다르면 어긋날 수 있어 인쇄 직전(printDoc의 before)에도 다시 잰다.
+   2×2 크기는 style.css .info-pair.comic-big(186mm 폭에 칸 약 90mm, 한 쪽 261mm에 든다). */
+function fitComicPages(root, fromLayout) {
+  if (!root || !root.offsetParent) return;   // 탭이 숨어 있으면 못 잰다 — 인쇄 직전에 다시 잰다
+  const pairs = [...root.querySelectorAll(".info-pair.comic-only")];
+  if (!pairs.length) return;
+  const paging = pgHost === root;
+  if (paging) clearPageMarks();   // 경계선·빈 칸이 끼어 있으면 덩어리 사이가 그만큼 벌어져 잰다
+  pairs.forEach((p) => p.classList.remove("comic-big"));
+  const pad = paging ? HANDLE_PAD_PX : 0;
+  const printScale = (Number(root.dataset.printScale) || 100) / 100;
+  const pageH = (PAGE_H_MM * PX_PER_MM) / printScale;
+  const big = [];
+  pairs.forEach((pair) => {
+    const sec = pair.closest("section.passage-block");
+    if (!sec) return;
+    const blks = [...sec.querySelectorAll(".pg-blk")].filter((b) => b.offsetParent);
+    const at = blks.indexOf(pair);
+    if (at < 0) return;
+    const rects = blks.map((b) => b.getBoundingClientRect());
+    let used = 0;
+    let fresh = true;   // 지금 덩어리가 쪽 첫머리인가
+    for (let i = 0; i <= at; i++) {
+      const h = Math.max(0, rects[i].height - pad);
+      const gap = i > 0 ? Math.max(0, rects[i].top - rects[i - 1].bottom) : 0;
+      if (i > 0 && (forcedBreak(blks[i]) || used + gap + h > pageH)) {
+        used = h;
+        fresh = true;
+      } else {
+        used += (i > 0 ? gap : 0) + h;
+        fresh = i === 0;
+      }
+    }
+    if (fresh) big.push(pair);
+  });
+  big.forEach((p) => p.classList.add("comic-big"));
+  if (paging && !fromLayout) layoutPages();
 }
 
 /* 요약 이미지의 말 — 셋을 다 고를 수 있고, 고른 만큼 장수와 값이 늘어난다.
@@ -6852,6 +6898,7 @@ function renderBriefEntries(entries) {
   $("briefInfoMakeBtn").style.display = on;   // 단추 변수는 이 함수보다 아래에서 만든다
   lastBriefEntries = done;
   syncFloatPrint();
+  requestAnimationFrame(() => fitComicPages(briefDocEl));
   if (entries.length) briefDocEl.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -7122,7 +7169,7 @@ briefBtn.addEventListener("click", async () => {
    영어 위의 루비(한글 뜻)를 워드가 표현하지 못해, 변환하면 그 뜻이 문장 안으로
    끼어든다("Many people believe 믿다 that 명사절 접속사 talent is fixed"). 실제로
    변환해 확인한 결과다. 인쇄/PDF는 브라우저가 루비를 그대로 그려 주므로 문제없다. */
-briefPrintBtn.addEventListener("click", () => printDoc(() => passageBasedName("요약분석")));
+briefPrintBtn.addEventListener("click", () => printDoc(() => passageBasedName("요약분석"), { before: () => fitComicPages(briefDocEl) }));
 TAB_SAVE.brief = {
   saveBtn: briefSaveBtn,
   canSave: () => (lastBriefEntries.length ? "" : "저장할 요약분석이 없습니다. 먼저 만들어 주세요."),

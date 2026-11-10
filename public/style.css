@@ -3154,6 +3154,13 @@ input.st-in{width:100%; box-sizing:border-box;}
 .info-comic img.infographic{display:none;}
 .info-pair .info-comic .dc-cut-img img{display:block; width:206%; height:206%; max-width:none; max-height:none; margin:0;}
 .info-pair.comic-only .info-caution{display:none;}
+/* 4컷 칸이 새 쪽에 혼자 갈 때(app.js fitComicPages) — 가로 한 줄 대신 2×2로 크게. 186mm 폭이면 칸이 약 89mm라
+   그림 둘 줄 178mm + 설명·제목을 더해도 한 쪽(261mm)에 든다 */
+.info-pair.comic-big .dc-cuts{grid-template-columns:repeat(2, 1fr); gap:5mm 6mm;}
+.info-pair.comic-big .dc-cut figcaption{font-size:13.5px; margin-top:6px;}
+@media print{
+  .info-pair.comic-big .dc-cut figcaption{font-size:10pt;}
+}
 /* 그림 느낌(일러스트·웹툰)은 4컷을 체크했을 때만, 체크 칸 옆에 — 체크박스 모양이지만 하나만 고른다(comicStyleOf) */
 .img-comic-style, .img-comic-bubble{display:inline-flex; gap:10px; align-items:center; padding:2px 8px; border-left:2px solid var(--line);}
 .img-comic-bubble{font-size:13px; color:var(--muted, #666);}
