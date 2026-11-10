@@ -196,7 +196,9 @@ _EXAM_RUN_RE = re.compile(r"^[A-Za-z0-9]{8,40}$")
 # 함께 적어 둬야, 나중에 약관을 고쳤을 때 "누가 어느 판에 동의했는지"를 가릴 수 있다.
 # ⚠️ terms.html을 고치면 이 값도 함께 올릴 것 — 안 올리면 옛 판에 동의한 사람과
 #    새 판에 동의한 사람이 기록상 구분되지 않는다.
-TERMS_VERSION = "2026-11-09"
+# 2026-11-11부터 terms.html은 12월 14일 시행 개정 판(학생 이용권)을 보여 주므로, 이날 뒤 가입자는 그 판을
+# 보고 동의한다(그 판이 12월 13일까지는 11월 9일 판이 적용된다고 밝힌다). 옛 판은 terms-20261109.html.
+TERMS_VERSION = "2026-12-14"
 
 # --- 결제(포트원) -----------------------------------------------------------
 # 셋 다 비어 있으면 "충전하기"가 결제창을 못 띄운다(503) — 결제사가 아직
@@ -16244,6 +16246,16 @@ CHANGELOG = [
             "처리하는 개인정보와 처리 방식은 바뀌지 않습니다. 학생을 등록하시는 선생님은 학생·보호자께 이 사실을 알려 주세요.",
         ],
     },
+    {
+        "version": 127,
+        "date": "2026-11-11",
+        "items": [
+            "이용약관·환불정책 개정 안내 — 2026년 12월 14일부터 학생 관리(반·학생 등록, 시험 내기, 성적표)가 유료로 바뀝니다. "
+            "학생 1명을 30일 동안 등록해 두는 '학생 이용권'을 포인트로 삽니다 — 1명 1,000P, 10명 단위(최소 10명), "
+            "한 번에 50명 이상이면 10%·100명 이상이면 12% 할인. 자동 연장은 없고, 기간이 끝나도 학생 로그인과 이미 낸 시험·성적은 그대로입니다. "
+            "그 전까지는 지금처럼 무료입니다. 자세한 내용은 화면 아래 이용약관(제7조의2)과 환불정책(10항)을 봐 주세요.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -16302,7 +16314,7 @@ def _account_payload(user_id):
         # 반/학생 관리 탭을 보여줄지 — 관리자가 켜 준 선생님만 True
         "classroomApproved": bool(info.get("classroom_approved")),
         # 학생 이용권 — 스위치가 꺼져 있으면(베타) None이라 화면이 아무것도 안 보인다
-        "seats": (_safe_seat_summary(user_id) if STUDENT_SEATS_ENABLED and info.get("classroom_approved")
+        "seats": (_safe_seat_summary(user_id) if info.get("classroom_approved") and _seats_on_for(user_id)
                   else None),
         # 레벨테스트 탭 — 특정 학원 자료라 관리자가 켜 준 선생님만(_leveltest_approved)
         "leveltestApproved": bool(info.get("leveltest_approved")),
@@ -17929,7 +17941,7 @@ def list_all_users():
         traceback.print_exc()
         acad_of = {}
     try:
-        seats_of = admin_seat_map() if STUDENT_SEATS_ENABLED else {}
+        seats_of = admin_seat_map() if _seats_prepared() else {}
     except Exception:
         traceback.print_exc()
         seats_of = {}
@@ -18480,6 +18492,60 @@ def save_brand_mark(user_id, req):
 # 기간이 끝나면 새 학생 등록과 새 시험 출제만 막고 학생 로그인·응시·성적은 그대로 둔다.
 # 약관·환불정책 개정안은 저장소의 '학생관리_이용권_약관개정안.md'. 시행일 30일 전에 공지하고 켤 것.
 STUDENT_SEATS_ENABLED = os.environ.get("STUDENT_SEATS_ENABLED", "0").strip() == "1"
+# 시행일 예약(YYYY-MM-DD, 한국 날짜) — 그날 0시부터 저절로 켜진다. 2026-12-14 시행으로 공지했다(2026-11-11).
+STUDENT_SEATS_FROM = os.environ.get("STUDENT_SEATS_FROM", "").strip()
+# 시행 전 실서비스 시험용 — 여기 적은 회원(이메일 또는 회원 id, 쉼표로)에게만 먼저 켠다
+STUDENT_SEATS_TESTERS = {x.strip().lower() for x in os.environ.get("STUDENT_SEATS_TESTERS", "").split(",") if x.strip()}
+_SEAT_TESTER_CACHE = {}
+
+
+def _seats_global_on():
+    """모두에게 켜졌나 — 스위치가 켜졌거나 예약한 시행일이 됐다."""
+    if STUDENT_SEATS_ENABLED:
+        return True
+    if STUDENT_SEATS_FROM:
+        try:
+            return datetime.now(KST).strftime("%Y-%m-%d") >= datetime.strptime(STUDENT_SEATS_FROM, "%Y-%m-%d").strftime("%Y-%m-%d")
+        except ValueError:
+            return False
+    return False
+
+
+def _seats_on_for(uid):
+    """이 회원(반 주인)에게 이용권 규칙이 켜졌나 — 모두에게 켜졌거나 시험 계정이다."""
+    if _seats_global_on():
+        return True
+    if not STUDENT_SEATS_TESTERS or not uid:
+        return False
+    if str(uid).lower() in STUDENT_SEATS_TESTERS:
+        return True
+    hit = _SEAT_TESTER_CACHE.get(uid)
+    now = time.monotonic()
+    if hit and hit[0] > now:
+        return hit[1]
+    try:
+        email = ((DB.collection("users").document(uid).get().to_dict() or {}).get("email") or "").lower()
+    except Exception:
+        email = ""
+    on = bool(email) and email in STUDENT_SEATS_TESTERS
+    _SEAT_TESTER_CACHE[uid] = (now + 60, on)
+    return on
+
+
+def _seats_prepared():
+    """관리자 화면에 이용권 칸·지급 줄을 보일까 — 켜졌거나, 시행일을 예약했거나, 시험 계정이 있다."""
+    return _seats_global_on() or bool(STUDENT_SEATS_FROM) or bool(STUDENT_SEATS_TESTERS)
+
+
+def _seats_status():
+    if _seats_global_on():
+        return "판매 중"
+    bits = []
+    if STUDENT_SEATS_FROM:
+        bits.append(f"{STUDENT_SEATS_FROM}부터 판매(예약)")
+    if STUDENT_SEATS_TESTERS:
+        bits.append(f"시험 계정 {len(STUDENT_SEATS_TESTERS)}개만 켜짐")
+    return " · ".join(bits) or "꺼짐"
 STUDENT_SEATS = "student_seats"            # 문서 id = 반 주인 회원 id
 SEAT_PRICE_KRW = int(os.environ.get("SEAT_PRICE_KRW", "1000"))   # 1명 30일
 SEAT_UNIT = 10
@@ -18564,7 +18630,7 @@ def seat_summary(owner, d=None, count=None):
     days_left = _seat_days_left(end, now) if active else 0
     has_next = bool(d.get("next_end"))
     return {
-        "enabled": STUDENT_SEATS_ENABLED,
+        "enabled": _seats_on_for(owner),
         "active": active,
         "seats": int(d.get("seats") or 0) if active else 0,
         "used": used,
@@ -18652,7 +18718,7 @@ def seat_quote(owner, action, n):
 
 def seat_buy(owner, action, n):
     """이용권을 산다 — 잔액 확인·차감·원장·이용권 문서를 한 트랜잭션으로(두 번 눌러도 한 번만)."""
-    if not STUDENT_SEATS_ENABLED:
+    if not _seats_on_for(owner):
         raise ValueError("학생 이용권은 아직 판매하지 않습니다.")
     _require_db()
     count = _seat_count_students(owner)
@@ -18778,7 +18844,7 @@ def admin_seat_map():
 
 def _seat_require(owner, teacher_id, adding=0):
     """학생을 더 등록하거나(adding=1) 시험을 낼 때(adding=0) 반 주인의 이용권을 본다. 스위치가 꺼져 있으면 그냥 통과."""
-    if not STUDENT_SEATS_ENABLED or not owner or str(owner).startswith("academy:"):
+    if not owner or str(owner).startswith("academy:") or not _seats_on_for(owner):
         return   # 학원 반은 학원 모드와 함께 정한다(지금은 학원 모드가 꺼져 있다)
     whose = "" if owner == teacher_id else "이 반을 만든 선생님의 "
     now = datetime.now(timezone.utc)
@@ -22660,7 +22726,7 @@ class Handler(BaseHTTPRequestHandler):
                 # — 이벤트를 내리려고 사람이 화면을 고칠 일이 없어야 한다.
                 "signupBonus": _signup_grant()[0],
                 # 학생 이용권 — 1명 30일 값·단위·할인. enabled가 거짓이면(베타) 화면이 판매 창을 안 연다
-                "seat": {"enabled": STUDENT_SEATS_ENABLED, "price": SEAT_PRICE_KRW, "unit": SEAT_UNIT,
+                "seat": {"enabled": _seats_global_on(), "price": SEAT_PRICE_KRW, "unit": SEAT_UNIT,
                          "min": SEAT_MIN, "max": SEAT_MAX, "days": SEAT_DAYS,
                          "discounts": [list(x) for x in SEAT_DISCOUNTS]},
                 "signupBonusBase": _signup_base_krw(),
@@ -22790,7 +22856,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/admin/me":
             self._send_json({"loggedIn": _admin_session_valid(self), "academyEnabled": ACADEMY_ENABLED,
-                             "seatsEnabled": STUDENT_SEATS_ENABLED})
+                             "seatsEnabled": _seats_prepared(), "seatsStatus": _seats_status()})
             return
 
         if path == "/api/admin/student-counts":

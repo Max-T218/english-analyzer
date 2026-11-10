@@ -107,10 +107,10 @@
     <!-- 가로 스크롤이 생기면 오른쪽 끝의 '탈퇴'가 화면 밖으로 밀려 보이지 않는다.
          칸마다 폭을 지정해(table-layout:fixed) 표가 화면 폭 안에 들어오게 하고,
          길어질 수 있는 값(이메일·이름)만 넘칠 때 …로 줄인다. -->
-    <!-- 학생 이용권 지급(값 0) — 판매 스위치(STUDENT_SEATS_ENABLED)가 켜져 있을 때만 보인다.
+    <!-- 학생 이용권 지급(값 0) — 판매가 켜졌거나 시행일을 예약했거나 시험 계정이 있을 때만 보인다(server _seats_prepared).
          회원 줄의 🎫 체크로 여러 선생님을 고르고 인원·만료일을 정해 한 번에 넣는다 -->
     <div class="panel" id="seatGrantBar" hidden style="font-size:13px;">
-      <b>🎫 학생 이용권 지급</b> — 고른 선생님 <b id="seatPickCount">0</b>명
+      <b>🎫 학생 이용권 지급</b> <span class="hint" id="seatStatus" style="margin:0;"></span> — 고른 선생님 <b id="seatPickCount">0</b>명
       <button type="button" class="btn ghost small" id="seatPickAll">학생기능 허용한 선생님 모두 고르기</button>
       <button type="button" class="btn ghost small" id="seatPickNone">고르기 해제</button>
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px;">
@@ -215,6 +215,7 @@ function showWorkspace() {
     if (!info.academyEnabled) { $("academyLockLabel").hidden = true; $("viewAcademiesBtn").hidden = true; }
     SEATS_ON = !!info.seatsEnabled;   // 학생 이용권 판매가 켜져 있을 때만 회원 줄에 이용권 칸이 보인다
     $("seatGrantBar").hidden = !SEATS_ON;
+    $("seatStatus").textContent = info.seatsStatus ? `(${info.seatsStatus})` : "";
     if (info.loggedIn) showWorkspace();
     else showGate();
   } catch (_) {
