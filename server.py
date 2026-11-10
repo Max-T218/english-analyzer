@@ -14080,6 +14080,9 @@ class _HwpxWriter:
         rest = _HWPX_TEXT_W - num_w
         if quick:
             qn = 2600   # 번호 칸 '12.'
+            # 세 자리 번호면 '100.'이 '10 / 0.'으로 꺾인다(2026-11-10, 180문항) — 칸을 넓힌다
+            if any(re.search(r"<hp:t>\d{3,}\.?</hp:t>", c[0]) for r in rows for c in r):
+                qn = 3300
             if quick == "mc":
                 pairs = max(1, ncol // 2)
                 aw = round((_HWPX_TEXT_W - qn * pairs) / pairs)
@@ -14119,8 +14122,10 @@ class _HwpxWriter:
             f'lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="{0 if quick else 1}" rowCnt="{len(rows)}" colCnt="{ncol}" '
             'cellSpacing="0" borderFillIDRef="6" noAdjust="0">'
             f'<hp:sz width="{sum(widths)}" widthRelTo="ABSOLUTE" height="{row_h * len(rows)}" heightRelTo="ABSOLUTE" protect="0"/>'
-            '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" '
-            'vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+            # 글자처럼 취급(treatAsChar=1)이면 한글이 표를 쪽·단 사이에서 나누지 못해, 한 쪽보다 긴 정답표
+            # (180문항)가 다음 쪽으로 통째로 밀리고 아래가 잘렸다(2026-11-10 사용자). 문단에 붙은 표로 둔다.
+            '<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" '
+            'vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
             '<hp:outMargin left="0" right="0" top="0" bottom="0"/>'
             '<hp:inMargin left="510" right="510" top="141" bottom="141"/>'
             f"{''.join(trs)}</hp:tbl>"
@@ -14281,6 +14286,11 @@ def _hwpx_fit_table(xml, width):
     m = re.search(r'colCnt="(\d+)"', xml)
     ncol = int(m.group(1)) if m else 2
     num_w = 1750   # 번호 칸 — 굵은 '13.'이 잘리지 않는 폭(비율로 줄였더니 '11'·'12'가 잘렸다), 남는 폭은 '주관식' 칸에
+    # 세 자리 번호(100~)는 '100.'이 이 폭에서 '10 / 0.'으로 꺾였다(2026-11-10 사용자, 180문항) — 마침표를 떼고
+    # 칸을 조금 넓힌다. '주관식'(7pt) 칸이 한 줄에 드는 폭은 남는다.
+    if re.search(r"<hp:t>\d{3,}\.</hp:t>", xml):
+        xml = re.sub(r"<hp:t>(\d+)\.</hp:t>", r"<hp:t>\1</hp:t>", xml)
+        num_w = 2050
     if ncol >= 2 and ncol % 2 == 0:
         pairs = ncol // 2
         ans_w = max(1200, (width - num_w * pairs) // pairs)
@@ -24221,9 +24231,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if is_hwpx:
                     # 학원 마크(학원명·로고·워터마크) — 화면의 학원 마크 칸에 넣은 것을 함께 보내온다
-                    # 정답·해설은 늘 미주로(2026-11-10 사용자 — 한글 파일은 무조건 이 방식)
+                    # 정답·해설은 미주로 달지 않고 답지에 글로 싣는다(2026-11-10 사용자 — PDF처럼 빠른 정답표는
+                    # 쪽 전체 폭 1단, 해설은 그 아래 2단). 미주로 달았더니 답지 쪽에서 단을 바꾸면 한글이 미주를
+                    # 다음 쪽부터 시작해(세 가지 배치로 실험) PDF 모양과 함께 할 수 없었다. 미주 길(endnotes=True)은
+                    # quiz_html_to_hwpx에 남아 있다.
                     blob = quiz_html_to_hwpx(source, title, answer_heading, columns, req.get("brand"),
-                                             endnotes=True)
+                                             endnotes=False)
                 else:
                     blob = quiz_html_to_docx(source, title, answer_heading, columns)
             except Exception as e:
