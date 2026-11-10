@@ -5260,9 +5260,16 @@ function b64ToBlobUrl(b64, mime) {
 }
 
 // 결과 화면을 새로 그리기 전에 부른다 — 안 부르면 만든 그림이 탭을 닫을 때까지 메모리에 남는다
+/* 그림 주소 목록은 상세분석·요약분석·내용 한장정리가 함께 쓴다(makeSummaryImage). 상세분석만
+   다시 그리는데 모두 반납했더니, 요약분석에 붙어 있던 그림이 깨진 그림으로 남았다(2026-11-10 사용자).
+   그래서 상세분석 결과(resultEl) 밖에서 아직 보이는 그림은 남긴다. */
 function revokeInfographics() {
-  infographicUrls.forEach((u) => URL.revokeObjectURL(u));
-  infographicUrls = [];
+  const inUse = new Set();
+  document.querySelectorAll('img[src^="blob:"]').forEach((img) => {
+    if (!resultEl.contains(img)) inUse.add(img.getAttribute("src"));
+  });
+  infographicUrls.forEach((u) => { if (!inUse.has(u)) URL.revokeObjectURL(u); });
+  infographicUrls = infographicUrls.filter((u) => inUse.has(u));
 }
 
 /* 지문 하나의 요약 그림들을 담는 한 덩어리. 두 장을 고르면 같은 덩어리에 위아래로
