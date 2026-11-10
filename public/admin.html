@@ -195,6 +195,8 @@ function showWorkspace() {
 (async () => {
   try {
     const info = await getJson("/api/admin/me");
+    // 학원 모드가 꺼져 있으면(서버 ACADEMY_ENABLED) 학원 열기·학원 목록을 감춘다
+    if (!info.academyEnabled) { $("academyLockLabel").hidden = true; $("viewAcademiesBtn").hidden = true; }
     if (info.loggedIn) showWorkspace();
     else showGate();
   } catch (_) {

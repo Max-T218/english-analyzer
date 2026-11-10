@@ -16300,8 +16300,8 @@ def _account_payload(user_id):
         # 로그인마다 함께 내려준다 — 비어 있으면 화면이 아무것도 띄우지 않는다
         "updates": _unseen_updates(info.get("last_seen_changelog")),
         # 들어가 있는 학원([🏫 ○○학원 열기])과 이메일로 온 학원 초대([수락]/[거절])
-        "academies": _safe_list(lambda: my_academies(user_id)),
-        "invites": _safe_list(lambda: invites_for_user(user_id, info)),
+        "academies": _safe_list(lambda: my_academies(user_id)) if ACADEMY_ENABLED else [],
+        "invites": _safe_list(lambda: invites_for_user(user_id, info)) if ACADEMY_ENABLED else [],
     }
 
 
@@ -17190,7 +17190,7 @@ def _session_user(handler):
     _touch_active(user_id)
     handler._uid = user_id
     slug = (handler.headers.get("X-Academy") or "").strip().lower()
-    if slug:
+    if slug and ACADEMY_ENABLED:
         handler._acad = _academy_ctx(user_id, slug)
         if handler._acad and handler.path.split("?", 1)[0].startswith(ACADEMY_CLASS_PREFIXES):
             return _academy_uid(handler._acad["aid"])
@@ -17226,6 +17226,16 @@ def _touch_active(user_id):
 # 회원을 이메일로 초대한다(상대가 로그인해 수락). 화면은 fetch에 X-Academy 머리를 실어 보내고, 서버는 요청마다
 # 회원 자격을 확인한다(_academy_ctx — 30초 캐시).
 ACADEMIES = "academies"
+# 학원 모드 스위치(2026-11-11 사용자 — 당분간 안 쓴다). 꺼져 있으면 X-Academy 머리를 무시하고,
+# /academy 링크는 첫 화면으로 돌려보내며, 학원 API·관리자 학원 API는 404로 답한다.
+# 학원·회원·학원 반 문서는 지우지 않는다 — 다시 쓰려면 Render 환경변수 ACADEMY_ENABLED=1.
+ACADEMY_ENABLED = os.environ.get("ACADEMY_ENABLED", "0").strip() == "1"
+ACADEMY_OFF_MSG = "학원 기능은 지금 쓰지 않습니다."
+
+
+def _academy_api_path(path):
+    return (path.startswith("/api/academy/") or path.startswith("/api/admin/academies")
+            or path == "/api/saved/share")
 ACADEMY_MEMBERS = "academy_members"     # 문서 id {학원}_{회원}
 ACADEMY_INVITES = "academy_invites"     # 문서 id {학원}_{이메일 해시}
 ACADEMY_SPEND = "academy_spend"         # 문서 id {학원}_{회원}_{YYYY-MM} — 원장 포인트를 쓴 양(월 한도)
@@ -22265,6 +22275,17 @@ class Handler(BaseHTTPRequestHandler):
         self._acad = None   # 학원 모드 — _session_user가 채운다
         self._uid = None
 
+        if not ACADEMY_ENABLED and _academy_api_path(path):
+            self._send_json({"error": ACADEMY_OFF_MSG}, 404)
+            return
+        if not ACADEMY_ENABLED and path == "/academy":
+            # 예전에 받은 학원 링크 — 개인 모드 첫 화면으로 보낸다(주소의 k도 떼어 낸다)
+            self.send_response(302)
+            self.send_header("Location", "/")
+            self.send_header("content-length", "0")
+            self.end_headers()
+            return
+
         if path == "/api/pricing":
             # 비밀값이 아니다 — 화면이 '만들기' 누르기 전에 예상 비용을 보여주는 데 쓴다.
             # 로그인 여부와 무관하게 조회 가능(가격표일 뿐 실제 과금은 아니다).
@@ -22337,7 +22358,7 @@ class Handler(BaseHTTPRequestHandler):
             if not user_id:
                 self._send_json({"loggedIn": False})
                 return
-            if (self.headers.get("X-Academy") or "").strip() and not self._acad:
+            if ACADEMY_ENABLED and (self.headers.get("X-Academy") or "").strip() and not self._acad:
                 # 학원 링크로 열었는데 이 학원 선생님이 아니다 — 화면이 알리고 개인 모드로 돌아간다
                 out = _account_payload(user_id)
                 out["academyDenied"] = True
@@ -22381,7 +22402,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/admin/me":
-            self._send_json({"loggedIn": _admin_session_valid(self)})
+            self._send_json({"loggedIn": _admin_session_valid(self), "academyEnabled": ACADEMY_ENABLED})
             return
 
         if path == "/api/admin/student-counts":
@@ -22892,6 +22913,9 @@ class Handler(BaseHTTPRequestHandler):
         self._exam_run = None
 
         path = self.path.split("?", 1)[0]
+        if not ACADEMY_ENABLED and _academy_api_path(path):
+            self._send_json({"error": ACADEMY_OFF_MSG}, 404)
+            return
         if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                         "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
