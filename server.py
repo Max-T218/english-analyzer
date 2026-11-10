@@ -619,6 +619,10 @@ class MailNotConfigured(RuntimeError):
     """인증메일을 보낼 수단이 없다 — 가입을 진행시키면 안 된다."""
 
 
+class MailSendFailed(MailNotConfigured):
+    """설정은 있는데 메일 서버가 받지 않았다(다시 보내도 실패). 화면 처리는 MailNotConfigured와 같다."""
+
+
 def send_verification_email(to_email, code, what="회원가입"):
     """인증코드를 메일로 보낸다. what은 메일 본문과 오류 문구에 들어가는 용도('회원가입'·'비밀번호 재설정').
 
@@ -654,10 +658,34 @@ def send_verification_email(to_email, code, what="회원가입"):
         f"{VERIFY_CODE_TTL // 60}분 안에 입력해 주세요.\n\n"
         "본인이 요청한 것이 아니라면 이 메일을 무시하셔도 됩니다."
     )
-    context = ssl.create_default_context()
-    with _IPv4SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context, timeout=20) as server:
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.send_message(msg)
+    # Gmail이 가끔 이유를 말하지 않고 연결을 끊는다("Connection unexpectedly closed",
+    # 2026-11-10 가입 화면에 그대로 떴다). 대개 한 번 더 보내면 나가므로 잠깐 쉬고 한 번 더
+    # 보낸다. 그래도 안 되면 영어 오류 대신 할 일을 알려 주는 문구로 바꿔 올린다.
+    # 아이디·앱 비밀번호가 틀린 것(SMTPAuthenticationError)은 다시 보내도 같아서 바로 넘긴다.
+    last = None
+    for attempt in range(2):
+        try:
+            context = ssl.create_default_context()
+            with _IPv4SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context, timeout=20) as server:
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.send_message(msg)
+            return
+        except smtplib.SMTPAuthenticationError as e:
+            last = e
+            break
+        except (smtplib.SMTPException, OSError) as e:
+            last = e
+            print(f"[mail] {what} 인증메일 {attempt + 1}번째 실패: {type(e).__name__} {e}",
+                  file=sys.stderr)
+            if attempt == 0:
+                time.sleep(2)
+    print(f"[mail] {what} 인증메일을 끝내 보내지 못했습니다: {type(last).__name__} {last}",
+          file=sys.stderr)
+    raise MailSendFailed(
+        "인증메일을 보내지 못했습니다. 메일 서버가 잠시 응답하지 않는 것 같습니다. "
+        "1~2분 뒤 다시 시도해 주세요." +
+        (" 계속 안 되면 위의 구글 계정 단추로 가입하실 수 있습니다." if what == "회원가입" else "")
+    )
 
 
 def _hash_password(password, salt=None):
