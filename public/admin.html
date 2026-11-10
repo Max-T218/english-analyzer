@@ -113,13 +113,20 @@
       <b>🎫 학생 이용권 지급</b> <span class="hint" id="seatStatus" style="margin:0;"></span> — 고른 선생님 <b id="seatPickCount">0</b>명
       <button type="button" class="btn ghost small" id="seatPickAll">학생기능 허용한 선생님 모두 고르기</button>
       <button type="button" class="btn ghost small" id="seatPickNone">고르기 해제</button>
-      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px;">
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:8px;">
+        <label><input type="radio" name="seatGrantMode" value="grant" checked> 늘려 주기(줄이지 않음)</label>
+        <label><input type="radio" name="seatGrantMode" value="set"> 이 값으로 바꾸기(줄이기·날짜 앞당기기 포함)</label>
+        <label><input type="radio" name="seatGrantMode" value="end"> 지금 끝내기</label>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px;" id="seatGrantFields">
+        <label><input type="checkbox" id="seatGrantUnlimited"> <b>인원 제한 없는 무료 이용</b>(기존 선생님 등)</label> ·
         인원 <input type="number" id="seatGrantN" step="10" min="10" value="10" style="width:80px;">명
         <label><input type="checkbox" id="seatGrantAuto"> 각자 지금 등록한 학생 수에 맞춤(10명 단위 올림, 최소 10명)</label>
         · 만료일 <input type="date" id="seatGrantUntil">까지
         <button type="button" class="btn small" id="seatGrantBtn">지급</button>
       </div>
-      <p class="hint" style="margin:6px 0 0;">값을 받지 않습니다. 이미 쓰는 이용권이 있으면 인원은 큰 쪽, 만료일은 늦은 쪽으로 맞춥니다(줄이지 않습니다).</p>
+      <p class="hint" style="margin:6px 0 0;">값을 받지 않습니다. '늘려 주기'는 이미 쓰는 이용권이 있으면 인원은 큰 쪽, 만료일은 늦은 쪽으로 맞추고(줄이지 않습니다),
+        '이 값으로 바꾸기'는 고른 값으로 그대로 덮어씁니다(미리 산 연장분은 지워집니다). '지금 끝내기'는 이용권만 끝내고 학생·성적은 그대로 둡니다. 만료일은 2099-12-31까지 고를 수 있습니다.</p>
       <div id="seatGrantResult" style="margin-top:6px;"></div>
     </div>
 
@@ -523,7 +530,7 @@ function renderUsers() {
         ${SEATS_ON && u.classroomApproved ? `<div style="font-size:11px; color:var(--ink-soft); margin-top:3px; white-space:nowrap;">
           <label title="위쪽 '학생 이용권 지급'에서 한 번에 지급할 선생님으로 고릅니다" style="cursor:pointer;">
           <input type="checkbox" class="seat-pick" ${seatPicked.has(u.id) ? "checked" : ""}>
-          🎫 ${u.seats && u.seats.active ? `${u.seats.seats}명 ~${esc(u.seats.end)}` : "이용권 없음"}</label></div>` : ""}
+          🎫 ${u.seats && u.seats.active ? `${u.seats.unlimited ? "무제한" : `${u.seats.seats}명`} ~${esc(u.seats.end)}` : "이용권 없음"}</label></div>` : ""}
       </td>
       <td style="padding:8px 6px;">
         <button type="button" class="btn ${u.leveltestApproved ? "" : "ghost"} small leveltest-btn"
@@ -664,7 +671,17 @@ function seatKstDate(plusDays) {
   return d.toISOString().slice(0, 10);
 }
 $("seatGrantUntil").value = seatKstDate(30);
-$("seatGrantAuto").addEventListener("change", (e) => { $("seatGrantN").disabled = e.target.checked; });
+function seatGrantMode() { return (document.querySelector('input[name="seatGrantMode"]:checked') || {}).value || "grant"; }
+function seatGrantSync() {
+  const end = seatGrantMode() === "end";
+  const unl = $("seatGrantUnlimited").checked;
+  $("seatGrantUnlimited").disabled = end;
+  $("seatGrantAuto").disabled = end || unl;
+  $("seatGrantN").disabled = end || unl || $("seatGrantAuto").checked;
+  $("seatGrantUntil").disabled = end;
+}
+["seatGrantAuto", "seatGrantUnlimited"].forEach((id) => $(id).addEventListener("change", seatGrantSync));
+document.querySelectorAll('input[name="seatGrantMode"]').forEach((r) => r.addEventListener("change", seatGrantSync));
 $("userTableBody").addEventListener("change", (e) => {
   const box = e.target.closest(".seat-pick");
   if (!box) return;
@@ -680,25 +697,30 @@ $("seatPickNone").addEventListener("click", () => { seatPicked.clear(); renderUs
 $("seatGrantBtn").addEventListener("click", async () => {
   const ids = [...seatPicked];
   if (!ids.length) { alert("회원 목록에서 🎫 체크로 선생님을 골라 주세요."); return; }
+  const mode = seatGrantMode();
+  const unlimited = $("seatGrantUnlimited").checked;
   const auto = $("seatGrantAuto").checked;
   const n = Number($("seatGrantN").value);
   const until = $("seatGrantUntil").value;
-  if (!until) { alert("만료일을 골라 주세요."); return; }
-  if (!confirm(`선생님 ${ids.length}명에게 학생 이용권을 ${auto ? "각자 등록 학생 수만큼" : `${n}명씩`} `
-    + `${until}까지 값 없이 넣어 줍니다. 계속할까요?`)) return;
+  if (mode !== "end" && !until) { alert("만료일을 골라 주세요."); return; }
+  const what = unlimited ? "인원 제한 없는 무료 이용" : auto ? "학생 이용권을 각자 등록 학생 수만큼" : `학생 이용권 ${n}명`;
+  const msg = mode === "end"
+    ? `선생님 ${ids.length}명의 학생 이용권을 지금 끝냅니다. 새 학생 등록·시험 내기가 바로 막힙니다(학생·성적은 그대로).`
+    : `선생님 ${ids.length}명에게 ${what}을 ${until}까지 ` + (mode === "set" ? "그대로 바꿔 넣습니다(줄어들 수 있습니다)." : "값 없이 넣어 줍니다.");
+  if (!confirm(msg + "\n\n계속할까요?")) return;
   const btn = $("seatGrantBtn");
   btn.disabled = true;
   $("seatGrantResult").textContent = "넣는 중…";
   try {
-    const r = await postJson("/api/admin/seats/grant", { userIds: ids, seats: auto ? "auto" : n, until });
+    const r = await postJson("/api/admin/seats/grant", { userIds: ids, seats: auto ? "auto" : n, until, mode, unlimited });
     const bad = r.results.filter((x) => !x.ok);
     r.results.filter((x) => x.ok).forEach((x) => {
       const u = currentUsers.find((v) => v.id === x.userId);
-      if (u) u.seats = { active: x.active, seats: x.seats, end: x.end };
+      if (u) u.seats = { active: x.active, seats: x.seats, end: x.end, unlimited: x.unlimited };
       seatPicked.delete(x.userId);
     });
     renderUsers(); seatPickSync();
-    $("seatGrantResult").innerHTML = `${r.results.length - bad.length}명에게 넣었습니다.`
+    $("seatGrantResult").innerHTML = `${r.results.length - bad.length}명 처리했습니다.`
       + (bad.length ? `<br><span style="color:#c62828;">못 넣은 ${bad.length}명(체크가 남아 있습니다): `
         + bad.map((x) => esc((currentUsers.find((v) => v.id === x.userId) || {}).email || x.userId) + " — " + esc(x.error)).join(" / ")
         + "</span>" : "");

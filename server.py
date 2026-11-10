@@ -18642,6 +18642,7 @@ def seat_summary(owner, d=None, count=None):
         "nextEnd": d.get("next_end") if has_next else None,
         "endingSoon": active and not has_next and days_left <= SEAT_NOTICE_DAYS,
         "everBought": bool(d.get("first_at")),
+        "unlimited": active and bool(d.get("unlimited")),
     }
 
 
@@ -18663,6 +18664,8 @@ def _seat_plan(d, action, n, count, now):
     d = _seat_roll(d, now)
     end = _seat_dt(d.get("end"))
     active = bool(end and now < end)
+    if active and d.get("unlimited"):
+        raise ValueError(f"{_seat_last_day(d.get('end'))}까지 인원 제한 없이 무료로 쓰고 계셔서 이용권을 살 필요가 없습니다.")
     new = dict(d)
     if action == "new":
         if active:
@@ -18692,7 +18695,7 @@ def _seat_plan(d, action, n, count, now):
             raise ValueError("쓰고 있는 이용권이 없습니다. 새로 사 주세요.")
         n = _seat_check_n(n, minimum=SEAT_UNIT)
         cur = int(d.get("seats") or 0)
-        days_left = max(1, min(SEAT_DAYS, _seat_days_left(end, now)))
+        days_left = max(1, _seat_days_left(end, now))   # 산 이용권이면 30일 이하, 관리자가 길게 넣어 준 기간이면 그만큼
         total = cur + n
         if total > SEAT_MAX:
             raise ValueError(f"학생 이용권은 {SEAT_MAX:,}명까지 살 수 있습니다.")
@@ -18757,7 +18760,7 @@ def seat_buy(owner, action, n):
 
 
 SEAT_GRANT_MAX_USERS = 500
-SEAT_GRANT_MAX_DAYS = 730
+SEAT_GRANT_LAST_DAY = "2099-12-31"   # 관리자가 고를 수 있는 가장 먼 만료일(기존 선생님 2050-12-31 무료 등)
 
 
 def _seat_until(until):
@@ -18770,60 +18773,80 @@ def _seat_until(until):
     now = datetime.now(timezone.utc)
     if end <= now:
         raise ValueError("만료일은 오늘이나 그 뒤로 골라 주세요.")
-    if end > now + timedelta(days=SEAT_GRANT_MAX_DAYS):
-        raise ValueError(f"만료일은 {SEAT_GRANT_MAX_DAYS}일 안으로 골라 주세요.")
+    if day.strftime("%Y-%m-%d") > SEAT_GRANT_LAST_DAY:
+        raise ValueError(f"만료일은 {SEAT_GRANT_LAST_DAY}까지 고를 수 있습니다.")
     return end
 
 
-def admin_seat_grant(owner, seats, until):
-    """관리자가 값을 받지 않고 이용권을 넣어 준다(시범 사용·오픈 때 기존 선생님 첫 달 무료·보상).
-    seats가 "auto"면 그 선생님의 지금 등록 학생 수를 10명 단위로 올린 값(최소 10명).
-    until은 만료일(그날까지 쓴다). 지금 쓰는 이용권보다 줄이지 않는다 — 자리는 큰 쪽, 끝나는 날은 늦은 쪽."""
+def admin_seat_grant(owner, seats, until, mode="grant", unlimited=False):
+    """관리자가 값을 받지 않고 이용권을 넣거나 고친다. 기록은 문서의 log에 남는다.
+    mode — grant(늘려 주기: 자리는 큰 쪽, 끝나는 날은 늦은 쪽 — 줄이지 않는다)
+           set(이 값으로 바꾸기: 인원·만료일·무제한을 그대로 덮어쓴다 — 줄이기도 된다. 미리 산 연장분은 지운다)
+           end(지금 끝내기: 이용권을 바로 끝낸다 — 학생·기록은 그대로)
+    seats — 10명 단위 숫자 또는 "auto"(지금 등록 학생 수를 10명 단위로 올림, 최소 10명). unlimited면 보지 않는다.
+    unlimited — 인원 제한 없는 무료 이용(기존 선생님 등). until까지 등록·출제를 막지 않는다."""
     _require_db()
-    target = _seat_until(until)
+    if mode not in ("grant", "set", "end"):
+        raise ValueError("잘못된 요청입니다.")
     if not DB.collection("users").document(owner).get().exists:
         raise ValueError("회원을 찾을 수 없습니다.")
-    if seats == "auto":
-        seats = max(SEAT_MIN, -(-_seat_count_students(owner) // SEAT_UNIT) * SEAT_UNIT)
-    seats = _seat_check_n(seats, minimum=SEAT_UNIT)
     now = datetime.now(timezone.utc)
     ref = DB.collection(STUDENT_SEATS).document(owner)
     d = _seat_roll(_seat_doc(owner), now)
     end = _seat_dt(d.get("end"))
-    if end and now < end:
-        d["seats"] = max(int(d.get("seats") or 0), seats)
-        if target > end:
-            d["end"] = target.isoformat()
-            if d.get("next_end"):   # 미리 산 연장분은 늘어난 끝 뒤로 민다
-                d["next_end"] = (target + timedelta(days=SEAT_DAYS)).isoformat()
+    active = bool(end and now < end)
+    if mode == "end":
+        if not active:
+            raise ValueError("쓰고 있는 이용권이 없습니다.")
+        d.update({"end": now.isoformat(), "next_seats": None, "next_end": None, "unlimited": False})
+        seats = 0
     else:
-        d.update({"seats": seats, "start": now.isoformat(), "end": target.isoformat(),
-                  "next_seats": None, "next_end": None})
+        target = _seat_until(until)
+        unlimited = bool(unlimited)
+        if unlimited:
+            seats = 0
+        else:
+            if seats == "auto":
+                seats = max(SEAT_MIN, -(-_seat_count_students(owner) // SEAT_UNIT) * SEAT_UNIT)
+            seats = _seat_check_n(seats, minimum=SEAT_UNIT)
+        if mode == "set" or not active:
+            d.update({"seats": seats, "end": target.isoformat(), "unlimited": unlimited,
+                      "next_seats": None, "next_end": None})
+            if not active:
+                d["start"] = now.isoformat()
+        else:   # grant + 쓰는 중 — 줄이지 않는다
+            d["seats"] = max(int(d.get("seats") or 0), seats)
+            d["unlimited"] = bool(d.get("unlimited")) or unlimited
+            if target > end:
+                d["end"] = target.isoformat()
+                if d.get("next_end"):   # 미리 산 연장분은 늘어난 끝 뒤로 민다
+                    d["next_end"] = (target + timedelta(days=SEAT_DAYS)).isoformat()
     d["first_at"] = d.get("first_at") or now.isoformat()
     d["updated_at"] = now.isoformat()
     d["log"] = (list(d.get("log") or []) + [{
-        "at": now.isoformat(), "kind": "grant", "n": seats, "until": str(until), "cost": 0,
-        "seats": d.get("seats"), "end": d.get("end")}])[-SEAT_LOG_MAX:]
+        "at": now.isoformat(), "kind": f"admin_{mode}", "n": seats, "until": str(until or ""),
+        "unlimited": bool(d.get("unlimited")), "cost": 0, "seats": d.get("seats"), "end": d.get("end")}])[-SEAT_LOG_MAX:]
     ref.set(d)
     return seat_summary(owner, d)
 
 
-def admin_seat_grant_many(user_ids, seats, until):
+def admin_seat_grant_many(user_ids, seats, until, mode="grant", unlimited=False):
     """여러 선생님에게 한 번에. 한 명이 실패해도 나머지는 넣고, 사람마다 결과를 돌려준다."""
     if not isinstance(user_ids, list) or not user_ids:
         raise ValueError("지급할 선생님을 골라 주세요.")
     ids = list(dict.fromkeys(str(x) for x in user_ids if x))
     if len(ids) > SEAT_GRANT_MAX_USERS:
         raise ValueError(f"한 번에 {SEAT_GRANT_MAX_USERS}명까지 지급할 수 있습니다.")
-    _seat_until(until)   # 날짜가 틀렸으면 아무것도 안 넣고 바로 알린다
-    if seats != "auto":
-        seats = _seat_check_n(seats, minimum=SEAT_UNIT)
+    if mode != "end":
+        _seat_until(until)   # 날짜가 틀렸으면 아무것도 안 넣고 바로 알린다
+        if seats != "auto" and not unlimited:
+            seats = _seat_check_n(seats, minimum=SEAT_UNIT)
     out = []
     for uid in ids:
         try:
-            r = admin_seat_grant(uid, seats, until)
-            out.append({"userId": uid, "ok": True, "seats": r["seats"],
-                        "end": _seat_last_day(r["end"]), "active": r["active"]})
+            r = admin_seat_grant(uid, seats, until, mode, unlimited)
+            out.append({"userId": uid, "ok": True, "seats": r["seats"], "unlimited": r["unlimited"],
+                        "end": _seat_last_day(r["end"]) if r["active"] else "", "active": r["active"]})
         except ValueError as e:
             out.append({"userId": uid, "ok": False, "error": str(e)})
     return out
@@ -18838,6 +18861,7 @@ def admin_seat_map():
         end = _seat_dt(d.get("end"))
         active = bool(end and now < end)
         out[doc.id] = {"active": active, "seats": int(d.get("seats") or 0) if active else 0,
+                       "unlimited": active and bool(d.get("unlimited")),
                        "end": _seat_last_day(d.get("end")), "nextSeats": int(d.get("next_seats") or 0)}
     return out
 
@@ -18850,6 +18874,8 @@ def _seat_require(owner, teacher_id, adding=0):
     now = datetime.now(timezone.utc)
     d = _seat_roll(_seat_doc(owner), now)
     end = _seat_dt(d.get("end"))
+    if end and now < end and d.get("unlimited"):
+        return   # 관리자가 넣어 준 '인원 제한 없는 무료 이용'(기존 선생님 등)
     if not (end and now < end):
         raise SeatRequired(
             f"{whose}학생 이용권이 " + ("끝났습니다" if d.get("first_at") else "없습니다") +
@@ -24061,7 +24087,8 @@ class Handler(BaseHTTPRequestHandler):
                 ids = req.get("userIds")
                 if ids is None and req.get("userId"):
                     ids = [req.get("userId")]
-                result = admin_seat_grant_many(ids, req.get("seats"), req.get("until"))
+                result = admin_seat_grant_many(ids, req.get("seats"), req.get("until"),
+                                               str(req.get("mode") or "grant"), bool(req.get("unlimited")))
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
                 return

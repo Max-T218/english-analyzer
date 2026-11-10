@@ -21447,7 +21447,8 @@ function seatDate(iso) {
   if (!iso) return "";
   // 만료 시각이 그다음 날 0시일 수 있어(관리자 지급 — 그날까지) 1초 앞의 날짜를 '까지'로 보인다
   const d = new Date(new Date(iso).getTime() - 1000);
-  return `${d.getMonth() + 1}월 ${d.getDate()}일`;
+  const y = d.getFullYear() !== new Date().getFullYear() ? `${d.getFullYear()}년 ` : "";   // 2050년처럼 먼 날도 알아보게
+  return `${y}${d.getMonth() + 1}월 ${d.getDate()}일`;
 }
 function seatRender(info) {
   SEAT = info || null;
@@ -21455,9 +21456,12 @@ function seatRender(info) {
   if (!bar) return;
   bar.hidden = !(SEAT && SEAT.enabled);
   if (bar.hidden) return;
-  bar.classList.toggle("warn", !SEAT.active || SEAT.endingSoon || SEAT.used > SEAT.seats);
+  bar.classList.toggle("warn", !SEAT.unlimited && (!SEAT.active || SEAT.endingSoon || SEAT.used > SEAT.seats));
+  $("seatBuyBtn").hidden = !!SEAT.unlimited;
   let t;
-  if (!SEAT.active) {
+  if (SEAT.unlimited) {
+    t = `🎫 학생 관리 무료 이용 중 · 인원 제한 없음 · ${seatDate(SEAT.end)}까지(등록 학생 ${SEAT.used}명)`;
+  } else if (!SEAT.active) {
     t = SEAT.everBought
       ? `🎫 학생 이용권이 ${seatDate(SEAT.lastEnd)}에 끝났습니다 — 새 학생 등록과 시험 내기가 멈췄습니다(등록된 학생 ${SEAT.used}명).`
       : "🎫 학생 이용권이 없습니다 — 이용권을 사면 학생을 등록하고 시험을 낼 수 있습니다.";
@@ -21524,6 +21528,7 @@ function seatSetAction(a) {
 async function seatOpen(reason) {
   if (!SEAT || !SEAT.enabled) return;
   try { seatRender(await getJson("/api/seats", "")); } catch (_) {}
+  if (SEAT.unlimited) return;   // 무료 무제한 이용 중 — 살 것이 없다
   const P = seatPricing();
   $("seatReason").hidden = !reason;
   $("seatReason").textContent = reason || "";
