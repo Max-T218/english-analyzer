@@ -17,6 +17,7 @@ import calendar
 import copy
 import csv
 import difflib
+import gzip
 import hashlib
 import hmac
 import html
@@ -1321,6 +1322,42 @@ def _vertex_try(model, data):
         print(f"[vertex] {model} {why} → AI Studio로 다시 보냄"
               f"{f' ({pause}초 쉼)' if pause else ''}: {detail}", flush=True)
         return None
+
+
+# ── 보내는 양 줄이기(2026-11-11 사용자 — Render 대역폭이 11일 만에 2.75GB/5GB) ──
+# 화면 파일이 app.js 하나만 1.2MB로 커졌는데 압축 없이, 열 때마다 통째로 보내고 있었다.
+# ① 글자 파일은 브라우저가 받는다고 하면(Accept-Encoding: gzip) 압축해 보낸다 — 4분의 1쯤 된다.
+# ② 정적 파일에 ETag를 달아, 브라우저가 가진 것과 같으면 본문 없이 304만 보낸다.
+#    .html·.js·.css는 여전히 열 때마다 서버에 '바뀌었나' 묻게 한다(no-cache) — 예전 no-store처럼
+#    옛 코드가 도는 일은 없고, 안 바뀌었으면 몇백 바이트로 끝난다.
+GZIP_SUFFIXES = (".html", ".js", ".css", ".svg", ".json", ".xml", ".txt", ".csv", ".webmanifest")
+GZIP_MIN_BYTES = 1400          # 이보다 작으면 압축해도 패킷 하나라 그대로 보낸다
+_STATIC_CACHE = {}             # 파일 경로 → (열쇠, 본문, ETag, 압축본 또는 None)
+_STATIC_CACHE_LOCK = threading.Lock()
+
+
+def _wants_gzip(handler):
+    return "gzip" in (handler.headers.get("Accept-Encoding") or "").lower()
+
+
+def _gzip_bytes(data, level=6):
+    return gzip.compress(data, compresslevel=level, mtime=0)
+
+
+def _etag_matches(handler, etag):
+    got = handler.headers.get("If-None-Match") or ""
+    if not got:
+        return False
+    if got.strip() == "*":
+        return True
+    bare = etag[2:] if etag.startswith("W/") else etag
+    for tag in got.split(","):
+        tag = tag.strip()
+        if tag.startswith("W/"):
+            tag = tag[2:]
+        if tag == bare:
+            return True
+    return False
 
 
 def _asset_version():
@@ -22067,9 +22104,15 @@ class Handler(BaseHTTPRequestHandler):
     def _send_json(self, obj, status=200, cookies=None, headers=None):
         self._last_status = status
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        gz = len(data) >= GZIP_MIN_BYTES and _wants_gzip(self)
+        if gz:
+            data = _gzip_bytes(data, 5)
         self.send_response(status)
         self.send_header("content-type", "application/json; charset=utf-8")
         self.send_header("content-length", str(len(data)))
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Vary", "Accept-Encoding")
         # API 응답은 어디에도 쌓아 두지 않는다.
         # 잔액·회원 목록·이용 내역은 초 단위로 바뀌는 값인데, 지금까지 캐시 지시자도
         # 검증자(ETag·Last-Modified)도 없이 내보내고 있었다. 그런 응답은 브라우저가
@@ -22717,25 +22760,55 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404, "Not found")
             return
         ctype = CONTENT_TYPES.get(target.suffix, "application/octet-stream")
-        body = target.read_bytes()
-        if target.name == "index.html":
-            # 클라이언트 ID는 비밀값이 아니라 화면(구글 로그인 버튼)에 그대로 넣어도 된다.
-            body = body.replace(b"%%GOOGLE_CLIENT_ID%%", GOOGLE_CLIENT_ID.encode("utf-8"))
-            body = body.replace(b"%%ASSET_V%%", _asset_version().encode("utf-8"))
+        try:
+            st = target.stat()
+        except OSError:
+            self.send_error(404, "Not found")
+            return
+        key = (st.st_mtime_ns, st.st_size, _asset_version() if target.name == "index.html" else "")
+        cached = _STATIC_CACHE.get(str(target))
+        if cached and cached[0] == key:
+            _, body, etag, gz_body = cached
+        else:
+            body = target.read_bytes()
+            if target.name == "index.html":
+                # 클라이언트 ID는 비밀값이 아니라 화면(구글 로그인 버튼)에 그대로 넣어도 된다.
+                body = body.replace(b"%%GOOGLE_CLIENT_ID%%", GOOGLE_CLIENT_ID.encode("utf-8"))
+                body = body.replace(b"%%ASSET_V%%", _asset_version().encode("utf-8"))
+            # 압축본과 원본을 같은 것으로 보게 약한(W/) ETag를 쓴다
+            etag = 'W/"' + hashlib.sha1(body).hexdigest()[:20] + '"'
+            gz_body = (_gzip_bytes(body) if target.suffix in GZIP_SUFFIXES and len(body) >= GZIP_MIN_BYTES
+                       else None)
+            with _STATIC_CACHE_LOCK:
+                _STATIC_CACHE[str(target)] = (key, body, etag, gz_body)
+        if target.suffix in (".html", ".js", ".css"):
+            cache_control = "no-cache"
+        else:
+            # 그림·아이콘·폰트는 좀처럼 바뀌지 않으니 하루 동안 재사용하게 둔다
+            cache_control = "public, max-age=86400"
+        if _etag_matches(self, etag):
+            # 브라우저가 가진 것과 같다 — 본문 없이 '그대로 쓰라'고만 답한다
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("cache-control", cache_control)
+            self.send_header("Vary", "Accept-Encoding")
+            self.end_headers()
+            return
+        use_gz = gz_body is not None and _wants_gzip(self)
+        if use_gz:
+            body = gz_body
         self.send_response(200)
         self.send_header("content-type", ctype)
         self.send_header("content-length", str(len(body)))
-        # 앱을 이루는 세 파일은 캐시하지 않는다.
-        # 여기에 아무 헤더도 안 붙이던 때는 브라우저가 제 나름의 기준으로 캐싱해서,
-        #   로컬에서 - app.js를 고치고 새로고침해도 옛 코드가 돌아 '고쳤는데 안 바뀐다'가 되고
-        #   배포에서 - 재배포 뒤 돌아온 사용자가 옛 JS로 새 API를 불러 엉뚱하게 실패했다.
-        # 파일이름에 판(version)을 붙이는 방식이 정석이지만 빌드 도구가 없는 구조라,
-        # 매번 받게 하는 쪽을 택한다(셋을 합쳐 200KB 남짓이라 감당할 수 있다).
-        if target.suffix in (".html", ".js", ".css"):
-            self.send_header("cache-control", "no-store, must-revalidate")
-        else:
-            # 그림·아이콘·폰트는 좀처럼 바뀌지 않으니 하루 동안 재사용하게 둔다
-            self.send_header("cache-control", "public, max-age=86400")
+        self.send_header("ETag", etag)
+        self.send_header("Vary", "Accept-Encoding")
+        if use_gz:
+            self.send_header("Content-Encoding", "gzip")
+        # 앱을 이루는 .html·.js·.css는 열 때마다 서버에 바뀌었는지 묻게 한다(no-cache + ETag).
+        # 헤더가 없던 때는 브라우저가 제 나름대로 캐싱해 재배포 뒤에도 옛 JS가 돌았고,
+        # 그래서 한동안 no-store(매번 통째로 받기)였다 — 셋을 합쳐 200KB 남짓이던 때 얘기다.
+        # 2026-11에는 app.js만 1.2MB라 대역폭이 한도를 넘게 돼, 바뀌었을 때만 받게 바꿨다.
+        self.send_header("cache-control", cache_control)
         self.end_headers()
         self.wfile.write(body)
 
