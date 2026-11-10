@@ -8988,7 +8988,7 @@ def call_gemini_mock_restore(file, api_key, nos=None, model=None, key=None, key_
 # 번호 범위로 나눠 동시에 부르는 까닭도 같다: 한 번에 다 시키면 연결이 끊긴다.
 PRICE_QUIZ_RESTORE_KRW = int(os.environ.get("PRICE_QUIZ_RESTORE_KRW", "10"))
 QUIZ_RESTORE_RANGE = 15
-QUIZ_RESTORE_MAX_NO = 90
+QUIZ_RESTORE_MAX_NO = 300   # 90이었는데 180문항 시험지도 만든다(2026-11-10) — 글자층에서 읽은 마지막 번호까지만 부른다
 QUIZ_RESTORE_PER_PAGE = 10   # 한 쪽에 실리는 문항 수의 넉넉한 어림 — 이 밖의 번호 범위는 부르지 않는다
 QUIZ_RESTORE_FORMATS = ("mc", "tf", "pick", "verb", "fill", "find", "gloss", "fix", "write", "short",
                         "compose", "convert", "answer")
@@ -9032,26 +9032,131 @@ format별 옮기는 법
 - 문항 하나의 정답을 정답 쪽에서 찾지 못하면 그 문항은 건너뜁니다(추측으로 정답을 적지 않습니다)."""
 
 
+_QR_ANSWER_HEAD_RE = re.compile(r"정답\s*및\s*해설|^정답$")
+_QR_NO_RE = re.compile(r"\d{1,3}\.?")
+# pdfminer가 2단 쪽을 읽으면 번호와 유형 이름표가 '1 주제'처럼 한 줄로 붙어 나온다
+_QR_NO_LINE_RE = re.compile(r"(\d{1,3})\.?(?:\s+(\S.{0,24}))?")
+QUIZ_RESTORE_SCAN_SECONDS = 45   # 글자층 훑기 시간 상한 — 넘으면 번호 범위로 읽는 예전 길로 간다
+QUIZ_RESTORE_SCAN_UNIQUE = 40    # 다시 1번으로 돌아가지 않고 이 번호까지 왔으면 번호가 이어지는 PDF로 보고 그만 읽는다
+
+
+def _quiz_restore_layout(data):
+    """문제 PDF의 글자층을 훑어 문항 번호가 어떻게 매겨졌는지 본다(AI 안 부름).
+
+    이 사이트의 옛 판(2026-09 무렵)은 지문마다 번호를 1번부터 다시 매겼다(지문 8개 × 14문항이면
+    1~14번이 여덟 벌). 번호 범위로 나눠 읽게 하면 1~15번 범위가 지문 1만 가져오고 16번부터는 없는
+    번호라 AI가 아무 지문에서 몇 문항을 골라 붙여, 112문항 중 26문항만 되살아났다(2026-11-10 사용자).
+    그래서 번호가 다시 1번으로 돌아가는 자리마다 지문 묶음을 나누고, 묶음마다 따로 읽게 한다.
+
+    돌려주는 값: {"groups": [{"label": 머리말, "max": 마지막 번호}, …]} — 묶음이 둘 이상일 때만,
+    아니면 {"max": 마지막 번호}(못 읽으면 0). 글자층이 없거나 못 읽으면 {}."""
+    if not PDF_READY:
+        return {}
+    try:
+        s = str(data or "")
+        raw = base64.b64decode(s.split(",", 1)[1] if s.startswith("data:") else s)
+    except Exception:
+        return {}
+    def parse(lines):
+        groups, cur = [], None
+        for i, ln in enumerate(lines):
+            m = _QR_NO_LINE_RE.fullmatch(ln)
+            if not m:
+                continue
+            rest = m.group(2) or ""
+            nxt = lines[i + 1] if i + 1 < len(lines) else ""
+            # 번호 뒤(같은 줄이나 다음 줄)에는 유형 이름표나 발문이 온다 — 보기 번호·숫자면 문항 번호가 아니다
+            after = rest or nxt
+            if not after or after[0] in "①②③④⑤" or after[0].isdigit():
+                continue
+            no = int(m.group(1))
+            if not 1 <= no <= QUIZ_RESTORE_MAX_NO:
+                continue
+            if cur is None or (no == 1 and cur["max"] >= 1):
+                label = lines[i - 1][:40] if i > 0 else ""
+                cur = {"label": "" if _QR_NO_LINE_RE.fullmatch(label) else label, "max": 0}
+                groups.append(cur)
+            cur["max"] = max(cur["max"], no)
+        return groups
+
+    # 쪽마다 읽다가 답지(정답 및 해설)가 나오면 멈춘다 — 답지에도 번호가 줄마다 찍히고, pdfminer는
+    # 쪽당 0.2초 넘게 걸린다(111쪽 27초). 번호가 한 번도 1로 돌아가지 않고 QUIZ_RESTORE_SCAN_UNIQUE번까지
+    # 왔으면 지금 판(번호가 이어짐)으로 보고 거기서 그만 읽는다 — 마지막 번호는 쪽 수로 어림한다.
+    # 시간 상한을 넘기면 끝까지 못 읽은 것이라 쓰지 않는다.
+    lines, started, done = [], time.time(), False
+    try:
+        for page in _pdf_extract_pages(io.BytesIO(raw), laparams=LAParams(), maxpages=QUIZ_RESTORE_MAX_NO):
+            for box in page:
+                if not isinstance(box, LTTextContainer):
+                    continue
+                for ln in box.get_text().splitlines():
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    if _QR_ANSWER_HEAD_RE.search(ln):
+                        done = True
+                        break
+                    lines.append(ln)
+                if done:
+                    break
+            if done:
+                break
+            g = parse(lines)
+            if len(g) == 1 and g[0]["max"] >= QUIZ_RESTORE_SCAN_UNIQUE:
+                return {}
+            if time.time() - started > QUIZ_RESTORE_SCAN_SECONDS:
+                return {}
+    except Exception:
+        return {}
+    groups = parse(lines)
+    if len(groups) >= 2:
+        return {"groups": groups}
+    return {"max": groups[0]["max"] if groups else 0}
+
+
 def call_gemini_quiz_restore(file, api_key, n_pages, model=None):
-    """문제 PDF → 문항 목록. 돌려주는 값: {"questions": [...], "failed": 실패한 범위 수}."""
+    """문제 PDF → 문항 목록. 돌려주는 값: {"questions": [...], "failed": 실패한 범위 수,
+    "sections": [{"name": 지문 머리말, "count": 문항 수}, …](지문마다 번호가 다시 시작한 PDF만)}."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
                            "관리자에게 문의하세요.")
     model = model if (model and _MODEL_RE.match(model)) else MODEL
     pdf = {"inlineData": {"mimeType": PDF_MIME, "data": file["data"]}}
-    limit = max(QUIZ_RESTORE_RANGE, n_pages * QUIZ_RESTORE_PER_PAGE)
-    ranges = [(lo, min(lo + QUIZ_RESTORE_RANGE - 1, QUIZ_RESTORE_MAX_NO))
-              for lo in range(1, QUIZ_RESTORE_MAX_NO + 1, QUIZ_RESTORE_RANGE) if lo <= limit]
+    layout = _quiz_restore_layout(file.get("data"))
+    groups = layout.get("groups") or []
+    # 할 일: (묶음 차례, 시작 번호, 끝 번호, 콕 집은 번호들 또는 None). 묶음이 없으면 묶음 차례는 0 하나다.
+    tasks = []
+    if groups:
+        for gi, g in enumerate(groups):
+            for lo in range(1, g["max"] + 1, QUIZ_RESTORE_RANGE):
+                tasks.append((gi, lo, min(lo + QUIZ_RESTORE_RANGE - 1, g["max"]), None))
+    else:
+        # 글자층에서 마지막 번호를 읽었으면 거기까지만, 못 읽었으면 쪽 수로 어림한다
+        limit = layout.get("max") or max(QUIZ_RESTORE_RANGE, n_pages * QUIZ_RESTORE_PER_PAGE)
+        tasks = [(0, lo, min(lo + QUIZ_RESTORE_RANGE - 1, QUIZ_RESTORE_MAX_NO), None)
+                 for lo in range(1, QUIZ_RESTORE_MAX_NO + 1, QUIZ_RESTORE_RANGE) if lo <= limit]
+    ranges = list(tasks)
     got, errors = {}, []
     labels = _vertex_get_labels()
 
-    def work(lo, hi):
+    def ask(gi, lo, hi, nos):
+        span = (", ".join(f"{n}번" for n in nos) + "만") if nos else f"{lo}번부터 {hi}번까지"
+        if not groups:
+            return f"맡을 번호: {span}. 이 범위의 문항만 되살려 적으세요."
+        g = groups[gi]
+        name = f"머리말 '{g['label']}', " if g["label"] else ""
+        return (f"이 PDF는 지문마다 문항 번호가 1번부터 다시 시작합니다(지문 묶음 {len(groups)}개). "
+                f"맡을 범위: 문제지의 {gi + 1}번째 지문 묶음({name}문항 1~{g['max']}번) 가운데 "
+                f"{span}. 정답 및 해설 쪽에서도 같은 {gi + 1}번째 지문 묶음의 정답·해설을 읽으세요 — "
+                f"다른 지문 묶음에도 같은 번호가 있으니 섞지 마세요. no는 그 묶음 안의 번호로 적습니다. "
+                f"맡은 번호는 빠짐없이 모두 적으세요.")
+
+    def work(gi, lo, hi, nos):
         _vertex_set_labels(labels)
         payload = {
             "systemInstruction": {"parts": [{"text": QUIZ_RESTORE_SYSTEM_PROMPT}]},
-            "contents": [{"role": "user", "parts": [
-                pdf, {"text": f"맡을 번호: {lo}번부터 {hi}번까지. 이 범위의 문항만 되살려 적으세요."}]}],
+            "contents": [{"role": "user", "parts": [pdf, {"text": ask(gi, lo, hi, nos)}]}],
             "generationConfig": {
                 "temperature": 0.15,   # 옮겨 적기 — 0으로 두면 재현 차단(RECITATION)이 늘어 조금 둔다
                 "maxOutputTokens": 32768,
@@ -9063,45 +9168,73 @@ def call_gemini_quiz_restore(file, api_key, n_pages, model=None):
             res = _gemini_json(payload, api_key, model, "문항이 너무 길어 옮기다가 잘렸습니다.",
                                salvage=True, label="quizrestore",
                                cache_system=len(ranges) >= 2, cache_prefix=1)   # 같은 PDF를 범위마다 보낸다
-            got[(lo, hi)] = res.get("questions") or []
+            got[(gi, lo, hi, nos)] = res.get("questions") or []
         except Exception as e:   # 한 범위 실패가 전체를 막지 않게
             errors.append(e)
 
-    threads = [threading.Thread(target=work, args=r, daemon=True) for r in ranges]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    def run(batch):
+        threads = [threading.Thread(target=work, args=r, daemon=True) for r in batch]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
     out, seen = [], set()
-    for rng in ranges:
-        for raw in got.get(rng) or []:
-            if not isinstance(raw, dict) or raw.get("format") not in QUIZ_RESTORE_FORMATS:
-                continue
-            try:
-                no = int(raw.get("no"))
-            except (TypeError, ValueError):
-                continue
-            if no in seen or not (rng[0] <= no <= rng[1]):
-                continue
-            # 모범답안을 answerText 대신 alts에만 적는 일이 있다 — 첫 것을 대표 답으로 올린다
-            if not str(raw.get("answerText") or "").strip() and raw.get("alts"):
-                alts = [a for a in raw["alts"] if str(a or "").strip()]
-                if alts:
-                    raw = dict(raw, answerText=alts[0], alts=alts[1:])
-            q = _qt_clean_question(raw)
-            if not q:
-                continue
-            seen.add(no)
-            q["no"] = no
-            out.append(q)
-    out.sort(key=lambda q: q["no"])
+
+    def collect(batch):
+        for rng in batch:
+            gi, lo, hi, nos = rng
+            for raw in got.get(rng) or []:
+                if not isinstance(raw, dict) or raw.get("format") not in QUIZ_RESTORE_FORMATS:
+                    continue
+                try:
+                    no = int(raw.get("no"))
+                except (TypeError, ValueError):
+                    continue
+                if (gi, no) in seen or not (lo <= no <= hi) or (nos and no not in nos):
+                    continue
+                # 모범답안을 answerText 대신 alts에만 적는 일이 있다 — 첫 것을 대표 답으로 올린다
+                if not str(raw.get("answerText") or "").strip() and raw.get("alts"):
+                    alts = [a for a in raw["alts"] if str(a or "").strip()]
+                    if alts:
+                        raw = dict(raw, answerText=alts[0], alts=alts[1:])
+                q = _qt_clean_question(raw)
+                if not q:
+                    continue
+                seen.add((gi, no))
+                q["no"] = no
+                out.append((gi, q))
+
+    run(ranges)
+    collect(ranges)
+    # AI가 가끔 맡은 번호 몇 개를 건너뛴다(지문 5의 9·11·13번 — 같은 요청을 다시 보내니 다 나왔다,
+    # 2026-11-10). 지문 묶음마다 마지막 번호를 알고 있으니 빠진 번호만 콕 집어 한 번 더 묻는다.
+    # 한 묶음이 통째로 비었으면 그 범위 호출이 실패한 것이라(errors) 다시 묻지 않는다.
+    if groups:
+        retry = []
+        for gi, g in enumerate(groups):
+            have = {n for x, n in seen if x == gi}
+            miss = tuple(n for n in range(1, g["max"] + 1) if n not in have)
+            if miss and have:
+                retry.append((gi, miss[0], miss[-1], miss))
+        if retry:
+            run(retry)
+            collect(retry)
+    out.sort(key=lambda p: (p[0], p[1]["no"]))
     if not out:
         e = errors[0] if errors else None
         if isinstance(e, (QuotaExceeded, ProUnavailable)):
             raise e
         raise RuntimeError(str(e) if e else "문항을 찾지 못했습니다. 이 사이트에서 만든 문제 PDF인지 확인해 주세요.")
-    return {"questions": out, "failed": len(errors)}
+    result = {"questions": [q for _gi, q in out], "failed": len(errors)}
+    if groups:
+        # 번호는 화면이 지문 묶음을 이어 1번부터 다시 매긴다. 묶음마다 머리말과 되살린 문항 수를 알려 준다
+        # (빠진 문항이 있으면 그 묶음의 마지막 번호보다 적다 — expected).
+        result["sections"] = [{"name": g["label"] or f"지문 {gi + 1}",
+                               "count": sum(1 for x, _q in out if x == gi), "expected": g["max"]}
+                              for gi, g in enumerate(groups)]
+        result["sections"] = [s for s in result["sections"] if s["count"]]
+    return result
 
 
 # 지문 하나로 인정하는 최소 길이. 이보다 짧은 것은 <보기> 상자나 각주를 지문으로 잘못

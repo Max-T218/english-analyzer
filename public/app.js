@@ -10095,10 +10095,28 @@ function setupQuizTab({ prefix, types, footer }) {
           (n) => { restoreBtn.textContent = `⏳ 연결이 끊겨 다시 받는 중… (${n})`; });
         const qs = res.questions || [];
         if (!qs.length) throw new Error("문항을 찾지 못했습니다. 이 사이트에서 만든 문제 PDF인지 확인해 주세요.");
-        renderQuizEntries([{ job: { name: "", named: false }, label: "", set: { questions: qs, variations: [] }, total: 1 }]);
+        /* 지문마다 번호를 1번부터 다시 매긴 옛 PDF는 서버가 지문 묶음(sections)별로 읽어 차례대로
+           돌려준다 — 묶음마다 지문 이름표를 단 항목으로 나눠 그리면 번호는 renderQuizEntries가 이어 매긴다. */
+        const secs = Array.isArray(res.sections) ? res.sections : [];
+        let entries;
+        if (secs.length > 1) {
+          let at = 0;
+          entries = secs.map((s) => {
+            const part = qs.slice(at, at + s.count);
+            at += s.count;
+            return { job: { name: s.name, named: true }, label: "", set: { questions: part, variations: [] }, total: secs.length };
+          });
+        } else {
+          entries = [{ job: { name: "", named: false }, label: "", set: { questions: qs, variations: [] }, total: 1 }];
+        }
+        renderQuizEntries(entries);
         setSheetTitle(f.name.replace(/\.pdf$/i, ""));
+        const short = secs.filter((s) => s.expected && s.count < s.expected);
         errorEl.textContent = res.failed
-          ? `⚠️ ${qs.length}문항을 불러왔지만 일부 구간은 읽지 못했습니다. 번호가 빠졌는지 확인해 주세요.` : "";
+          ? `⚠️ ${qs.length}문항을 불러왔지만 일부 구간은 읽지 못했습니다. 번호가 빠졌는지 확인해 주세요.`
+          : short.length
+            ? `⚠️ ${qs.length}문항을 불러왔지만 ${short.map((s) => `${s.name}(${s.count}/${s.expected})`).join(", ")}에서 빠진 문항이 있습니다.`
+            : "";
       } catch (err) {
         errorEl.textContent = err.message || "문제를 불러오지 못했습니다.";
       } finally {
