@@ -289,7 +289,7 @@ $("logoutBtn").addEventListener("click", async () => {
   showOnly(codeGateEl);
 });
 
-const FORMAT_LABEL = { mcq: "객관식", saq: "주관식" };
+const FORMAT_LABEL = { mcq: "객관식", saq: "주관식", mix: "객관식+주관식" };
 const DIRECTION_LABEL = { en2ko: "영어→뜻", ko2en: "뜻→영어" };
 
 async function loadTests() {
@@ -469,7 +469,8 @@ async function openTest(assignmentId) {
     if (data.kind === "quiz") { openQuiz(assignmentId, data); return; }
     $("takeTitle").textContent = data.round > 1 ? `${data.title} (${data.round}회차)` : data.title;
     $("takeHint").textContent =
-      data.format === "mcq" ? "보기 중 하나를 고르세요." : "직접 입력하세요.";
+      data.format === "mcq" ? "보기 중 하나를 고르세요."
+      : data.format === "mix" ? "보기가 있으면 고르고, 없으면 직접 입력하세요." : "직접 입력하세요.";
     currentFormat = data.format;
     currentQuestions = data.questions;
     currentAnswers = currentQuestions.map(() => "");
@@ -511,9 +512,9 @@ function renderQuestion() {
   $("takeForm").innerHTML = `
     <div class="st-q">
       <div class="st-q-prompt">${currentIndex + 1}. ${esc(q.prompt)}
-        ${currentFormat === "saq" ? `<span class="hint">(${q.direction === "en2ko" ? "뜻 쓰기" : "영어 쓰기"})</span>` : ""}
+        ${!isMcQ(q) ? `<span class="hint">(${q.direction === "en2ko" ? "뜻 쓰기" : "영어 쓰기"})</span>` : ""}
       </div>
-      ${currentFormat === "mcq"
+      ${isMcQ(q)
         ? `<div class="qt-opts">${(q.options || []).map((opt, k) => {
             const out = ((currentOut[currentIndex] || []).includes(opt)) && opt !== saved;
             return `<div class="qt-cell">
@@ -529,8 +530,11 @@ function renderQuestion() {
   nextBtn.textContent = currentIndex === total - 1 ? "제출하기" : "다음";
 }
 
+// 객관식 문항인지 — 혼합 시험(mix)은 문항마다 다르다. 서버가 객관식 문항에만 보기(options)를 싣는다
+function isMcQ(q) { return !!(q && Array.isArray(q.options)); }
+
 function readCurrentAnswer() {
-  if (currentFormat === "mcq") {
+  if (isMcQ(currentQuestions[currentIndex])) {
     const checked = $("takeForm").querySelector('input[name="qCurrent"]:checked');
     return checked ? checked.value : "";
   }
@@ -674,7 +678,7 @@ $("takeForm").addEventListener("input", (e) => {
 // 안 된다). 정답이 아닌 보기는 ✕로 지워 가며 풀고, 직접 [다음]을 누른다. 지운 표시는 답이 아니라
 // 풀이 도중 표시일 뿐이라 이 화면 안에서만 기억한다(currentOut).
 $("takeForm").addEventListener("click", (e) => {
-  if (currentFormat !== "mcq") return;
+  if (!isMcQ(currentQuestions[currentIndex])) return;
   const xb = e.target.closest(".st-x");
   if (xb) {
     const list = currentOut[currentIndex] || (currentOut[currentIndex] = []);

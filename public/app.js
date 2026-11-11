@@ -16,26 +16,6 @@ try {
   /* 사생활 보호 모드 등에서 접근이 막혀도 앱은 그대로 동작 */
 }
 
-// ── 학원 모드 (2026-11-08 사용자) ──
-// 같은 아이디라도 학원 링크(/academy?k=<학원 주소>)로 열면 학원 모드다 — 자료를 만들면 원장 포인트가 나가고,
-// 학원 공유 폴더와 학원 반을 함께 쓴다. 서버가 요청마다 알 수 있게 /api/ 요청에 X-Academy 머리를 싣는다
-// (다른 스크립트(grammar.js 등)도 fetch를 쓰므로 여기서 한 번 감싼다). 탭마다 따로라 개인 모드 창과 함께 열어도 된다.
-const ACADEMY_SLUG = location.pathname === "/academy"
-  ? (new URLSearchParams(location.search).get("k") || "").trim().toLowerCase() : "";
-if (ACADEMY_SLUG) {
-  const rawFetch = window.fetch.bind(window);
-  window.fetch = (input, init) => {
-    const url = typeof input === "string" ? input : (input && input.url) || "";
-    const local = url.startsWith("/api/") || url.startsWith(location.origin + "/api/");
-    if (!local) return rawFetch(input, init);
-    const opts = Object.assign({}, init || {});
-    const headers = new Headers(opts.headers || (typeof input !== "string" && input.headers) || {});
-    headers.set("X-Academy", ACADEMY_SLUG);
-    opts.headers = headers;
-    return rawFetch(input, opts);
-  };
-}
-
 const $ = (id) => document.getElementById(id);
 const passageListEl = $("passageList");
 const addPassageBtn = $("addPassageBtn");
@@ -715,7 +695,6 @@ function closeAllModals() {
   closeModal(signupModalEl);
   closeModal(rechargeModalEl);
   closeModal(assignModalEl);
-  ["academyOverlay", "academyMoveOverlay"].forEach((id) => { if ($(id)) closeModal($(id)); });
 }
 function showSignupStep(step) {
   signupPanelEl.hidden = step !== "form";
@@ -1058,9 +1037,6 @@ let isExamApproved = false;
 
 function renderAccount(info) {
   isLoggedIn = !!(info && info.loggedIn);
-  // 계정 정보 전체가 온 때(로그인·/api/me — 'email' 칸이 있다)만 학원 칸을 다시 그린다.
-  // 충전 뒤처럼 잔액만 다시 그리는 호출에는 이 칸들이 없다.
-  if (info && (!isLoggedIn || "email" in info)) syncAcademyBar(isLoggedIn ? info : null);
   if (!isLoggedIn) {
     currentKrw = null;
     currentKrwFree = currentKrwPaid = null;
@@ -1093,13 +1069,9 @@ function renderAccount(info) {
   else hideExamTab();
   updateVocabAssignBtnVisibility();
   syncQuizAssignBtns();
-  // 학원 모드 — 잔액은 원장 포인트(내 이번 달 한도까지)다
-  const ac = currentAcademy;
-  const krwText = currentKrw === null ? "" : ac
-    ? ` · 원장 포인트 ${pt(currentKrw)} 사용 가능${ac.limitLeft !== null && ac.limitLeft !== undefined ? ` (이번 달 내 한도 ${pt(ac.limitLeft)} 남음)` : ""}`
-    : ` · 잔액 ${pt(currentKrw)}`;
+  const krwText = currentKrw === null ? "" : ` · 잔액 ${pt(currentKrw)}`;
   // 기간이 있는 가입 축하 포인트가 남아 있으면 가장 이른 소멸일을 잔액 옆에 함께 적는다
-  const exp = (ac ? [] : Array.isArray(info.freeExpiring) ? info.freeExpiring : []).filter((x) => Number(x.amount) > 0);
+  const exp = (Array.isArray(info.freeExpiring) ? info.freeExpiring : []).filter((x) => Number(x.amount) > 0);
   const expText = exp.length
     ? ` (가입 축하 ${pt(exp.reduce((a, x) => a + Number(x.amount), 0))} ${kstMonthDay(exp[0].expiresAt)}까지)`
     : "";
@@ -1113,266 +1085,6 @@ function renderAccount(info) {
     showUpdatePanel(info.updates);
   }
 }
-
-/* ══════ 학원 (server.py '학원') ══════
-   개인 모드: 계정 줄에 들어가 있는 학원 링크([🏫 ○○학원 열기])와 학원 초대([수락]/[거절]).
-   학원 모드: 위에 학원 띠(원장 포인트·한도), [🏫 학원 관리](학원 관리자·원장), [↩ 개인 모드로].
-   학원 모드에서는 탈퇴 단추를 감추고, 충전은 원장만(원장 계정 잔액이 곧 원장 포인트다). */
-let currentAcademy = null;   // 학원 모드의 학원 정보(/api/me의 academy) — 개인 모드면 null
-let academyInvites = [];
-function syncAcademyBar(info) {
-  currentAcademy = ACADEMY_SLUG && info && info.academy ? info.academy : null;
-  if (ACADEMY_SLUG && info && info.academyDenied) {
-    alert("이 학원 링크는 지금 계정으로 열 수 없습니다(이 학원의 선생님이 아닙니다). 개인 모드로 엽니다.");
-    location.href = "/";
-    return;
-  }
-  const a = currentAcademy;
-  academyInvites = !a && info && Array.isArray(info.invites) ? info.invites : [];
-  const links = !a && info && Array.isArray(info.academies) ? info.academies : [];
-  const wrap = $("academyLinks");
-  wrap.hidden = !(links.length || academyInvites.length);
-  wrap.innerHTML = academyInvites.map((x) =>
-    `<span class="ac-invite">📩 <b>${esc(x.academy)}</b> ${esc(x.roleLabel)}${x.manager ? "·관리자" : ""} 초대
-      <button type="button" class="btn small ac-inv-ans" data-id="${esc(x.id)}" data-ok="1">수락</button>
-      <button type="button" class="btn ghost small ac-inv-ans" data-id="${esc(x.id)}">거절</button></span>`).join(" ")
-    + links.map((x) => `<a class="btn ghost small" href="/academy?k=${encodeURIComponent(x.slug)}"
-        title="학원 모드로 엽니다 — 원장 포인트로 만들고 학원 공유 폴더·학원 반을 씁니다">🏫 ${esc(x.name)} 열기</a>`).join(" ");
-  $("academyBanner").hidden = !a;
-  if (a) {
-    $("academyBannerText").textContent = `🏫 ${a.name} 학원 모드 · ${a.roleLabel}${a.manager ? "·학원 관리자" : ""} — `
-      + "자료를 만들면 원장 포인트가 쓰이고, 학원 공유 폴더와 학원 반을 함께 씁니다.";
-    document.title = `${a.name} · English Lab`;
-  }
-  $("academyManageBtn").hidden = !(a && (a.manager || a.isDirector));
-  $("academyPersonalBtn").hidden = !ACADEMY_SLUG;
-  $("deleteAccountBtn").hidden = !!a;
-  $("openRechargeBtn").hidden = !!a && !a.isDirector;
-  $("academyMoveBtn").hidden = !a;
-  $("academyReturnBtn").hidden = !a;
-  $("academySharedBtn").hidden = !a;
-}
-$("academySharedBtn").addEventListener("click", () => openSavedList("shared"));
-$("academyLinks").addEventListener("click", async (e) => {
-  const b = e.target.closest(".ac-inv-ans");
-  if (!b) return;
-  const inv = academyInvites.find((x) => x.id === b.dataset.id);
-  const accept = !!b.dataset.ok;
-  if (accept && !confirm(`${inv ? inv.academy : "학원"} 초대를 수락합니다.\n\n수락하면 [🏫 ${inv ? inv.academy : "학원"} 열기]로 학원 모드에 들어갈 수 있습니다. 학원 모드에서 자료를 만들면 원장 포인트가 쓰이고, 학원 공유 폴더·학원 반을 함께 씁니다. 내 저장함은 어느 모드에서나 그대로 보입니다.`)) return;
-  if (!accept && !confirm("이 초대를 거절할까요?")) return;
-  try {
-    renderAccount(await postJson("/api/academy/invite/answer", { inviteId: b.dataset.id, accept }, "처리하지 못했습니다."));
-  } catch (err) {
-    alert(err.message || "처리하지 못했습니다.");
-  }
-});
-$("academyPersonalBtn").addEventListener("click", () => {
-  if (confirm("개인 모드로 엽니다(내 포인트로 만듭니다). 화면에 있는 저장하지 않은 결과물은 사라집니다. 계속할까요?")) location.href = "/";
-});
-
-const academyEl = $("academyOverlay");
-let academyData = null;
-async function loadAcademy() {
-  $("academyError").textContent = "";
-  $("academyBody").innerHTML = `<tr><td colspan="7">불러오는 중…</td></tr>`;
-  try {
-    academyData = await getJson("/api/academy/overview", "학원 정보를 불러오지 못했습니다.");
-  } catch (err) {
-    $("academyBody").innerHTML = "";
-    $("academyError").textContent = err.message || "학원 정보를 불러오지 못했습니다.";
-    return;
-  }
-  const d = academyData;
-  $("academyTitle").textContent = `🏫 ${d.name} 관리`;
-  $("academyLink").value = `${location.origin}/academy?k=${d.slug}`;
-  $("academyMonthTh").textContent = `${String(d.month).slice(5).replace(/^0/, "")}월 사용`;
-  $("academyInviteForm").hidden = !d.isManager;
-  $("academyLimitNote").textContent = d.isDirector
-    ? "월 한도 칸에 숫자를 적으면 그 선생님이 이번 달 원장 포인트를 그만큼까지만 씁니다(비우면 한도 없음). 원장 본인은 한도가 없습니다."
-    : "월 한도는 원장만 정할 수 있습니다.";
-  $("academyBody").innerHTML = d.members.map((m) => {
-    const isDir = m.role === "director";
-    return `<tr data-uid="${esc(m.userId)}">
-      <td>${esc(m.name)}${m.userId === d.me ? ` <span class="ac-me">(나)</span>` : ""}<div class="ac-me">${esc(m.email)}</div></td>
-      <td><select class="ac-role"${d.isManager && !isDir ? "" : " disabled"}>
-        <option value="teacher"${!isDir ? " selected" : ""}>강사</option>
-        <option value="director"${isDir ? " selected" : ""}>원장</option></select></td>
-      <td><input type="checkbox" class="ac-mgr"${m.manager ? " checked" : ""}${d.isManager ? "" : " disabled"}></td>
-      <td class="ac-num">${pt(m.used || 0)}</td>
-      <td>${isDir ? `<span class="ac-me">한도 없음</span>`
-        : `<input type="number" class="ac-limit" min="0" step="1000" placeholder="없음" value="${m.limit === null || m.limit === undefined ? "" : esc(m.limit)}"${d.isDirector ? "" : " disabled"}>`}</td>
-      <td>${(d.isManager && !isDir && m.userId !== d.me) ? `<button type="button" class="btn ghost small danger ac-del">내보내기</button>` : ""}
-          ${(m.userId === d.me && !isDir) ? `<button type="button" class="btn ghost small ac-leave">학원에서 나가기</button>` : ""}</td>
-    </tr>`;
-  }).join("");
-  $("academyInviteList").innerHTML = d.invites.length
-    ? `<div class="hint" style="margin:4px 0 2px;"><b>답을 기다리는 초대</b></div>` + d.invites.map((x) =>
-      `<div class="ac-inv-row" data-id="${esc(x.id)}">📧 ${esc(x.email)} · ${esc(x.roleLabel)}${x.manager ? "·관리자" : ""}
-        ${x.expired ? `<span class="ac-me">(기간 지남)</span>` : ""}
-        ${d.isManager ? `<button type="button" class="btn ghost small ac-inv-cancel">초대 취소</button>` : ""}</div>`).join("")
-    : "";
-}
-async function academyUpdate(body) {
-  try {
-    await postJson("/api/academy/member/update", body, "바꾸지 못했습니다.");
-  } catch (err) {
-    alert(err.message || "바꾸지 못했습니다.");
-  }
-  await loadAcademy();
-  refreshTokenDisplay();   // 내 역할·한도가 바뀌었을 수 있다
-}
-$("academyManageBtn").addEventListener("click", () => { openModal(academyEl); loadAcademy(); });
-$("academyClose").addEventListener("click", () => closeModal(academyEl));
-$("academyCopyLink").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText($("academyLink").value); alert("학원 링크를 복사했습니다. 학원 선생님들께 알려 주세요."); }
-  catch (_) { $("academyLink").select(); }
-});
-$("academyBody").addEventListener("change", (e) => {
-  const tr = e.target.closest("tr[data-uid]");
-  if (!tr || !academyData) return;
-  const m = academyData.members.find((x) => x.userId === tr.dataset.uid);
-  if (!m) return;
-  if (e.target.classList.contains("ac-role")) {
-    if (e.target.value === "director" && !confirm(`${m.name}님을 원장으로 정합니다.\n\n원장은 한 명이라 지금 원장은 강사가 되고, 앞으로 학원 모드의 자료 값은 ${m.name}님의 포인트에서 나갑니다. 계속할까요?`)) {
-      e.target.value = m.role; return;
-    }
-    academyUpdate({ userId: m.userId, role: e.target.value });
-  } else if (e.target.classList.contains("ac-mgr")) {
-    if (!e.target.checked && m.userId === academyData.me && !confirm("내 학원 관리자 권한을 끕니다. 그러면 선생님 초대·역할 바꾸기를 더는 못 합니다. 계속할까요?")) {
-      e.target.checked = true; return;
-    }
-    academyUpdate({ userId: m.userId, manager: e.target.checked });
-  } else if (e.target.classList.contains("ac-limit")) {
-    const v = e.target.value.trim();
-    academyUpdate({ userId: m.userId, limit: v === "" ? null : Number(v) });
-  }
-});
-$("academyBody").addEventListener("click", async (e) => {
-  const tr = e.target.closest("tr[data-uid]");
-  if (!tr || !academyData) return;
-  const m = academyData.members.find((x) => x.userId === tr.dataset.uid);
-  const leave = e.target.closest(".ac-leave");
-  if (!e.target.closest(".ac-del") && !leave) return;
-  if (!confirm(leave ? "이 학원에서 나갑니다. 내 개인 자료는 그대로이고, 공유 폴더에 넣은 내 자료는 학원에 그대로 공유됩니다. 계속할까요?"
-    : `${m.name}님을 학원에서 내보냅니다.\n\n그분의 개인 자료는 그대로이고, 학원 반·공유 폴더의 자료는 학원에 남습니다. 계속할까요?`)) return;
-  try {
-    await postJson("/api/academy/member/remove", { userId: m.userId }, "처리하지 못했습니다.");
-  } catch (err) {
-    alert(err.message || "처리하지 못했습니다.");
-    return;
-  }
-  if (leave) { location.href = "/"; return; }
-  loadAcademy();
-});
-$("academyInviteForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const body = { email: $("acInvEmail").value.trim(), role: $("acInvRole").value, manager: $("acInvManager").checked };
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) { alert("초대할 선생님의 가입 이메일을 정확히 입력하세요."); return; }
-  if (body.role === "director" && !confirm("원장으로 초대합니다. 수락하면 지금 원장은 강사가 되고 원장 포인트가 그분 것으로 바뀝니다. 계속할까요?")) return;
-  try {
-    await postJson("/api/academy/invite", body, "초대하지 못했습니다.");
-    $("acInvEmail").value = "";
-    $("acInvManager").checked = false;
-    $("acInvRole").value = "teacher";
-    alert(`${body.email}로 초대했습니다.\n그 이메일로 가입한 선생님이 로그인하면 초대가 보입니다(아직 가입하지 않았다면 가입한 뒤에 보입니다).`);
-  } catch (err) {
-    alert(err.message || "초대하지 못했습니다.");
-  }
-  loadAcademy();
-});
-$("academyInviteList").addEventListener("click", async (e) => {
-  const b = e.target.closest(".ac-inv-cancel");
-  if (!b || !confirm("이 초대를 취소할까요?")) return;
-  try {
-    await postJson("/api/academy/invite/cancel", { inviteId: b.closest(".ac-inv-row").dataset.id }, "취소하지 못했습니다.");
-  } catch (err) {
-    alert(err.message || "취소하지 못했습니다.");
-  }
-  loadAcademy();
-});
-
-/* 개인 반 → 학원 반 옮기기(학생 관리 탭의 [📥 개인 반 가져오기], 학원 모드에서만) */
-const academyMoveEl = $("academyMoveOverlay");
-$("academyMoveBtn").addEventListener("click", async () => {
-  openModal(academyMoveEl);
-  $("academyMoveList").innerHTML = `<p class="hint">불러오는 중…</p>`;
-  try {
-    const { classes } = await getJson("/api/academy/personal-classes", "반 목록을 불러오지 못했습니다.");
-    $("academyMoveList").innerHTML = classes.length ? classes.map((c) =>
-      `<div class="ac-inv-row" data-id="${esc(c.id)}"><b>${esc(c.name)}</b> <span class="ac-me">학생 ${c.students}명</span>
-        <button type="button" class="btn small ac-move">학원으로 옮기기</button></div>`).join("")
-      : `<p class="hint">옮길 개인 반이 없습니다(내가 만든 반만 옮길 수 있습니다).</p>`;
-  } catch (err) {
-    $("academyMoveList").innerHTML = `<p class="error">${esc(err.message || "반 목록을 불러오지 못했습니다.")}</p>`;
-  }
-});
-$("academyMoveClose").addEventListener("click", () => closeModal(academyMoveEl));
-$("academyMoveList").addEventListener("click", async (e) => {
-  const b = e.target.closest(".ac-move");
-  if (!b) return;
-  const row = b.closest("[data-id]");
-  const name = row.querySelector("b").textContent;
-  if (!confirm(`'${name}' 반을 ${currentAcademy ? currentAcademy.name : "학원"}으로 옮깁니다.\n\n학생·시험·성적이 함께 옮겨져 학원 선생님 모두가 함께 봅니다. 학생 아이디·비밀번호는 그대로입니다.\n개인 모드에서는 더는 보이지 않습니다([↩ 개인 반으로 돌려보내기]로 되돌릴 수 있습니다). 계속할까요?`)) return;
-  b.disabled = true;
-  try {
-    const r = await postJson("/api/academy/move-class", { classId: row.dataset.id }, "옮기지 못했습니다.");
-    row.innerHTML = `<b>${esc(name)}</b> <span class="ac-me">옮겼습니다 — 학생 ${r.students}명 · 시험 ${r.tests}개</span>`;
-    if (typeof window.reloadStudentsTab === "function") window.reloadStudentsTab();
-  } catch (err) {
-    alert(err.message || "옮기지 못했습니다.");
-    b.disabled = false;
-  }
-});
-
-/* 학원 반 → 개인 반 돌려보내기(학생 관리 탭의 [↩ 개인 반으로 돌려보내기], 학원 모드에서만).
-   학원 관리자·원장은 모든 학원 반을 받을 선생님을 골라 돌려보내고, 강사는 자기가 가져온 반만 자기에게 돌려받는다. */
-const academyReturnEl = $("academyReturnOverlay");
-async function loadAcademyReturn() {
-  const box = $("academyReturnList");
-  box.innerHTML = `<p class="hint">불러오는 중…</p>`;
-  try {
-    const { classes, members, canPick } = await getJson("/api/academy/academy-classes", "반 목록을 불러오지 못했습니다.");
-    if (!classes.length) {
-      box.innerHTML = `<p class="hint">${canPick ? "돌려보낼 학원 반이 없습니다." : "돌려받을 반이 없습니다(내가 개인 반에서 가져온 반만 돌려받을 수 있습니다)."}</p>`;
-      return;
-    }
-    box.innerHTML = classes.map((c) => {
-      const from = c.movedFrom ? `${esc(c.movedFromName || "탈퇴한 선생님")} 선생님이 가져온 반` : "학원에서 만든 반";
-      const pick = canPick
-        ? `<select class="ac-ret-to">${(c.target ? "" : `<option value="">받을 선생님 고르기</option>`)
-            + members.map((m) => `<option value="${esc(m.id)}"${m.id === c.target ? " selected" : ""}>${esc(m.name)} (${esc(m.roleLabel)})</option>`).join("")
-            + (c.movedFrom && !members.some((m) => m.id === c.movedFrom) && c.movedFromName
-              ? `<option value="${esc(c.movedFrom)}"${c.movedFrom === c.target ? " selected" : ""}>${esc(c.movedFromName)} (학원을 나감)</option>` : "")}</select>`
-        : `<span class="ac-me">나에게 돌려받기</span>`;
-      return `<div class="ac-inv-row" data-id="${esc(c.id)}"><b>${esc(c.name)}</b>
-        <span class="ac-me">학생 ${c.students}명 · ${from}</span> ${pick}
-        <button type="button" class="btn small ac-return">돌려보내기</button></div>`;
-    }).join("");
-  } catch (err) {
-    box.innerHTML = `<p class="error">${esc(err.message || "반 목록을 불러오지 못했습니다.")}</p>`;
-  }
-}
-$("academyReturnBtn").addEventListener("click", () => { openModal(academyReturnEl); loadAcademyReturn(); });
-$("academyReturnClose").addEventListener("click", () => closeModal(academyReturnEl));
-$("academyReturnList").addEventListener("click", async (e) => {
-  const b = e.target.closest(".ac-return");
-  if (!b) return;
-  const row = b.closest("[data-id]");
-  const name = row.querySelector("b").textContent;
-  const sel = row.querySelector(".ac-ret-to");
-  if (sel && !sel.value) { alert("받을 선생님을 골라 주세요."); return; }
-  const toName = sel ? sel.options[sel.selectedIndex].textContent.replace(/\s*\(.*\)$/, "") : "나";
-  if (!confirm(`'${name}' 반을 ${toName}${sel ? " 선생님" : ""}의 개인 반으로 돌려보냅니다.\n\n학생·시험·성적이 함께 가고 학생 아이디·비밀번호는 그대로입니다. 학원 모드에서는 더는 보이지 않습니다. 계속할까요?`)) return;
-  b.disabled = true;
-  try {
-    const r = await postJson("/api/academy/return-class", { classId: row.dataset.id, toUserId: sel ? sel.value : "" }, "돌려보내지 못했습니다.");
-    row.innerHTML = `<b>${esc(name)}</b> <span class="ac-me">${esc(r.to)} 선생님에게 돌려보냈습니다 — 학생 ${r.students}명 · 시험 ${r.tests}개</span>`;
-    if (typeof window.reloadStudentsTab === "function") window.reloadStudentsTab();
-  } catch (err) {
-    alert(err.message || "돌려보내지 못했습니다.");
-    b.disabled = false;
-  }
-});
 
 /* ── 업데이트 소식 ──
    로그인(또는 세션이 살아 있어 자동으로 들어오는 새로고침)마다 서버가 "이 계정이
@@ -14088,9 +13800,7 @@ function openSaveDialog(tab) {
   saveDialogLeadEl.textContent = customLead || (tab === PASSAGE_TAB
     ? `지금 ${passageSaveFrom ? passageSaveFrom.label : "입력칸"}에 있는 지문만 저장합니다. ` +
       "나중에 \"📄 지문 저장함\"에서 그대로 되불러올 수 있습니다."
-    : "지문과 만든 결과를 함께 저장합니다. 나중에 \"📦 제작 자료 저장함\"에서 이 제목으로 다시 찾을 수 있습니다.")
-    // 학원 모드에서 새로 저장하면 서버가 학원 공유 폴더에 바로 넣는다(save_item)
-    + (currentAcademy ? ` 학원 모드라 새로 저장하면 \"🏫 학원 공유 자료\"에 바로 들어가 학원 선생님 모두가 봅니다(덮어쓰기는 원래 공유 상태 그대로).` : "");
+    : "지문과 만든 결과를 함께 저장합니다. 나중에 \"📦 제작 자료 저장함\"에서 이 제목으로 다시 찾을 수 있습니다.");
   // 지문 분석에 요약 이미지가 붙어 있으면, 그림도 함께 저장된다는 것을 알린다(용량을 차지한다).
   const warnEl = $("saveDialogWarn");
   if (warnEl) warnEl.hidden = !(tab === "analyze" && docHasInfographic());
@@ -14277,38 +13987,22 @@ function savedItemRowHtml(item) {
   const label = TAB_LABELS[item.tab] || item.tab;
   const date = savedDateText(item.updated_at) + (typeof item.n === "number" ? ` · 지문 ${item.n}개` : "");
   // 지문 저장함에서만 체크박스를 둔다 — 체크한 차례가 번호로 보이고, 그 차례대로 입력칸에 들어간다
-  const at = openLibrary === "passage" && !savedShareMode ? savedPick.indexOf(item.id) : -2;
-  let pick = at === -2 ? "" :
+  const at = openLibrary === "passage" ? savedPick.indexOf(item.id) : -2;
+  const pick = at === -2 ? "" :
     `<label class="saved-pick" title="체크한 차례대로 입력칸에 들어갑니다."><input type="checkbox" class="saved-pick-cb"${at >= 0 ? " checked" : ""}><span class="saved-pick-no">${at >= 0 ? at + 1 : ""}</span></label>`;
-  // 여러 개 공유 — 아직 어디에도 공유하지 않은 내 자료에만 체크박스를 둔다
-  if (savedShareMode) {
-    pick = !item.shared && !item.sharedElsewhere
-      ? `<label class="saved-pick" title="학원 공유 폴더에 넣을 자료를 고릅니다."><input type="checkbox" class="saved-share-cb"${savedSharePick.has(item.id) ? " checked" : ""}></label>`
-      : `<span class="saved-pick" aria-hidden="true"></span>`;
-  }
-  // 학원 공유 폴더(학원 모드) — 남이 넣은 것은 고쳐 저장할 수 있지만 지우기는 만든 사람과 원장만(서버가 다시 본다)
-  const ac = currentAcademy;
-  const mine = !item.shared || item.mine;
-  const shareTag = item.shared ? `<span class="saved-share-tag" title="학원 공유 폴더 — 학원 선생님 모두가 보고 고칩니다">🏫 공유${item.mine ? "" : ` · ${esc(item.by || "다른 선생님")}`}</span>`
-    : item.sharedElsewhere ? `<span class="saved-share-tag" title="어느 학원의 공유 폴더에 들어가 있는 내 자료">🏫 공유 중</span>` : "";
-  const shareBtn = !ac ? "" : item.shared
-    ? ((item.mine || ac.isDirector) ? `<button type="button" class="btn ghost small saved-list-share" data-share="0" title="학원 공유 폴더에서 뺍니다(자료는 만든 사람에게 그대로).">공유 빼기</button>` : "")
-    : (!item.sharedElsewhere ? `<button type="button" class="btn ghost small saved-list-share" data-share="1" title="학원 공유 폴더에 원본을 넣습니다 — 학원 선생님 모두가 보고 고쳐 저장할 수 있습니다.">🏫 공유</button>` : "");
-  const canDelete = mine || (ac && ac.isDirector);
   return `
     <div class="saved-list-item" data-id="${esc(item.id)}">
       ${pick}<span class="saved-list-tag">${esc(label)}</span>
       <div class="saved-list-info">
-        <div class="saved-list-title" title="${esc(item.title || "제목 없음")}">${shareTag}${esc(item.title || "제목 없음")}</div>
+        <div class="saved-list-title" title="${esc(item.title || "제목 없음")}">${esc(item.title || "제목 없음")}</div>
         <div class="saved-list-date">${esc(date)}</div>
       </div>
       <div class="saved-list-actions">
         <button type="button" class="btn ghost small saved-list-load"
                 title="이 저장본을 입력칸으로 가져옵니다.">불러오기</button>
         <button type="button" class="btn ghost small saved-list-rename" title="이 저장본의 이름을 바꿉니다.">✏️ 이름</button>
-        ${item.tab === "vocab" && mine ? `<button type="button" class="btn ghost small saved-list-folder" title="이 단어장을 다른 폴더로 옮기거나 폴더에서 뺍니다.">📁 폴더</button>` : ""}
-        ${shareBtn}
-        ${canDelete ? `<button type="button" class="btn ghost small danger saved-list-delete">삭제</button>` : ""}
+        ${item.tab === "vocab" ? `<button type="button" class="btn ghost small saved-list-folder" title="이 단어장을 다른 폴더로 옮기거나 폴더에서 뺍니다.">📁 폴더</button>` : ""}
+        <button type="button" class="btn ghost small danger saved-list-delete">삭제</button>
       </div>
     </div>`;
 }
@@ -14372,16 +14066,6 @@ const LIBRARY = {
     empty: "아직 저장한 제작 자료가 없습니다. 자료를 만든 뒤 각 탭의 “💾 사이트 저장”을 눌러 보세요.",
     match: (item) => item.tab !== PASSAGE_TAB,
   },
-  /* 학원 모드 사이드바의 [🏫 학원 공유 자료] — 지문·제작 자료 가리지 않고 학원 공유 폴더에 든 것만.
-     저장본은 그대로 saved_items 한 곳이고(shared_academy 표시) 보는 창만 하나 더 둔 것이다 */
-  shared: {
-    title: () => `🏫 ${currentAcademy ? `${currentAcademy.name} ` : ""}학원 공유 자료`,
-    lead: "학원 선생님들이 공유 폴더에 넣은 자료입니다. [불러오기]로 열어 쓰고, 고친 뒤 [💾 사이트 저장]에서 덮어쓰면 원본이 바뀌어 " +
-          "학원 선생님 모두에게 그대로 보입니다. 지우기는 만든 선생님과 원장만 됩니다. " +
-          "내 자료를 여기에 넣으려면 지문 저장함·제작 자료 저장함에서 그 자료 옆의 [🏫 공유]를 누르세요.",
-    empty: "아직 공유된 자료가 없습니다. 지문 저장함이나 제작 자료 저장함에서 자료 옆의 [🏫 공유]를 누르면 여기에 나옵니다.",
-    match: (item) => !!item.shared,
-  },
 };
 
 // 목록은 열 때마다 통째로 받아 두고, 어느 저장함인지는 화면에서만 걸러 낸다
@@ -14414,9 +14098,7 @@ function savedKindRank(tab) {
   return i < 0 ? SAVED_KIND_ORDER.length : i;
 }
 
-let savedSharedOnly = false;   // 학원 모드 — [🏫 공유 폴더]만 보기
 function savedItemMatches(item) {
-  if (savedSharedOnly && !item.shared) return false;
   if (savedKindFilter && item.tab !== savedKindFilter) return false;
   if (!savedSearchText) return true;
   // 종류 이름까지 검색 대상에 넣는다 — "단어장"을 쳤을 때 아무것도 안 나오면
@@ -14428,31 +14110,9 @@ function savedItemMatches(item) {
 /* 선택 바 — 체크한 개수·지문 합계·입력칸 상한을 보여 주고 [불러오기]를 켠다.
    상한은 공용 지문칸 40개, 시험지 탭의 시험 범위 칸은 100개다. 넘으면 빨갛게 알린다(넘어도 막지는 않는다 —
    뒤쪽이 잘린다는 안내가 불러온 뒤에 따로 나온다). */
-/* 학원 모드 — 여러 자료를 체크해 한꺼번에 학원 공유 폴더에 넣는다(2026-11-09 사용자). 서버는 한 건씩인
-   /api/saved/share 그대로이고 화면이 4건씩 나눠 부른다. 지문 저장함의 '불러오기 체크'와 겹치지 않게
-   [☑ 여러 개 공유]를 켠 동안에는 그 체크를 감춘다. */
-let savedShareMode = false;
-const savedSharePick = new Set();
-function updateShareBar() {
-  $("savedShareBar").hidden = !savedShareMode;
-  if (!savedShareMode) return;
-  const n = savedSharePick.size;
-  $("savedShareInfo").textContent = n
-    ? `${n}개 선택 — 원본 그대로 공유되어 학원 선생님 누구나 보고 고쳐 저장할 수 있습니다(지우기는 나와 원장만).`
-    : "공유할 자료 앞의 체크박스를 누르세요. 이미 공유한 자료에는 체크박스가 없습니다.";
-  $("savedShareGo").disabled = !n;
-  $("savedShareGo").textContent = n ? `선택한 ${n}개 공유` : "선택한 자료 공유";
-}
-function setSavedShareMode(on) {
-  savedShareMode = !!on;
-  savedSharePick.clear();
-  renderSavedList();
-}
-
 function updatePickBar() {
-  updateShareBar();
   const bar = $("savedPickBar");
-  const on = openLibrary === "passage" && !savedShareMode;
+  const on = openLibrary === "passage";
   bar.hidden = !on;
   if (!on) return;
   const picked = savedPick.map((id) => savedItemsCache.find((it) => it.id === id)).filter(Boolean);
@@ -14533,16 +14193,10 @@ function renderSavedList() {
   if (savedKindFilter && !counts.has(savedKindFilter)) savedKindFilter = "";
 
   const multi = kinds.length > 1;
-  const nShared = all.filter((it) => it.shared).length;
-  // 공유 자료 창은 이미 공유된 것만이라 [🏫 학원 공유 폴더] 거르개가 필요 없다
-  const sharedChip = !!currentAcademy && openLibrary !== "shared";
-  if (!sharedChip) { savedSharedOnly = false; savedShareMode = false; }
-  savedKindsEl.hidden = !multi && !sharedChip;
-  savedListToolsEl.hidden = all.length < 2 && !sharedChip;   // 한 개뿐이면 찾을 것도 없다
-  if (multi || sharedChip) {
+  savedKindsEl.hidden = !multi;
+  savedListToolsEl.hidden = all.length < 2;   // 한 개뿐이면 찾을 것도 없다
+  if (multi) {
     savedKindsEl.innerHTML =
-      (sharedChip ? `<button type="button" class="saved-kind saved-kind-shared${savedSharedOnly ? " on" : ""}" data-shared="1" title="학원 선생님이 함께 쓰는 자료만 봅니다">🏫 학원 공유 폴더 <b>${nShared}</b></button>` +
-        `<button type="button" class="saved-kind saved-kind-shared${savedShareMode ? " on" : ""}" data-sharemode="1" title="여러 자료를 체크해 한꺼번에 학원 공유 폴더에 넣습니다">☑ 여러 개 공유</button>` : "") +
       `<button type="button" class="saved-kind${savedKindFilter ? "" : " on"}" data-kind="">전체 <b>${all.length}</b></button>` +
       kinds
         .map(
@@ -14612,8 +14266,6 @@ async function openSavedList(kind, target, onlyTab) {
   savedKindFilter = "";
   savedSearchText = "";
   savedPick = [];
-  savedShareMode = false;
-  savedSharePick.clear();
   if (savedSearchEl) savedSearchEl.value = "";
   savedListCountEl.textContent = "";
   savedListToolsEl.hidden = true;
@@ -15072,28 +14724,7 @@ savedListBodyEl.addEventListener("click", async (e) => {
     return;
   }
 
-  const shareBtn = e.target.closest(".saved-list-share");
-  if (shareBtn) {
-    const share = shareBtn.dataset.share === "1";
-    if (share && !confirm("이 자료를 학원 공유 폴더에 넣습니다.\n\n원본 그대로 공유되어 학원 선생님 누구나 보고 고쳐 저장할 수 있습니다(지우기는 나와 원장만). 계속할까요?")) return;
-    try {
-      await postJson("/api/saved/share", { id, share }, "바꾸지 못했습니다.");
-      const cached = savedItemsCache.find((it) => it.id === id);
-      if (cached) {
-        if (share) Object.assign(cached, { shared: true, mine: true });
-        else if (cached.mine) { cached.shared = false; }
-        else savedItemsCache = savedItemsCache.filter((it) => it.id !== id);
-      }
-      renderSavedList();
-    } catch (err) {
-      alert(err.message || "바꾸지 못했습니다.");
-    }
-    return;
-  }
-
   if (e.target.closest(".saved-list-delete")) {
-    const cachedDel = savedItemsCache.find((it) => it.id === id);
-    if (cachedDel && cachedDel.shared && !confirm("학원 공유 폴더의 자료입니다. 지우면 학원 선생님 모두에게서 사라지고, 만든 선생님의 저장함에서도 지워집니다. 계속할까요?")) return;
     if (!confirm("이 저장 항목을 삭제하시겠습니까?\n되돌릴 수 없습니다.")) return;
     try {
       await postJson("/api/saved/delete", { id }, "삭제에 실패했습니다.");
@@ -15116,51 +14747,8 @@ savedSearchEl.addEventListener("input", () => {
 savedKindsEl.addEventListener("click", (e) => {
   const btn = e.target.closest(".saved-kind");
   if (!btn) return;
-  if (btn.dataset.sharemode) { setSavedShareMode(!savedShareMode); return; }
-  if (btn.dataset.shared) savedSharedOnly = !savedSharedOnly;
-  else savedKindFilter = btn.dataset.kind || "";
+  savedKindFilter = btn.dataset.kind || "";
   renderSavedList();
-});
-
-savedListBodyEl.addEventListener("change", (e) => {
-  const cb = e.target.closest(".saved-share-cb");
-  if (!cb) return;
-  const id = cb.closest(".saved-list-item").dataset.id;
-  if (cb.checked) savedSharePick.add(id); else savedSharePick.delete(id);
-  updateShareBar();
-});
-$("savedShareVisible").addEventListener("click", () => {
-  savedListBodyEl.querySelectorAll(".saved-share-cb").forEach((cb) => {
-    cb.checked = true;
-    savedSharePick.add(cb.closest(".saved-list-item").dataset.id);
-  });
-  updateShareBar();
-});
-$("savedShareCancel").addEventListener("click", () => setSavedShareMode(false));
-$("savedShareGo").addEventListener("click", async () => {
-  const ids = [...savedSharePick];
-  if (!ids.length) return;
-  if (!confirm(`고른 자료 ${ids.length}개를 학원 공유 폴더에 넣습니다.\n\n원본 그대로 공유되어 학원 선생님 누구나 보고 고쳐 저장할 수 있습니다(지우기는 나와 원장만). 계속할까요?`)) return;
-  const go = $("savedShareGo");
-  go.disabled = true;
-  const failed = [];
-  let done = 0;
-  for (let i = 0; i < ids.length; i += 4) {
-    await Promise.all(ids.slice(i, i + 4).map(async (id) => {
-      try {
-        await postJson("/api/saved/share", { id, share: true }, "공유하지 못했습니다.");
-        const cached = savedItemsCache.find((it) => it.id === id);
-        if (cached) Object.assign(cached, { shared: true, mine: true });
-      } catch (err) {
-        const it = savedItemsCache.find((x) => x.id === id);
-        failed.push(`· ${(it && it.title) || "제목 없음"} — ${err.message || "공유하지 못했습니다."}`);
-      }
-      done += 1;
-      go.textContent = `공유하는 중… ${done}/${ids.length}`;
-    }));
-  }
-  setSavedShareMode(false);
-  if (failed.length) alert(`${ids.length - failed.length}개를 공유했고 ${failed.length}개는 못 했습니다.\n\n${failed.join("\n")}`);
 });
 
 passageLibraryBtn.addEventListener("click", () => {
@@ -19290,7 +18878,6 @@ const assignedTestListEl = $("assignedTestList");
 
 let classesCache = [];
 let selectedClassId = "";
-window.reloadStudentsTab = () => refreshClassSelect(true);   // 개인 반을 학원으로 옮긴 뒤(학원 모드)
 
 async function refreshClassSelect(preserveSelection) {
   classErrorEl.textContent = "";
@@ -20329,7 +19916,7 @@ $("classWrongBtn").addEventListener("click", async (e) => {
     return;
   }
   const fmt = $("classWrongFormat").value;
-  if (!confirm(`"${title}"을(를) ${plans.length}명에게 각자의 틀린 단어로 냅니다 (${fmt === "mcq" ? "객관식" : "주관식"}).\n` +
+  if (!confirm(`"${title}"을(를) ${plans.length}명에게 각자의 틀린 단어로 냅니다 (${FORMAT_LABEL_KO[fmt] || "주관식"}).\n` +
       (skipped ? `틀린 단어가 2개 미만이라 건너뛰는 학생 ${skipped}명\n` : "") +
       (already ? `이미 낸 학생 ${already}명\n` : "") + "\n내시겠습니까?")) return;
   btn.disabled = true;
@@ -20412,7 +19999,7 @@ studentTableBodyEl.addEventListener("change", (e) => {
   loadStudentReport(rr, rr.dataset.for, m.value);
 });
 
-const FORMAT_LABEL_KO = { mcq: "객관식", saq: "주관식" };
+const FORMAT_LABEL_KO = { mcq: "객관식", saq: "주관식", mix: "객관식+주관식" };
 
 async function loadAssignedTests() {
   assignedTestListEl.innerHTML = `<p class="hint">불러오는 중…</p>`;

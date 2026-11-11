@@ -998,58 +998,6 @@
     </div>
   </div>
 
-  <!-- ══════════ 학원 관리 — 선생님 명단·역할·원장 포인트 월 한도·초대(학원 모드, 학원 관리자·원장) ══════════ -->
-  <div class="modal-overlay" id="academyOverlay" hidden>
-    <div class="modal-box" style="max-width:880px;">
-      <button type="button" class="modal-close" id="academyClose" aria-label="닫기">&times;</button>
-      <h3 class="modal-title" id="academyTitle">학원 관리</h3>
-      <div class="ac-add-row">
-        <input type="text" id="academyLink" readonly style="flex:1 1 260px;">
-        <button type="button" class="btn ghost small" id="academyCopyLink">📋 학원 링크 복사</button>
-      </div>
-      <p class="hint">학원 선생님은 이 링크로 열면 학원 모드가 됩니다 — 자료를 만들면 <b>원장 포인트</b>가 쓰이고, 저장함의 <b>학원 공유 폴더</b>와 <b>학원 반</b>을 함께 씁니다. 내 저장함은 어느 모드에서나 그대로 보입니다.</p>
-      <div class="error" id="academyError"></div>
-      <div style="overflow-x:auto;">
-        <table class="ac-table">
-          <thead><tr><th>선생님</th><th>역할</th><th>학원 관리자</th><th style="text-align:right;" id="academyMonthTh">이번 달 사용</th><th>월 한도(원장 포인트)</th><th></th></tr></thead>
-          <tbody id="academyBody"></tbody>
-        </table>
-      </div>
-      <p class="hint" id="academyLimitNote"></p>
-      <form class="auth-panel ac-add" id="academyInviteForm">
-        <b>📧 선생님 초대하기</b>
-        <div class="ac-add-row">
-          <input type="text" id="acInvEmail" placeholder="초대할 선생님의 가입 이메일" autocapitalize="none" spellcheck="false" style="flex:2 1 220px;">
-          <select id="acInvRole"><option value="teacher">강사</option><option value="director">원장</option></select>
-          <label class="chk"><input type="checkbox" id="acInvManager"> 학원 관리자</label>
-          <button type="submit" class="btn small">초대</button>
-        </div>
-        <p class="hint">초대받은 선생님이 이 사이트에 로그인하면 위쪽에 초대가 보이고, [수락]을 누르면 학원 링크로 학원 모드에 들어올 수 있습니다(30일 안에). 아직 가입하지 않았다면 그 이메일로 가입한 뒤에 보입니다.</p>
-        <div id="academyInviteList"></div>
-      </form>
-    </div>
-  </div>
-
-  <!-- ══════════ 개인 반 → 학원 반 옮기기 ══════════ -->
-  <div class="modal-overlay" id="academyMoveOverlay" hidden>
-    <div class="modal-box">
-      <button type="button" class="modal-close" id="academyMoveClose" aria-label="닫기">&times;</button>
-      <h3 class="modal-title">📥 개인 반 가져오기</h3>
-      <p class="hint">개인 모드에서 만든 반을 학원 반으로 옮깁니다. 학생·시험·성적이 함께 옮겨져 학원 선생님 모두가 함께 보고, 학생 아이디·비밀번호는 그대로입니다. 옮긴 반은 개인 모드에서 보이지 않습니다.</p>
-      <div id="academyMoveList"></div>
-    </div>
-  </div>
-
-  <!-- ══════════ 학원 반 → 개인 반 돌려보내기 ══════════ -->
-  <div class="modal-overlay" id="academyReturnOverlay" hidden>
-    <div class="modal-box">
-      <button type="button" class="modal-close" id="academyReturnClose" aria-label="닫기">&times;</button>
-      <h3 class="modal-title">↩ 개인 반으로 돌려보내기</h3>
-      <p class="hint">학원 반을 선생님 한 분의 개인 반으로 돌려보냅니다. 학생·시험·성적이 함께 가고 학생 아이디·비밀번호는 그대로입니다. 돌려보낸 반은 학원 모드에서 보이지 않습니다. 개인 반에서 가져온 반은 가져온 선생님이, 학원에서 만든 반은 원장이 기본으로 받습니다.</p>
-      <div id="academyReturnList"></div>
-    </div>
-  </div>
-
   <!-- ══════════ 학생 이용권 사기·연장·인원 더하기(app.js seatOpen) ══════════ -->
   <div class="modal-overlay" id="seatOverlay" hidden>
     <div class="modal-box">
@@ -1105,8 +1053,9 @@
           <select id="assignFormat">
             <option value="mcq">객관식(5지선다)</option>
             <option value="saq">주관식(직접 입력)</option>
+            <option value="mix">객관식+주관식(반반 섞기)</option>
           </select>
-          <p class="hint">객관식은 "영어 보고 뜻 고르기"·"뜻 보고 영어 고르기"가 무작위로 섞여 나가고, 주관식은 모두 "뜻 보고 영어 쓰기"로 나갑니다.</p>
+          <p class="hint">객관식은 "영어 보고 뜻 고르기"·"뜻 보고 영어 고르기"가 무작위로 섞여 나가고, 주관식은 모두 "뜻 보고 영어 쓰기"로 나갑니다. 객관식+주관식은 문항 절반이 5지선다, 절반이 직접 입력이고 학생마다·재시험마다 자리가 바뀝니다.</p>
           <label class="chk" style="margin:4px 0 8px;">
             <input type="checkbox" id="assignRetestChk"> 합격 기준을 두고, 기준 미달이면 통과할 때까지 재시험
           </label>
@@ -1206,10 +1155,6 @@
     <button type="button" class="tab-btn" data-tab="students" id="studentsTabBtn" hidden>🏫 학생 관리</button>
     <!-- 레벨테스트 — 특정 학원의 자료라 관리자가 켜 준 선생님에게만 보인다(public/leveltest.js) -->
     <button type="button" class="tab-btn" data-tab="leveltest" id="leveltestTabBtn" hidden>🎯 레벨테스트</button>
-    <!-- 학원 모드에서만 보인다 — 학원 공유 폴더 자료만 모은 저장함 창을 연다(탭 화면이 아니라 창, app.js LIBRARY.shared).
-         tab-btn이 아니라 tab-group-btn 모양을 빌린다 — tab-btn은 data-tab이 있어야 하는 탭 목록(tabBtns)에 들어간다 -->
-    <button type="button" class="tab-group-btn" id="academySharedBtn" hidden
-            title="학원 선생님들이 공유 폴더에 넣은 자료를 모아 봅니다.">🏫 학원 공유 자료</button>
     <!-- 지금 열려 있는 탭의 만드는 순서를 보여 준다. 사이드바가 sticky라 스크롤해도
          따라와서, 탭을 누른 자리에서 바로 눌러 볼 수 있다. -->
     <button type="button" class="howto-btn" id="howtoBtn"
@@ -1223,9 +1168,6 @@
 
   <div class="main-content">
 
-  <!-- 학원 모드 띠 — 학원 링크로 열었을 때만(app.js syncAcademyBar) -->
-  <div class="academy-banner" id="academyBanner" hidden><span id="academyBannerText"></span></div>
-
   <section class="panel">
     <div class="account-bar" id="accountBar">
       <div id="accountLoggedIn" class="account-state">
@@ -1234,10 +1176,6 @@
         <button type="button" class="btn ghost small" id="materialLibraryBtn">📦 제작 자료 저장함</button>
         <button type="button" class="btn ghost small" id="usageHistoryBtn">🧾 이용 내역</button>
         <button type="button" class="btn small" id="openRechargeBtn">💳 충전</button>
-        <!-- 학원 — 개인 모드: 들어가 있는 학원 링크·초대 / 학원 모드: 학원 관리·개인 모드로(app.js syncAcademyBar) -->
-        <span id="academyLinks" hidden></span>
-        <button type="button" class="btn ghost small" id="academyManageBtn" hidden>🏫 학원 관리</button>
-        <button type="button" class="btn ghost small" id="academyPersonalBtn" hidden>↩ 개인 모드로</button>
         <button type="button" class="btn ghost small" id="logoutBtn">로그아웃</button>
         <button type="button" class="btn ghost small danger" id="deleteAccountBtn">회원 탈퇴</button>
       </div>
@@ -2763,9 +2701,6 @@
           <button type="button" class="btn ghost small" id="shareClassBtn">👥 함께 쓰는 선생님</button>
           <button type="button" class="btn ghost small danger" id="leaveClassBtn">반에서 나가기</button>
           <button type="button" class="btn ghost small" id="joinClassBtn">공유 코드로 반 참여</button>
-          <!-- 학원 모드에서만 보인다 — 개인 모드에서 만든 반을 학원 반으로 옮긴다(app.js academyMove) -->
-          <button type="button" class="btn ghost small" id="academyMoveBtn" hidden>📥 개인 반 가져오기</button>
-          <button type="button" class="btn ghost small" id="academyReturnBtn" hidden>↩ 개인 반으로 돌려보내기</button>
         </div>
       </div>
       <div class="error" id="classError"></div>
@@ -2834,6 +2769,7 @@
         <select id="classWrongFormat" style="width:auto;">
           <option value="mcq">객관식(5지선다)</option>
           <option value="saq">주관식</option>
+          <option value="mix">객관식+주관식</option>
         </select>
         <button type="button" class="btn small" id="classWrongBtn">🎯 학생마다 오답테스트 내기</button>
         <span class="error" id="classWrongStatus"></span>
@@ -3283,15 +3219,6 @@
         <button type="button" class="btn ghost small" id="savedPickSort" title="이름의 숫자 크기대로(1과, 2과, 10과) 한 번에 줄 세웁니다.">이름순 정렬</button>
         <button type="button" class="btn ghost small" id="savedPickClear">선택 비우기</button>
         <button type="button" class="btn small" id="savedPickLoad" disabled>선택한 저장본 불러오기</button>
-      </div>
-    </div>
-    <!-- 학원 모드 — [☑ 여러 개 공유]를 누르면 체크한 자료를 한꺼번에 학원 공유 폴더에 넣는다(app.js savedShareMode) -->
-    <div class="saved-pick-bar" id="savedShareBar" hidden>
-      <div class="saved-pick-info" id="savedShareInfo"></div>
-      <div class="saved-pick-btns">
-        <button type="button" class="btn ghost small" id="savedShareVisible">보이는 것 모두 선택</button>
-        <button type="button" class="btn ghost small" id="savedShareCancel">그만두기</button>
-        <button type="button" class="btn small" id="savedShareGo" disabled>선택한 자료 공유</button>
       </div>
     </div>
     <div class="print-guide-actions">

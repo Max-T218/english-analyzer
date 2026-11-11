@@ -3314,27 +3314,6 @@ input.st-in{width:100%; box-sizing:border-box;}
   .xp-sec-img{break-inside:avoid; page-break-inside:avoid;}
 }
 
-/* ══════ 학원 모드·학원 관리 (app.js '학원') ══════ */
-.academy-banner { margin:0 0 10px; padding:9px 14px; border-radius:10px; background:var(--accent-soft, #eaf1ff);
-  border:1px solid var(--accent, #2563eb); color:var(--ink, #1f2937); font-size:13.5px; font-weight:600; }
-.saved-share-tag { display:inline-block; margin-right:6px; padding:1px 6px; border-radius:6px; font-size:11px;
-  font-weight:700; background:var(--accent-soft, #eaf1ff); color:var(--accent, #2563eb); vertical-align:1px; }
-.saved-kind-shared.on { background:var(--accent, #2563eb); color:#fff; }
-.ac-table { width:100%; border-collapse:collapse; font-size:13px; margin:6px 0; }
-.ac-table th, .ac-table td { padding:6px 6px; border-bottom:1px solid var(--line, #e3e7ee); text-align:left; white-space:nowrap; vertical-align:middle; }
-.ac-table td.ac-num { text-align:right; font-weight:700; }
-.ac-table select, .ac-table input.ac-limit { padding:3px 4px; font-size:12px; margin:0; width:auto; }
-.ac-table input.ac-limit { width:96px; }
-.ac-table .btn { padding:3px 7px; font-size:11.5px; }
-.ac-me { font-size:11px; color:var(--ink-soft, #777); font-weight:400; }
-.ac-add { margin-top:12px; border-top:1px solid var(--line, #e3e7ee); padding-top:10px; }
-.ac-add-row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:6px 0; }
-.ac-add-row input[type=text] { flex:1 1 140px; min-width:120px; margin:0; }
-.ac-add-row select { margin:0; width:auto; flex:0 0 auto; }
-.ac-add-row .chk { display:inline-flex; gap:4px; align-items:center; margin:0; white-space:nowrap; }
-.ac-invite { display:inline-flex; gap:4px; align-items:center; padding:2px 6px; border:1px solid var(--line, #e3e7ee); border-radius:8px; font-size:12.5px; }
-.ac-inv-row { display:flex; gap:8px; align-items:center; font-size:13px; padding:4px 0; flex-wrap:wrap; }
-
 /* ── 학생 이용권(app.js seatRender) ── */
 .seat-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px; padding:8px 12px;
   border:1px solid var(--line, #ddd); border-radius:8px; font-size:14px; }
