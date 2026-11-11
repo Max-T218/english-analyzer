@@ -20039,7 +20039,7 @@ def list_tests_for_student(student_id):
             "kind": d.get("kind") or "vocab", "source": d.get("source") or "",
             "questionCount": d.get("n_questions") or 0,
             "pending": (last.get("pending") or 0) if last else 0,
-            "qc": _qt_q_counts(last.get("qdetails")) if last else None,
+            "qc": _qt_counts_for(d, last.get("qdetails")) if last else None,
             "wordCount": d.get("n_words") or 0, "createdAt": d.get("created_at", ""),
             "maxWrong": d.get("max_wrong"),
             "submitted": bool(attempts),
@@ -20259,7 +20259,7 @@ def _student_test_rows(student_id, assignments, attempts_by):
             "kind": "quiz" if quiz else "vocab", "source": a.get("source") or "",
             "questionCount": a["n_questions"] if "n_questions" in a else len(a.get("questions") or []),
             "pending": (last.get("pending") or 0) if (quiz and last) else 0,
-            "qc": _qt_q_counts(last.get("qdetails")) if (quiz and last) else None,
+            "qc": _qt_counts_for(a, last.get("qdetails")) if (quiz and last) else None,
             "wordCount": a["n_words"] if "n_words" in a else len(a.get("vocab") or []), "maxWrong": a.get("max_wrong"),
             "createdAt": a.get("created_at", ""),
             # 문제 시험은 합격/불합격이 없다 — 냈으면 'done'(제출)
@@ -20412,7 +20412,7 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
             "studentId": sid, "studentName": name,
             "removed": sid not in targets,
             "pending": (last.get("pending") or 0) if (quiz and last) else 0,
-            "qc": _qt_q_counts(last.get("qdetails")) if (quiz and last) else None,
+            "qc": _qt_counts_for(assignment, last.get("qdetails")) if (quiz and last) else None,
             "status": ("done" if atts else "none") if quiz else
                       _vocab_status(progress, atts),
             "passed": progress["passed"], "passedRound": progress["passedRound"],
@@ -20988,11 +20988,20 @@ def _qt_grade_question(q, given):
     return rows
 
 
-def _qt_q_counts(qdetails):
+def _qt_q_counts(qdetails, by_unit=False):
     """문항 단위의 맞음·틀림·확인 대기 개수 — 화면에는 점수 대신 이것만 보인다(2026-10-12 사용자:
     "점수 표기는 필요 없고 맞고 틀리고만"). 칸이 여럿인 문항은 모두 맞아야 '맞음', 하나라도
-    확인 대기면 '확인 대기'다."""
+    확인 대기면 '확인 대기'다.
+    by_unit이면 칸 하나하나를 센다(워크북 시험 — 단계 하나가 문항 하나라 칸이 수십 개인데, 한 칸만 틀려도
+    단계 전체가 '틀림 1'로 보였다. 2026-11-11 사용자). 화면이 '칸'을 붙이도록 unit 표시를 단다."""
     c = {"right": 0, "wrong": 0, "pending": 0}
+    if by_unit:
+        c["unit"] = True
+        for d in qdetails or []:
+            for u in d.get("units") or []:
+                ok = u.get("ok")
+                c["right" if ok is True else "pending" if ok is None else "wrong"] += 1
+        return c
     for d in qdetails or []:
         us = d.get("units") or []
         if not us:
@@ -21004,6 +21013,11 @@ def _qt_q_counts(qdetails):
         else:
             c["wrong"] += 1
     return c
+
+
+def _qt_counts_for(assignment, qdetails):
+    """그 시험에 맞는 방식으로 센 맞음·틀림 개수 — 워크북 시험만 칸 단위."""
+    return _qt_q_counts(qdetails, by_unit=(assignment or {}).get("source") == "workbook")
 
 
 def _qt_totals(qdetails):
@@ -21057,7 +21071,7 @@ def quiz_review(assignment_id, assignment, attempt):
         "kind": "quiz", "title": assignment.get("title", ""),
         "score": score, "total": total, "pending": pending,
         "wrong": total - score - pending, "passed": True, "round": 1,
-        "qc": _qt_q_counts(attempt.get("qdetails")),
+        "qc": _qt_counts_for(assignment, attempt.get("qdetails")),
         "submittedAt": attempt.get("submitted_at", ""), "items": items,
     }
 
@@ -21078,7 +21092,7 @@ def grade_quiz_unit(teacher_id, assignment_id, student_id, no, unit, ok, round_n
     round_no가 있으면 원래 답안이 아니라 그 회차의 보충 학습(quiz_retries)을 채점한다 — 틀림으로 정하면
     학생이 다음에 결과를 열 때 남은 회차의 보충 학습이 다시 붙는다(_qr_state가 그때 센다)."""
     _require_db()
-    _own_assignment(teacher_id, assignment_id)
+    _, a_doc = _own_assignment(teacher_id, assignment_id)
     try:
         rnd = int(round_no or 0)
     except (TypeError, ValueError):
@@ -21100,7 +21114,8 @@ def grade_quiz_unit(teacher_id, assignment_id, student_id, no, unit, ok, round_n
     score, total, pending = _qt_totals(qdetails)
     ref.update({"qdetails": qdetails, "score": score, "pending": pending,
                 "wrong": total - score - pending})
-    return {"score": score, "total": total, "pending": pending, "qc": _qt_q_counts(qdetails)}
+    return {"score": score, "total": total, "pending": pending,
+            "qc": _qt_q_counts(qdetails) if rnd > 0 else _qt_counts_for(a_doc, qdetails)}
 
 
 def _qt_question_stats(assignment, attempts):

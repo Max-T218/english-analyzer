@@ -839,7 +839,7 @@ function showQuizResult(r) {
   $("quizResultScore").innerHTML = QT.countsText(qc, true);
   $("quizResultLead").textContent =
     (qc.wrong ? "아래에서 틀린 문항의 정답과 해설을 확인하세요." : qc.pending ? "" : "모두 맞혔어요! 🎉") +
-    (qc.pending ? ` 선생님이 확인할 문항이 ${qc.pending}개 있어요.` : "");
+    (qc.pending ? ` 선생님이 확인할 ${qc.unit ? "칸" : "문항"}이 ${qc.pending}개 있어요.` : "");
   $("quizWrongOnly").checked = false;
   $("quizResultBody").innerHTML = items.map((q, i) => QT.questionHtml(q, i, "review")).join("");
   quizResultData = r;

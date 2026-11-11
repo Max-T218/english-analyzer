@@ -499,9 +499,11 @@
   // 점수 대신 보여 주는 한 줄 — 문항 단위 맞음·틀림(·확인 중) 개수. html이면 색을 입힌다
   function countsText(qc, html) {
     if (!qc) return "";
-    const ok = html ? `<b style="color:#15803d">맞음 ${qc.right}</b>` : `맞음 ${qc.right}`;
-    const bad = html ? `<b style="color:#b91c1c">틀림 ${qc.wrong}</b>` : `틀림 ${qc.wrong}`;
-    return `${ok} · ${bad}${qc.pending ? ` · 확인 중 ${qc.pending}` : ""}`;
+    // 워크북 시험은 서버가 칸 하나하나를 센다(qc.unit) — 숫자 뒤에 '칸'을 붙인다
+    const u = qc.unit ? "칸" : "";
+    const ok = html ? `<b style="color:#15803d">맞음 ${qc.right}${u}</b>` : `맞음 ${qc.right}${u}`;
+    const bad = html ? `<b style="color:#b91c1c">틀림 ${qc.wrong}${u}</b>` : `틀림 ${qc.wrong}${u}`;
+    return `${ok} · ${bad}${qc.pending ? ` · 확인 중 ${qc.pending}${u}` : ""}`;
   }
 
   window.QT = { countsText, clean, emStem, esc, unitCount, questionHtml, questionStatus, bind, collect, restore, blankCount };

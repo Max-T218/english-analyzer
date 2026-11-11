@@ -169,7 +169,7 @@ dev/prod 분리가 없습니다. 서비스 계정 JSON 하나의 프로젝트를
 `create_quiz_assignment`(문항을 `_qt_clean_question`으로 다시 거른다 — HTML은 `sanitize_quiz_html`)·`_qt_student_view`(정답을 뺀
 모양 — pick/verb/fill은 지문을 `segments`로 쪼개 칸 자리만 남긴다)·`submit_quiz_attempt`·`quiz_review`·`grade_quiz_unit`.
 채점은 답 칸 하나씩(`_qt_units`) 하지만 **화면에는 점수를 보이지 않고 문항 단위 맞음·틀림 개수만**
-보인다(`_qt_q_counts` → `qc`, 화면 `QT.countsText` — 사용자 결정. 문제 시험은 성적표의 점수 그래프·평균에서도 빠진다). 비교는 `_qt_key`(대소문자·따옴표·문장부호 무시, 철자는 본다).
+보인다(`_qt_q_counts` → `qc`, 화면 `QT.countsText` — 사용자 결정. **워크북 시험만은 칸 단위로 센다**(`_qt_counts_for` — 단계 하나가 문항 하나라 한 칸만 틀려도 단계 전체가 '틀림 1'이었다, 2026-11-11 사용자. `qc.unit`이면 화면이 '맞음 11칸'처럼 '칸'을 붙인다. 반 전체 문항별 정답률 표는 그대로 단계 단위). 문제 시험은 성적표의 점수 그래프·평균에서도 빠진다). 비교는 `_qt_key`(대소문자·따옴표·문장부호 무시, 철자는 본다).
 `QUIZ_TEST_FREE_FORMATS`(조건 영작·문장 전환·질문에 답하기·짧은 서술)는 모범답안과 다르면 `ok:None`(확인 대기)로 두고
 선생님이 결과의 [답안 보기]에서 [맞음]/[틀림]을 누른다(`/api/quiz-tests/grade`). **한 번만 응시**하고 제출 즉시 정답·해설을
 보여 준다(사용자 결정). 답안은 `qdetails`에 담는다 — 단어시험의 `details`와 이름을 나눈 까닭은 `_wrong_items`·자주 틀린 단어가
