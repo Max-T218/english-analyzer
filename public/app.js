@@ -15458,29 +15458,7 @@ $("howtoBtn").addEventListener("click", () => {
   const active = document.querySelector(".tab-page.active");
   openHowto(active ? active.id.replace(/^tab-/, "") : "analyze");
 });
-$("howtoClose").addEventListener("click", () => { howtoGuideEl.hidden = true; });
-
-/* ══════ 사용자 소통방(카카오톡 오픈채팅) ══════ */
-// 사이드바 [👥 사용자 소통방] → QR·입장 단추 창. 주소는 index.html의 입장 단추에 한 번만 적는다
-const openChatGuideEl = $("openChatGuide");
-$("openChatBtn").addEventListener("click", () => { openChatGuideEl.hidden = false; });
-$("openChatClose").addEventListener("click", () => { openChatGuideEl.hidden = true; });
-openChatGuideEl.addEventListener("click", (e) => {
-  if (e.target === openChatGuideEl) openChatGuideEl.hidden = true;
-});
-$("openChatCopy").addEventListener("click", async (e) => {
-  const btn = e.currentTarget;
-  const url = openChatGuideEl.querySelector(".openchat-actions a").href;
-  try {
-    await navigator.clipboard.writeText(url);
-    btn.textContent = "✅ 복사했어요";
-  } catch {
-    window.prompt("아래 링크를 복사해 주세요.", url);
-    return;
-  }
-  setTimeout(() => { btn.textContent = "🔗 링크 복사"; }, 1800);
-});
-howtoGuideEl.addEventListener("click", (e) => {
+$("howtoClose").addEventListener("click", () => { howtoGuideEl.hidden = true; });howtoGuideEl.addEventListener("click", (e) => {
   if (e.target === howtoGuideEl) howtoGuideEl.hidden = true;   // 바깥을 눌러도 닫힌다
 });
 // 창 아래 예시 그림도 탭의 결과물 예시처럼 누르면 크게 띄운다

@@ -1165,9 +1165,9 @@
     <a class="howto-btn ask-side" href="https://pf.kakao.com/_xiexdJX/chat" target="_blank" rel="noopener"
        title="카카오톡 채널로 문의합니다. 결제·환불은 이메일로 보내 주세요.">💬 문의하기</a>
     <!-- 사용자 소통방(카카오톡 오픈채팅, 2026-11-12 사용자). 로그인한 화면에만 있다 — 학생 화면(student.html)에는 없다.
-         누르면 QR·입장 단추 창(#openChatGuide). 방 주소를 바꾸면 이 창의 링크와 public/openchat-qr.svg를 함께 바꿀 것 -->
-    <button type="button" class="howto-btn ask-side" id="openChatBtn"
-            title="잉글리시랩을 쓰는 분들이 모인 카카오톡 오픈채팅방입니다.">👥 사용자 소통방</button>
+         누르면 카카오 입장 화면이 바로 열린다(그 화면에 QR·링크 복사가 있어 사이트 창은 두지 않는다 — 사용자) -->
+    <a class="howto-btn ask-side" id="openChatBtn" href="https://open.kakao.com/o/gT14GFWi" target="_blank" rel="noopener"
+       title="잉글리시랩을 쓰는 분들이 모인 카카오톡 오픈채팅방입니다.">👥 사용자 소통방</a>
   </nav>
 
   <div class="main-content">
@@ -2979,26 +2979,6 @@
 <!-- ══════════ 만드는 법 안내 ══════════
      탭마다 순서가 다르므로, 그 탭의 [❓ 만드는 법]을 누르면 그 탭 것만 보여 준다.
      내용은 public/app.js의 HOWTO에 있다 — 탭을 새로 만들면 거기에 한 칸 더한다. -->
-<!-- 사용자 소통방 입장 창 — 휴대폰은 [카카오톡으로 입장], PC는 QR을 휴대폰 카메라로 찍는다.
-     QR은 public/openchat-qr.svg(방 주소로 미리 만든 그림 — 주소가 바뀌면 다시 만들 것) -->
-<div class="print-guide" id="openChatGuide" hidden>
-  <div class="print-guide-card openchat-card" role="dialog" aria-modal="true" aria-labelledby="openChatTitle">
-    <h3 id="openChatTitle">👥 잉글리시랩 사용자 소통방</h3>
-    <p class="print-guide-lead">사용법 질문, 오류 제보, 바라는 기능을 편하게 나누는 카카오톡 오픈채팅방입니다.</p>
-    <img class="openchat-qr" src="/openchat-qr.svg" alt="사용자 소통방 입장 QR 코드" width="200" height="200">
-    <p class="openchat-qr-cap">PC에서는 휴대폰 카메라로 QR을 찍으면 바로 들어갈 수 있어요.</p>
-    <div class="openchat-actions">
-      <a class="btn" href="https://open.kakao.com/o/gT14GFWi" target="_blank" rel="noopener">카카오톡으로 입장</a>
-      <button type="button" class="btn ghost" id="openChatCopy">🔗 링크 복사</button>
-    </div>
-    <p class="print-guide-note">학생 회원도 함께 있을 수 있어요. 학생 개인정보·시험 원본은 올리지 말아 주시고,
-      결제·환불·계정 문의는 1:1(💬 문의하기)로 보내 주세요.</p>
-    <div class="print-guide-actions">
-      <button type="button" class="btn ghost" id="openChatClose">닫기</button>
-    </div>
-  </div>
-</div>
-
 <div class="print-guide" id="howtoGuide" hidden>
   <div class="print-guide-card" role="dialog" aria-modal="true" aria-labelledby="howtoTitle">
     <h3 id="howtoTitle"></h3>
