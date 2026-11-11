@@ -19572,6 +19572,10 @@ def create_test_assignment(teacher_id, class_id, title, vocab, fmt, student_id=N
         "title": (title or "").strip(),
         "vocab": clean_vocab, "format": fmt, "max_wrong": max_wrong,
         "n_questions": 0, "n_words": len(clean_vocab),
+        # 주관식 문항은 '뜻 보고 영어 쓰기'로만 낸다(2026-11-11 사용자 — 뜻 쓰기는 학생이
+        # 여러 뜻 중 무엇을 쓸지 헷갈려 했다). 이 표시가 없는 옛 시험은 예전처럼 섞어 낸다 —
+        # 풀던 중인 학생의 문제가 바뀌어 채점이 어긋나지 않게.
+        "sa_dir": "ko2en",
         "created_at": _now_iso(),
     })
     return ref.id
@@ -19685,6 +19689,8 @@ def _build_student_questions(assignment_id, assignment, student_id, round):
         item = vocab[idx]
         q_rng = random.Random(f"{assignment_id}:{student_id}:{round}:{idx}")
         direction = "en2ko" if q_rng.random() < 0.5 else "ko2en"
+        if fmt != "mcq" and assignment.get("sa_dir") == "ko2en":
+            direction = "ko2en"   # 주관식은 영어로 쓰기만(create_test_assignment의 sa_dir)
         if direction == "en2ko":
             prompt, correct, pool = item["word"], item["meaning"], meaning_pool
         else:
