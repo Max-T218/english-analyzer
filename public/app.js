@@ -20000,6 +20000,8 @@ studentTableBodyEl.addEventListener("change", (e) => {
 });
 
 const FORMAT_LABEL_KO = { mcq: "객관식", saq: "주관식", mix: "객관식+주관식" };
+// 형식 뒤에 붙이는 말 — 주관식은 늘 '뜻 보고 영어 쓰기'다(server.py _build_student_questions, 2026-11-12 사용자)
+const FORMAT_DETAIL_KO = { mcq: "(영어↔뜻 혼합)", saq: "(뜻 보고 영어 쓰기)", mix: "(주관식은 영어 쓰기)" };
 
 async function loadAssignedTests() {
   assignedTestListEl.innerHTML = `<p class="hint">불러오는 중…</p>`;
@@ -20061,7 +20063,7 @@ function renderAssignedTests(tests) {
           <b>${esc(t.title || (t.kind !== "quiz" ? "단어시험" : t.source === "workbook" ? "워크북" : "문제 시험"))}</b>
           <span class="hint">· ${t.kind === "quiz"
             ? (t.source === "workbook" ? `📚 워크북 · ${t.questionCount}단계` : `📝 문제 시험 · ${t.questionCount}문항`)
-            : `${esc(FORMAT_LABEL_KO[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개`}
+            : `${esc(FORMAT_LABEL_KO[t.format] || t.format)}${FORMAT_DETAIL_KO[t.format] || ""} · 단어 ${t.wordCount}개`}
             · ${t.studentId ? `👤 ${esc(t.studentName || "학생 1명")}` : "반 전체"}
             ${t.maxWrong != null ? `· 합격 기준 ${t.wordCount - t.maxWrong}/${t.wordCount}(오답 ${t.maxWrong}개까지)` : ""}
             ${t.by ? `· 낸 선생님 ${esc(t.by)}${t.mine ? "(나)" : ""}` : ""}</span>

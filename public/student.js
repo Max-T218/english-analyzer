@@ -290,6 +290,8 @@ $("logoutBtn").addEventListener("click", async () => {
 });
 
 const FORMAT_LABEL = { mcq: "객관식", saq: "주관식", mix: "객관식+주관식" };
+// 주관식은 늘 '뜻 보고 영어 쓰기'다(server.py _build_student_questions)
+const FORMAT_DETAIL = { mcq: "(영어↔뜻 혼합)", saq: "(뜻 보고 영어 쓰기)", mix: "(주관식은 영어 쓰기)" };
 const DIRECTION_LABEL = { en2ko: "영어→뜻", ko2en: "뜻→영어" };
 
 async function loadTests() {
@@ -337,7 +339,7 @@ function renderTests(tests) {
         <button type="button" class="btn ghost result-btn" data-id="${id}">틀린 단어 보기</button>${study}`;
     }
     return testCardHtml(t.title,
-      `${esc(FORMAT_LABEL[t.format] || t.format)}(영어↔뜻 혼합) · 단어 ${t.wordCount}개`
+      `${esc(FORMAT_LABEL[t.format] || t.format)}${FORMAT_DETAIL[t.format] || ""} · 단어 ${t.wordCount}개`
         + (t.maxWrong != null ? ` · 합격 기준 ${t.wordCount - t.maxWrong}/${t.wordCount}` : ""),
       status, buttons);
   }).join("");
