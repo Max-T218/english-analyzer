@@ -722,6 +722,14 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 /* 문의하기는 <a>라 밑줄과 링크색이 붙는다. [만드는 법] 단추와 같은 결로 맞춘다.
    바깥으로 나가는 링크라는 것은 말풍선(💬)으로만 구분한다. */
 .ask-side{display:block; text-decoration:none; margin-top:6px;}
+/* 사용자 소통방 입장 창(#openChatGuide) */
+.openchat-card{max-width:400px; text-align:center;}
+.openchat-card .print-guide-lead, .openchat-card .print-guide-note{text-align:left;}
+.openchat-qr{display:block; width:200px; height:200px; margin:6px auto 4px; padding:8px;
+  background:#fff; border:1px solid var(--line); border-radius:12px;}
+.openchat-qr-cap{margin:0 0 12px; font-size:12px; color:var(--ink-soft);}
+.openchat-actions{display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin-bottom:10px;}
+.openchat-actions .btn{text-decoration:none;}
 /* 만드는 법 창의 '이런 자료가 나옵니다' — 결과물을 실제로 그려 넣는 자리.
    결과물은 A4 폭에 맞춰 만들어져 있어 520px 창에 넣으면 줄바꿈이 달라 실제와
    다르게 보인다. 예시가 있을 때만 창을 넓히고, 그래도 넘치면 그 안에서만 스크롤한다. */
