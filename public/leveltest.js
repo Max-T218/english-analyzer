@@ -344,6 +344,68 @@
   try { Object.assign(bulkSetOf, JSON.parse(localStorage.getItem(BULK_KEY) || "{}")); } catch (_) { /* 저장 못 해도 된다 */ }
   const OFF_GROUP = /휴원|퇴원|휴학/;
 
+  // 직접 입력 표(이름·반·아이디 칸) — 엑셀에서 복사해 아무 칸에 붙여 넣으면 칸마다 나뉘어 채워지고(2026-11-13 사용자: 직접 입력해도 안 헷갈리게),
+  // 마지막 줄에 쓰면 줄이 늘어난다. 파일을 놓은 뒤 표를 건드리면 파일 선택은 풀어 표를 읽는다.
+  const grid = $("ltBulkGrid").tBodies[0];
+  const GRID_PH = ["김민수", "AL3", ""];
+  function gridAdd(n) {
+    for (let i = 0; i < n; i++) {
+      const tr = document.createElement("tr");
+      const ph = grid.rows.length === 0;   // 회색 예시는 첫 줄에만 — 빈 줄마다 있으면 입력한 것처럼 보여 헷갈린다
+      tr.innerHTML = `<td class="n">${grid.rows.length + 1}</td>` + [0, 1, 2].map((c) =>
+        `<td><input data-c="${c}" autocomplete="off" spellcheck="false"${ph && GRID_PH[c] ? ` placeholder="${GRID_PH[c]}"` : ""}></td>`).join("");
+      grid.appendChild(tr);
+    }
+  }
+  function gridRows() {
+    return [...grid.rows].map((tr) => [...tr.querySelectorAll("input")].map((i) => i.value.trim())).filter((r) => r[0]);
+  }
+  function gridDetachFile() {
+    if ($("ltBulkFile").files.length) {
+      $("ltBulkFile").value = "";
+      $("ltBulkDrop").classList.remove("has");
+      $("ltBulkFileName").textContent = "또는 이 칸을 눌러 파일 고르기 (.xlsx · .csv)";
+    }
+  }
+  gridAdd(8);
+  grid.addEventListener("input", (e) => {
+    gridDetachFile();
+    const tr = e.target.closest("tr");
+    if (tr && tr === grid.rows[grid.rows.length - 1]) gridAdd(5);
+  });
+  grid.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || !e.target.matches("input")) return;
+    e.preventDefault();
+    const tr = e.target.closest("tr").nextElementSibling;
+    if (tr) tr.querySelectorAll("input")[Number(e.target.dataset.c)].focus();
+  });
+  grid.addEventListener("paste", (e) => {
+    const inp = e.target.closest("input");
+    if (!inp) return;
+    const text = (e.clipboardData || window.clipboardData).getData("text");
+    if (!/[\t\n]/.test(text)) return;   // 한 칸짜리 붙여넣기는 그대로 둔다
+    e.preventDefault();
+    gridDetachFile();
+    const lines = text.replace(/\r/g, "").split("\n");
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    const delim = text.includes("\t") ? "\t" : ",";
+    const r0 = inp.closest("tr").rowIndex - 1;
+    const c0 = Number(inp.dataset.c);
+    lines.forEach((line, k) => {
+      while (grid.rows.length <= r0 + k) gridAdd(1);
+      const inputs = grid.rows[r0 + k].querySelectorAll("input");
+      line.split(delim).forEach((v, j) => { if (c0 + j <= 2) inputs[c0 + j].value = v.trim(); });
+    });
+    while (grid.rows.length < r0 + lines.length + 3) gridAdd(1);   // 아래에 빈 줄을 남긴다
+  });
+  $("ltBulkAddRowsBtn").addEventListener("click", () => gridAdd(5));
+  $("ltBulkClearBtn").addEventListener("click", () => {
+    if (gridRows().length && !confirm("표에 적은 내용을 모두 지울까요?")) return;
+    grid.innerHTML = "";
+    gridAdd(8);
+    gridDetachFile();
+  });
+
   function bulkParse(rows) {
     const cols = { name: 0, group: 1, id: 2 };
     // 제목 줄 찾기 — 맨 위에 '원생 명단 (날짜)' 같은 제목이나 빈 줄이 있어도 위 10줄 안에서 찾는다
@@ -430,14 +492,15 @@
   $("ltBulkReadBtn").addEventListener("click", async () => {
     $("ltBulkError").textContent = "";
     const file = $("ltBulkFile").files[0];
-    const text = $("ltBulkText").value;
     const btn = $("ltBulkReadBtn");
     btn.disabled = true;
     try {
       let rows;
       if (file) rows = await bulkReadFile(file);
-      else if (text.trim()) rows = text.split(/\r?\n/).filter((l) => l.trim()).map((l) => l.split(l.includes("\t") ? "\t" : ","));
-      else throw new Error("파일을 올리거나 명단을 붙여 넣어 주세요.");
+      else {
+        rows = gridRows();
+        if (!rows.length) throw new Error("표에 이름을 입력하거나, 엑셀 파일을 끌어다 놓아 주세요.");
+      }
       bulk = bulkParse(rows);
       if (!bulk.length) throw new Error("이름이 있는 줄을 찾지 못했습니다. 첫 줄에 '이름 · 반 · 아이디' 제목을 넣거나, 이름·반·아이디 순서로 적어 주세요.");
       bulkRender("");

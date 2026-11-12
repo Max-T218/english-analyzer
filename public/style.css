@@ -2979,6 +2979,13 @@ details:not([open]) > .lt-bulk-title::before{content:"▸ ";}
 .lt-drop-big{font-size:18px; font-weight:800; color:#1d4ea8;}
 .lt-drop-sub{font-size:13px; color:#4b5d7a;}
 .lt-drop.has .lt-drop-sub{color:#1d4ea8; font-weight:700;}
+.lt-grid-wrap{max-height:340px; overflow:auto; background:#fff; border:1px solid #9db7e8; border-radius:8px;}
+.lt-grid{width:100%; border-collapse:collapse; font-size:14px;}
+.lt-grid th{position:sticky; top:0; background:#d9e8ff; color:#1d4ea8; text-align:left; padding:7px 8px; border-bottom:2px solid #9db7e8; z-index:1;}
+.lt-grid td{padding:0; border-bottom:1px solid #e3e9f5; border-right:1px solid #eef2fa;}
+.lt-grid td.n{text-align:center; color:#8a97ad; font-size:12px; background:#f6f8fc; width:44px;}
+.lt-grid input{width:100%; border:0; border-radius:0; padding:8px 8px; font-size:14px; background:transparent; box-sizing:border-box;}
+.lt-grid input:focus{outline:2px solid #2f6fdb; outline-offset:-2px; background:#f4f8ff;}
 .lt-bulk-panel textarea, .lt-bulk-panel input[type=file]{background:#fff;}
 .lt-bulk-group{background:#fff;}
 .lt-bulk-group{border:1px solid var(--line, #e3e6ea); border-radius:8px; padding:8px 12px; margin-top:8px;}

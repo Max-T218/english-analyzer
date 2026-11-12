@@ -2841,8 +2841,13 @@
             <input type="file" id="ltBulkFile" accept=".xlsx,.csv,.txt,.xls" hidden>
           </label>
           <div style="margin:6px 0 8px;"><button type="button" class="btn ghost small" id="ltBulkTemplateBtn">양식 내려받기</button></div>
-          <textarea id="ltBulkText" rows="5" placeholder="이름&#9;반&#9;아이디&#10;김민수&#9;AL3&#9;3s001&#10;이서연&#9;AM2" style="width:100%; font-size:14px;"></textarea>
-          <div style="margin-top:8px;"><button type="button" class="btn small" id="ltBulkReadBtn">명단 확인</button></div>
+          <p class="hint" style="margin:10px 0 4px;"><b>직접 입력</b>하거나, 엑셀에서 복사(Ctrl+C)해 아래 표의 아무 칸에 <b>붙여넣기(Ctrl+V)</b> 하세요. 칸이 알아서 나뉘어 채워집니다.</p>
+          <div class="lt-grid-wrap"><table class="lt-grid" id="ltBulkGrid"><thead><tr><th style="width:44px;">#</th><th>이름</th><th>반</th><th>아이디 <span class="hint">(비우면 이름)</span></th></tr></thead><tbody></tbody></table></div>
+          <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <button type="button" class="btn small" id="ltBulkReadBtn">명단 확인</button>
+            <button type="button" class="btn ghost small" id="ltBulkAddRowsBtn">줄 5개 더하기</button>
+            <button type="button" class="btn ghost small" id="ltBulkClearBtn">표 비우기</button>
+          </div>
           <div class="error" id="ltBulkError"></div>
           <div id="ltBulkPreview" style="margin-top:12px;"></div>
         </details>
