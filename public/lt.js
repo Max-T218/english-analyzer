@@ -389,7 +389,7 @@
   $("printBtn").addEventListener("click", () => window.print());
   $("againBtn").addEventListener("click", () => {
     store(KEY, undefined);
-    location.href = "/test.html";
+    location.href = "/test";
   });
 
   /* ── 처음 ── */

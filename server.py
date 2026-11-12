@@ -21465,9 +21465,10 @@ def lt_list_students(user_id):
     return rows
 
 
-def lt_create_student(user_id, name, login_id, memo=""):
+def lt_create_student(user_id, name, login_id, memo="", pw_hash=None):
     """아이디만으로 로그인하므로(lt_login) 비밀번호는 쓰지 않는다. 예전 판과 문서 모양을 맞추려고 1234 해시를
-    그대로 적어 둔다(다시 비밀번호를 쓰게 되면 그대로 살아난다)."""
+    그대로 적어 둔다(다시 비밀번호를 쓰게 되면 그대로 살아난다). pw_hash는 일괄 등록이 한 번 만든 그 해시를
+    넘겨 학생마다 다시 계산하지 않게 한다(PBKDF2 20만 번이라 수백 명이면 느리다)."""
     _require_db()
     name = _lt_clean_name(name)
     # 아이디를 비우면 이름을 아이디로 쓴다(띄어쓰기는 뺀다)
@@ -21476,7 +21477,7 @@ def lt_create_student(user_id, name, login_id, memo=""):
     password = STUDENT_PW_DEFAULT
     ref = DB.collection(LT_STUDENTS).document()
     _lt_claim_login_id(login_id, ref.id)
-    salt, digest = _hash_password(_pw_key(password))
+    salt, digest = pw_hash or _hash_password(_pw_key(password))
     ref.set({"owner": user_id, "name": name, "login_id": login_id, "memo": str(memo or "").strip()[:LT_NAME_MAX],
              "pw_salt": salt, "pw_hash": digest, "pw_set_by": "teacher", "created_at": _now_iso()})
     return {"id": ref.id}
@@ -21640,6 +21641,212 @@ def lt_assign(user_id, set_id, student_ids):
             made += 1
             break
     return {"made": made}
+
+
+# --- 원생 명단으로 한꺼번에 등록·출제 (2026-11-13 사용자: 원생 전체가 레벨테스트를 본다) ---
+# 학원 관리 프로그램에서 내려받은 엑셀을 올리면 서버가 표로 읽어 주고(lt_read_sheet — 어떤 칸이 이름·학년인지는
+# 화면이 짐작하고 선생님이 고친다), 화면이 학생마다 시험지를 정해 lt_bulk에 나눠 보낸다(LT_BULK_MAX명씩).
+
+LT_SHEET_MAX_ROWS = 2000
+LT_SHEET_MAX_COLS = 40
+LT_BULK_MAX = 25       # 한 요청에 등록·출제할 학생 수 — 화면이 이만큼씩 나눠 보낸다
+_LT_ID_DROP_RE = re.compile(r"[^0-9a-z가-힣._-]")
+
+
+def _lt_cell(v):
+    t = re.sub(r"\s+", " ", str(v if v is not None else "")).strip()
+    if re.fullmatch(r"-?\d+\.0", t):   # 엑셀 숫자 칸(3.0 → 3)
+        t = t[:-2]
+    return t[:100]
+
+
+def _lt_sheet_trim(rows):
+    rows = [[_lt_cell(c) for c in r[:LT_SHEET_MAX_COLS]] for r in rows[:LT_SHEET_MAX_ROWS + 50]]
+    rows = [r for r in rows if any(r)]
+    width = max((len(r) for r in rows), default=0)
+    return [r + [""] * (width - len(r)) for r in rows][:LT_SHEET_MAX_ROWS]
+
+
+def _lt_read_xlsx(raw):
+    import xml.etree.ElementTree as ET
+    ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    rel_ns = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        names = set(z.namelist())
+        shared = []
+        if "xl/sharedStrings.xml" in names:
+            for si in ET.fromstring(z.read("xl/sharedStrings.xml")).findall("m:si", ns):
+                shared.append("".join(t.text or "" for t in si.iter(f"{{{ns['m']}}}t")))
+        # 첫 번째 시트 — workbook.xml의 첫 sheet가 가리키는 파일(없으면 sheet1.xml)
+        path = "xl/worksheets/sheet1.xml"
+        try:
+            wb = ET.fromstring(z.read("xl/workbook.xml"))
+            first = wb.find("m:sheets/m:sheet", ns)
+            rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+            rid = first.get(rel_ns) if first is not None else None
+            for r in rels:
+                if r.get("Id") == rid:
+                    target = r.get("Target") or ""
+                    path = target.lstrip("/") if target.startswith("/") else "xl/" + target
+        except (KeyError, ET.ParseError):
+            pass
+        if path not in names:
+            raise ValueError("엑셀 파일에서 시트를 찾지 못했습니다.")
+        sheet = ET.fromstring(z.read(path))
+    rows = []
+    for row in sheet.iter(f"{{{ns['m']}}}row"):
+        cells = {}
+        for c in row.findall("m:c", ns):
+            ref = c.get("r") or ""
+            letters = re.match(r"[A-Z]+", ref)
+            col = 0
+            for ch in (letters.group(0) if letters else ""):
+                col = col * 26 + (ord(ch) - 64)
+            col = col - 1 if col else len(cells)
+            t = c.get("t")
+            if t == "inlineStr":
+                val = "".join(x.text or "" for x in c.iter(f"{{{ns['m']}}}t"))
+            else:
+                v = c.find("m:v", ns)
+                val = v.text if v is not None else ""
+                if t == "s" and val not in (None, ""):
+                    try:
+                        val = shared[int(val)]
+                    except (ValueError, IndexError):
+                        val = ""
+            if col < LT_SHEET_MAX_COLS:
+                cells[col] = val
+        if cells:
+            rows.append([cells.get(k, "") for k in range(max(cells) + 1)])
+        if len(rows) > LT_SHEET_MAX_ROWS + 50:
+            break
+    return rows
+
+
+def _lt_read_html_table(text):
+    """학원 프로그램이 흔히 내려주는 '.xls' — 실제로는 표 하나짜리 HTML이다."""
+    from html.parser import HTMLParser
+
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.rows, self.row, self.cell = [], None, None
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "tr":
+                self.row = []
+            elif tag in ("td", "th") and self.row is not None:
+                self.cell = []
+            elif tag == "br" and self.cell is not None:
+                self.cell.append(" ")
+
+        def handle_endtag(self, tag):
+            if tag in ("td", "th") and self.row is not None and self.cell is not None:
+                self.row.append("".join(self.cell))
+                self.cell = None
+            elif tag == "tr" and self.row is not None:
+                self.rows.append(self.row)
+                self.row = None
+
+        def handle_data(self, data):
+            if self.cell is not None:
+                self.cell.append(data)
+    p = P()
+    p.feed(text)
+    return p.rows
+
+
+def lt_read_sheet(filename, raw):
+    """엑셀(.xlsx)·HTML로 된 .xls·CSV·탭으로 나눈 글을 [[칸, …], …]로 읽는다. 옛 엑셀(BIFF .xls)은 못 읽는다."""
+    if not raw:
+        raise ValueError("파일이 비어 있습니다.")
+    if raw[:2] == b"PK":
+        try:
+            rows = _lt_read_xlsx(raw)
+        except zipfile.BadZipFile:
+            raise ValueError("엑셀 파일을 열지 못했습니다.")
+    elif raw[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        raise ValueError("옛 엑셀 형식(.xls)이라 읽지 못합니다. 엑셀에서 '다른 이름으로 저장' → 'Excel 통합 문서(.xlsx)' 또는 "
+                         "'CSV'로 저장해 올려 주세요.")
+    else:
+        text = None
+        for enc in ("utf-8-sig", "cp949", "utf-16"):
+            try:
+                text = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            raise ValueError("파일을 읽지 못했습니다. 엑셀(.xlsx)이나 CSV로 저장해 올려 주세요.")
+        if re.search(r"<\s*table", text, re.I):
+            rows = _lt_read_html_table(text)
+        else:
+            lines = text.splitlines()
+            delim = "\t" if sum(l.count("\t") for l in lines[:20]) >= sum(l.count(",") for l in lines[:20]) and \
+                any("\t" in l for l in lines[:20]) else ","
+            rows = list(csv.reader(lines, delimiter=delim))
+    rows = _lt_sheet_trim(rows)
+    if not rows:
+        raise ValueError("파일에서 표를 찾지 못했습니다.")
+    return {"rows": rows}
+
+
+def _lt_auto_ids(base):
+    """이름으로 만든 아이디가 이미 있으면 '김민수2'·'김민수3'…으로 바꿔 본다(20자 안에서)."""
+    yield base
+    for n in range(2, 100):
+        tail = str(n)
+        yield base[:20 - len(tail)] + tail
+
+
+def lt_bulk(user_id, rows):
+    """명단의 학생 여럿을 한 번에 등록하고 각자 정한 시험지를 낸다. 행마다 결과를 돌려준다(한 명이 실패해도 나머지는 한다).
+    행: {name, group?(반 — 학생 메모에 적는다), loginId?, fixedId?(선생님이 적은 아이디 — 겹치면 번호를 붙이지 않고 실패),
+    studentId?(이미 등록한 학생), setId}."""
+    _require_db()
+    sets = _lt_sets()
+    rows = list(rows or [])[:LT_BULK_MAX]
+    if not rows:
+        raise ValueError("등록할 학생이 없습니다.")
+    pw_hash = _hash_password(_pw_key(STUDENT_PW_DEFAULT))
+
+    def one(k, r):
+        try:
+            set_id = str(r.get("setId") or "")
+            if set_id not in sets:
+                raise ValueError("시험지를 골라 주세요.")
+            sid = str(r.get("studentId") or "")
+            if sid:
+                _, st = _lt_own_student(user_id, sid)
+                name, login, reused = st.get("name") or "", st.get("login_id") or "", True
+            else:
+                name = _lt_clean_name(r.get("name"))
+                typed = _lt_norm_login_id(r.get("loginId"))
+                base = typed if (typed and r.get("fixedId")) else _LT_ID_DROP_RE.sub("", typed or _lt_norm_login_id(name))
+                if len(base) < 2:
+                    base = (base + "학생")[:20]
+                tries = [base] if r.get("fixedId") else list(_lt_auto_ids(base[:20]))
+                made = None
+                for cand in tries:
+                    try:
+                        made = lt_create_student(user_id, name, cand, memo=r.get("group") or "", pw_hash=pw_hash)
+                        login = cand
+                        break
+                    except ValueError as e:
+                        if "이미 사용 중" not in str(e) or cand == tries[-1]:
+                            raise
+                sid, reused = made["id"], False
+            lt_assign(user_id, set_id, [sid])
+            return {"i": k, "ok": True, "name": name, "loginId": login, "studentId": sid, "reused": reused,
+                    "setId": set_id, "setLabel": sets[set_id]["gradeLabel"]}
+        except ValueError as e:
+            return {"i": k, "ok": False, "name": str(r.get("name") or ""), "error": str(e)}
+
+    # 서울 Firestore까지 한 번 오가는 데 시간이 걸려 학생마다 차례로 하면 느리다 — 몇 명씩 함께 한다
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda kr: one(*kr), enumerate(rows)))
+    return {"results": results}
 
 
 def lt_list_links(user_id):
@@ -22744,7 +22951,8 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/leveltest/links", "/api/leveltest/links/update", "/api/leveltest/links/delete",
                         "/api/leveltest/grade", "/api/leveltest/results/delete",
                         "/api/lt/begin", "/api/lt/resume", "/api/lt/submit", "/api/lt/login", "/api/lt/logout",
-                        "/api/leveltest/students", "/api/leveltest/students/update", "/api/leveltest/students/delete"):
+                        "/api/leveltest/students", "/api/leveltest/students/update", "/api/leveltest/students/delete",
+                        "/api/leveltest/sheet", "/api/leveltest/bulk"):
             self.send_error(404, "Not found")
             return
         try:
@@ -23383,7 +23591,8 @@ class Handler(BaseHTTPRequestHandler):
         # --- 레벨테스트 (선생님 쪽 POST) ---
         if path in ("/api/leveltest/links", "/api/leveltest/links/update", "/api/leveltest/links/delete",
                     "/api/leveltest/grade", "/api/leveltest/results/delete", "/api/leveltest/students",
-                    "/api/leveltest/students/update", "/api/leveltest/students/delete"):
+                    "/api/leveltest/students/update", "/api/leveltest/students/delete",
+                    "/api/leveltest/sheet", "/api/leveltest/bulk"):
             user_id = _session_user(self)
             if not user_id:
                 self._send_json({"error": "로그인이 필요합니다."}, 401)
@@ -23408,6 +23617,14 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/leveltest/students/delete":
                     lt_delete_student(user_id, req.get("id"))
                     result = {"ok": True}
+                elif path == "/api/leveltest/sheet":
+                    try:
+                        raw = base64.b64decode(str(req.get("data") or ""), validate=False)
+                    except (ValueError, TypeError):
+                        raise ValueError("파일을 읽지 못했습니다.")
+                    result = lt_read_sheet(req.get("name"), raw)
+                elif path == "/api/leveltest/bulk":
+                    result = lt_bulk(user_id, req.get("rows") or [])
                 elif path == "/api/leveltest/grade":
                     result = lt_grade(user_id, req.get("id"), req.get("i"), req.get("ok"))
                 else:

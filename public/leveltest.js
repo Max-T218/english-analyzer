@@ -19,7 +19,7 @@
   let ltLoaded = false;
   let ltStudents = [];        // 레벨테스트 학생(학생 관리와 따로)
 
-  const testUrl = `${location.origin}/test.html`;
+  const testUrl = `${location.origin}/test`;   // 짧은 주소(server.py가 /test.html로 받는다 — 2026-11-13 사용자: .html은 뺀다)
   $("ltStudentUrl").textContent = testUrl;
   $("ltCopyUrlBtn").addEventListener("click", () => {
     const ok = () => { $("ltNotice").textContent = "주소를 복사했습니다."; };
@@ -87,9 +87,9 @@
   function renderStudentList() {
     const box = $("ltStudentList");
     box.innerHTML = ltStudents.length
-      ? `<table class="lt-table"><thead><tr><th>이름</th><th>아이디</th><th>등록일</th><th></th></tr></thead><tbody>${
+      ? `<table class="lt-table"><thead><tr><th>이름</th><th>반</th><th>아이디</th><th>등록일</th><th></th></tr></thead><tbody>${
         ltStudents.map((st) => `<tr data-id="${esc(st.id)}">
-          <td><b>${esc(st.name)}</b></td><td>${esc(st.loginId)}</td>
+          <td><b>${esc(st.name)}</b></td><td>${esc(st.memo || "")}</td><td>${esc(st.loginId)}</td>
           <td>${esc(fmtWhen(st.createdAt))}</td>
           <td><button type="button" class="btn ghost small" data-act="edit">이름·아이디</button>
             <button type="button" class="btn ghost small danger" data-act="del">삭제</button></td>
@@ -333,6 +333,197 @@
     const rep = ltOpen.report;
     openPrintWindow(`레벨테스트 리포트 · ${rep.studentName || ""}`,
       `<style>${window.LTR.EXTRA_CSS}</style>` + window.LTR.reportHtml(rep, reportOpts(true)));
+  });
+
+  /* ── 명단으로 한꺼번에 등록·출제 (2026-11-13 사용자: 원생 전체) ──
+     이름·반·아이디 세 칸을 엑셀(.xlsx·.csv)로 올리거나 붙여 넣으면 반별로 묶어 보여 주고, 반마다 시험지를 한 번 고른다.
+     서버 /api/leveltest/sheet(파일 → 표)·/api/leveltest/bulk(학생 25명씩 등록 + 출제). 반 이름은 학생 메모에 남는다. */
+  const BULK_KEY = "lt_bulk_group_set";
+  let bulk = [];   // { name, group, loginId, on, dupe }
+  const bulkSetOf = {};   // 반 → 시험지 id
+  try { Object.assign(bulkSetOf, JSON.parse(localStorage.getItem(BULK_KEY) || "{}")); } catch (_) { /* 저장 못 해도 된다 */ }
+  const OFF_GROUP = /휴원|퇴원|휴학/;
+
+  function bulkParse(rows) {
+    const cols = { name: 0, group: 1, id: 2 };
+    const first = (rows[0] || []).map((c) => String(c).replace(/\s/g, "").toLowerCase());
+    const find = (re) => first.findIndex((c) => re.test(c));
+    const iName = find(/^(이름|성명|원생명?|학생명?|name)$/);
+    if (iName >= 0) {
+      cols.name = iName;
+      const g = find(/^(반|반명|클래스|class|소속)$/);
+      const i = find(/^(아이디|id|로그인|로그인id|학생코드|코드)$/);
+      cols.group = g;
+      cols.id = i;
+      rows = rows.slice(1);
+    }
+    const out = [];
+    rows.forEach((r) => {
+      const name = String(r[cols.name] || "").trim();
+      if (!name) return;
+      const group = cols.group >= 0 ? String(r[cols.group] || "").trim() : "";
+      const loginId = cols.id >= 0 ? String(r[cols.id] || "").trim() : "";
+      out.push({ name, group, loginId, on: !OFF_GROUP.test(group), dupe: false });
+    });
+    const seen = new Map();
+    out.forEach((r) => {
+      if (!r.loginId) return;
+      const k = r.loginId.replace(/\s+/g, "").toLowerCase();
+      if (seen.has(k)) { r.dupe = true; seen.get(k).dupe = true; } else seen.set(k, r);
+    });
+    return out;
+  }
+
+  const groupLabel = (g) => g || "(반 없음)";
+  function setOptions(sel) {
+    const groups = [];
+    ltSets.forEach((s) => {
+      let row = groups.find((x) => x.name === (s.group || ""));
+      if (!row) groups.push(row = { name: s.group || "", sets: [] });
+      row.sets.push(s);
+    });
+    return `<option value="">시험지 고르기</option>` + groups.map((g) =>
+      `<optgroup label="${esc(g.name || "기타")}">${g.sets.map((s) => `<option value="${esc(s.id)}"${sel === s.id ? " selected" : ""}>${esc(s.gradeLabel)}</option>`).join("")}</optgroup>`).join("");
+  }
+
+  function bulkRender(summaryHtml) {
+    const box = $("ltBulkPreview");
+    if (!bulk.length) { box.innerHTML = summaryHtml || ""; return; }
+    const groups = [];
+    bulk.forEach((r, k) => {
+      let g = groups.find((x) => x.name === r.group);
+      if (!g) groups.push(g = { name: r.group, rows: [] });
+      g.rows.push(k);
+    });
+    box.innerHTML = `${summaryHtml || ""}
+      <p class="hint"><b>${bulk.length}명</b>을 읽었습니다 (${groups.length}개 반). 반마다 시험지를 고르세요. 체크를 끈 학생은 등록하지 않습니다${bulk.some((r) => OFF_GROUP.test(r.group)) ? " (휴원·퇴원 반은 처음부터 꺼져 있습니다)" : ""}.</p>
+      ${groups.map((g) => `<div class="lt-bulk-group" data-group="${esc(g.name)}">
+        <div class="lt-bulk-head">
+          <label class="lt-set"><input type="checkbox" data-gall="1"${g.rows.every((k) => bulk[k].on) ? " checked" : ""}> <b>${esc(groupLabel(g.name))}</b> <span class="hint">${g.rows.length}명</span></label>
+          <select data-gset="1">${setOptions(bulkSetOf[g.name])}</select>
+        </div>
+        <details><summary class="hint" style="cursor:pointer;">명단 보기</summary>
+          <table class="lt-table"><tbody>${g.rows.map((k) => `<tr data-k="${k}"${bulk[k].dupe ? ' class="lt-off"' : ""}>
+            <td style="width:34px;"><input type="checkbox" data-row="1"${bulk[k].on ? " checked" : ""}></td>
+            <td><b>${esc(bulk[k].name)}</b></td><td>${esc(bulk[k].loginId || "(이름이 아이디)")}${bulk[k].dupe ? ' <span style="color:#c0392b;">아이디 겹침</span>' : ""}</td></tr>`).join("")}</tbody></table>
+        </details></div>`).join("")}
+      <div style="margin-top:10px;"><button type="button" class="btn" id="ltBulkGoBtn"></button> <span class="hint" id="ltBulkProgress"></span></div>`;
+    bulkSyncBtn();
+  }
+
+  function bulkSyncBtn() {
+    const b = $("ltBulkGoBtn");
+    if (b) b.textContent = `일괄 등록·출제 (${bulk.filter((r) => r.on).length}명)`;
+  }
+
+  async function bulkReadFile(file) {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    let bin = "";
+    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    const r = await postJson("/api/leveltest/sheet", { name: file.name, data: btoa(bin) }, "파일을 읽지 못했습니다.");
+    return r.rows || [];
+  }
+
+  $("ltBulkReadBtn").addEventListener("click", async () => {
+    $("ltBulkError").textContent = "";
+    const file = $("ltBulkFile").files[0];
+    const text = $("ltBulkText").value;
+    const btn = $("ltBulkReadBtn");
+    btn.disabled = true;
+    try {
+      let rows;
+      if (file) rows = await bulkReadFile(file);
+      else if (text.trim()) rows = text.split(/\r?\n/).filter((l) => l.trim()).map((l) => l.split(l.includes("\t") ? "\t" : ","));
+      else throw new Error("파일을 올리거나 명단을 붙여 넣어 주세요.");
+      bulk = bulkParse(rows);
+      if (!bulk.length) throw new Error("이름이 있는 줄을 찾지 못했습니다. 첫 줄에 '이름 · 반 · 아이디' 제목을 넣거나, 이름·반·아이디 순서로 적어 주세요.");
+      bulkRender("");
+    } catch (e) {
+      $("ltBulkError").textContent = e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $("ltBulkTemplateBtn").addEventListener("click", () => {
+    const csv = "﻿이름,반,아이디\n김민수,AL3,3s001\n이서연,AM2,\n";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = "레벨테스트_명단_양식.csv";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  });
+
+  $("ltBulkPreview").addEventListener("change", (e) => {
+    const grp = e.target.closest(".lt-bulk-group");
+    if (!grp) return;
+    const name = grp.dataset.group;
+    if (e.target.dataset.gset) {
+      bulkSetOf[name] = e.target.value;
+      try { localStorage.setItem(BULK_KEY, JSON.stringify(bulkSetOf)); } catch (_) { /* 저장 못 해도 된다 */ }
+    } else if (e.target.dataset.gall) {
+      bulk.forEach((r) => { if (r.group === name) r.on = e.target.checked; });
+      grp.querySelectorAll("input[data-row]").forEach((x) => { x.checked = e.target.checked; });
+    } else if (e.target.dataset.row) {
+      bulk[Number(e.target.closest("tr").dataset.k)].on = e.target.checked;
+      grp.querySelector("input[data-gall]").checked = bulk.filter((r) => r.group === name).every((r) => r.on);
+    }
+    bulkSyncBtn();
+  });
+
+  $("ltBulkPreview").addEventListener("click", async (e) => {
+    if (e.target.id !== "ltBulkGoBtn") return;
+    $("ltBulkError").textContent = "";
+    const mine = bulk.map((r, k) => ({ r, k })).filter((x) => x.r.on);
+    if (!mine.length) { $("ltBulkError").textContent = "등록할 학생이 없습니다."; return; }
+    const noSet = [...new Set(mine.filter((x) => !bulkSetOf[x.r.group] || !ltSets.some((s) => s.id === bulkSetOf[x.r.group])).map((x) => groupLabel(x.r.group)))];
+    if (noSet.length) { $("ltBulkError").textContent = `시험지를 고르지 않은 반이 있습니다: ${noSet.join(", ")}`; return; }
+    const dupes = mine.filter((x) => x.r.dupe).length;
+    if (dupes && !confirm(`아이디가 겹치는 학생이 ${dupes}명 있습니다. 겹치는 줄은 먼저 나온 한 명만 등록되고 나머지는 실패로 남습니다. 계속할까요?`)) return;
+    if (!confirm(`${mine.length}명을 등록하고 시험을 냅니다. 계속할까요?`)) return;
+    const btn = $("ltBulkGoBtn");
+    btn.disabled = true;
+    const done = [];      // 성공 { name, group, loginId, setLabel }
+    const failed = [];    // 실패 { k, error }
+    const CHUNK = 25;
+    try {
+      for (let at = 0; at < mine.length; at += CHUNK) {
+        const part = mine.slice(at, at + CHUNK);
+        $("ltBulkProgress").textContent = `${Math.min(at + CHUNK, mine.length)} / ${mine.length}명 처리 중…`;
+        const res = await postJson("/api/leveltest/bulk", {
+          rows: part.map((x) => ({ name: x.r.name, group: x.r.group, loginId: x.r.loginId, fixedId: !!x.r.loginId, setId: bulkSetOf[x.r.group] })),
+        }, "등록하지 못했습니다.");
+        (res.results || []).forEach((o) => {
+          const x = part[o.i];
+          if (o.ok) done.push({ name: o.name, group: x.r.group, loginId: o.loginId, setLabel: o.setLabel, k: x.k });
+          else failed.push({ k: x.k, error: o.error });
+        });
+      }
+    } catch (err) {
+      $("ltBulkError").textContent = `${err.message} (여기까지 ${done.length}명은 등록됐습니다 — 아래 명단에서 남은 학생만 다시 시도하세요)`;
+      mine.forEach((x) => { if (!done.some((d) => d.k === x.k) && !failed.some((f) => f.k === x.k)) failed.push({ k: x.k, error: "처리하지 못했습니다." }); });
+    }
+    // 성공한 줄은 명단에서 빼고, 실패한 줄만 남겨 다시 시도할 수 있게 한다
+    const okKeys = new Set(done.map((d) => d.k));
+    const failLines = failed.slice(0, 40).map((f) => `<li>${esc(bulk[f.k].name)}: ${esc(String(f.error))}</li>`).join("");
+    bulk = bulk.filter((_, k) => !okKeys.has(k));
+    bulkLastDone = done;
+    bulkRender(`<div class="hint" style="color:var(--accent, #2f6fdb); font-weight:700; margin-bottom:8px;">${done.length}명을 등록하고 시험을 냈습니다.${failed.length ? ` <span style="color:#c0392b;">${failed.length}명은 실패했습니다 — 아래 명단에 남겨 두었습니다.</span>` : ""}
+      ${done.length ? ` <button type="button" class="btn ghost small" id="ltBulkCsvBtn">결과(이름·반·아이디) 내려받기</button>` : ""}</div>
+      ${failLines ? `<ul class="hint" style="color:#c0392b;">${failLines}</ul>` : ""}`);
+    await ltRefresh();
+  });
+
+  let bulkLastDone = [];
+  $("ltBulkPreview").addEventListener("click", (e) => {
+    if (e.target.id !== "ltBulkCsvBtn") return;
+    const q = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
+    const csv = "﻿" + ["이름,반,아이디,시험지", ...bulkLastDone.map((d) => [d.name, d.group, d.loginId, d.setLabel].map(q).join(","))].join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = "레벨테스트_등록결과.csv";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   });
 
   // 탭을 처음 열 때(그리고 다시 열 때마다) 목록을 받아 온다 — 학생이 막 제출했을 수 있다
