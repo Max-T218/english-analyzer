@@ -340,6 +340,14 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
   음성·그림은 `leveltest_media/{이름}__{n}` 조각(900KB씩). 원본 index.html(또는 zip)에서
   `tools/leveltest_import.py`(`--dry-run`이면 읽기만)로 올린다 — 다시 돌리면 덮어쓴다. 서버는 5분 캐시(`_lt_sets`).
   시험지 8종(Phonics·Starters·Movers·Flyers·중고등 Type A~D, 424문항), 문제 모양은 mc·mc_multi·fill·order.
+  **2027 시험지(2026-11-13)**: 학원이 준 것이 사이트 파일이 아니라 인쇄용 원본(PDF·한글·음성)이라 문항을 사이트 모양으로
+  옮겨 적은 JSON을 `--json`으로 올린다(`load_json` — JSON·옮겨 적은 스크립트는 학원 자료라 저장소에 넣지 않는다).
+  id는 `y2027_*`(Starters·Movers·Flyers·중고등 Type A~E 8종, 424문항), 시험지 문서의 `group`이 '2027 레벨테스트'.
+  **2026 시험지는 지우지 않고 `group` '2026 레벨테스트'로 묶어 둔다**(사용자 — 이미 본 학생 결과가 그 id를 가리킨다).
+  선생님 탭의 시험지 고르기는 묶음별로 나뉘고 첫 묶음만 펼친다(`renderSetPicker`). 2027 Type A 듣기는 2026과 같은 파일이라
+  `typea` 음성을 그대로 쓴다. 원본 답지가 없던 Type A 객관식·Type B·Type E 객관식 정답은 옮기면서 풀어서 정했다(학원 확인 필요).
+  영작처럼 맞는 문장이 여러 모양인 빈칸은 문항에 `review:true`를 달아 모범 답과 다르면 확인 대기로 둔다(`_lt_grade`).
+  단추로 고르는 빈칸(`_lt_fill_options`)은 우리말 답이어도 다른 단추면 바로 틀림이다.
 - **학생은 레벨테스트 사이트 `test.html`(짧은 주소 `/test`)에 아이디·비밀번호로 로그인한다**(2026-10-21 사용자 —
   학생 관리처럼 한 사이트에서 로그인하되 student.html과 따로). 계정은 선생님이 탭의 '👤 레벨테스트 학생'에서
   등록한다(`lt_create_student`/`lt_update_student`/`lt_delete_student` — 무차별 대입 제한은 학생 관리와 같은 함수를 쓰고,

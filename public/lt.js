@@ -267,8 +267,10 @@
       const imgs = item.choiceImages;
       const wrap = el("div", "choices" + (imgs ? " imgs" : ""));
       Object.keys(imgs || item.choices || {}).forEach((L) => {
+        // 보기 글이 번호 그 자체인 문항(①~⑤ 중 들어갈 곳 고르기 — 2027 시험지)은 번호를 한 번만 보인다
         const inner = imgs
           ? `<span class="lt">${esc(L)}</span><img src="${esc(media(imgs[L]))}" alt="">`
+          : item.choices[L] === L ? `<span class="lt">${esc(L)}</span>`
           : `<span class="lt">${esc(L)}</span><span>${item.choices[L]}</span>`;
         const c = el("button", "choice" + (answers[i] === L ? " sel" : ""), inner);
         c.type = "button";

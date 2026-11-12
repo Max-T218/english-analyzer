@@ -14,6 +14,8 @@
   python tools/leveltest_import.py <원본 index.html 또는 압축 zip> --dry-run   # 읽기만, 요약 출력
   python tools/leveltest_import.py <원본 index.html 또는 압축 zip>             # Firestore에 올린다
 
+  python tools/leveltest_import.py <옮겨 적은 시험지 .json> --dry-run         # 2027년부터(아래 load_json 참고)
+
 다시 돌리면 같은 문서를 덮어쓴다(시험지를 고친 뒤 다시 올리는 길). 응시 결과는 건드리지 않는다.
 """
 import json
@@ -171,7 +173,26 @@ def media_mime(b):
         return "image/jpeg"
     if b.startswith(b"ID3") or b[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
         return "audio/mpeg"
+    if b[4:8] == b"ftyp":   # m4a(2027 Movers 듣기)
+        return "audio/mp4"
     return "application/octet-stream"
+
+
+# ── 2027년부터: 인쇄용 원본(PDF·한글)을 옮겨 적은 JSON ──
+# 2027 시험지는 원래 사이트(index.html)가 없어 원본을 사이트 모양으로 옮겨 적었다(2026-11-13). 그 JSON은
+# 학원 자료라 이 저장소에 넣지 않는다 — 모양: {"sets": [시험지 문서 + "test"], "updates": {옛 시험지 id: 바꿀 칸},
+# "media": {이름: 로컬 파일 경로}}. updates는 옛 시험지를 지우지 않고 묶음(group)·이름·차례만 바꾼다.
+def load_json(path):
+    with open(path, encoding="utf-8") as f:
+        pack = json.load(f)
+    sets = pack.get("sets") or []
+    media = {}
+    for key, fp in (pack.get("media") or {}).items():
+        with open(fp, "rb") as g:
+            raw = g.read()
+        media[key] = (media_mime(raw), raw)
+    problems = [f"{k}: 형식을 모르는 파일" for k, (m, _) in media.items() if m == "application/octet-stream"]
+    return sets, media, problems, pack.get("updates") or {}
 
 
 # ── 밑줄 보정 (2026-10-21 사용자: '밑줄 친'인데 밑줄이 안 보인다) ──
@@ -326,10 +347,17 @@ def build(html):
     return sets, media, problems
 
 
-def upload(sets, media):
+def upload(sets, media, updates=None):
     from google.cloud import firestore
     db = firestore.Client()
     now = datetime.now(timezone.utc).isoformat()
+    for sid, fields in (updates or {}).items():
+        ref = db.collection("leveltest_sets").document(sid)
+        if not ref.get().exists:
+            print(f"  옛 시험지 {sid} 없음 — 건너뜀")
+            continue
+        ref.update(dict(fields, updated_at=now))
+        print(f"  옛 시험지 {sid} → {fields}")
     for s in sets:
         doc = {k: v for k, v in s.items() if k != "test"}
         doc["data"] = json.dumps(s["test"], ensure_ascii=False)
@@ -353,7 +381,13 @@ def main():
     if not args:
         print(__doc__)
         sys.exit(1)
-    sets, media, problems = build(load_html(args[0]))
+    updates = {}
+    if args[0].lower().endswith(".json"):
+        sets, media, problems, updates = load_json(args[0])
+    else:
+        sets, media, problems = build(load_html(args[0]))
+    for sid, fields in updates.items():
+        print(f"(옛 시험지) {sid:10} → {fields.get('group', '')} · {fields.get('gradeLabel', '')}")
     for s in sets:
         print(f"{s['id']:10} {s['gradeLabel']:24} {s['questionCount']:3}문항 "
               f"시간 {s['timeLimitSec'] // 60}분 듣기 {s['audioKey'] or '-'}")
@@ -368,7 +402,7 @@ def main():
             print(json.dumps([s["test"] for s in sets], ensure_ascii=False, indent=1))
         return
     print("\nFirestore에 올립니다…")
-    upload(sets, media)
+    upload(sets, media, updates)
     print("끝.")
 
 

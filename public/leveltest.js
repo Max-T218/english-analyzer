@@ -133,10 +133,25 @@
   function renderSetPicker() {
     const box = $("ltSetPicker");
     const keep = (box.querySelector("input:checked") || {}).value;
-    box.innerHTML = ltSets.length
-      ? ltSets.map((s) => `<label class="lt-set"><input type="radio" name="ltSet" value="${esc(s.id)}"${keep === s.id ? " checked" : ""}>
-          <b>${esc(s.gradeLabel)}</b> <span class="hint">${s.questionCount}문항${s.timeLimitSec ? ` · ${Math.round(s.timeLimitSec / 60)}분` : ""}${s.hasListening ? " · 듣기" : ""}</span></label>`).join("")
-      : `<p class="hint">등록된 시험지가 없습니다. 관리자에게 문의하세요.</p>`;
+    const one = (s) => `<label class="lt-set"><input type="radio" name="ltSet" value="${esc(s.id)}"${keep === s.id ? " checked" : ""}>
+          <b>${esc(s.gradeLabel)}</b> <span class="hint">${s.questionCount}문항${s.timeLimitSec ? ` · ${Math.round(s.timeLimitSec / 60)}분` : ""}${s.hasListening ? " · 듣기" : ""}</span></label>`;
+    // 연도 묶음(서버 group) — 첫 묶음(올해 시험지)은 펼쳐 두고, 지난해 묶음은 접어 둔다(2026-11-13 사용자: 2026 시험지는 묶어서 보관)
+    const groups = [];
+    ltSets.forEach((s) => {
+      const g = s.group || "";
+      let row = groups.find((x) => x.name === g);
+      if (!row) groups.push(row = { name: g, sets: [] });
+      row.sets.push(s);
+    });
+    box.innerHTML = !ltSets.length
+      ? `<p class="hint">등록된 시험지가 없습니다. 관리자에게 문의하세요.</p>`
+      : groups.length < 2 && !groups[0].name
+        ? `<div class="lt-sets">${ltSets.map(one).join("")}</div>`
+        : groups.map((g, k) => {
+          const open = k === 0 || g.sets.some((s) => s.id === keep);
+          return `<details class="lt-set-group"${open ? " open" : ""}><summary>${esc(g.name || "기타 시험지")} <span class="hint">${g.sets.length}종</span></summary>
+            <div class="lt-sets">${g.sets.map(one).join("")}</div></details>`;
+        }).join("");
   }
 
   function renderLinks() {

@@ -2966,6 +2966,9 @@ input.st-in{width:100%; box-sizing:border-box;}
 .lt-sets{display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:6px 14px; margin-top:8px;}
 .lt-set{display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer; margin:0;}
 .lt-set input{width:auto; margin:0;}
+.lt-set-group{margin-top:8px; border:1px solid var(--line, #e3e6ea); border-radius:8px; padding:8px 12px;}
+.lt-set-group > summary{cursor:pointer; font-weight:700; font-size:13.5px;}
+.lt-set-group > .lt-sets{margin-top:6px;}
 .lt-table{width:100%; border-collapse:collapse; font-size:13px;}
 .lt-table th{text-align:left; padding:7px 8px; border-bottom:2px solid var(--line, #e3e6ea); white-space:nowrap;}
 .lt-table td{padding:7px 8px; border-bottom:1px solid var(--line, #e3e6ea); vertical-align:top;}

@@ -21079,6 +21079,8 @@ def _lt_sets():
             "id": snap.id,
             "label": str(d.get("label") or snap.id),
             "gradeLabel": str(d.get("gradeLabel") or d.get("label") or snap.id),
+            # 연도 묶음('2027 레벨테스트'·'2026 레벨테스트') — 지난해 시험지는 지우지 않고 묶어 둔다(2026-11-13 사용자)
+            "group": str(d.get("group") or ""),
             "order": int(d.get("order") or 0),
             "timeLimitSec": int(d.get("timeLimitSec") or 0),
             "hasListening": bool(d.get("hasListening")),
@@ -21093,7 +21095,7 @@ def _lt_sets():
 
 
 def _lt_set_meta(s):
-    return {"id": s["id"], "label": s["label"], "gradeLabel": s["gradeLabel"],
+    return {"id": s["id"], "label": s["label"], "gradeLabel": s["gradeLabel"], "group": s.get("group") or "",
             "timeLimitSec": s["timeLimitSec"], "hasListening": s["hasListening"],
             "questionCount": len(s["items"])}
 
@@ -21269,8 +21271,12 @@ def _lt_grade(it, given):
         return False, "(무응답)", correct_text
     if any(_lt_norm(text) == _lt_norm(a) for a in answers):
         return True, text, correct_text
-    # 우리말로 답하는 칸은 같은 뜻을 다르게 쓸 수 있다 — 선생님이 본다
-    if any(_LT_HANGUL_RE.search(a) for a in answers):
+    # 우리말로 답하는 칸은 같은 뜻을 다르게 쓸 수 있다 — 선생님이 본다.
+    # 영작처럼 맞는 문장이 여러 모양인 칸(시험지의 review 표시, 2027 시험지부터)도 모범 답과 다르면 선생님이 본다.
+    # 단, 몇 개 중에서 단추로 고르는 칸(품사 쓰기 — _lt_fill_options)은 다른 단추를 골랐으면 그냥 틀림이다.
+    if _lt_fill_options(q, it.get("grp") or {}):
+        return False, text, correct_text
+    if q.get("review") or any(_LT_HANGUL_RE.search(a) for a in answers):
         return None, text, correct_text
     return False, text, correct_text
 
