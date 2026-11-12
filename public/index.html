@@ -2831,9 +2831,9 @@
       </section>
 
       <!-- 명단으로 일괄 등록 — 이름·반·아이디 세 칸(엑셀 파일 또는 붙여넣기), 반마다 시험지를 한 번 고른다 -->
-      <section class="panel">
-        <details id="ltBulkWrap">
-          <summary class="field-head" style="cursor:pointer;"><label style="cursor:pointer;">📥 명단으로 한꺼번에 등록·출제 (원생 전체)</label></summary>
+      <section class="panel lt-bulk-panel">
+        <details id="ltBulkWrap" open>
+          <summary class="lt-bulk-title">📥 명단으로 한꺼번에 등록·출제 <span>원생 전체 · 엑셀 한 번에</span></summary>
           <p class="hint">엑셀에 <b>이름 · 반 · 아이디</b> 세 칸으로 적어 올리거나(.xlsx·.csv), 엑셀에서 복사해 아래 칸에 붙여 넣으세요. 아이디 칸을 비우면 이름이 아이디가 되고, 같은 이름이 있으면 '김민수2'처럼 번호가 붙습니다. 올리면 <b>반별로 묶어서</b> 보여 주니, 반마다 시험지를 한 번만 고르면 됩니다.</p>
           <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0;">
             <input type="file" id="ltBulkFile" accept=".xlsx,.csv,.txt,.xls" style="max-width:300px;">
