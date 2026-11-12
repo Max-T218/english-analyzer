@@ -346,16 +346,19 @@
 
   function bulkParse(rows) {
     const cols = { name: 0, group: 1, id: 2 };
-    const first = (rows[0] || []).map((c) => String(c).replace(/\s/g, "").toLowerCase());
-    const find = (re) => first.findIndex((c) => re.test(c));
-    const iName = find(/^(이름|성명|원생명?|학생명?|name)$/);
-    if (iName >= 0) {
-      cols.name = iName;
-      const g = find(/^(반|반명|클래스|class|소속)$/);
-      const i = find(/^(아이디|id|로그인|로그인id|학생코드|코드)$/);
-      cols.group = g;
-      cols.id = i;
-      rows = rows.slice(1);
+    // 제목 줄 찾기 — 맨 위에 '원생 명단 (날짜)' 같은 제목이나 빈 줄이 있어도 위 10줄 안에서 찾는다
+    const NAME_RE = /^(이름|성명|원생명?|학생명?|name)$/;
+    let head = -1;
+    for (let k = 0; k < Math.min(rows.length, 10) && head < 0; k++) {
+      if (rows[k].some((c) => NAME_RE.test(String(c).replace(/\s/g, "").toLowerCase()))) head = k;
+    }
+    if (head >= 0) {
+      const first = rows[head].map((c) => String(c).replace(/\s/g, "").toLowerCase());
+      const find = (re) => first.findIndex((c) => re.test(c));
+      cols.name = find(NAME_RE);
+      cols.group = find(/^(반|반명|클래스|class|소속)$/);
+      cols.id = find(/^(아이디|id|로그인|로그인id|학생코드|코드)$/);
+      rows = rows.slice(head + 1);
     }
     const out = [];
     rows.forEach((r) => {
@@ -438,12 +441,42 @@
       bulk = bulkParse(rows);
       if (!bulk.length) throw new Error("이름이 있는 줄을 찾지 못했습니다. 첫 줄에 '이름 · 반 · 아이디' 제목을 넣거나, 이름·반·아이디 순서로 적어 주세요.");
       bulkRender("");
+      if (file) $("ltBulkFileName").textContent = `✔ ${file.name} — ${bulk.length}명을 읽었습니다 (다른 파일을 놓으면 바꿔 읽습니다)`;
     } catch (e) {
       $("ltBulkError").textContent = e.message;
+      if (file) $("ltBulkFileName").textContent = `✖ ${file.name} — 읽지 못했습니다`;
     } finally {
       btn.disabled = false;
     }
   });
+
+  // 파일 끌어다 놓기 — 놓거나 고르면 바로 명단을 읽는다(2026-11-13 사용자). 상자 밖에 놓아도 브라우저가 파일을 열지 않게 패널 전체가 받는다.
+  function bulkPick(file) {
+    if (!file) return;
+    if (!/\.(xlsx|csv|txt|xls)$/i.test(file.name)) { $("ltBulkError").textContent = "엑셀(.xlsx)이나 CSV 파일만 올릴 수 있습니다."; return; }
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    $("ltBulkFile").files = dt.files;
+    $("ltBulkFileName").textContent = `✔ ${file.name} — 읽는 중…`;
+    $("ltBulkDrop").classList.add("has");
+    $("ltBulkReadBtn").click();
+  }
+  const bulkPanel = document.querySelector(".lt-bulk-panel");
+  ["dragenter", "dragover"].forEach((ev) => bulkPanel.addEventListener(ev, (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
+    e.preventDefault();
+    $("ltBulkDrop").classList.add("over");
+  }));
+  bulkPanel.addEventListener("dragleave", (e) => {
+    if (!bulkPanel.contains(e.relatedTarget)) $("ltBulkDrop").classList.remove("over");
+  });
+  bulkPanel.addEventListener("drop", (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
+    e.preventDefault();
+    $("ltBulkDrop").classList.remove("over");
+    bulkPick(e.dataTransfer.files[0]);
+  });
+  $("ltBulkFile").addEventListener("change", () => bulkPick($("ltBulkFile").files[0]));
 
   $("ltBulkTemplateBtn").addEventListener("click", () => {
     const csv = "﻿이름,반,아이디\n김민수,AL3,3s001\n이서연,AM2,\n";

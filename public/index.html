@@ -2835,10 +2835,12 @@
         <details id="ltBulkWrap" open>
           <summary class="lt-bulk-title">📥 명단으로 한꺼번에 등록·출제 <span>원생 전체 · 엑셀 한 번에</span></summary>
           <p class="hint">엑셀에 <b>이름 · 반 · 아이디</b> 세 칸으로 적어 올리거나(.xlsx·.csv), 엑셀에서 복사해 아래 칸에 붙여 넣으세요. 아이디 칸을 비우면 이름이 아이디가 되고, 같은 이름이 있으면 '김민수2'처럼 번호가 붙습니다. 올리면 <b>반별로 묶어서</b> 보여 주니, 반마다 시험지를 한 번만 고르면 됩니다.</p>
-          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0;">
-            <input type="file" id="ltBulkFile" accept=".xlsx,.csv,.txt,.xls" style="max-width:300px;">
-            <button type="button" class="btn ghost small" id="ltBulkTemplateBtn">양식 내려받기</button>
-          </div>
+          <label class="lt-drop" id="ltBulkDrop" for="ltBulkFile">
+            <span class="lt-drop-big">📄 엑셀 파일을 여기로 끌어다 놓으세요</span>
+            <span class="lt-drop-sub" id="ltBulkFileName">또는 이 칸을 눌러 파일 고르기 (.xlsx · .csv)</span>
+            <input type="file" id="ltBulkFile" accept=".xlsx,.csv,.txt,.xls" hidden>
+          </label>
+          <div style="margin:6px 0 8px;"><button type="button" class="btn ghost small" id="ltBulkTemplateBtn">양식 내려받기</button></div>
           <textarea id="ltBulkText" rows="5" placeholder="이름&#9;반&#9;아이디&#10;김민수&#9;AL3&#9;3s001&#10;이서연&#9;AM2" style="width:100%; font-size:14px;"></textarea>
           <div style="margin-top:8px;"><button type="button" class="btn small" id="ltBulkReadBtn">명단 확인</button></div>
           <div class="error" id="ltBulkError"></div>
