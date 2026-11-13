@@ -1168,6 +1168,9 @@
          누르면 카카오 입장 화면이 바로 열린다(그 화면에 QR·링크 복사가 있어 사이트 창은 두지 않는다 — 사용자) -->
     <a class="howto-btn ask-side" id="openChatBtn" href="https://open.kakao.com/o/gT14GFWi" target="_blank" rel="noopener"
        title="잉글리시랩을 쓰는 분들이 모인 카카오톡 오픈채팅방입니다.">👥 사용자 소통방</a>
+    <!-- 요금표 — 탭마다 값이 어떻게 붙는지 한 화면에(2026-11-13 사용자 — 고객 문의가 잦다). 사이드바 맨 아래.
+         금액은 /api/pricing으로 채운다(app.js renderPriceTab) — 여기에 숫자를 적지 말 것 -->
+    <button type="button" class="tab-btn howto-btn ask-side" data-tab="pricing">💰 요금표</button>
   </nav>
 
   <div class="main-content">
@@ -2796,6 +2799,15 @@
 
   <!-- 레벨테스트 — 상담 온 학생에게 응시 링크(/lt/<코드>)를 주고, 결과 리포트를 받아 본다.
        시험지는 서버(Firestore)에만 있다. 동작은 public/leveltest.js, 학생 화면은 lt.html. -->
+  <!-- 요금표 — 사이드바 맨 아래 [💰 요금표]. 표는 app.js renderPriceTab이 서버 가격으로 그린다 -->
+  <section class="tab-page" id="tab-pricing">
+    <section class="panel">
+      <div class="field-head"><label>💰 요금표</label></div>
+      <p class="hint">값은 모두 포인트(P)이고 1P = 1원입니다. 만들기에 성공했을 때만 차감되고, 실행 전에 예상 금액을 먼저 보여 드립니다. 사이트 저장·인쇄·워드·한글 내려받기는 무료입니다.</p>
+      <div id="priceTab"><p class="hint">요금을 불러오는 중입니다…</p></div>
+    </section>
+  </section>
+
   <section class="tab-page" id="tab-leveltest">
     <div id="ltListView">
       <section class="panel">

@@ -888,6 +888,113 @@ async function loadPricing() {
 }
 loadPricing();
 
+/* ══════════ 요금표 탭(사이드바 맨 아래 [💰 요금표]) ══════════
+   고객이 "이건 얼마예요?"를 자주 물어 탭마다 값이 붙는 방식을 한 화면에 모았다(2026-11-13 사용자).
+   금액은 모두 PRICING(/api/pricing)에서 꺼낸다 — 숫자를 여기 적으면 서버 값을 바꿀 때 어긋난다.
+   계산 방식(유형 첫 문항 + 추가 문항, 워크북 상한 등)은 server.py의 _quiz_action_cost·_workbook_cost·
+   _grammar_cost·_trend_page_cost와 같은 식이다 — 식을 바꾸면 여기 글도 고칠 것. */
+function renderPriceTab() {
+  const box = $("priceTab");
+  if (!box) return;
+  const P = PRICING;
+  if (!P) {
+    box.innerHTML = `<p class="hint">요금을 불러오지 못했습니다. 새로고침해 주세요.</p>`;
+    return;
+  }
+  const v = (n) => (Number(n) > 0 ? pt(n) : `<span class="price-free">무료</span>`);
+  const plus = (n) => (Number(n) > 0 ? `+${pt(n)}` : `<span class="price-free">무료</span>`);
+  const row = (name, val, note) =>
+    `<tr><td>${name}${note ? `<span class="price-note">${note}</span>` : ""}</td><td class="price-v">${val}</td></tr>`;
+  const card = (title, unit, rows, ex) =>
+    `<section class="price-card"><h3>${title}${unit ? ` <small>${unit}</small>` : ""}</h3>` +
+    `<table class="price-table">${rows.join("")}</table>` +
+    (ex ? `<p class="price-ex">${ex}</p>` : "") + `</section>`;
+  const n = (x) => Number(x || 0);
+  const first = n(P.mcqTransform || P.mcqPlain);
+  const extra = n(P.extraQuestion);
+  const quizEx = first + first + extra;
+  const gr = (q) => n(P.grammarBase) + n(P.grammarPerQ) * q;
+  const wbMax = n(P.workbookMax), wbStage = n(P.workbookStage);
+  const wbCap = wbStage ? Math.ceil(wbMax / wbStage) : 0;
+  const seat = P.seat || {};
+  const seatFrom = /^\d{4}-\d{2}-\d{2}$/.test(seat.from || "")
+    ? (() => { const [y, m, d] = seat.from.split("-").map(Number); return `${y}년 ${m}월 ${d}일`; })() : "";
+  const disc = (seat.discounts || []).slice().sort((a, b) => a[0] - b[0])
+    .map(([k, pc]) => `${k}명 이상 ${pc}%`).join(" · ");
+  const seatVal = seat.enabled ? `1명 ${pt(seat.price)}`
+    : seatFrom ? `${seatFrom}부터 1명 ${pt(seat.price)}` : `<span class="price-free">지금은 무료</span>`;
+  const amounts = (P.rechargeAmounts || []).map((a) => Number(a).toLocaleString()).join(" · ");
+  const trendEx = 8 * n(P.trendScanPage) + n(P.examTrend);
+  box.innerHTML = [
+    card("📖 지문 분석", "지문 1개당", [
+      row("상세분석", v(P.analyze)),
+      row("요약분석", v(P.brief)),
+      row("요약 이미지 — 인포그래픽 (선택)", plus(P.infographic), "상세분석·요약분석·내용 한장정리에 붙일 때, 그림 1장당"),
+      row("요약 이미지 — 4컷 그림 (선택)", plus(P.decodePic), "일러스트·웹툰, 그림 1장당"),
+    ], `예) 지문 3개 상세분석 + 인포그래픽 = (${pt(P.analyze)} + ${pt(P.infographic)}) × 3 = ${pt((n(P.analyze) + n(P.infographic)) * 3)}`),
+    card("📘 리딩노트 · 💡 내용 한장정리", "지문 1개당", [
+      row("리딩노트", v(P.decode)),
+      row("리딩노트 4컷 그림 (선택)", plus(P.decodePic)),
+      row("내용 한장정리", v(P.explain)),
+      row("내용 한장정리 요약 이미지 (선택)", "위 요약 이미지 값", `인포그래픽 ${pt(P.infographic)} · 4컷 그림 ${pt(P.decodePic)}`),
+    ]),
+    card("📝 문제 제작", "객관식 · 주관식 · 객관식+주관식", [
+      row("유형 1개의 첫 문항", v(first), "지문 1개 × 유형 1개마다"),
+      row("같은 유형의 둘째 문항부터", plus(extra), "같은 지문에서 같은 유형을 여러 문항 만들 때, 1문항마다"),
+      row("고난도 선택", `<span class="price-free">추가 요금 없음</span>`),
+      row("지문 변형 (원문 그대로 / 단어 변형)", v(P.reword)),
+      row("문제 PDF에서 불러오기", v(P.quizRestore), "되살린 문항 1개당"),
+    ], `예) 지문 1개에서 주제 1문항 + 빈칸 2문항 = ${pt(first)} + (${pt(first)} + ${pt(extra)}) = ${pt(quizEx)}`),
+    card("📐 문법문제 마법사", "시험지 1장당", [
+      row("기본 요금", v(P.grammarBase)),
+      row("문제 1개당", plus(P.grammarPerQ), "객관식·주관식 합쳐서 셉니다"),
+    ], `예) 10문제 ${pt(gr(10))} · 20문제 ${pt(gr(20))} · 50문제 ${pt(gr(50))} · 100문제 ${pt(gr(100))}<br>` +
+       `난이도를 '난이도별로 따로'로 고르면 시험지가 난이도 수만큼 나오고, 시험지마다 이 값이 붙습니다.`),
+    card("📚 워크북 제작", "지문 1개당", [
+      row("단계 1개당", v(wbStage)),
+      row("지문 1개 최대 금액", v(wbMax), wbCap ? `단계를 ${wbCap}개 넘게 골라도 이 금액까지만` : ""),
+      row("내용 O/X 단계", "별도", `주관식 O/X 문제 값으로 따로 계산 (첫 문항 ${pt(P.saq)}, 추가 문항 ${pt(extra)})`),
+    ], `예) 지문 2개 × 5단계 = ${pt(Math.min(5 * wbStage, wbMax) * 2)} · 지문 2개 × 10단계 = ${pt(Math.min(10 * wbStage, wbMax) * 2)}`),
+    card("📒 단어장", "", [
+      row("직접 입력 · 사진 · PDF에서 단어 가져오기", v(Math.max(n(P.vocabOcr), n(P.vocabPdf)))),
+      row("지문에서 단어 뽑기", v(P.vocabExtract), "지문 1개당"),
+    ]),
+    card("🧾 동형 모의고사 제작", "", [
+      row("기출 시험지 유형 분석 · 지문 꺼내기", v(n(P.examScan) + n(P.examOcrPage))),
+      row("시험지 문항 1개당", v(first), "A형·B형을 만들면 부마다 붙습니다"),
+      row("단어장으로 지문 바꿔 싣기", v(P.reword)),
+    ], `예) 25문항 1부 = ${pt(first * 25)}`),
+    card("📊 시험지 분석 리포트", "", [
+      row("유형 분석", v(P.trendScanPage), "시험지 1쪽당"),
+      row("시험 범위 대조 (선택)", plus(P.trendOcrPage), "시험지 1쪽당, 시험 범위를 넣었을 때만"),
+      row("분석 총평", v(P.examTrend), "리포트 1건당"),
+      row("카드뉴스 만들기", v(0)),
+    ], `예) 8쪽 시험지 1부 = ${pt(trendEx)} · 범위 대조까지 = ${pt(trendEx + 8 * n(P.trendOcrPage))}`),
+    card("🏫 학생 관리", "", [
+      row("반·학생 등록, 시험 내기, 채점, 성적표", v(0)),
+      row("성적표 AI 코멘트", v(P.studentComment), "1건당"),
+      row("틀린 문제 보충 학습 (선택)", `문제 값 + ${pt(P.retryConcept)}`,
+        `새로 만든 문제 값 + 회차마다 개념 설명 ${pt(P.retryConcept)}, 선생님 포인트에서 차감`),
+      row("학생 이용권", seatVal,
+        `학생 1명 ${n(seat.days) || 30}일 기준, ${n(seat.unit) || 10}명 단위·최소 ${n(seat.min) || 10}명` +
+        (disc ? `<br>할인: ${disc}` : "") + (!seat.enabled && seatFrom ? `<br>그 전까지는 무료입니다` : "")),
+    ]),
+    card("📥 지문 넣기 도우미", "", [
+      row("사진에서 지문 읽기 · PDF에서 지문 꺼내기 · 정답표 읽기", v(n(P.ocr) + n(P.pdfSplit))),
+      row("모의고사 문제지 → 원래 지문 자동 채우기", v(P.mockRestore), "되살린 지문 1개당"),
+      row("사진 속 문제를 AI로 풀어 지문 되살리기", v(P.passageSolve), "문제 1개당"),
+    ]),
+    card("🎯 레벨테스트", "", [row("학생 등록 · 출제 · 응시 · 결과 리포트", v(0))]),
+    card("💳 충전과 포인트", "", [
+      amounts ? row("충전 금액", "1원 = 1P", `${amounts}원`) : "",
+      P.signupBonus ? row("가입 축하 포인트", pt(P.signupBonus),
+        n(P.signupExpireMonths) ? `가입일로부터 ${n(P.signupExpireMonths)}개월 안에 사용` : "") : "",
+      n(P.paidExpireYears) ? row("충전한 포인트 사용 기한", `${n(P.paidExpireYears)}년`) : "",
+    ]),
+  ].join("");
+}
+onPricingReady(renderPriceTab);
+
 /* 가입 축하금 이벤트 띠. 금액도 기간도 서버가 정한다 — 화면에 숫자를 박아 두면
    이벤트가 끝난 뒤에도 그 숫자가 남는다(가격을 하드코딩하지 않는 것과 같은 이유).
    signupBonusEvent가 거짓이면 띠를 감춘다. 서버가 끝난 날을 알고 있으므로, 이벤트를
@@ -4046,7 +4153,7 @@ function syncTabChrome(tab) {
   // 문법문제 마법사는 '넣은 지문으로'를 골랐을 때만 지문칸을 쓴다(grammar.js grammarWantsPassage)
   const grammarNoPassage = tab === "grammar" && !(typeof grammarWantsPassage === "function" && grammarWantsPassage());
   const vocabNoPassage = tab === "vocab" && !(typeof vocabWantsPassage === "function" && vocabWantsPassage());
-  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || grammarNoPassage || vocabNoPassage || tab === "students" || tab === "leveltest";
+  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || grammarNoPassage || vocabNoPassage || tab === "students" || tab === "leveltest" || tab === "pricing";
   // 단어장 '지문에서 뽑기'는 목표 어법을 쓰지 않는다(사용자) — 칸만 감추고 적어 둔 값은 다른 탭을 위해 그대로 둔다
   const targetGrammarRow = $("targetGrammarRow");
   // 리딩노트도 목표 어법을 쓰지 않는다

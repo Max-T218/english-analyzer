@@ -721,7 +721,19 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .howto-btn:hover{color:var(--accent); border-color:var(--accent); background:var(--accent-soft);}
 /* 문의하기는 <a>라 밑줄과 링크색이 붙는다. [만드는 법] 단추와 같은 결로 맞춘다.
    바깥으로 나가는 링크라는 것은 말풍선(💬)으로만 구분한다. */
-.ask-side{display:block; text-decoration:none; margin-top:6px;}/* 만드는 법 창의 '이런 자료가 나옵니다' — 결과물을 실제로 그려 넣는 자리.
+.ask-side{display:block; text-decoration:none; margin-top:6px;}
+/* 요금표 — 사이드바 맨 아래의 탭. 사용자 소통방 바로 밑에 같은 모양(.howto-btn .ask-side)으로 붙는다 */
+.tabs .tab-btn.howto-btn{width:100%;}
+.price-card{border:1px solid var(--line); border-radius:10px; padding:14px 16px 6px; margin-top:12px; background:var(--card);}
+.price-card h3{margin:0; font-size:15px;}
+.price-card h3 small{font-weight:400; font-size:12.5px; color:var(--ink-soft);}
+.price-table{width:100%; border-collapse:collapse; margin-top:6px;}
+.price-table td{padding:8px 0; border-top:1px solid var(--line); vertical-align:top; font-size:14px;}
+.price-table tr:first-child td{border-top:0;}
+.price-table td.price-v{text-align:right; white-space:nowrap; padding-left:14px; font-weight:700; font-variant-numeric:tabular-nums;}
+.price-note{display:block; color:var(--ink-soft); font-size:12.5px; font-weight:400;}
+.price-free{display:inline-block; background:#e3f4ea; color:#1f7a4d; border-radius:999px; padding:0 9px; font-size:12.5px;}
+.price-ex{background:var(--accent-soft); border-radius:8px; padding:8px 11px; margin:4px 0 10px; font-size:13px;}/* 만드는 법 창의 '이런 자료가 나옵니다' — 결과물을 실제로 그려 넣는 자리.
    결과물은 A4 폭에 맞춰 만들어져 있어 520px 창에 넣으면 줄바꿈이 달라 실제와
    다르게 보인다. 예시가 있을 때만 창을 넓히고, 그래도 넘치면 그 안에서만 스크롤한다. */
 .print-guide-card.wide{max-width:780px;}

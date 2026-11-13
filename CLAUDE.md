@@ -289,7 +289,7 @@ order=순서 배열·자동 / wbwrite=영작 연습·다르면 확인 대기 / p
 
 ### `public/index.html`
 
-탭 — `analyze`, `brief`, `decode`(리딩노트, `public/decode.js`), `explain`(내용 한장정리, `public/explain.js`), `mcq`, `saq`, `mix`, `grammar`(문법문제 마법사, `public/grammar.js`), `workbook`, `vocab`, `exam`, `trend`, `students`, `leveltest`(레벨테스트 — 승인된 선생님만, 아래 '레벨테스트' 참고).
+탭 — `analyze`, `brief`, `decode`(리딩노트, `public/decode.js`), `explain`(내용 한장정리, `public/explain.js`), `mcq`, `saq`, `mix`, `grammar`(문법문제 마법사, `public/grammar.js`), `workbook`, `vocab`, `exam`, `trend`, `students`, `leveltest`(레벨테스트 — 승인된 선생님만, 아래 '레벨테스트' 참고), `pricing`(요금표 — 사이드바 맨 아래 [💰 요금표], 2026-11-13 사용자. 금액은 `app.js`의 `renderPriceTab`이 `/api/pricing`으로 채운다 — 가격 계산식(`_quiz_action_cost`·`_workbook_cost`·`_grammar_cost`·`_trend_page_cost`)을 바꾸면 이 탭의 설명 글도 함께 고칠 것).
 사이드바에서는 `analyze`·`brief`가 상위 단추 **'📖 지문 분석'**(상세분석 / 요약분석) 아래로, `mcq`·`saq`·`mix` 셋이 **'📝 문제 제작'**(객관식 / 주관식 / 객관식+주관식) 아래로 묶여 있다(`TAB_GROUPS`) — 하위 버튼은 그대로 `.tab-btn`+`data-tab`이라 저장함 불러오기 등이 누르는 길은 안 바뀌고, 상위 단추의 켜짐·하위 줄의 보임은 `syncTabGroups`가 맞춘다. `mix`(객관식+주관식, 2026-10-06)는 두 유형을 한 시험지에 섞는 탭이다 —
 `setupQuizTab`을 `prefix:"mix"`로 한 번 더 부르는 것뿐이고(`MIX_TYPES` = `MCQ_TYPES` + `SAQ_TYPES`,
 고난도 가능 유형 `MIX_HARD_TYPES`), 서버는 유형 이름만 보고 요금·모델을 정하므로

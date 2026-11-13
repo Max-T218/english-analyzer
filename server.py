@@ -22327,7 +22327,12 @@ class Handler(BaseHTTPRequestHandler):
                 # 학생 이용권 — 1명 30일 값·단위·할인. enabled가 거짓이면(베타) 화면이 판매 창을 안 연다
                 "seat": {"enabled": _seats_global_on(), "price": SEAT_PRICE_KRW, "unit": SEAT_UNIT,
                          "min": SEAT_MIN, "max": SEAT_MAX, "days": SEAT_DAYS,
-                         "discounts": [list(x) for x in SEAT_DISCOUNTS]},
+                         "discounts": [list(x) for x in SEAT_DISCOUNTS],
+                         # 예약한 시행일(요금표 탭이 '언제부터'를 적는다) — 없으면 ""
+                         "from": STUDENT_SEATS_FROM},
+                # 충전 금액 단추와 포인트 기한 — 요금표 탭이 쓴다
+                "rechargeAmounts": list(RECHARGE_AMOUNTS),
+                "paidExpireYears": PAID_POINT_EXPIRE_YEARS,
                 "signupBonusBase": _signup_base_krw(),
                 # 가입 축하 포인트의 유효기간(개월) — 시행일 전이면 0(가입 창 안내 문구가 쓴다)
                 "signupExpireMonths": SIGNUP_POINT_EXPIRE_MONTHS if _kst_reached(SIGNUP_POINT_EXPIRE_FROM) else 0,
@@ -22373,6 +22378,8 @@ class Handler(BaseHTTPRequestHandler):
                 "mockRestore": PRICE_MOCK_RESTORE_KRW,
                 # 이 사이트로 만든 문제 PDF → 문제 복원 — 되살려 받아 낸 문항 1개당
                 "quizRestore": PRICE_QUIZ_RESTORE_KRW,
+                # 문제 시험 보충 학습 — 회차마다 새 문제 값에 더해 받는 개념 설명 값(요금표 탭)
+                "retryConcept": PRICE_RETRY_CONCEPT_KRW,
                 "passageSolve": PRICE_PASSAGE_SOLVE_KRW,
                 # 단어장 탭 — 사진 인식은 매번, PDF는 규칙이 못 뽑아 AI로 다시 시도할 때만
                 "vocabOcr": PRICE_VOCAB_OCR_KRW,
