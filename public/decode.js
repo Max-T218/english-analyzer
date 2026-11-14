@@ -135,10 +135,21 @@ function dcRender() {
    그림을 2쪽 끝(100 → 80 → 65%)에 먼저 넣어 보고, 어느 글 모양으로도 안 될 때만 1쪽 빈자리, 그래도 안 되면 한 줄 그대로 3쪽에 둔다.
    **그림이 1쪽으로 가면 그림이 어휘·끊어 읽기보다 앞에 놓여 순서가 무너지므로 마지막 수단이다**(2026-11-06 사용자 — 16문장 지문이
    '본문 → 그림 | 어휘 → 끊어 읽기'로 나왔다. 어휘 1쪽 + 88%가 없어 맞는 모양이 있는데도 1쪽으로 갔다).
+   **끊어 읽기 영어 줄간격도 여기서 고른다**(2026-11-14 사용자 — 수업 중 줄 사이에 설명을 써 넣는다): 넓게(2.5배, 기본) → 보통(data-lh="m", 2.1배)
+   → 예전 모양(data-lh="s", 1.7배 + 영어:우리말 반반 칸) 차례로, 줄간격마다 위의 글 모양 × 그림 2쪽 자리를 해 본다(글씨 88%는 예전 줄간격에서만). 그림을 1쪽·3쪽으로 옮기는 것은 예전 줄간격으로도
+   안 될 때만이다 — 그래서 쪽 수·그림 자리는 줄간격을 넓히기 전보다 나빠지지 않는다(영어:우리말 칸도 3:2로 바꿔 예전보다 짧다).
+   **끊어 읽기가 넓은 줄간격·글씨 그대로 2쪽 한 장(그림 없이)에도 안 들어가는 장문은 3쪽으로 이어 싣는다**(2026-11-14 사용자 —
+   고2 10월 모의고사 41~42번 1,327자를 2쪽에 맞추느라 줄간격 1.7배·그림 65%가 됐다). 실측으로 대략 원문 1,150자(공백 포함)를 넘는 지문이다
+   (끊어 읽기 높이 ≈ 글자 수 × 0.12mm + 문장 수 × 8.7mm + 12mm, 2쪽에서 끊어 읽기 자리 약 240mm · 4컷 그림을 함께 두면 약 180mm = 약 850자).
+   그때는 2쪽에 들지 않는 문장(dcSplitFlow)을 3쪽 앞으로 넘기고 그림은 3쪽 끝에 둔다. 3쪽으로도 모자라면 위와 같은 차례로 줄간격·글씨·그림을 줄인다.
+   판정은 글자 수가 아니라 화면에서 잰 높이로 한다(글자 수는 선생님께 알리는 어림값).
    소제목 번호는 맞춘 뒤 쪽 차례대로 다시 매긴다. */
+const DC_LINE_STEPS = ["", "m", "s"];   // style.css의 .dc-sheet[data-lh] — 인쇄·.dc-measure 두 곳
 const DC_PIC_KEEP = [["p2", ""], ["p2", "80"], ["p2", "65"]];     // 순서가 그대로인 자리
 const DC_PIC_SPARE = [["p1", ""], ["p1", "80"], ["p1", "65"]];    // 순서가 바뀌는 자리 — 마지막 수단
 const DC_FIT_STEPS = [[false, ""], [false, "94"], [true, ""], [true, "94"], [false, "88"], [true, "88"]];
+// 3쪽으로 이을 때는 어휘를 2쪽으로 옮겨도 자리가 3쪽으로 밀릴 뿐이라 글씨를 줄이는 것보다 먼저 한다(41~42번이 1쪽 때문에 94%가 됐다)
+const DC_FIT_STEPS_THREE = [[false, ""], [true, ""], [false, "94"], [true, "94"], [false, "88"], [true, "88"]];
 
 function dcPlaceWords(sheet, toPage2) {
   const w = sheet.querySelector(".dc-sec-words");
@@ -169,6 +180,38 @@ function dcPlacePic(sheet, where) {
   if (p3) p3.remove();
 }
 
+// 3쪽(머리만 있는 빈 쪽)을 만든다 — 이미 있으면 그대로
+function dcEnsurePage3(sheet) {
+  let p3 = sheet.querySelector(":scope > .dc-page3");
+  if (!p3) {
+    const e = dcState.entries[Number(sheet.dataset.i)] || {};
+    sheet.insertAdjacentHTML("beforeend", `<div class="dc-page dc-page3">${dcHeadHtml(e.name || "", 3)}</div>`);
+    p3 = sheet.querySelector(":scope > .dc-page3");
+  }
+  return p3;
+}
+// 3쪽으로 넘긴 끊어 읽기 문장을 2쪽으로 되돌린다(다시 잴 때마다 나누기 전 모양에서 시작)
+function dcJoinFlow(sheet) {
+  const cont = sheet.querySelector(".dc-flow-cont");
+  if (!cont) return;
+  const ol = sheet.querySelector(".dc-page2 .dc-sec-flow .dc-lbl");
+  cont.querySelectorAll(".dc-s").forEach((li) => ol.appendChild(li));
+  cont.remove();
+}
+// 2쪽에 들지 않는 끊어 읽기 문장을 뒤에서부터 3쪽 맨 앞(그림보다 앞)으로 넘긴다 — 문장 한 줄은 쪽 사이에서 자르지 않는다
+function dcSplitFlow(sheet, limit) {
+  const p2 = sheet.querySelector(".dc-page2");
+  const ol = p2.querySelector(".dc-sec-flow .dc-lbl");
+  const p3 = dcEnsurePage3(sheet);
+  let cont = p3.querySelector(".dc-flow-cont");
+  if (!cont) {
+    p3.querySelector(".dc-head").insertAdjacentHTML("afterend", `<div class="dc-flow-cont"><ol class="dc-lbl"></ol></div>`);
+    cont = p3.querySelector(".dc-flow-cont");
+  }
+  const ol3 = cont.querySelector(".dc-lbl");
+  while (p2.getBoundingClientRect().height > limit && ol.children.length > 1) ol3.prepend(ol.lastElementChild);
+}
+
 // 소제목 번호를 쪽 차례대로 01, 02 … 로 다시 매긴다(어휘·그림이 쪽을 옮겨 다니므로)
 function dcRenumber(sheet) {
   sheet.querySelectorAll(".dc-h-no").forEach((el, k) => { el.textContent = String(k + 1).padStart(2, "0"); });
@@ -186,10 +229,25 @@ function dcFit() {
       .every((p) => p.getBoundingClientRect().height <= limit);
     const hasPic = !!sheet.querySelector(".dc-sec-pic");
     let picP3 = false;
+    // 지난번에 3쪽으로 나눴으면 되돌리고 시작한다
+    dcJoinFlow(sheet);
+    if (hasPic) dcPlacePic(sheet, "p2");   // 3쪽이 있으면 함께 지운다
+    else sheet.querySelector(":scope > .dc-page3")?.remove();
     sheet.dataset.pic = "";
+    // 장문인지 — 넓은 줄간격·글씨 그대로, 어휘 1쪽, 그림을 뺀 2쪽에 끊어 읽기가 안 들어가면 3쪽으로 잇는다
+    sheet.dataset.lh = "";
+    sheet.dataset.fit = "";
+    dcPlaceWords(sheet, false);
+    if (hasPic) dcPlacePic(sheet, "p3");
+    const three = sheet.querySelector(".dc-page2").getBoundingClientRect().height > limit;
+    if (hasPic) dcPlacePic(sheet, "p2");
     // 글 모양마다 그림 자리들을 넣어 보고 처음 맞는 글 모양을 돌려준다
+    // 글씨 88%는 줄간격을 가장 좁혔을 때만 — 88%는 1쪽 본문까지 함께 작아져, 줄간격을 지키려고 쓰기에는 손해가 크다
+    // (2026-11-14 고2 10월 모의고사 40번이 넓은 줄간격 + 글씨 88%로 나왔다)
     const tryAll = (spots) => {
+      const last = (sheet.dataset.lh || "") === DC_LINE_STEPS[DC_LINE_STEPS.length - 1];
       for (const [toPage2, fit] of DC_FIT_STEPS) {
+        if (fit === "88" && !last) continue;
         dcPlaceWords(sheet, toPage2);
         sheet.dataset.fit = fit;
         for (const [where, size] of spots) {
@@ -200,26 +258,82 @@ function dcFit() {
       }
       return null;
     };
-    let step = hasPic ? tryAll(DC_PIC_KEEP) || tryAll(DC_PIC_SPARE) : tryAll([["p2", ""]]);
-    if (!step && hasPic) {
+    // 줄간격을 넓은 것부터 — 그림은 2쪽 자리만. 그래도 안 되면 가장 좁은 줄간격(예전 값)으로 1쪽·3쪽 자리를 본다
+    // 3쪽으로 이을 때 — 줄간격 넓은 것부터, 글 모양(어휘 자리·글씨) × 그림 크기(3쪽 끝)를 해 본다
+    const tryThree = () => {
+      const lastLh = DC_LINE_STEPS[DC_LINE_STEPS.length - 1];
+      for (const lh of DC_LINE_STEPS) {
+        sheet.dataset.lh = lh;
+        for (const [toPage2, fit] of DC_FIT_STEPS_THREE) {
+          if (fit === "88" && lh !== lastLh) continue;
+          dcPlaceWords(sheet, toPage2);
+          sheet.dataset.fit = fit;
+          for (const size of hasPic ? ["", "80", "65"] : [""]) {
+            sheet.dataset.pic = size;
+            dcJoinFlow(sheet);
+            if (hasPic) dcPlacePic(sheet, "p3");
+            dcSplitFlow(sheet, limit);
+            if (fits()) return [toPage2, fit];
+          }
+        }
+      }
+      return null;
+    };
+    let step = null;
+    if (three) {
+      step = tryThree();
+      if (!step) {
+        // 3쪽으로도 모자라면 가장 줄인 모양으로 두고 넘치는 만큼 인쇄가 한 쪽 더 넘어간다
+        sheet.dataset.lh = DC_LINE_STEPS[DC_LINE_STEPS.length - 1];
+        sheet.dataset.fit = "88";
+        sheet.dataset.pic = "";
+        dcPlaceWords(sheet, true);
+        dcJoinFlow(sheet);
+        if (hasPic) dcPlacePic(sheet, "p3");
+        dcSplitFlow(sheet, limit);
+      }
+      // 줄인 모양에서 문장이 모두 2쪽에 들면 3쪽의 빈 칸(그림도 없으면 쪽째)을 치운다 — 빈 쪽이 인쇄되지 않게
+      const cont = sheet.querySelector(".dc-flow-cont");
+      if (cont && !cont.querySelector(".dc-s")) cont.remove();
+      const p3 = sheet.querySelector(":scope > .dc-page3");
+      if (p3 && !p3.querySelector(".dc-s, .dc-sec-pic")) p3.remove();
+    } else {
+      for (const lh of DC_LINE_STEPS) {
+        sheet.dataset.lh = lh;
+        step = tryAll(hasPic ? DC_PIC_KEEP : [["p2", ""]]);
+        if (step) break;
+      }
+      if (!step && hasPic) step = tryAll(DC_PIC_SPARE);
+    }
+    if (!step && hasPic && !three) {
       // 어느 모양으로도 안 들어가면 그림만 한 줄 그대로 3쪽에 둔다 — 글은 그림 없이 맞춘다
       sheet.dataset.pic = "";
       dcPlacePic(sheet, "p3");
       picP3 = true;
-      for (const [toPage2, fit] of DC_FIT_STEPS) {
-        dcPlaceWords(sheet, toPage2);
-        sheet.dataset.fit = fit;
-        if (fits()) { step = [toPage2, fit]; break; }
+      // 2쪽이 끊어 읽기만으로 비므로 줄간격은 다시 넓은 것부터
+      for (const lh of DC_LINE_STEPS) {
+        sheet.dataset.lh = lh;
+        for (const [toPage2, fit] of DC_FIT_STEPS) {
+          if (fit === "88" && lh !== DC_LINE_STEPS[DC_LINE_STEPS.length - 1]) continue;
+          dcPlaceWords(sheet, toPage2);
+          sheet.dataset.fit = fit;
+          if (fits()) { step = [toPage2, fit]; break; }
+        }
+        if (step) break;
       }
     }
     dcRenumber(sheet);
     const note = sheet.querySelector(".dc-fitnote");
     const parts = [];
-    if (!step) parts.push("⚠️ 글이 길어 2쪽에 다 들어가지 않아 한 쪽 더 넘어갑니다 — 🎨 꾸미기의 글자 크기를 줄이거나 ✏️ 직접 수정으로 해석을 줄여 보세요.");
-    else if (step[0] && step[1]) parts.push(`📏 인쇄 2쪽에 맞추려고 주요 어휘를 2쪽 위로 옮기고 이 지문만 글씨를 ${step[1]}%로 줄였습니다.`);
-    else if (step[1]) parts.push(`📏 인쇄 2쪽에 맞추려고 이 지문만 글씨를 ${step[1]}%로 줄였습니다.`);
-    else if (step[0]) parts.push("📏 인쇄 2쪽에 맞추려고 주요 어휘를 2쪽 위로 옮겼습니다.");
-    if (picP3) parts.push("🖼️ 4컷 그림은 자리가 모자라 3쪽에 넣었습니다 — 2쪽 안에 넣으려면 🎨 꾸미기의 글자 크기를 줄여 보세요.");
+    const pages = three ? "3쪽" : "2쪽";
+    if (three) parts.push(`📄 끊어 읽기가 길어 3쪽까지 이어 싣습니다${hasPic ? "(4컷 그림은 3쪽 끝)" : ""}.`);
+    if (!step) parts.push(`⚠️ 글이 길어 ${pages}에 다 들어가지 않아 한 쪽 더 넘어갑니다 — 🎨 꾸미기의 글자 크기를 줄이거나 ✏️ 직접 수정으로 해석을 줄여 보세요.`);
+    else if (step[0] && step[1]) parts.push(`📏 인쇄 ${pages}에 맞추려고 주요 어휘를 2쪽 위로 옮기고 이 지문만 글씨를 ${step[1]}%로 줄였습니다.`);
+    else if (step[1]) parts.push(`📏 인쇄 ${pages}에 맞추려고 이 지문만 글씨를 ${step[1]}%로 줄였습니다.`);
+    else if (step[0]) parts.push(`📏 인쇄 ${pages}에 맞추려고 주요 어휘를 2쪽 위로 옮겼습니다.`);
+    if (sheet.dataset.lh) parts.push(`✏️ ${pages}에 맞추려고 끊어 읽기 영어 줄간격을 ${sheet.dataset.lh === "m" ? "조금" : "예전만큼"} 좁혔습니다.`);
+    if (three) { if (sheet.dataset.pic) parts.push(`🖼️ 4컷 그림을 ${sheet.dataset.pic}% 크기로 줄여 넣었습니다.`); }
+    else if (picP3) parts.push("🖼️ 4컷 그림은 자리가 모자라 3쪽에 넣었습니다 — 2쪽 안에 넣으려면 🎨 꾸미기의 글자 크기를 줄여 보세요.");
     else if (hasPic && !sheet.querySelector(".dc-page2 .dc-sec-pic")) {
       parts.push(`🖼️ 2쪽에 자리가 모자라 4컷 그림을 1쪽에 넣었습니다${sheet.dataset.pic ? `(${sheet.dataset.pic}% 크기)` : ""} — 그림이 끊어 읽기보다 앞에 옵니다.`);
     } else if (sheet.dataset.pic) parts.push(`🖼️ 4컷 그림을 ${sheet.dataset.pic}% 크기로 줄여 넣었습니다.`);
@@ -585,7 +699,7 @@ if (typeof HOWTO !== "undefined") {
         "그림은 지문마다 위의 <b>🖼️ 4컷 그림 넣기 / 🔄 그림 다시 그리기 / 그림 빼기</b>로 더하거나 바꿉니다.",
       "<b>🖨️ 인쇄 / PDF 변환</b>으로 뽑거나, <b>💾 사이트 저장</b>으로 남겨 둡니다.",
     ],
-    tip: "1쪽: 본문과 해석 · 핵심 정리(제목·주제·글의 목적·흐름 세 줄) · 주요 어휘(외웠는지 표시하는 네모) / 2쪽: 문장마다 왼쪽에 '/'로 끊은 영어, 오른쪽에 우리말(4컷 그림은 2쪽 아래). 지문이 길어 넘치면 글씨를 조금 줄이거나 어휘·그림 자리를 옮겨 <b>알아서 두 쪽에 맞춥니다</b>. 4컷 그림 값은 지문마다 1세트입니다. 🎨 꾸미기로 색·글자 크기·글꼴을 바꿀 수 있고, 고른 색은 끊어 읽기 우리말 칸의 바탕색에도 들어갑니다(요금 없음). 다른 지문으로 넘어갈 때는 지문 칸의 <b>[🆕 새로 만들기]</b>를 누르세요.",
+    tip: "1쪽: 본문과 해석 · 핵심 정리(제목·주제·글의 목적·흐름 세 줄) · 주요 어휘(외웠는지 표시하는 네모) / 2쪽: 문장마다 왼쪽에 '/'로 끊은 영어, 오른쪽에 우리말(4컷 그림은 2쪽 아래). 끊어 읽기 영어는 줄 사이에 설명을 써 넣을 수 있게 줄간격을 넓게 두고, 지문이 길어 넘치면 줄간격·글씨를 조금 줄이거나 어휘·그림 자리를 옮겨 <b>알아서 두 쪽에 맞춥니다</b>. 끊어 읽기만으로 한 쪽이 넘는 장문(대략 1,150자 넘는 지문)은 줄이지 않고 <b>3쪽까지 이어 싣고</b> 4컷 그림은 3쪽 끝에 둡니다. 4컷 그림 값은 지문마다 1세트입니다. 🎨 꾸미기로 색·글자 크기·글꼴을 바꿀 수 있고, 고른 색은 끊어 읽기 우리말 칸의 바탕색에도 들어갑니다(요금 없음). 다른 지문으로 넘어갈 때는 지문 칸의 <b>[🆕 새로 만들기]</b>를 누르세요.",
   };
 }
 

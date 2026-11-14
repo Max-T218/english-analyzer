@@ -3092,8 +3092,10 @@ details:not([open]) > .lt-bulk-title::before{content:"▸ ";}
   break-inside:avoid; page-break-inside:avoid;}
 .dc-s:last-child{border-bottom:none;}
 .dc-s-no{font-size:12px; font-weight:800; color:var(--accent); padding-top:7px; font-variant-numeric:tabular-nums;}
-.dc-s-body{display:grid; grid-template-columns:1fr 1fr; min-width:0;}
-.dc-s-en{line-height:1.7; font-size:14.5px; min-width:0; padding:5px 12px 5px 0;}
+/* 영어 칸을 넓게(3:2) — 영어 줄간격을 넓혀(수업 중 설명을 써 넣는 자리, 2026-11-14 사용자) 늘어난 높이를 영어 줄 수를 줄여 메운다.
+   반반이던 때보다 쪽 길이가 거의 같다. 인쇄 줄간격은 아래 .dc-measure와 @media print 두 곳 */
+.dc-s-body{display:grid; grid-template-columns:3fr 2fr; min-width:0;}
+.dc-s-en{line-height:2.6; font-size:14.5px; min-width:0; padding:5px 12px 5px 0;}
 /* 우리말 칸 바탕은 꾸미기의 테마 색을 옅게 푼 --accent-soft — 색을 고르면 함께 바뀐다 */
 .dc-s-ko{line-height:1.6; font-size:13px; color:var(--ink); min-width:0; padding:5px 12px; background:var(--accent-soft);}
 .dc-sl{color:var(--accent); font-weight:700; margin:0 5px;}
@@ -3125,9 +3127,14 @@ details:not([open]) > .lt-bulk-title::before{content:"▸ ";}
 .dc-measure .dc-w{padding:3px 0;}
 .dc-measure .dc-s{padding:2px 0;}
 .dc-measure .dc-s-no{padding-top:6px;}
-.dc-measure .dc-s-en{font-size:9.5pt; padding-top:4px; padding-bottom:4px;}
+.dc-measure .dc-s-en{font-size:9.5pt; line-height:2.5; padding-top:4px; padding-bottom:4px;}
 .dc-measure .dc-s-ko{font-size:9pt; padding-top:4px; padding-bottom:4px;}
 .dc-measure .dc-fitnote{display:none;}
+/* 끊어 읽기 영어 줄간격 — dcFit이 2쪽에 들게 넓게(기본 2.5) → 보통 → 예전 값으로 고른다(decode.js DC_LINE_STEPS) */
+.dc-measure .dc-sheet[data-lh="m"] .dc-s-en{line-height:2.1;}
+/* 가장 좁은 단계는 예전 모양 그대로(반반 칸) — 1.7배에서는 3:2가 우리말 줄을 늘려 오히려 길었다(고2 10월 41~42번) */
+.dc-measure .dc-sheet[data-lh="s"] .dc-s-en{line-height:1.7;}
+.dc-measure .dc-sheet[data-lh="s"] .dc-s-body{grid-template-columns:1fr 1fr;}
 /* 그 지문만 글씨를 줄인다(dcFit이 정한다) — 쪽 전체를 zoom으로 줄여 폭은 그대로 쓴다 */
 .dc-measure .dc-sheet[data-fit="94"] .dc-page{zoom:.94;}
 .dc-measure .dc-sheet[data-fit="88"] .dc-page{zoom:.88;}
@@ -3147,9 +3154,12 @@ details:not([open]) > .lt-bulk-title::before{content:"▸ ";}
   .dc-w{padding:3px 0;}
   .dc-s{padding:2px 0;}
   .dc-s-no{padding-top:6px;}
-  .dc-s-en{font-size:9.5pt; padding-top:4px; padding-bottom:4px;}
+  .dc-s-en{font-size:9.5pt; line-height:2.5; padding-top:4px; padding-bottom:4px;}
   .dc-s-ko{font-size:9pt; padding-top:4px; padding-bottom:4px;}
   .dc-fitnote{display:none !important;}
+  .dc-sheet[data-lh="m"] .dc-s-en{line-height:2.1;}
+  .dc-sheet[data-lh="s"] .dc-s-en{line-height:1.7;}
+  .dc-sheet[data-lh="s"] .dc-s-body{grid-template-columns:1fr 1fr;}
   .dc-sheet[data-fit="94"] .dc-page{zoom:.94;}
   .dc-sheet[data-fit="88"] .dc-page{zoom:.88;}
   /* 소제목과 그 내용을 한 덩어리로 — 소제목만 앞 쪽에 남지 않게(break-after:avoid는 크로미움이 무시한다) */
