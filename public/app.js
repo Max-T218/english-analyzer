@@ -676,7 +676,8 @@ const gateEl = $("gate");
 const workspaceEl = $("workspace");
 const loginModalEl = $("loginModalOverlay");
 const signupModalEl = $("signupModalOverlay");
-const rechargeModalEl = $("rechargeModalOverlay");
+// 충전은 2026-11-17부터 플로팅 창이 아니라 요금표 탭 아래 칸(#rechargePanel)이다 — 그래서 없다(null)
+const rechargeModalEl = null;
 const loginPanelEl = $("loginPanel");
 const signupPanelEl = $("signupPanel");
 const verifyPanelEl = $("verifyPanel");
@@ -685,10 +686,10 @@ const verifyPanelEl = $("verifyPanel");
 // 안에서 '이메일·비밀번호 입력'→'인증코드 입력' 두 단계를 오가고, 로그인 창은
 // 구글 버튼과 이메일/비밀번호 폼을 한 창에 같이 보여준다.
 function openModal(overlay) {
-  overlay.hidden = false;
+  if (overlay) overlay.hidden = false;
 }
 function closeModal(overlay) {
-  overlay.hidden = true;
+  if (overlay) overlay.hidden = true;
 }
 function closeAllModals() {
   closeModal(loginModalEl);
@@ -809,9 +810,8 @@ $("signupToLogin").addEventListener("click", () => { closeModal(signupModalEl); 
 $("loginToSignup").addEventListener("click", () => { closeModal(loginModalEl); openSignupModal(); });
 $("loginModalClose").addEventListener("click", () => closeModal(loginModalEl));
 $("signupModalClose").addEventListener("click", () => closeModal(signupModalEl));
-$("rechargeModalClose").addEventListener("click", () => closeModal(rechargeModalEl));
 // 배경(어두운 부분) 클릭 시 닫기 — 안쪽 상자를 클릭한 건 버블링으로 안 걸리게 확인
-[loginModalEl, signupModalEl, rechargeModalEl].forEach((overlay) => {
+[loginModalEl, signupModalEl].forEach((overlay) => {
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) closeModal(overlay);
   });
@@ -1365,7 +1365,9 @@ async function submitRecharge(amount) {
       "결제 확인에 실패했습니다."
     );
     renderAccount({ loggedIn: true, krwRemaining: data.krwRemaining });
-    closeModal(rechargeModalEl);
+    rechargeStatusEl.textContent = "";
+    rechargeErrorEl.textContent = "";
+    alert(`충전되었습니다. 지금 잔액은 ${Number(data.krwRemaining || 0).toLocaleString()}P입니다.`);
   } catch (err) {
     rechargeErrorEl.textContent = err.message || "충전에 실패했습니다.";
   } finally {
@@ -1373,13 +1375,25 @@ async function submitRecharge(amount) {
   }
 }
 
+// 카카오페이 결제 수단 칸 — 서버가 카카오페이 채널을 켰을 때만 보인다
+function syncRechargeMethod() {
+  const methodField = $("rechargeMethodField");
+  if (methodField) methodField.hidden = !(PRICING && PRICING.kakaopay);
+}
+onPricingReady(syncRechargeMethod);
+// 머리줄 [💳 충전] — 요금표 탭을 열고 아래 충전 칸으로 내려간다
 const openRechargeBtn = $("openRechargeBtn");
 if (openRechargeBtn) {
   openRechargeBtn.addEventListener("click", () => {
     rechargeErrorEl.textContent = "";
-    const methodField = $("rechargeMethodField");
-    if (methodField) methodField.hidden = !(PRICING && PRICING.kakaopay);
-    openModal(rechargeModalEl);
+    syncRechargeMethod();
+    const tabBtn = document.querySelector('.tab-btn[data-tab="pricing"]');
+    if (tabBtn) tabBtn.click();
+    // 탭을 바꾸면 화면이 맨 위로 올라가므로, 그다음에 내려간다
+    setTimeout(() => {
+      const panel = $("rechargePanel");
+      if (panel) panel.scrollIntoView({ block: "start" });
+    }, 120);
   });
 }
 $("rechargePresets").addEventListener("click", (e) => {

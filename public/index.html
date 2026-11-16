@@ -942,62 +942,6 @@
     </div>
   </div>
 
-  <!-- ══════════ 충전 창(플로팅) ══════════ -->
-  <div class="modal-overlay" id="rechargeModalOverlay" hidden>
-    <div class="modal-box">
-      <button type="button" class="modal-close" id="rechargeModalClose" aria-label="닫기">&times;</button>
-      <h3 class="modal-title">충전</h3>
-      <p class="hint">신용카드로 결제하면 결제한 금액만큼 포인트가 즉시 충전됩니다. <b>1P = 1원</b>이며, 아래 금액은 카드에 청구되는 실제 결제 금액입니다.</p>
-      <p class="hint">서비스 제공 기간: 결제 완료 즉시 충전되어 바로 이용 가능합니다(별도 배송·대기 기간 없음).</p>
-      <p class="hint">결제 수단에 따른 <b>추가 수수료는 없습니다</b>.</p>
-
-      <div class="recharge-terms">
-        <b>결제 전에 꼭 확인해 주세요</b>
-        <ul>
-          <li><b>7일 이내 청약철회</b> — 충전일로부터 7일 안에는 환불을 요청할 수 있습니다.
-            신청일부터 3영업일 이내에 결제 취소 처리합니다.</li>
-          <li><b>단, 쓴 만큼은 돌려드릴 수 없습니다</b> — 충전한 포인트를 일부라도 사용한
-            경우 <b>사용한 금액을 뺀 나머지</b>가 환불됩니다(위약금·수수료는 없습니다).</li>
-          <li><b>7일이 지난 뒤에도</b> 남아 있는 유상 포인트 잔액은 언제든 환불받을 수
-            있습니다. 무상으로 지급된 포인트는 환불 대상이 아닙니다.</li>
-          <li><b>소진기한 5년</b> — 결제한 시점부터 5년이 지나면 남은 포인트는 소멸됩니다.
-            각 충전분의 소멸 예정일은 <b>이용 내역</b>에서 확인할 수 있습니다.</li>
-          <li>만 19세 미만은 <b>법정대리인의 동의</b>가 필요하며, 동의 없는 결제는 취소할 수 있습니다.</li>
-        </ul>
-        <span class="recharge-terms-more"><a href="/refund.html" target="_blank" rel="noopener">환불정책 전문</a>
-          · <a href="/terms.html" target="_blank" rel="noopener">이용약관 제8조</a>
-          · <a href="https://pf.kakao.com/_xiexdJX/chat" target="_blank" rel="noopener">문의하기</a></span>
-      </div>
-
-      <div class="field">
-        <label for="rechargePhone">연락처(휴대폰 번호)</label>
-        <input type="tel" id="rechargePhone" placeholder="010-1234-5678" autocomplete="tel">
-      </div>
-
-      <div class="field" id="rechargeMethodField" hidden>
-        <label>결제 수단</label>
-        <div class="recharge-methods">
-          <label class="recharge-method"><input type="radio" name="rechargeMethod" value="card" checked><span>💳 카드</span></label>
-          <label class="recharge-method"><input type="radio" name="rechargeMethod" value="kakaopay"><span>카카오페이</span></label>
-        </div>
-      </div>
-
-      <div class="recharge-presets" id="rechargePresets">
-        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="1000">1,000원</button>
-        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="2000">2,000원</button>
-        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="5000">5,000원</button>
-        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="10000">10,000원</button>
-        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="20000">20,000원</button>
-        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="30000">30,000원</button>
-        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="50000">50,000원</button>
-      </div>
-      <!-- 금액 직접 입력은 뺐다 — 카카오페이 입점 심사가 '고객이 금액을 직접 입력하는
-           결제'를 받지 않는다(2026-09-27). 서버도 RECHARGE_AMOUNTS 밖의 금액은 거부한다. -->
-      <span class="gate-status" id="rechargeStatus"></span>
-      <div class="error" id="rechargeError"></div>
-    </div>
-  </div>
-
   <!-- ══════════ 학생 이용권 사기·연장·인원 더하기(app.js seatOpen) ══════════ -->
   <div class="modal-overlay" id="seatOverlay" hidden>
     <div class="modal-box">
@@ -2805,6 +2749,57 @@
       <div class="field-head"><label>💰 요금표</label></div>
       <p class="hint">값은 모두 포인트(P)이고 1P = 1원입니다. 만들기에 성공했을 때만 차감되고, 실행 전에 예상 금액을 먼저 보여 드립니다. 사이트 저장·인쇄·워드·한글 내려받기는 무료입니다.</p>
       <div id="priceTab"><p class="hint">요금을 불러오는 중입니다…</p></div>
+    </section>
+    <section class="panel" id="rechargePanel">
+      <div class="field-head"><label>💳 포인트 충전</label></div>
+      <p class="hint">신용카드로 결제하면 결제한 금액만큼 포인트가 즉시 충전됩니다. <b>1P = 1원</b>이며, 아래 금액은 카드에 청구되는 실제 결제 금액입니다.</p>
+      <p class="hint">서비스 제공 기간: 결제 완료 즉시 충전되어 바로 이용 가능합니다(별도 배송·대기 기간 없음).</p>
+      <p class="hint">결제 수단에 따른 <b>추가 수수료는 없습니다</b>.</p>
+
+      <div class="recharge-terms">
+        <b>결제 전에 꼭 확인해 주세요</b>
+        <ul>
+          <li><b>7일 이내 청약철회</b> — 충전일로부터 7일 안에는 환불을 요청할 수 있습니다.
+            신청일부터 3영업일 이내에 결제 취소 처리합니다.</li>
+          <li><b>단, 쓴 만큼은 돌려드릴 수 없습니다</b> — 충전한 포인트를 일부라도 사용한
+            경우 <b>사용한 금액을 뺀 나머지</b>가 환불됩니다(위약금·수수료는 없습니다).</li>
+          <li><b>7일이 지난 뒤에도</b> 남아 있는 유상 포인트 잔액은 언제든 환불받을 수
+            있습니다. 무상으로 지급된 포인트는 환불 대상이 아닙니다.</li>
+          <li><b>소진기한 5년</b> — 결제한 시점부터 5년이 지나면 남은 포인트는 소멸됩니다.
+            각 충전분의 소멸 예정일은 <b>이용 내역</b>에서 확인할 수 있습니다.</li>
+          <li>만 19세 미만은 <b>법정대리인의 동의</b>가 필요하며, 동의 없는 결제는 취소할 수 있습니다.</li>
+        </ul>
+        <span class="recharge-terms-more"><a href="/refund.html" target="_blank" rel="noopener">환불정책 전문</a>
+          · <a href="/terms.html" target="_blank" rel="noopener">이용약관 제8조</a>
+          · <a href="https://pf.kakao.com/_xiexdJX/chat" target="_blank" rel="noopener">문의하기</a></span>
+      </div>
+
+      <div class="field">
+        <label for="rechargePhone">연락처(휴대폰 번호)</label>
+        <input type="tel" id="rechargePhone" placeholder="010-1234-5678" autocomplete="tel">
+      </div>
+
+      <div class="field" id="rechargeMethodField" hidden>
+        <label>결제 수단</label>
+        <div class="recharge-methods">
+          <label class="recharge-method"><input type="radio" name="rechargeMethod" value="card" checked><span>💳 카드</span></label>
+          <label class="recharge-method"><input type="radio" name="rechargeMethod" value="kakaopay"><span>카카오페이</span></label>
+        </div>
+      </div>
+
+      <div class="recharge-presets" id="rechargePresets">
+        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="1000">1,000원</button>
+        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="2000">2,000원</button>
+        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="5000">5,000원</button>
+        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="10000">10,000원</button>
+        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="20000">20,000원</button>
+        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="30000">30,000원</button>
+        <button type="button" class="btn ghost small recharge-preset-btn" data-amount="50000">50,000원</button>
+      </div>
+      <!-- 금액 직접 입력은 뺐다 — 카카오페이 입점 심사가 '고객이 금액을 직접 입력하는
+           결제'를 받지 않는다(2026-09-27). 서버도 RECHARGE_AMOUNTS 밖의 금액은 거부한다. -->
+      <span class="gate-status" id="rechargeStatus"></span>
+      <div class="error" id="rechargeError"></div>
     </section>
   </section>
 
