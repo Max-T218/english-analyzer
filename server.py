@@ -330,6 +330,9 @@ PRICE_SAQ_KRW = int(os.environ.get("PRICE_SAQ_KRW", "250"))
 # 스키마·프롬프트를 잘라야 한다(그때 비로소 적게 고르면 실제로 싸진다).
 PRICE_WORKBOOK_STAGE_KRW = int(os.environ.get("PRICE_WORKBOOK_STAGE_KRW", "100"))  # 단계 1개당
 PRICE_WORKBOOK_MAX_KRW = int(os.environ.get("PRICE_WORKBOOK_MAX_KRW", "700"))      # 지문 1개당 상한
+# 지문 1개당 최소(2026-11-17 사용자 — 2027-01-01부터 200P, 아래 PRICE_NEXT). 단계를 적게 골라도 AI는 한 번에 통째로 만들어
+# 원가가 지문당 약 50~60원(2027)으로 거의 같다 — 1단계(100P) 요청이 워크북의 절반인데 2027 원가율 중간 58%였다
+PRICE_WORKBOOK_MIN_KRW = int(os.environ.get("PRICE_WORKBOOK_MIN_KRW", "100"))
 WORKBOOK_STAGE_IDS = (1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15)  # public/app.js의 WB_STAGES와 같은 목록
 # 13·14·15 단어 쓰기 세 가지(2026-10-19) — 13 영영풀이 보고 단어 쓰기 / 14 영어 단어 보고 우리말 뜻 쓰기 /
 # 15 우리말 뜻 보고 영어 단어 쓰기. 세 단계가 같은 재료(wordPicks)를 쓰되 **단계마다 다른 단어**를 받는다 —
@@ -406,7 +409,9 @@ def _workbook_cost(stages):
     """워크북 1지문의 정찰 가격(원). 화면도 같은 식으로 예상 비용을 보여 주지만,
     실제 청구는 언제나 여기서 다시 계산한 값을 쓴다."""
     n = len(parse_workbook_stages(stages))
-    return min(n * PRICE_WORKBOOK_STAGE_KRW, PRICE_WORKBOOK_MAX_KRW)
+    if not n:
+        return 0
+    return max(PRICE_WORKBOOK_MIN_KRW, min(n * PRICE_WORKBOOK_STAGE_KRW, PRICE_WORKBOOK_MAX_KRW))
 # 같은 유형에서 2문항째부터 추가되는 금액. 한 번의 호출에서 지문과 시스템 프롬프트는
 # 문항 수와 무관하게 한 번만 입력되므로(= 입력 토큰을 나눠 쓴다), 추가 문항은 출력
 # 비용만 든다. 그래서 첫 문항(유형 단가)보다 싸게 매긴다.
@@ -434,8 +439,10 @@ PRICE_EXAM_TREND_KRW = int(os.environ.get("PRICE_EXAM_TREND_KRW", "300"))
 # 원가는 쪽당 약 36원 · 약 62원(위 실측을 8쪽으로 나눈 값). **동형 모의고사 탭은 그대로 무료다**
 # (사용자 결정 — 문항값으로 이미 남는다). 두 탭이 같은 주소를 부르므로 리포트 탭이 요청에
 # trend:true를 실어 가르고, 그 표시가 있을 때만 이 값을 받는다(_trend_page_cost).
-PRICE_TREND_SCAN_PAGE_KRW = int(os.environ.get("PRICE_TREND_SCAN_PAGE_KRW", "100"))
-PRICE_TREND_OCR_PAGE_KRW = int(os.environ.get("PRICE_TREND_OCR_PAGE_KRW", "100"))
+# 2026-11-17 사용자: 둘 다 100P → 150P. usage_records 실측으로 유형 분석 쪽당 약 46원·범위 대조 약 62원(둘 다 Pro)이라
+# 100P로는 원가율 46~62%였다(마진 2027 기준 65%·53%).
+PRICE_TREND_SCAN_PAGE_KRW = int(os.environ.get("PRICE_TREND_SCAN_PAGE_KRW", "150"))
+PRICE_TREND_OCR_PAGE_KRW = int(os.environ.get("PRICE_TREND_OCR_PAGE_KRW", "150"))
 # 학생 성적표 코멘트(AI) — 1건당 정액. 집계 숫자만 보는 짧은 글쓰기라 Flash로 충분하다.
 PRICE_STUDENT_COMMENT_KRW = int(os.environ.get("PRICE_STUDENT_COMMENT_KRW", "50"))
 # 문법문제 출제 마법사(/api/grammar) — 시험지 한 장에 기본값 + 문제당(객관식·주관식 합쳐서 센다).
@@ -455,11 +462,14 @@ PRICE_PDFSPLIT_KRW = int(os.environ.get("PRICE_PDFSPLIT_KRW", "0"))
 # 모의고사 문제지 → 지문 복원(/api/mockrestore) — AI(Pro)가 문제를 풀어 빈칸을 채우고 순서·삽입을 맞춰
 # 원래 지문으로 되돌린다. 복원해 받아 낸 지문 1개당이다(못 받은 지문은 받지 않는다).
 # 원가(2026-10-20 실측 전 어림): 문제지 한 부(독해 28지문)를 다섯 묶음으로 나눠 Pro로 부르면 약 300~500원.
-PRICE_MOCK_RESTORE_KRW = int(os.environ.get("PRICE_MOCK_RESTORE_KRW", "30"))
+# 2026-11-17 사용자: 30P → 70P. usage_records 실측(11/6~16, 22지문)으로 지문당 원가가 약 52원이라 30P로는
+# 손해였다(원가율 174%). 처음 정한 '원가만 넘기면 된다'는 뜻 그대로 70P(원가율 약 74%). Pro라 2027 단가 인상과는 무관하다
+PRICE_MOCK_RESTORE_KRW = int(os.environ.get("PRICE_MOCK_RESTORE_KRW", "70"))
 # 사진 속 문제(순서·삽입·무관한 문장·빈칸)를 AI가 풀기(/api/passagesolve) — 문제 1개당.
 # 지문은 사진에서 읽은 조각을 화면이 다시 이으므로 AI는 답 번호만 낸다. Pro로 풀고 Flash로 한 번 더 풀어
 # 두 답이 다르면 화면이 '확인 권장'으로 짚는다. 원가(2026-10-21 실측) Pro 문항당 약 15~25원 + Flash 약 1원
-PRICE_PASSAGE_SOLVE_KRW = int(os.environ.get("PRICE_PASSAGE_SOLVE_KRW", "30"))
+# 2026-11-17 사용자: 30P → 50P(30P면 원가율 55~87%였다)
+PRICE_PASSAGE_SOLVE_KRW = int(os.environ.get("PRICE_PASSAGE_SOLVE_KRW", "50"))
 # 단어장 탭 — 사진에서 단어 목록 인식. 지문 사진(PRICE_OCR_KRW)과 같은 자리이지만
 # 값은 따로 매긴다(단어장은 지문 분석 없이도 쓸 수 있어 씀씀이가 다르다).
 PRICE_VOCAB_OCR_KRW = int(os.environ.get("PRICE_VOCAB_OCR_KRW", "0"))
@@ -470,6 +480,54 @@ PRICE_VOCAB_PDF_KRW = int(os.environ.get("PRICE_VOCAB_PDF_KRW", "0"))
 # 단어장 탭 — 지문에서 단어 뽑기(2026-11-02 사용자). 지문 하나당 Flash 한 번이다.
 # 원가를 실측하기 전의 임시 값이다 — Render 로그의 [usage] vocabextract 줄로 재서 맞출 것.
 PRICE_VOCAB_EXTRACT_KRW = int(os.environ.get("PRICE_VOCAB_EXTRACT_KRW", "30"))
+
+# ── 예약 인상(2026-11-17 사용자 확정) ──
+# 2027-01-01부터 Flash 단가가 두 배라(입력 $0.75→$1.50, 출력 $3.75→$7.50) Flash를 쓰는 기능만 '오른 원가만큼'
+# 올린다(한 건당 남는 금액을 지금과 같게 — 원가율 25%로 맞추는 안보다 덜 오르게 고른 것이다). 근거는
+# usage_records 11/6~16 실측(AI Studio 단가). 그날 0시(한국 시간)에 _apply_price_next가 아래 값으로 바꾼다 —
+# 서버를 다시 띄우지 않아도 된다(요청마다 확인). 환경변수로 직접 정한 이름은 건드리지 않는다.
+# 30일 전 공지(CHANGELOG 131, 요금표 탭 예고 칸)를 2026-11-17에 했다. 날짜·값을 바꾸면 공지도 함께.
+PRICE_NEXT_FROM = os.environ.get("PRICE_NEXT_FROM", "2027-01-01").strip()
+PRICE_NEXT = {   # 이름: (새 값, 요금표 예고에 쓰는 이름, 단위)
+    "PRICE_ANALYZE_KRW": (350, "상세분석", "지문 1개당"),
+    "PRICE_BRIEF_KRW": (250, "요약분석", "지문 1개당"),
+    "PRICE_DECODE_KRW": (200, "리딩노트", "지문 1개당"),
+    "PRICE_GRAMMAR_PER_Q_KRW": (15, "문법문제 문제 1개당", "보충 학습의 문법 문제도 같은 값"),
+    "PRICE_WORKBOOK_MIN_KRW": (200, "워크북 지문 1개 최소 금액", "1단계만 골라도 이 금액"),
+}
+_PRICE_NEXT_DONE = False
+
+
+def _price_next_due():
+    if not PRICE_NEXT_FROM:
+        return False
+    try:
+        return datetime.now(KST).strftime("%Y-%m-%d") >= datetime.strptime(PRICE_NEXT_FROM, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return False
+
+
+def _apply_price_next():
+    """예약한 날이 됐으면 PRICE_NEXT 값으로 바꾼다(한 번만). 요청 처리 맨 앞에서 부른다."""
+    global _PRICE_NEXT_DONE
+    if _PRICE_NEXT_DONE or not _price_next_due():
+        return
+    for name, (val, _label, _unit) in PRICE_NEXT.items():
+        if name not in os.environ:
+            globals()[name] = val
+    _PRICE_NEXT_DONE = True
+    print(f"[가격] {PRICE_NEXT_FROM} 예약 인상을 적용했습니다: "
+          + ", ".join(f"{k}={globals()[k]}" for k in PRICE_NEXT), flush=True)
+
+
+def _price_next_notice():
+    """요금표 탭 예고 칸 — 아직 바뀌기 전이면 (지금 값 → 새 값) 목록, 바뀐 뒤엔 None."""
+    if _PRICE_NEXT_DONE or _price_next_due() or not PRICE_NEXT_FROM:
+        return None
+    items = [{"label": label, "unit": unit, "now": globals()[name], "next": val}
+             for name, (val, label, unit) in PRICE_NEXT.items()
+             if name not in os.environ and globals()[name] != val]
+    return {"from": PRICE_NEXT_FROM, "items": items} if items else None
 
 # 객관식 전용 유형 — public/app.js의 MCQ_TYPES와 반드시 같은 목록을 유지한다.
 # 이 집합에 없는 유형은 전부 주관식으로 보고 PRICE_SAQ_KRW를 매긴다(객관식·주관식
@@ -14996,6 +15054,17 @@ def get_user_krw(user_id):
         return 0
 
 
+def get_spendable_krw(user_id):
+    """만들기 전에 '이 값을 낼 수 있나'를 볼 때 쓰는 값 — 포인트 잔액 + 프리미엄권이 이번 달 더 덮을 분량.
+    잔액을 보여 주는 자리(get_user_krw)와 나눈 것은, 프리미엄권 분량은 돌려받을 수 있는 돈이 아니어서다."""
+    krw = get_user_krw(user_id)
+    try:
+        d = DB.collection("users").document(user_id).get().to_dict() or {}
+    except Exception:
+        return krw
+    return krw + _premium_left(d)
+
+
 # 로그인했을 때 "업데이트 소식" 플로팅 창에 띄우는 내용. 새로 든 것이 있으면 위에
 # 새 항목을 추가한다(항상 이 목록의 첫 자리 = 최신). version은 순전히 순서 비교용
 # 정수라 날짜와 무관하게 그냥 하나씩 늘리면 된다 — 날짜 문자열을 쓰면 같은 날
@@ -16268,6 +16337,28 @@ CHANGELOG = [
             "글씨를 줄이지 않고 3쪽까지 이어 싣습니다(4컷 그림은 3쪽 끝).",
         ],
     },
+    {
+        "version": 130,
+        "date": "2026-11-17",
+        "items": [
+            "💳 포인트 충전이 요금표 탭 맨 아래로 옮겨졌습니다 — 오른쪽 위 [💳 충전]을 누르면 그 자리로 바로 갑니다.",
+            "AI 비용이 처음 어림보다 커서 손해가 나던 세 가지 값을 오늘부터 조정했습니다 — "
+            "모의고사 문제지의 [🧩 AI로 자동 채우기] 지문 1개당 30P → 70P, 사진 속 문제 AI로 풀기 문제 1개당 30P → 50P, "
+            "시험지 분석 리포트 유형 분석·범위 대조 시험지 1쪽당 100P → 150P. 모두 쓰기 전에 값을 먼저 보여 드리고, "
+            "[원문 그대로 두기]처럼 무료인 길은 그대로 무료입니다.",
+        ],
+    },
+    {
+        "version": 131,
+        "date": "2026-11-17",
+        "items": [
+            "📢 2027년 1월 1일부터 일부 값이 오릅니다 — 구글이 AI 사용료(Gemini Flash)를 두 배로 올리는 날이라, "
+            "오르는 비용만큼만 반영합니다: 상세분석 300P → 350P, 요약분석 200P → 250P, 리딩노트 150P → 200P, "
+            "문법문제 문제 1개당 10P → 15P(기본 100P는 그대로), 워크북 지문 1개 최소 100P → 200P(2단계 이상은 그대로).",
+            "객관식·주관식 문제, 워크북 2단계 이상, 요약 이미지·4컷 그림, 내용 한장정리, 단어장은 값이 그대로입니다. "
+            "자세한 표는 사이드바 [💰 요금표]에서 보실 수 있습니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -16325,6 +16416,8 @@ def _account_payload(user_id):
         "freeExpiring": [{"amount": x["remaining"], "expiresAt": x["expires_at"]} for x in _signup_lots(info)],
         # 반/학생 관리 탭을 보여줄지 — 관리자가 켜 준 선생님만 True
         "classroomApproved": bool(info.get("classroom_approved")),
+        # 프리미엄권 — 살 수 있는지(canBuy)·쓰는 중인지·이번 달 남은 분량
+        "premium": premium_summary(user_id, info),
         # 학생 이용권 — 스위치가 꺼져 있으면(베타) None이라 화면이 아무것도 안 보인다
         "seats": (_safe_seat_summary(user_id) if info.get("classroom_approved") and _seats_on_for(user_id)
                   else None),
@@ -16778,6 +16871,135 @@ def _log_signup_grant(user_id, amount, label="가입 축하 지급", expires_at=
         traceback.print_exc()
 
 
+# ══════════ 프리미엄권(2026-11-17 사용자) ══════════
+# 6개월·1년 동안 자료 만들기에 포인트가 빠지지 않는다(학생 보충 학습 값 포함, 학생 이용권은 따로).
+# 무제한이지만 원가를 지키려고 한 달(한국 달력 1일~말일)에 PREMIUM_MONTHLY_CAP 포인트 분량까지만 덮고,
+# 넘으면 그달 남은 기간은 보통 포인트로 차감한다(공정 이용). 덮은 값은 회원 문서 premium_use에 센다.
+# 한도 근거: 요약 이미지 원가율이 약 38%로 가장 높아, 한도를 다 이미지로 써도 월 환산 가격을 넘지 않게
+# 잡았다(10만 P × 38% ≈ 3.8만 원 ≤ 1년권 월 약 3.7만 원). 2026-11 사용량 실측에서 선생님 90%가 월 1만 P 미만.
+# 결제는 충전과 같은 포트원 결제창 — payment_intents 문서에 kind:"premium"·plan을 달아 confirm_payment_intent가
+# 포인트 대신 기간을 넣는다. 스위치는 학생 이용권과 같은 셋(ENABLED / FROM / TESTERS).
+PREMIUM_PLANS = {
+    # 2026-11-17 사용자 확정: 279,000 / 499,000원 — 한도까지 다 쓰는 회원도 2027 원가(새 값 기준 약 26%)·부가세·카드 수수료를
+    # 빼고 남게(실제 남는 비율 6개월 약 37%·1년 약 29%). 경쟁 서비스(294,000 / 534,000원)보다 조금 낮다
+    "6m": {"months": 6, "price": int(os.environ.get("PREMIUM_6M_KRW", "279000")), "label": "프리미엄 6개월권"},
+    "12m": {"months": 12, "price": int(os.environ.get("PREMIUM_12M_KRW", "499000")), "label": "프리미엄 1년권"},
+}
+PREMIUM_MONTHLY_CAP = int(os.environ.get("PREMIUM_MONTHLY_CAP", "100000"))
+PREMIUM_ENABLED = os.environ.get("PREMIUM_ENABLED", "0").strip() == "1"
+PREMIUM_FROM = os.environ.get("PREMIUM_FROM", "").strip()   # YYYY-MM-DD(한국 날짜) 0시부터 판매
+PREMIUM_TESTERS = {x.strip().lower() for x in os.environ.get("PREMIUM_TESTERS", "").split(",") if x.strip()}
+_PREMIUM_TESTER_CACHE = {}
+
+
+def _premium_sale_on_for(uid):
+    """이 회원이 프리미엄권을 살 수 있나 — 판매가 켜졌거나(스위치·시행일) 시험 계정이다.
+    이미 산 기간은 스위치와 상관없이 끝까지 쓴다(_premium_left는 이 함수를 보지 않는다)."""
+    if PREMIUM_ENABLED:
+        return True
+    if PREMIUM_FROM:
+        try:
+            if datetime.now(KST).strftime("%Y-%m-%d") >= datetime.strptime(PREMIUM_FROM, "%Y-%m-%d").strftime("%Y-%m-%d"):
+                return True
+        except ValueError:
+            pass
+    if not PREMIUM_TESTERS or not uid:
+        return False
+    if str(uid).lower() in PREMIUM_TESTERS:
+        return True
+    hit = _PREMIUM_TESTER_CACHE.get(uid)
+    now = time.monotonic()
+    if hit and hit[0] > now:
+        return hit[1]
+    try:
+        email = ((DB.collection("users").document(uid).get().to_dict() or {}).get("email") or "").lower()
+    except Exception:
+        email = ""
+    on = bool(email) and email in PREMIUM_TESTERS
+    _PREMIUM_TESTER_CACHE[uid] = (now + 60, on)
+    return on
+
+
+def _premium_month(now=None):
+    """공정 이용 한도를 세는 달 — 한국 달력."""
+    return (now or datetime.now(timezone.utc)).astimezone(KST).strftime("%Y-%m")
+
+
+def _premium_info(d):
+    p = d.get("premium")
+    return p if isinstance(p, dict) and p.get("end") else None
+
+
+def _premium_active(d, now=None):
+    p = _premium_info(d)
+    if not p:
+        return False
+    now_iso = (now or datetime.now(timezone.utc)).isoformat()
+    return (p.get("start") or "") <= now_iso < p["end"]
+
+
+def _premium_used(d, now=None):
+    u = d.get("premium_use")
+    if isinstance(u, dict) and u.get("month") == _premium_month(now):
+        try:
+            return max(0, int(u.get("used") or 0))
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def _premium_left(d, now=None):
+    """이번 달 프리미엄권이 더 덮어 줄 수 있는 포인트(쓰는 중이 아니면 0)."""
+    if not _premium_active(d, now):
+        return 0
+    return max(0, PREMIUM_MONTHLY_CAP - _premium_used(d, now))
+
+
+def _premium_last_day(end_iso):
+    """'○일까지' 표시 — 끝나는 시각 1초 앞의 한국 날짜(학생 이용권 _seat_last_day와 같은 방식)."""
+    try:
+        end = datetime.fromisoformat(end_iso)
+    except (TypeError, ValueError):
+        return ""
+    return (end - timedelta(seconds=1)).astimezone(KST).strftime("%Y-%m-%d")
+
+
+def premium_summary(user_id, d=None):
+    """/api/me의 premium — 화면이 구매 칸·잔액 옆 표시를 그린다."""
+    if d is None:
+        d = DB.collection("users").document(user_id).get().to_dict() or {}
+    p = _premium_info(d)
+    active = _premium_active(d)
+    out = {
+        "canBuy": _premium_sale_on_for(user_id),
+        "active": active,
+        "cap": PREMIUM_MONTHLY_CAP,
+        "used": _premium_used(d) if active else 0,
+        "left": _premium_left(d),
+    }
+    if p:
+        out.update({"plan": p.get("plan"), "label": (PREMIUM_PLANS.get(p.get("plan")) or {}).get("label", "프리미엄권"),
+                    "lastDay": _premium_last_day(p["end"]), "ended": not active and p["end"] <= _now_iso()})
+    return out
+
+
+def _premium_extend(d, plan_id, now=None):
+    """구매한 기간을 넣는다 — 쓰는 중이면 끝나는 날부터 이어 붙인다(남은 기간을 버리지 않는다).
+    끝나는 시각은 한국 날짜 기준 그날 0시 + n개월 → 그 다음 날 0시(구매한 날을 하루로 센다)."""
+    now = now or datetime.now(timezone.utc)
+    months = PREMIUM_PLANS[plan_id]["months"]
+    p = _premium_info(d) or {}
+    if _premium_active(d, now):
+        base = datetime.fromisoformat(p["end"])
+        start = p.get("start") or now.isoformat()
+    else:
+        day0 = now.astimezone(KST).replace(hour=0, minute=0, second=0, microsecond=0)
+        base = day0 + timedelta(days=1)
+        start = now.isoformat()
+    end = _plus_months(base.astimezone(KST), months).astimezone(timezone.utc)
+    return {"plan": plan_id, "start": start, "end": end.isoformat(), "updated_at": now.isoformat()}
+
+
 def _charge_update(d, amount):
     """회원 문서 d에서 amount를 뺄 때 쓸 (update, 유상 사용, 무상 사용, 뺀 뒤 잔액).
     charge_krw와 학생 이용권 구매(seat_buy — 이용권 문서와 한 트랜잭션으로 묶는다)가 같이 쓴다.
@@ -16820,11 +17042,20 @@ def charge_krw(user_id, amount, label="사용", kind="use"):
         snap = user_ref.get(transaction=tx)
         if not snap.exists:
             raise ValueError("해당 회원을 찾을 수 없습니다.")
-        update, use_paid, use_free, new_total = _charge_update(snap.to_dict() or {}, amount)
+        d = snap.to_dict() or {}
+        # 프리미엄권 — 자료 만들기(kind=use)만 이번 달 한도 안에서 덮는다. 넘는 만큼만 포인트에서 뺀다
+        covered = min(amount, _premium_left(d)) if kind == "use" else 0
+        rest = amount - covered
+        update, use_paid, use_free, new_total = _charge_update(d, rest)
+        if covered:
+            update["premium_use"] = {"month": _premium_month(), "used": _premium_used(d) + covered}
         tx.update(user_ref, update)
-        tx.set(row_ref, _ledger_row(
-            user_id, kind, label, -amount, -use_paid, -use_free, new_total
-        ))
+        row = _ledger_row(
+            user_id, kind, label + (" · 프리미엄권" if covered else ""), -rest, -use_paid, -use_free, new_total
+        )
+        if covered:
+            row["premium_covered"] = int(covered)
+        tx.set(row_ref, row)
         return use_paid, use_free
 
     use_paid, use_free = _apply(DB.transaction())
@@ -16874,18 +17105,22 @@ def add_krw(user_id, amount, kind, label):
     return _apply(DB.transaction())
 
 
-def create_payment_intent(user_id, amount):
+def create_payment_intent(user_id, amount, plan=None):
     """결제창을 열기 '전에' 부른다. 아직 포인트를 주지 않는다 — 결제가 실제로
     끝난 뒤 confirm_payment_intent가 포트원 서버에 직접 물어보고 나서야 지급한다.
-    브라우저가 보고하는 성공 여부는 위조될 수 있으므로 그 자체를 근거로 쓰지 않는다."""
+    브라우저가 보고하는 성공 여부는 위조될 수 있으므로 그 자체를 근거로 쓰지 않는다.
+    plan을 주면 프리미엄권 결제다 — 금액은 부르는 쪽이 PREMIUM_PLANS에서 꺼내 넘긴다."""
     _require_db()
     payment_id = f"pay-{secrets.token_hex(16)}"
-    DB.collection("payment_intents").document(payment_id).set({
+    doc = {
         "user_id": user_id,
         "amount": int(amount),
         "status": "pending",
         "created_at": _now_iso(),
-    })
+    }
+    if plan:
+        doc.update({"kind": "premium", "plan": plan})
+    DB.collection("payment_intents").document(payment_id).set(doc)
     return payment_id
 
 
@@ -16964,6 +17199,38 @@ def confirm_payment_intent(user_id, payment_id):
 
     user_ref = DB.collection("users").document(user_id)
     row_ref = DB.collection(POINT_LEDGER).document()
+
+    if intent.get("kind") == "premium":
+        # 프리미엄권 — 포인트 대신 이용 기간을 넣는다. 결제 완료 표시와 기간을 한 트랜잭션으로 묶어 두 번 넣지 않는다
+        plan_id = intent.get("plan")
+        if plan_id not in PREMIUM_PLANS:
+            raise ValueError("프리미엄권 종류를 알 수 없습니다.")
+
+        @firestore.transactional
+        def _apply_premium(tx):
+            i_snap = intent_ref.get(transaction=tx)
+            u_snap = user_ref.get(transaction=tx)
+            if (i_snap.to_dict() or {}).get("status") != "pending":
+                return None
+            if not u_snap.exists:
+                raise ValueError("해당 회원을 찾을 수 없습니다.")
+            d = u_snap.to_dict() or {}
+            new_p = _premium_extend(d, plan_id)
+            new_p["payment_id"] = payment_id
+            tx.update(user_ref, {"premium": new_p})
+            total, _free, _paid = _split_balance(d)
+            tx.set(row_ref, _ledger_row(
+                user_id, "premium",
+                f"{PREMIUM_PLANS[plan_id]['label']} 구매 ({amount:,}원 · {_premium_last_day(new_p['end'])}까지)",
+                0, 0, 0, total,
+            ))
+            tx.update(intent_ref, {"status": "completed", "confirmed_at": _now_iso(),
+                                   "premium_end": new_p["end"]})
+            return total
+
+        result = _apply_premium(DB.transaction())
+        return result if result is not None else get_user_krw(user_id)
+
     # 이 충전분이 언제 소멸하는지는 여기서만 정해진다 — add_krw와 같은 규칙(5년)이다.
     # 트랜잭션이 재시도돼도 기한이 흔들리지 않게 밖에서 한 번만 잰다.
     expires_at = _paid_expiry()
@@ -17079,6 +17346,47 @@ def apply_payment_cancellation(payment_id):
 
     user_ref = DB.collection("users").document(user_id)
     row_ref = DB.collection(POINT_LEDGER).document()
+
+    if intent.get("kind") == "premium":
+        # 프리미엄권 결제 취소 — 포인트가 아니라 이용 기간을 되돌린다.
+        # 전액 취소(7일 안·안 씀)는 그 결제로 넣은 개월 수만큼 끝나는 날을 당기고(이어 산 기간은 남긴다),
+        # 부분 취소(중도 해지 — 남은 기간을 일할로 돌려준 것)는 지금 바로 끝낸다.
+        plan = PREMIUM_PLANS.get(intent.get("plan")) or {}
+
+        @firestore.transactional
+        def _apply_premium(tx):
+            i = (intent_ref.get(transaction=tx).to_dict() or {})
+            if i.get("status") != "completed":
+                return None
+            already = int(i.get("cancelled_applied") or 0)
+            if cancelled_total - already <= 0:
+                return 0
+            u_snap = user_ref.get(transaction=tx)
+            if not u_snap.exists:
+                return None
+            d = u_snap.to_dict() or {}
+            p = _premium_info(d)
+            now = datetime.now(timezone.utc)
+            full = cancelled_total >= int(i.get("amount", 0) or 0)
+            if p:
+                if full and plan.get("months"):
+                    end = _plus_months(datetime.fromisoformat(p["end"]).astimezone(KST), -plan["months"])
+                    new_end = max(end.astimezone(timezone.utc), now)
+                else:
+                    new_end = now
+                tx.update(user_ref, {"premium": {**p, "end": new_end.isoformat(), "updated_at": now.isoformat()}})
+            total, _free, _paid = _split_balance(d)
+            tx.set(row_ref, _ledger_row(
+                user_id, "cancel",
+                f"{plan.get('label', '프리미엄권')} 결제 취소 ({cancelled_total - already:,}원)", 0, 0, 0, total,
+            ))
+            update = {"cancelled_applied": cancelled_total, "cancelled_at": _now_iso()}
+            if full:
+                update["status"] = "cancelled"
+            tx.update(intent_ref, update)
+            return 0
+
+        return _apply_premium(DB.transaction())
 
     @firestore.transactional
     def _apply(tx):
@@ -20942,7 +21250,7 @@ def start_quiz_retry(assignment_id, student_id):
         raise ValueError("이 문제는 새 문제를 만들 수 있는 모양이 아니에요.")
     teacher_id = assignment.get("teacher_id")
     payer = teacher_id
-    if get_user_krw(payer) < _qr_estimate(gram, quiz):
+    if get_spendable_krw(payer) < _qr_estimate(gram, quiz):
         raise ValueError("선생님의 포인트가 부족해 새 문제를 만들 수 없어요. 선생님께 알려 주세요.")
     _request_track(payer, "retry")   # 학생 요청이지만 값은 선생님이 낸다
     ref = _qr_ref(assignment_id, student_id, rnd)
@@ -22273,6 +22581,7 @@ class Handler(BaseHTTPRequestHandler):
         연결을 끊지 않고 JSON 오류로 답한다(정적 파일 서빙은 예외가 날 일이 거의
         없지만 같은 안전망을 함께 태워도 손해가 없다)."""
         started = _timing_begin(self)
+        _apply_price_next()   # 예약 인상 날짜가 됐으면 값을 바꾼다(한 번만)
         try:
             self._handle_get()
         except Exception as e:
@@ -22333,6 +22642,10 @@ class Handler(BaseHTTPRequestHandler):
                 # 끝나는 날이 지나면 서버가 event=False를 내려주므로 띠도 저절로 사라진다
                 # — 이벤트를 내리려고 사람이 화면을 고칠 일이 없어야 한다.
                 "signupBonus": _signup_grant()[0],
+                # 프리미엄권 — 6개월·1년, 자료 만들기 무제한(한 달 cap 포인트 분량까지). 살 수 있는지는 /api/me의 premium.canBuy
+                "premium": {"cap": PREMIUM_MONTHLY_CAP, "from": PREMIUM_FROM,
+                            "plans": [{"id": k, "label": v["label"], "months": v["months"], "price": v["price"]}
+                                      for k, v in PREMIUM_PLANS.items()]},
                 # 학생 이용권 — 1명 30일 값·단위·할인. enabled가 거짓이면(베타) 화면이 판매 창을 안 연다
                 "seat": {"enabled": _seats_global_on(), "price": SEAT_PRICE_KRW, "unit": SEAT_UNIT,
                          "min": SEAT_MIN, "max": SEAT_MAX, "days": SEAT_DAYS,
@@ -22360,6 +22673,9 @@ class Handler(BaseHTTPRequestHandler):
                 # 워크북은 고른 단계 수로 매긴다 — 화면이 같은 식으로 예상 비용을 계산한다
                 "workbookStage": PRICE_WORKBOOK_STAGE_KRW,
                 "workbookMax": PRICE_WORKBOOK_MAX_KRW,
+                "workbookMin": PRICE_WORKBOOK_MIN_KRW,
+                # 예약 인상 예고(요금표 탭) — 바뀐 뒤에는 None
+                "priceNext": _price_next_notice(),
                 "reword": PRICE_REWORD_KRW,
                 "ocr": PRICE_OCR_KRW,
                 # 기출 유형 분석 — 기본 0원. 값이 붙어도 시험지 1벌당이지 쪽 수에 곱하지 않는다
@@ -22910,6 +23226,7 @@ class Handler(BaseHTTPRequestHandler):
         여기서 터지면 화면은 'JSON 대신 HTML' 같은 엉뚱한 메시지밖에 볼 수 없어
         원인을 찾기가 매우 어렵다(실제로 그런 사고가 있었다)."""
         self._inflight_key = None
+        _apply_price_next()   # 예약 인상 날짜가 됐으면 값을 바꾼다(한 번만) — 값을 매기기 전에
         _VERTEX_CALLS.n = 0   # 이번 요청의 Vertex 호출 차례를 처음부터 센다(_vertex_try)
         _vertex_set_labels(None)   # 지난 요청의 회원 라벨이 남지 않게(keep-alive는 스레드를 다시 쓴다)
         started = _timing_begin(self)
@@ -22946,7 +23263,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/auth/reset-request", "/api/auth/reset-confirm",
                         "/api/logout", "/api/auth/delete",
-                        "/api/account/recharge", "/api/account/recharge/confirm",
+                        "/api/account/recharge", "/api/account/recharge/confirm", "/api/premium/buy",
                         "/api/account/ack-update", "/api/portone/webhook",
                         "/api/saved", "/api/saved/delete", "/api/saved/rename", "/api/saved/folder",
                         "/api/saved-image", "/api/brand",
@@ -23196,7 +23513,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:  # /api/ocr
                     cost = PRICE_OCR_KRW
                     self._pending_label = "사진에서 지문 옮기기"
-                remaining = get_user_krw(self._payer)
+                remaining = get_spendable_krw(self._payer)   # 프리미엄권 이번 달 남은 분량까지
                 if remaining < cost:
                     self._send_json(
                         {
@@ -23398,6 +23715,47 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/api/premium/buy":
+            # 프리미엄권 결제 요청 생성 — 충전과 같은 결제창을 쓰고, 확인도 같은 /api/account/recharge/confirm이다
+            # (결제 요청 문서의 kind:"premium"을 보고 포인트 대신 기간을 넣는다)
+            if DB is None:
+                self._send_json({"error": "로그인 기능이 아직 설정되지 않았습니다."}, 503)
+                return
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요한 서비스입니다."}, 401)
+                return
+            plan_id = (req.get("plan") or "").strip()
+            if plan_id not in PREMIUM_PLANS:
+                self._send_json({"error": "프리미엄권 종류가 올바르지 않습니다."}, 400)
+                return
+            if not _premium_sale_on_for(user_id):
+                self._send_json({"error": "프리미엄권은 아직 판매하지 않습니다."}, 403)
+                return
+            if not (PORTONE_STORE_ID and PORTONE_CHANNEL_KEY_CARD and PORTONE_API_SECRET):
+                self._send_json({"error": "결제 기능이 아직 설정되지 않았습니다."}, 503)
+                return
+            method = (req.get("method") or "card").strip()
+            if method == "kakaopay":
+                if not PORTONE_CHANNEL_KEY_KAKAOPAY:
+                    self._send_json({"error": "카카오페이 결제가 아직 설정되지 않았습니다."}, 503)
+                    return
+                channel_key = PORTONE_CHANNEL_KEY_KAKAOPAY
+            else:
+                method = "card"
+                channel_key = PORTONE_CHANNEL_KEY_CARD
+            plan = PREMIUM_PLANS[plan_id]
+            payment_id = create_payment_intent(user_id, plan["price"], plan=plan_id)
+            self._send_json({
+                "paymentId": payment_id,
+                "storeId": PORTONE_STORE_ID,
+                "channelKey": channel_key,
+                "method": method,
+                "amount": plan["price"],
+                "orderName": f"English Lab {plan['label']}",
+            })
+            return
+
         if path == "/api/account/recharge/confirm":
             # 결제창이 끝난 뒤 부른다 — 실제 지급은 여기, confirm_payment_intent 안에서
             # 포트원 서버에 직접 확인한 뒤에만 이뤄진다.
@@ -23417,7 +23775,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
                 return
-            self._send_json({"krwRemaining": new_krw})
+            self._send_json({"krwRemaining": new_krw, "premium": premium_summary(user_id)})
             return
 
         # '업데이트 소식' 플로팅 창을 닫을 때 부른다. 지금 CHANGELOG의 맨 앞(최신) 번호로

@@ -914,8 +914,19 @@ function renderPriceTab() {
   const extra = n(P.extraQuestion);
   const quizEx = first + first + extra;
   const gr = (q) => n(P.grammarBase) + n(P.grammarPerQ) * q;
-  const wbMax = n(P.workbookMax), wbStage = n(P.workbookStage);
+  const wbMax = n(P.workbookMax), wbStage = n(P.workbookStage), wbMin = n(P.workbookMin);
   const wbCap = wbStage ? Math.ceil(wbMax / wbStage) : 0;
+  const wbOf = (k) => Math.max(wbMin, Math.min(k * wbStage, wbMax));
+  // 예약 인상 예고(server.py PRICE_NEXT) — 그날이 되면 서버가 priceNext를 비워 저절로 사라진다
+  const nx = P.priceNext;
+  const nextFrom = nx && /^\d{4}-\d{2}-\d{2}$/.test(nx.from || "")
+    ? (() => { const [y, m, d] = nx.from.split("-").map(Number); return `${y}년 ${m}월 ${d}일`; })() : "";
+  const nextHtml = nx && nextFrom && (nx.items || []).length
+    ? `<section class="price-card price-next"><h3>📢 ${nextFrom}부터 바뀌는 값</h3>` +
+      `<p class="price-ex" style="margin-top:0;">구글이 AI 사용료(Gemini Flash)를 두 배로 올리는 날이라, 오르는 비용만큼만 반영합니다. 아래 표의 값은 그 전날까지 적용됩니다.</p>` +
+      `<table class="price-table">${nx.items.map((it) =>
+        row(esc(it.label), `${pt(it.now)} → <b>${pt(it.next)}</b>`, esc(it.unit || ""))).join("")}</table></section>`
+    : "";
   const seat = P.seat || {};
   const seatFrom = /^\d{4}-\d{2}-\d{2}$/.test(seat.from || "")
     ? (() => { const [y, m, d] = seat.from.split("-").map(Number); return `${y}년 ${m}월 ${d}일`; })() : "";
@@ -926,6 +937,7 @@ function renderPriceTab() {
   const amounts = (P.rechargeAmounts || []).map((a) => Number(a).toLocaleString()).join(" · ");
   const trendEx = 8 * n(P.trendScanPage) + n(P.examTrend);
   box.innerHTML = [
+    nextHtml,
     card("📖 지문 분석", "지문 1개당", [
       row("상세분석", v(P.analyze)),
       row("요약분석", v(P.brief)),
@@ -953,8 +965,9 @@ function renderPriceTab() {
     card("📚 워크북 제작", "지문 1개당", [
       row("단계 1개당", v(wbStage)),
       row("지문 1개 최대 금액", v(wbMax), wbCap ? `단계를 ${wbCap}개 넘게 골라도 이 금액까지만` : ""),
+      wbMin > wbStage ? row("지문 1개 최소 금액", v(wbMin), "단계를 적게 골라도 이 금액부터") : "",
       row("내용 O/X 단계", "별도", `주관식 O/X 문제 값으로 따로 계산 (첫 문항 ${pt(P.saq)}, 추가 문항 ${pt(extra)})`),
-    ], `예) 지문 2개 × 5단계 = ${pt(Math.min(5 * wbStage, wbMax) * 2)} · 지문 2개 × 10단계 = ${pt(Math.min(10 * wbStage, wbMax) * 2)}`),
+    ], `예) 지문 2개 × 5단계 = ${pt(wbOf(5) * 2)} · 지문 2개 × 10단계 = ${pt(wbOf(10) * 2)}`),
     card("📒 단어장", "", [
       row("직접 입력 · 사진 · PDF에서 단어 가져오기", v(Math.max(n(P.vocabOcr), n(P.vocabPdf)))),
       row("지문에서 단어 뽑기", v(P.vocabExtract), "지문 1개당"),
@@ -1047,6 +1060,7 @@ function billableJobCount() {
 // renderAccount()가 /api/me를 받을 때마다 갱신해 두는 현재 잔액 — 비용 확인창에
 // "예상 비용" 옆에 "지금 잔액"도 같이 보여주는 데 쓴다.
 let currentKrw = null;
+let currentPremium = null;   // /api/me의 premium — 프리미엄권(아래 '프리미엄권' 참고)
 
 // 예상 비용(+지금 잔액)을 보여주고 진행 여부를 묻는다. 가격표를 못 받아 왔으면
 // (네트워크 문제 등) 확인 없이 그냥 진행시킨다 — 비용 확인은 편의 기능이지,
@@ -1082,14 +1096,16 @@ function reduceAdvice(jobCount, extra) {
 async function hasEnoughPoints(krw, label, jobCount, advice) {
   if (!(PRICING !== null && Number.isFinite(krw) && krw > 0)) return true;
   await refreshTokenDisplay();
-  if (!Number.isFinite(currentKrw) || currentKrw >= krw) return true;
+  // 프리미엄권이 이번 달 더 덮어 줄 분량도 낼 수 있는 값이다(서버 get_spendable_krw와 같은 셈)
+  const spendable = Number.isFinite(currentKrw) ? currentKrw + premiumLeft() : NaN;
+  if (!Number.isFinite(spendable) || spendable >= krw) return true;
 
-  const short = krw - currentKrw;
+  const short = krw - spendable;
   // 몇 개까지 되는지 함께 알려 준다 — '안 됩니다'로만 끝내면 몇 개를 빼야 할지
   // 사용자가 직접 나눠 봐야 한다
   let fitLine = "";
   if (Number.isFinite(jobCount) && jobCount > 1) {
-    const fit = Math.floor(currentKrw / (krw / jobCount));
+    const fit = Math.floor(spendable / (krw / jobCount));
     fitLine =
       fit > 0
         ? `\n지금 잔액으로는 ${fit}개까지 만들 수 있습니다.`
@@ -1098,7 +1114,9 @@ async function hasEnoughPoints(krw, label, jobCount, advice) {
   alert(
     `포인트가 모자라 만들 수 없습니다.\n\n${label}\n\n` +
       `필요한 값: ${pt(krw)}\n` +
-      `지금 잔액: ${pt(currentKrw)} (${pt(short)} 모자람)${fitLine}\n\n` +
+      (premiumLeft()
+        ? `지금 잔액: ${pt(currentKrw)} + 프리미엄권 이번 달 남은 분량 ${pt(premiumLeft())} (${pt(short)} 모자람)${fitLine}\n\n`
+        : `지금 잔액: ${pt(currentKrw)} (${pt(short)} 모자람)${fitLine}\n\n`) +
       (advice ? `${advice}\n` : "") +
       `충전은 화면 오른쪽 위에서 하실 수 있습니다.`
   );
@@ -1114,8 +1132,14 @@ async function costConfirmed(krw, label, jobCount, advice) {
   const priced = PRICING !== null && Number.isFinite(krw) && krw > 0;
   if (!manyLine && !priced) return true;
   const costLine = priced ? `예상 비용: ${pt(krw)}\n` : "";
-  const balanceLine =
-    priced && Number.isFinite(currentKrw)
+  // 프리미엄권 — 이번 달 남은 분량 안이면 포인트가 빠지지 않고, 넘는 만큼만 잔액에서 나간다
+  const covered = priced ? Math.min(krw, premiumLeft()) : 0;
+  const balanceLine = covered
+    ? `👑 프리미엄권으로 ${pt(covered)} 무료(이번 달 남은 분량 ${pt(premiumLeft())})` +
+      (krw > covered && Number.isFinite(currentKrw)
+        ? `\n넘는 ${pt(krw - covered)}는 잔액에서: ${pt(currentKrw)} → 약 ${pt(currentKrw - (krw - covered))}\n`
+        : "\n")
+    : priced && Number.isFinite(currentKrw)
       ? `지금 잔액: ${pt(currentKrw)} → 진행 후 약 ${pt((currentKrw - krw))}\n`
       : "";
   return confirm(`${label}\n\n${manyLine}${costLine}${balanceLine}\n진행하시겠습니까?`);
@@ -1147,6 +1171,8 @@ function renderAccount(info) {
   if (!isLoggedIn) {
     currentKrw = null;
     currentKrwFree = currentKrwPaid = null;
+    currentPremium = null;
+    premiumRender();
     isClassroomApproved = false;
     studentsTabBtn.hidden = true;
     hideLeveltestTab();
@@ -1176,7 +1202,9 @@ function renderAccount(info) {
   else hideExamTab();
   updateVocabAssignBtnVisibility();
   syncQuizAssignBtns();
-  const krwText = currentKrw === null ? "" : ` · 잔액 ${pt(currentKrw)}`;
+  if ("premium" in info) { currentPremium = info.premium || null; premiumRender(); }
+  const premText = currentPremium && currentPremium.active ? ` · 👑 프리미엄(${premiumDayText(currentPremium.lastDay)}까지)` : "";
+  const krwText = (currentKrw === null ? "" : ` · 잔액 ${pt(currentKrw)}`) + premText;
   // 기간이 있는 가입 축하 포인트가 남아 있으면 가장 이른 소멸일을 잔액 옆에 함께 적는다
   const exp = (Array.isArray(info.freeExpiring) ? info.freeExpiring : []).filter((x) => Number(x.amount) > 0);
   const expText = exp.length
@@ -1316,9 +1344,10 @@ const rechargeStatusEl = $("rechargeStatus");
 const rechargeErrorEl = $("rechargeError");
 const rechargePhoneEl = $("rechargePhone");
 
-async function submitRecharge(amount) {
+// premiumPlan을 주면 프리미엄권 결제다 — 결제 요청만 /api/premium/buy로 만들고, 결제창·확인은 충전과 같다
+async function submitRecharge(amount, premiumPlan) {
   rechargeErrorEl.textContent = "";
-  if (!Number.isFinite(amount) || amount <= 0) {
+  if (!premiumPlan && (!Number.isFinite(amount) || amount <= 0)) {
     rechargeErrorEl.textContent = "충전할 금액을 골라 주세요.";
     return;
   }
@@ -1336,7 +1365,9 @@ async function submitRecharge(amount) {
   try {
     const methodEl = document.querySelector('input[name="rechargeMethod"]:checked');
     const method = methodEl && methodEl.value === "kakaopay" ? "kakaopay" : "card";
-    const intent = await postJson("/api/account/recharge", { amount, method }, "결제 요청에 실패했습니다.");
+    const intent = premiumPlan
+      ? await postJson("/api/premium/buy", { plan: premiumPlan, method }, "결제 요청에 실패했습니다.")
+      : await postJson("/api/account/recharge", { amount, method }, "결제 요청에 실패했습니다.");
     rechargeStatusEl.textContent = "결제 진행 중…";
     const result = await window.PortOne.requestPayment({
       storeId: intent.storeId,
@@ -1364,10 +1395,16 @@ async function submitRecharge(amount) {
       { paymentId: intent.paymentId },
       "결제 확인에 실패했습니다."
     );
-    renderAccount({ loggedIn: true, krwRemaining: data.krwRemaining });
     rechargeStatusEl.textContent = "";
     rechargeErrorEl.textContent = "";
-    alert(`충전되었습니다. 지금 잔액은 ${Number(data.krwRemaining || 0).toLocaleString()}P입니다.`);
+    if (premiumPlan) {
+      await refreshTokenDisplay();   // 프리미엄권 표시(기간·이번 달 분량)까지 새로 받는다
+      const pm = data.premium || {};
+      alert(`${pm.label || "프리미엄권"}을 구매했습니다.\n${pm.lastDay ? `${premiumDayText(pm.lastDay)}까지 ` : ""}자료 제작에 포인트가 빠지지 않습니다.`);
+    } else {
+      renderAccount({ loggedIn: true, krwRemaining: data.krwRemaining });
+      alert(`충전되었습니다. 지금 잔액은 ${Number(data.krwRemaining || 0).toLocaleString()}P입니다.`);
+    }
   } catch (err) {
     rechargeErrorEl.textContent = err.message || "충전에 실패했습니다.";
   } finally {
@@ -1396,6 +1433,82 @@ if (openRechargeBtn) {
     }, 120);
   });
 }
+/* ── 프리미엄권(2026-11-17 사용자) — 6개월·1년 자료 제작 무제한, 한 달 cap 포인트 분량까지(공정 이용) ──
+   금액·한도는 /api/pricing의 premium, 살 수 있는지·쓰는 중인지는 /api/me의 premium(server.py premium_summary). */
+function premiumDayText(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || "");
+  return m ? `${m[1]}년 ${Number(m[2])}월 ${Number(m[3])}일` : (ymd || "");
+}
+// 만들기 전 '낼 수 있나'에 더하는 값 — 프리미엄권이 이번 달 더 덮어 줄 분량
+function premiumLeft() {
+  return currentPremium && currentPremium.active ? Math.max(0, Number(currentPremium.left) || 0) : 0;
+}
+function premiumPlanText(plan, cap) {
+  const months = Number(plan.months) || 0;
+  const perMonth = months ? Math.round(plan.price / months / 100) * 100 : 0;
+  return {
+    period: months >= 12 && months % 12 === 0 ? `${months / 12}년` : `${months}개월`,
+    perMonth,
+    cap: Number(cap) || 0,
+  };
+}
+function premiumRender() {
+  const box = $("premiumBox");
+  if (!box) return;
+  const pm = currentPremium || {};
+  const conf = PRICING && PRICING.premium;
+  const showBuy = !!(pm.canBuy && conf && Array.isArray(conf.plans) && conf.plans.length);
+  box.hidden = !(showBuy || pm.active);
+  const now = $("premiumNow");
+  if (pm.active) {
+    now.hidden = false;
+    now.innerHTML = `<span class="premium-now">👑 ${esc(pm.label || "프리미엄권")} 이용 중 · ${esc(premiumDayText(pm.lastDay))}까지</span><br>` +
+      `이번 달 ${pt(pm.used)} / ${pt(pm.cap)} 사용 — 넘으면 이번 달 남은 기간만 포인트로 차감되고 다음 달 1일에 다시 무제한입니다.`;
+  } else {
+    now.hidden = true;
+  }
+  const plansEl = $("premiumPlans");
+  if (!showBuy) { plansEl.innerHTML = ""; return; }
+  plansEl.innerHTML = conf.plans.map((p) => {
+    const t = premiumPlanText(p, conf.cap);
+    return `<div class="premium-plan">
+      <div class="premium-plan-name">${esc(p.label)}</div>
+      <div class="premium-plan-price">${Number(p.price).toLocaleString()}원<small>월 약 ${t.perMonth.toLocaleString()}원</small></div>
+      <ul>
+        <li><b>${t.period}간 자료 제작 무제한 이용</b></li>
+        <li>지문 분석·문제·워크북·이미지·모의고사 등 모든 자료 만들기</li>
+        <li>학생 보충 학습 비용 포함</li>
+        <li>공정 이용: 한 달 ${pt(t.cap)} 분량까지</li>
+      </ul>
+      <button type="button" class="btn small premium-buy-btn" data-plan="${esc(p.id)}">${pm.active ? "기간 더하기" : "구매하기"}</button>
+    </div>`;
+  }).join("");
+}
+onPricingReady(premiumRender);
+$("premiumPlans").addEventListener("click", (e) => {
+  const btn = e.target.closest(".premium-buy-btn");
+  if (!btn) return;
+  const conf = PRICING && PRICING.premium;
+  const plan = conf && (conf.plans || []).find((p) => p.id === btn.dataset.plan);
+  if (!plan) return;
+  const t = premiumPlanText(plan, conf.cap);
+  const pm = currentPremium || {};
+  const msg =
+    `${plan.label} · ${Number(plan.price).toLocaleString()}원\n\n` +
+    `■ ${t.period}간 자료 제작 무제한 이용\n` +
+    `· 지문 분석, 리딩노트, 문제(객관식·주관식·문법), 워크북, 단어장, 동형 모의고사, 시험지 분석 리포트, 요약 이미지·4컷 그림 등 모든 자료 만들기에 포인트가 빠지지 않습니다.\n` +
+    `· 학생 보충 학습에서 새로 만드는 문제 값도 포함됩니다.\n` +
+    `· 학생 이용권(학생 관리)은 포함되지 않습니다.\n\n` +
+    `■ 공정 이용\n` +
+    `· 한 달(매월 1일~말일)에 ${pt(t.cap)} 분량까지 무제한입니다. 넘으면 그달 남은 기간만 보통 포인트로 차감되고, 다음 달 1일에 다시 무제한입니다.\n\n` +
+    (pm.active ? `■ 지금 쓰는 프리미엄권(${premiumDayText(pm.lastDay)}까지)이 끝나는 날부터 ${t.period}이 이어집니다.\n\n` : `■ 오늘부터 ${t.period} 동안 쓸 수 있습니다.\n\n`) +
+    `■ 환불\n` +
+    `· 구매일로부터 7일 안에 자료를 하나도 만들지 않았으면 전액 환불합니다.\n` +
+    `· 그 뒤에 해지하면 이용한 날수만큼 뺀 나머지를 환불합니다.\n\n` +
+    `결제하시겠습니까?`;
+  if (!confirm(msg)) return;
+  submitRecharge(plan.price, plan.id);
+});
 $("rechargePresets").addEventListener("click", (e) => {
   const btn = e.target.closest(".recharge-preset-btn");
   if (!btn) return;
@@ -10785,8 +10898,9 @@ function workbookCost(stageCount) {
   if (!PRICING || !stageCount) return 0;
   const per = PRICING.workbookStage || 0;
   const max = PRICING.workbookMax || 0;
+  const min = PRICING.workbookMin || 0;   // 지문 1개 최소 금액(server.py PRICE_WORKBOOK_MIN_KRW)
   const sum = per * stageCount;
-  return max ? Math.min(sum, max) : sum;
+  return Math.max(min, max ? Math.min(sum, max) : sum);
 }
 
 /* ── 내용 O/X(단계 12) — 주관식 탭의 OX진위를 불러 쓴다 ──
@@ -10971,6 +11085,7 @@ function updateWbCostHint() {
     // 상한에 걸렸으면 왜 단계 수 × 단가와 다른지 밝힌다
     const per = PRICING.workbookStage || 0;
     if (per && cost < per * sn) parts.push(`<span class="cost-hint-note">(전체 선택 상한)</span>`);
+    if (per && cost > per * sn) parts.push(`<span class="cost-hint-note">(지문 1개 최소 금액)</span>`);
     if (ox) parts.push(`<span class="cost-hint-note">(내용 O/X ${pt(ox)} 포함 — 주관식 OX와 같은 값)</span>`);
   }
   wbCostHintEl.innerHTML = parts.join(" ");
@@ -15609,6 +15724,7 @@ const USAGE_KIND_LABEL = {
   adjust: "조정",
   expire: "소멸",
   cancel: "결제취소",
+  premium: "프리미엄권",
 };
 
 let usageRows = [];      // 지금까지 받아 둔 줄 (더 보기로 이어 붙인다)

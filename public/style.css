@@ -344,6 +344,21 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 .recharge-terms ul{margin:0; padding-left:18px;}
 .recharge-terms li + li{margin-top:5px;}
 .recharge-terms-more{display:block; margin-top:8px; font-size:12px; color:var(--ink-soft);}
+/* 프리미엄권(app.js premiumRender) — 충전 금액 단추 위, 카드 두 장 */
+.premium-box{margin:16px 0 18px; padding:14px; border:2px solid var(--accent); border-radius:12px;
+  background:rgba(37,99,235,.05);}
+.premium-head{font-size:16px; font-weight:800; color:var(--ink); margin-bottom:8px;}
+.premium-sub{font-size:12.5px; font-weight:700; color:var(--accent); margin-left:6px;}
+.premium-plans{display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px;}
+.premium-plan{border:1px solid var(--line); border-radius:10px; background:var(--card); padding:12px 13px;
+  display:flex; flex-direction:column; gap:6px;}
+.premium-plan-name{font-weight:800; font-size:15px; color:var(--ink);}
+.premium-plan-price{font-size:22px; font-weight:800; color:var(--ink);}
+.premium-plan-price small{font-size:12px; font-weight:600; color:var(--ink-soft); margin-left:4px;}
+.premium-plan ul{margin:2px 0 4px; padding-left:18px; font-size:12.5px; line-height:1.55; color:var(--ink);}
+.premium-plan .btn{margin-top:auto;}
+.premium-now{font-weight:700; color:var(--accent);}
+.recharge-amount-label{display:block; margin:6px 0 6px; font-weight:700;}
 
 /* 미리보기 안의 단계 이름 — 동형 모의고사는 '기출을 읽어 낸 결과'와 '그것으로 만든
    시험지' 두 장면이 이어지는데, 구분이 없으면 한 장면처럼 보여 무엇이 분석 결과이고
@@ -725,6 +740,8 @@ label.chk-lg{gap:8px; font-size:14.5px;}
 /* 요금표 — 사이드바 맨 아래의 탭. 사용자 소통방 바로 밑에 같은 모양(.howto-btn .ask-side)으로 붙는다 */
 .tabs .tab-btn.howto-btn{width:100%;}
 .price-card{border:1px solid var(--line); border-radius:10px; padding:14px 16px 6px; margin-top:12px; background:var(--card);}
+/* 예약 인상 예고(app.js renderPriceTab의 priceNext) — 맨 위, 눈에 띄게 */
+.price-card.price-next{border:2px solid #f59e0b; background:rgba(245,158,11,.07);}
 .price-card h3{margin:0; font-size:15px;}
 .price-card h3 small{font-weight:400; font-size:12.5px; color:var(--ink-soft);}
 .price-table{width:100%; border-collapse:collapse; margin-top:6px;}

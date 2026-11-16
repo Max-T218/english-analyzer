@@ -2787,6 +2787,14 @@
         </div>
       </div>
 
+      <!-- 프리미엄권(app.js premiumRender) — 살 수 있거나 쓰는 중일 때만 보인다. 금액은 /api/pricing의 premium -->
+      <div class="premium-box" id="premiumBox" hidden>
+        <div class="premium-head">👑 프리미엄권 <span class="premium-sub">자료 제작 무제한</span></div>
+        <p class="hint" id="premiumNow" hidden></p>
+        <div class="premium-plans" id="premiumPlans"></div>
+      </div>
+
+      <label class="recharge-amount-label">포인트 충전 금액</label>
       <div class="recharge-presets" id="rechargePresets">
         <button type="button" class="btn ghost small recharge-preset-btn" data-amount="1000">1,000원</button>
         <button type="button" class="btn ghost small recharge-preset-btn" data-amount="2000">2,000원</button>
