@@ -11152,10 +11152,10 @@ function wbPageUnits(doc = workbookDocEl) {
 }
 // 처음 상태의 쪽 나눔 — style.css의 인쇄 규칙과 같다(단계마다 새 쪽, 단어 쓰기끼리는 잇는다)
 function wbDefaultBrk(el) {
-  const word = el.matches("table") ? "wb-page-word" : "wb-passage-word";
+  const kinds = el.matches("table") ? ["wb-page-word"] : ["wb-passage-word", "wb-passage-ox"];
   let prev = el.previousElementSibling;
   while (prev && prev.matches(".pg-gap, .pg-edge, .wb-pg-bar")) prev = prev.previousElementSibling;
-  return el.classList.contains(word) && prev && prev.classList.contains(word) ? "auto" : "page";
+  return kinds.some((k) => el.classList.contains(k) && prev && prev.classList.contains(k)) ? "auto" : "page";
 }
 const wbBrkOf = (el) => el.dataset.brk || wbDefaultBrk(el);
 const WB_CONT_GAP = 18;   // 앞 쪽에 이어 붙인 단계 위 여백(px) — style.css 인쇄 규칙의 margin-top과 같다
@@ -11183,22 +11183,36 @@ function wbSimulate(doc, breaks) {
     const title = px(sec.querySelector(".wb-titlebar"));
     sec.querySelectorAll(":scope > table.wb-page").forEach((tbl, ti) => {
       const head = px(tbl.querySelector("thead"));
-      const qs = [...tbl.querySelectorAll(".wb-q")];
+      /* 내용 O/X 세트(.wb-ox-set)는 통째가 아니라 지문 상자 하나 + 카드 두 장씩(인쇄 2단의 한 줄)으로
+         나눠 담는다 — 인쇄에서도 세트 안에서 쪽이 갈린다(style.css, 2026-11-17). */
+      const qs = [];
+      tbl.querySelectorAll(".wb-q").forEach((q) => {
+        if (!q.classList.contains("wb-ox-set")) { qs.push({ el: q, h: px(q) }); return; }
+        const pas = q.querySelector(".wb-ox-passage");
+        if (pas) qs.push({ el: pas, h: px(pas) });
+        const cards = [...q.querySelectorAll(".wb-ox-card")];
+        for (let i = 0; i < cards.length; i += 2) {
+          // 인쇄에서는 폭이 반이지만 여백·글씨가 작아져, 두 장 한 줄이 화면 카드 한 장의 약 0.8배다(A4 PDF 실측)
+          const h = Math.max(px(cards[i]), px(cards[i + 1])) * 0.8;
+          qs.push({ el: cards[i], h, row: true });
+        }
+      });
       const top = head + px(tbl.querySelector(".wb-guide")) + (ti === 0 ? title : 0);
       const unit = ti === 0 ? sec : tbl;
-      const first = qs.length ? px(qs[0]) : 0;
+      const first = qs.length ? qs[0].h : 0;
       if (si === 0 && ti === 0) newPage(unit, "", top);
       else if (wbBrkOf(unit) === "page") newPage(unit, "새 쪽 시작으로 정한 단계", top);
       // 이어 붙여도 머리말과 첫 문항이 안 들어가면 브라우저도 다음 쪽으로 넘긴다
       else if (used + WB_CONT_GAP + top + first > pageH) newPage(unit, "자리가 모자라 넘어감", top);
       else used += WB_CONT_GAP + top;
       let rowTop = null;
-      qs.forEach((q) => {
+      qs.forEach(({ el: q, h, row }) => {
         // 두 칸으로 늘어선 단어 문항은 한 줄에 둘 — 줄이 바뀔 때만 높이를 더한다
-        const t = q.getBoundingClientRect().top;
-        if (rowTop !== null && Math.abs(t - rowTop) < 1) return;
-        rowTop = t;
-        const h = px(q);
+        if (!row) {
+          const t = q.getBoundingClientRect().top;
+          if (rowTop !== null && Math.abs(t - rowTop) < 1) return;
+          rowTop = t;
+        }
         if (used + h > pageH && used > top) newPage(q, "단계가 다음 쪽으로 이어짐", repeatHead ? head : 0);
         used += h;
       });
@@ -12419,7 +12433,8 @@ function buildWorkbookByStage(entries, stages, exam) {
     const groups = [];
     const word = WB_WORD_STAGES.includes(stageId);
     builtAll.forEach(({ it, built }) => {
-      parts.push(`<section class="wb-passage${word ? " wb-passage-word" : ""}" data-key="s${stageId}p${it.pi}">${wbTitlebarHtml(it.d)}` +
+      // 내용 O/X도 단계별 묶기에서는 지문끼리 잇는다(2026-11-17 사용자 — 지문마다 새 쪽이라 쪽 아래가 60%씩 비었다)
+      parts.push(`<section class="wb-passage${word ? " wb-passage-word" : ""}${stageId === 12 ? " wb-passage-ox" : ""}" data-key="s${stageId}p${it.pi}">${wbTitlebarHtml(it.d)}` +
         wbStageTableHtml(head, it.label, exam, meta.guide, built.html, word, stageId) + `</section>`);
       if (built.answers && built.answers.length) {
         groups.push({ head: it.label || head, items: built.answers });
@@ -12695,8 +12710,9 @@ function buildStageOx(ox, passageText) {
         <div class="qz-answer-box"><b>정답 ${label}</b>${q.explanation ? `<br>${safeHTML(q.explanation)}` : ""}</div>
       </div>`);
   });
-  /* 지문(1단) 아래에 O/X 카드만 2단으로 둔다(2026-10-27 사용자). 세트 전체가 .wb-q 한 덩어리라
-     지문과 문항이 쪽 사이에서 갈리지 않는다 — 카드마다 지문을 되풀이하지 않아도 된다. */
+  /* 지문(1단) 아래에 O/X 카드만 2단으로 둔다(2026-10-27 사용자). 인쇄에서는 세트 안에서 쪽이 갈릴 수 있다
+     (2026-11-17 — 통째로 묶었더니 단계 머리만 남은 빈 쪽이 지문마다 생겼다). 지문 상자와 카드 한 장은 안 쪼개고,
+     지문 바로 뒤에서는 끊지 않아 지문이 첫 줄 카드와 함께 간다(style.css). */
   const passageBox = passageHtml ? `<div class="qz-passage wb-ox-passage">${passageHtml}</div>` : "";
   return {
     html: `<div class="wb-q wb-ox-set">${passageBox}<div class="wb-ox-cols">${html.join("")}</div></div>`,
