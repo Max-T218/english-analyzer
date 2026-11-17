@@ -638,18 +638,13 @@ TAB_SAVE.decode = {
   },
   afterLoad: async (itemId, payload) => {
     const metas = Array.isArray(payload.images) ? payload.images : [];
-    let added = 0;
-    for (const m of metas) {
-      try {
-        const d = await getJson(`/api/saved-image/${encodeURIComponent(itemId)}/${encodeURIComponent(m.key)}`, "");
-        const e = dcState.entries[m.entry];
-        if (d && d.image && e && e.data && e.data.pic) {
-          e.picSrc = dcBlobUrl(d.image, d.mime || "image/jpeg");
-          dcSavedSrc.set(itemId + "|" + m.key, e.picSrc);
-          added++;
-        }
-      } catch (_e) { /* 이 그림만 건너뛴다 */ }
-    }
+    // 세 장씩 받고 '불러오는 중 n/N'을 띄운다(app.js fetchSavedImages)
+    const added = await fetchSavedImages(itemId, metas, (m, d) => {
+      const e = dcState.entries[m.entry];
+      if (!(e && e.data && e.data.pic)) return false;
+      e.picSrc = dcBlobUrl(d.image, d.mime || "image/jpeg");
+      dcSavedSrc.set(itemId + "|" + m.key, e.picSrc);
+    }, "4컷 그림");
     if (added) dcRender();
   },
   applyPayload: (payload) => {

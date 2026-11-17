@@ -3400,3 +3400,15 @@ details:not([open]) > .lt-bulk-title::before{content:"▸ ";}
 .seat-quote { margin:12px 0 4px; font-size:15px; line-height:1.6; }
 .seat-short { color:#c62828; font-weight:700; }
 .seat-refund { font-size:12px; }
+
+/* 저장본 그림 불러오는 중 안내(app.js imgLoadToast) — 화면 아래 가운데, 인쇄에는 안 나온다 */
+.img-load-toast{
+  position:fixed; left:50%; bottom:28px; transform:translateX(-50%); z-index:1500;
+  background:#1f2937; color:#fff; padding:10px 18px; border-radius:999px;
+  font-size:15px; font-weight:600; box-shadow:0 6px 20px rgba(0,0,0,.25);
+  max-width:calc(100vw - 32px); text-align:center;
+}
+.img-load-toast.done{background:#166534;}
+.img-load-toast.warn{background:#b45309;}
+.img-load-toast[hidden]{display:none;}
+@media print{ .img-load-toast{display:none !important;} }

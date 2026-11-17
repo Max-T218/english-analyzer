@@ -604,6 +604,22 @@ def _quiz_action_cost(items):
         total += _quiz_type_base_price(t) + PRICE_EXTRA_QUESTION_KRW * max(0, n - 1)
     return total
 
+
+# 이용 내역(원장) 이름표 — 어느 탭에서 만든 문제인지 보이게(2026-11-17 사용자: 선생님이 어느 탭을
+# 많이 쓰는지 알고 싶었는데 모두 '문제 제작'이라 갈리지 않았다). 화면이 /api/quiz에 tab을 싣는다.
+# 값·모델과는 상관없는 표시일 뿐이고, 목록 밖이거나 없으면(옛 화면) 예전 이름 그대로다.
+QUIZ_TAB_LABELS = {
+    "mcq": "객관식 제작",
+    "saq": "주관식 제작",
+    "mix": "객관식+주관식 제작",
+    "exam": "동형 모의고사",
+    "workbook": "워크북 내용 O/X",
+}
+
+
+def _quiz_ledger_label(tab, n):
+    return f"{QUIZ_TAB_LABELS.get(str(tab or ''), '문제 제작')} · {n}문항"
+
 # --- 관리자 페이지(public/admin.html) — 회원 목록·토큰 조회/충전 --------------
 # 일반 회원 로그인(이메일 정규식 검증 등)과 완전히 분리된, 아이디 하나짜리 단일
 # 관리자 로그인이다. ADMIN_PASSWORD를 설정하지 않으면 관리자 로그인은 항상 거부된다
@@ -23433,7 +23449,7 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     cost = _quiz_action_cost(quiz_items)
                     total_q = sum(n for _t, n in quiz_items)
-                    self._pending_label = f"문제 제작 · {total_q}문항"
+                    self._pending_label = _quiz_ledger_label(req.get("tab"), total_q)
                     # 동형 모의고사 상한 이벤트 — 시험지 탭은 한 호출에 한 문항만 보낸다.
                     # 그 모양이 아닌 요청에 examRun이 실려 오면 평소 값으로 받는다.
                     exam_run = str(req.get("examRun") or "")
@@ -25432,7 +25448,7 @@ class Handler(BaseHTTPRequestHandler):
                         ]
                         items = [(t, n) for t, n in items if n > 0]
                         self._pending_charge = _quiz_action_cost(items)
-                        self._pending_label = f"문제 제작 · {sum(n for _t, n in items)}문항"
+                        self._pending_label = _quiz_ledger_label(req.get("tab"), sum(n for _t, n in items))
                         skipped.append(
                             f"문장삽입 {dropped}문항은 번호 위치가 끝내 바르게 나오지 않아 뺐습니다. "
                             "뺀 문항 요금은 나가지 않았습니다. 다시 만들어 보세요."
@@ -25453,7 +25469,7 @@ class Handler(BaseHTTPRequestHandler):
                         items = [(t, n - left if t == "지칭 추론" else n) for t, n in items]
                         items = [(t, n) for t, n in items if n > 0]
                         self._pending_charge = _quiz_action_cost(items)
-                        self._pending_label = f"문제 제작 · {sum(n for _t, n in items)}문항"
+                        self._pending_label = _quiz_ledger_label(req.get("tab"), sum(n for _t, n in items))
                         skipped.append(
                             f"지칭 추론 {left}문항은 밑줄이 대명사가 아닌 말에 걸려 끝내 바르게 나오지 않아 뺐습니다. "
                             "뺀 문항 요금은 나가지 않았습니다. 대명사(he·she·they…)가 여럿 나오는 지문으로 다시 만들어 보세요."
@@ -25464,7 +25480,7 @@ class Handler(BaseHTTPRequestHandler):
                     items = [(t, n - mood_dropped if t == "심경" else n) for t, n in items]
                     items = [(t, n) for t, n in items if n > 0]
                     self._pending_charge = _quiz_action_cost(items)
-                    self._pending_label = f"문제 제작 · {sum(n for _t, n in items)}문항"
+                    self._pending_label = _quiz_ledger_label(req.get("tab"), sum(n for _t, n in items))
                     skipped.append(
                         f"심경 {mood_dropped}문항은 인물의 감정이 드러나는 이야기 글에서만 만들 수 있어 뺐습니다. "
                         "뺀 문항 요금은 나가지 않았습니다."

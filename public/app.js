@@ -6001,26 +6001,76 @@ async function uploadInfographics(itemId, metas, onProgress) {
   }
 }
 
-// 불러온 저장본에 딸린 그림을 받아 붙인다. 없거나 못 받은 그림은 건너뛴다(글은 이미 떠 있다).
-async function loadInfographics(itemId, payload) {
-  const metas = Array.isArray(payload.images) ? payload.images : [];
-  if (!metas.length) return;
-  let added = 0;
-  for (const m of metas) {
+/* 목록을 n개씩 함께 처리한다(앞 것이 끝나면 다음 것을 집는다). 그림 한 장이 700KB 남짓이고 서버(오리건)와
+   저장소(서울)를 오가 한 장씩 차례로 받으면 장수만큼 기다렸다 — 세 장씩이면 몰려 실패하지 않으면서 빨라진다. */
+async function runPool(list, n, fn) {
+  const queue = list.slice();
+  const worker = async () => { for (let x; (x = queue.shift()); ) await fn(x); };
+  await Promise.all(Array.from({ length: Math.min(n, list.length) }, worker));
+}
+
+/* 저장본 그림을 받는 동안 화면 아래에 '그림 불러오는 중 3/12'를 띄운다(2026-11-17 사용자 — 글만 뜨고 그림 칸이
+   한참 비어 있어 저장이 안 된 줄 알았다). 다 받으면 잠깐 결과를 보이고 사라진다. */
+let imgLoadToastTimer = 0;
+function imgLoadToast(text, done) {
+  let el = document.getElementById("imgLoadToast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "imgLoadToast";
+    el.className = "img-load-toast";
+    el.setAttribute("role", "status");
+    document.body.appendChild(el);
+  }
+  clearTimeout(imgLoadToastTimer);
+  el.textContent = text;
+  el.classList.toggle("done", done === "ok");
+  el.classList.toggle("warn", done === "warn");
+  el.hidden = false;
+  if (done) imgLoadToastTimer = setTimeout(() => { el.hidden = true; }, 3500);
+}
+
+/* 저장본에 딸린 그림을 세 장씩 받아, 한 장 받을 때마다 onEach(meta, 받은 값)를 부른다.
+   못 받은 그림은 건너뛴다(글은 이미 떠 있다). 받은 장수를 돌려준다. */
+async function fetchSavedImages(itemId, metas, onEach, word = "그림") {
+  if (!metas.length) return 0;
+  let done = 0;
+  let got = 0;
+  imgLoadToast(`🖼 ${word} 불러오는 중… 0/${metas.length}`);
+  await runPool(metas, 3, async (m) => {
     try {
       const d = await getJson(
         `/api/saved-image/${encodeURIComponent(itemId)}/${encodeURIComponent(m.key)}`, ""
       );
-      if (d && d.image && resultEl.querySelector(`.passage-block[data-entry="${m.entry}"]`)) {
-        const src = b64ToBlobUrl(d.image, d.mime || "image/jpeg");
-        const names = metas.filter((x) => x.entry === m.entry).length > 1;
-        if (addInfographic(m.entry, src, names ? IMG_LANG_NAME[m.lang] || "" : "", m.lang, m.caps, m.spec)) {
-          added++;
-          infoSavedSrc.set(itemId + "|" + m.key, src);  // 서버에 있는 그대로다 — 다시 올릴 필요 없다
-        }
-      }
+      if (d && d.image && onEach(m, d) !== false) got++;
     } catch (_e) { /* 이 그림만 건너뛴다 */ }
-  }
+    done++;
+    if (done < metas.length) imgLoadToast(`🖼 ${word} 불러오는 중… ${done}/${metas.length}`);
+  });
+  imgLoadToast(got === metas.length
+    ? `✅ ${word} ${got}장을 모두 불러왔습니다`
+    : `⚠️ ${word} ${metas.length}장 중 ${metas.length - got}장을 불러오지 못했습니다 — 다시 불러와 보세요`,
+    got === metas.length ? "ok" : "warn");
+  return got;
+}
+
+// 불러온 저장본에 딸린 그림을 받아 붙인다 — 받는 대로 하나씩 붙는다.
+async function loadInfographics(itemId, payload) {
+  const metas = Array.isArray(payload.images) ? payload.images : [];
+  if (!metas.length) return;
+  let added = 0;
+  await fetchSavedImages(itemId, metas, (m, d) => {
+    if (!resultEl.querySelector(`.passage-block[data-entry="${m.entry}"]`)) return false;
+    const src = b64ToBlobUrl(d.image, d.mime || "image/jpeg");
+    const names = metas.filter((x) => x.entry === m.entry).length > 1;
+    if (!addInfographic(m.entry, src, names ? IMG_LANG_NAME[m.lang] || "" : "", m.lang, m.caps, m.spec)) return false;
+    // 세 장씩 받으므로 도착 차례가 섞인다 — 저장한 차례대로 다시 놓는다
+    const shots = infographicHost(m.entry).querySelector(".info-shots");
+    shots.lastElementChild.dataset.ord = metas.indexOf(m);
+    [...shots.children].sort((a, b) => (+a.dataset.ord || 0) - (+b.dataset.ord || 0))
+      .forEach((f) => shots.appendChild(f));
+    added++;
+    infoSavedSrc.set(itemId + "|" + m.key, src);  // 서버에 있는 그대로다 — 다시 올릴 필요 없다
+  }, "요약 이미지");
   if (added) {
     applyPageBreaks(payload.pageBreaks); // 그림 덩어리가 생겼으니 쪽 구성을 다시 입힌다
     resetUndo();
@@ -7158,8 +7208,9 @@ TAB_SAVE.brief = {
     let failed = 0;
     const reasons = new Set();
     if (onProgress && todo.length) onProgress(0, todo.length);
-    for (let n = 0; n < todo.length; n++) {
-      const m = todo[n];
+    let sent = 0;
+    // 상세분석처럼 세 장씩 함께 올린다(한 장씩이면 장수만큼 기다렸다)
+    await runPool(todo, 3, async (m) => {
       try {
         const [i, j] = m.key.split("_").map(Number);
         const src = lastBriefEntries[i].images[j].src;
@@ -7172,8 +7223,9 @@ TAB_SAVE.brief = {
         reasons.add((e && e.message) || String(e));
         console.error("요약 이미지 저장 실패", m.key, e);
       }
-      if (onProgress) onProgress(n + 1, todo.length);
-    }
+      sent++;
+      if (onProgress) onProgress(sent, todo.length);
+    });
     if (failed) {
       throw new Error(`글은 저장됐지만 요약 이미지 ${failed}장은 저장하지 못했습니다 — ${[...reasons].join(" / ")} 다시 저장해 보세요.`);
     }
@@ -7182,24 +7234,19 @@ TAB_SAVE.brief = {
     const metas = Array.isArray(payload.images) ? payload.images : [];
     if (!metas.length) return;
     const next = lastBriefEntries.map((e) => ({ ...e, images: [] }));
-    let added = 0;
-    for (const m of metas) {
-      try {
-        const d = await getJson(
-          `/api/saved-image/${encodeURIComponent(itemId)}/${encodeURIComponent(m.key)}`, "");
-        if (d && d.image && next[m.entry]) {
-          const src = b64ToBlobUrl(d.image, d.mime || "image/jpeg");
-          next[m.entry].images.push({
-            ...(m.lang === "comic"
-              ? { src, name: IMG_LANG_NAME.comic, lang: "comic", caps: m.caps || [] }
-              : { src, name: m.lang || "" }),
-            ...(m.spec ? { spec: m.spec } : {}),
-          });
-          infoSavedSrc.set(itemId + "|" + m.key, src);
-          added++;
-        }
-      } catch (_e) { /* 이 그림만 건너뛴다 */ }
-    }
+    const got = new Map();   // 세 장씩 받아 도착 차례가 섞인다 — 다 받은 뒤 저장한 차례대로 붙인다
+    const added = await fetchSavedImages(itemId, metas, (m, d) => {
+      if (!next[m.entry]) return false;
+      const src = b64ToBlobUrl(d.image, d.mime || "image/jpeg");
+      got.set(m, {
+        ...(m.lang === "comic"
+          ? { src, name: IMG_LANG_NAME.comic, lang: "comic", caps: m.caps || [] }
+          : { src, name: m.lang || "" }),
+        ...(m.spec ? { spec: m.spec } : {}),
+      });
+      infoSavedSrc.set(itemId + "|" + m.key, src);
+    }, "요약 이미지");
+    metas.forEach((m) => { if (got.has(m)) next[m.entry].images.push(got.get(m)); });
     if (added) renderBriefEntries(next);
   },
   applyPayload: (payload) => {
@@ -9409,6 +9456,8 @@ function setupQuizTab({ prefix, types, footer }) {
       targetDefs: quizVocab.defsForText(source),
       difficulty,
       school: school(),
+      // 이용 내역에 어느 탭에서 만든 것인지 적는 데만 쓴다(값·모델과 무관)
+      tab: prefix,
     });
 
     /* 실패 카드의 [🔄 이 지문만 다시 만들기]. 실패한 자리(한 묶음 또는 한 변형 세트)만 다시 만들어, 이미 있는 문제는
@@ -11546,7 +11595,7 @@ async function wbMakeOne(job, total, serverStages, oxCalls) {
     try {
       const res = await postGenerate(
         "/api/quiz",
-        { passage: job.text, types: call.types, variation: "verbatim", difficulty: call.difficulty, school: "high" },
+        { passage: job.text, types: call.types, variation: "verbatim", difficulty: call.difficulty, school: "high", tab: "workbook" },
         "내용 O/X 생성에 실패했습니다."
       );
       (res.questions || []).filter((q) => q && (q.tfItems || []).length).forEach((q) =>
@@ -18483,6 +18532,7 @@ async function runExamPaper() {
             targetWords: words,
             targetDefs: examVocab.defsForText(text),
             examRun,
+            tab: "exam",
             school: examSchoolEl && examSchoolEl.value === "middle" ? "middle" : "high",
           },
           "문제 생성에 실패했습니다."

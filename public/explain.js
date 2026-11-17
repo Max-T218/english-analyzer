@@ -583,19 +583,14 @@ TAB_SAVE.explain = {
     if (failed) throw new Error(`글은 저장됐지만 요약 이미지 ${failed}장은 저장하지 못했습니다 — ${[...reasons].join(" / ")} 다시 저장해 보세요.`);
   },
   afterLoad: async (itemId, payload) => {
-    let added = 0;
-    for (const m of Array.isArray(payload.images) ? payload.images : []) {
-      try {
-        const d = await getJson(`/api/saved-image/${encodeURIComponent(itemId)}/${encodeURIComponent(m.key)}`, "");
-        const e = xpState.entries[m.entry];
-        if (d && d.image && e && e.data && e.data.img) {
-          e.imgSrc = b64ToBlobUrl(d.image, d.mime || "image/jpeg");
-          xpBlobUrls.push(e.imgSrc);
-          xpSavedSrc.set(itemId + "|" + m.key, e.imgSrc);
-          added++;
-        }
-      } catch (_e) { /* 이 그림만 건너뛴다 */ }
-    }
+    // 세 장씩 받고 '불러오는 중 n/N'을 띄운다(app.js fetchSavedImages)
+    const added = await fetchSavedImages(itemId, Array.isArray(payload.images) ? payload.images : [], (m, d) => {
+      const e = xpState.entries[m.entry];
+      if (!(e && e.data && e.data.img)) return false;
+      e.imgSrc = b64ToBlobUrl(d.image, d.mime || "image/jpeg");
+      xpBlobUrls.push(e.imgSrc);
+      xpSavedSrc.set(itemId + "|" + m.key, e.imgSrc);
+    }, "요약 이미지");
     if (added) xpRender();
   },
   applyPayload: (payload) => {
