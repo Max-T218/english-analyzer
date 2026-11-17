@@ -1005,7 +1005,19 @@ function trendPerExamHtml(st) {
       ${only.length ? `<div class="tv-ex-only"><b>이 시험에서만</b> ${only.join(", ")}</div>` : ""}
     </div>`;
   }).join("");
-  return `<div class="tv-exams" style="--n:${cols}">${cards}</div>`;
+  // 시험지별 영역 비중을 한 방사형에 겹쳐 — 카드마다 따로 있는 도넛으로는 시험끼리 견주기 어렵다(2026-11-18 사용자)
+  const axes = [...TREND_DOMAINS.map(([n]) => n), "서술형"];
+  const series = st.names.map((nm, i) => {
+    const tot = st.perDocTotal[i] || 0;
+    const dom = new Map();
+    st.list.forEach((r) => { const d = trendDomainOf(r.label); dom.set(d, (dom.get(d) || 0) + (r.per[i] || 0)); });
+    return { name: short[i], color: TREND_EXAM_COLORS[i % TREND_EXAM_COLORS.length],
+      values: axes.map((d) => (tot ? (100 * (dom.get(d) || 0)) / tot : 0)) };
+  });
+  const top = Math.max(10, ...series.flatMap((s) => s.values));
+  const radar = typeof rpRadar === "function" ? rpRadar(axes, series, Math.ceil(top / 10) * 10) : "";
+  return `<div class="tv-exams" style="--n:${cols}">${cards}</div>
+    ${radar ? `<div class="rp-keep" style="margin-top:10px"><h5 style="margin:6px 0 2px">시험지별 영역 비중 비교 <small style="font-weight:400;color:#898781">각 시험 문항 중 영역별 비율(%) — 선 색이 시험지, 바깥 테두리 ${Math.ceil(top / 10) * 10}%</small></h5>${radar}</div>` : ""}`;
 }
 
 /* ── 영역 색(영역 도넛·서술형 영역 등) ──

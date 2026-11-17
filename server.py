@@ -3550,6 +3550,16 @@ def build_quiz_user_prompt(passage, items, short_hint=None, explain_hint=None,
             "다만 지문에 그 문법이 쓰인 곳(문장 전환이면 바꿀 재료)이 없으면 억지로 지문을 "
             "고쳐 넣지 말고, 지문에 실제로 있는 문법으로 평소대로 출제하세요."
         )
+    ksat = _ksat_in_passage(passage) if not target_words and picked & QUIZ_VOCAB_TYPES else []
+    if ksat:
+        # 선생님 단어장이 없을 때만 — 수능에 거듭 나온 낱말을 어휘 문항의 출제 자리 후보로(화면에는 안 보인다)
+        lines.append(
+            "참고 — 이 지문에 나오는 수능 빈출 낱말(수능의 여러 지문에 거듭 나온 어려운 낱말): "
+            + ", ".join(ksat) + "\n"
+            "아래 유형에서 학생이 판단할 자리(밑줄·네모·빈칸·뜻풀이할 낱말)를 고를 때, 이 낱말이 글의 "
+            "흐름에서 중요하게 쓰였다면 우선 고려하세요: " + ", ".join(sorted(picked & QUIZ_VOCAB_TYPES)) + ". "
+            "유형 규칙이 먼저이고, 맞지 않으면 평소대로 출제하세요."
+        )
     if target_words and picked & QUIZ_VOCAB_TYPES:
         lines.append(
             "시험 범위 단어장: " + ", ".join(target_words) + "\n"
@@ -5362,8 +5372,76 @@ judgment as the "핵심 어휘 & 표현" table of a passage analysis.
 - `note`: "" unless something needs saying.
 """
 
+# ── 수능 빈출 낱말(2026-11-18 사용자) — 교육과정 3,000단어 밖이지만 수능 여러 지문에 나온 낱말(ksat_frequent_words.txt).
+# 화면에는 드러내지 않고, 지문에서 단어를 뽑을 때 지문에 있으면 후보로 함께 알려 준다(목록 밖 몫 제한에도 안 걸린다).
+KSAT_WORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ksat_frequent_words.txt")
+_KSAT_INFLECT = (("ies", "y"), ("ied", "y"), ("es", ""), ("s", ""), ("ed", ""), ("ed", "e"), ("d", ""),
+                 ("ing", ""), ("ing", "e"), ("ly", ""))
+
+
+def _ksat_variants(w):
+    out = {w}
+    for end, rep in _KSAT_INFLECT:
+        if w.endswith(end) and len(w) - len(end) >= 3:
+            b = w[:-len(end)] + rep
+            out.add(b)
+            if len(b) > 3 and b[-1] == b[-2]:
+                out.add(b[:-1])
+    return out
+
+
+def _load_ksat_words():
+    """변화형 → 목록 낱말(exclaimed·exclaims → exclaimed). 파일이 없으면 빈 값 — 이 도움만 꺼진다."""
+    table = {}
+    try:
+        with open(KSAT_WORDS_FILE, encoding="utf-8") as f:
+            words = [ln.strip().lower() for ln in f if ln.strip() and not ln.startswith("#")]
+    except OSError:
+        return table
+    for w in words:
+        for v in _ksat_variants(w):
+            table.setdefault(v, w)
+    return table
+
+
+_KSAT_WORDS = _load_ksat_words()
+
+
+def _ksat_frequent(word):
+    """수능 빈출 낱말이면 그 목록 낱말, 아니면 None."""
+    if not _KSAT_WORDS:
+        return None
+    for v in _ksat_variants(str(word or "").lower()):
+        if v in _KSAT_WORDS:
+            return _KSAT_WORDS[v]
+    return None
+
+
+def _ksat_in_passage(text, limit=15):
+    """지문에 나오는 수능 빈출 낱말(목록 낱말 모양, 처음 나온 차례). 고유명사 자리(문장 가운데 대문자)는 뺀다.
+    상세분석 핵심 어휘·리딩노트 주요 어휘·어휘 문항 출제 자리 고르기에 '참고'로만 알려 준다(화면에는 안 보인다)."""
+    if not _KSAT_WORDS:
+        return []
+    out = []
+    text = str(text or "")
+    for m in _VOCAB_EXTRACT_TOKEN_RE.finditer(text):
+        tok = re.split(r"['’]", m.group(0))[0]
+        if len(tok) < 3:
+            continue
+        before = text[:m.start()].rstrip()
+        if tok[0].isupper() and before and before[-1] not in ".?!\"“”:;\n":
+            continue
+        k = _ksat_frequent(tok)
+        if k and k not in out:
+            out.append(k)
+            if len(out) >= limit:
+                break
+    return out
+
+
 def _vocab_extract_candidates(text, exclude):
     """지문의 낱말 중 목록(중학교·공통 / 고등 선택)에 있는 것 → [(표제어 열쇠, 차례)] (지문 순서).
+    교육과정 목록 밖이라도 수능 빈출 낱말이면 차례 3으로 함께 넣는다.
     초등 단어·고유명사(문장 가운데 대문자)·이미 뽑은 낱말은 뺀다."""
     found = {}
     for m in _VOCAB_EXTRACT_TOKEN_RE.finditer(text):
@@ -5375,7 +5453,12 @@ def _vocab_extract_candidates(text, exclude):
             continue
         hit = _curriculum_rank(base)
         if hit and hit[0] in (1, 2) and hit[1] not in exclude and base.lower() not in exclude:
-            found.setdefault(hit[1], hit[0])
+            # 고등(선택) 낱말 중 수능 빈출이면 차례 4로 — AI가 그 낱말을 먼저 보게
+            found.setdefault(hit[1], 4 if hit[0] == 2 and _ksat_frequent(hit[1]) else hit[0])
+        elif not hit:
+            k = _ksat_frequent(base)
+            if k and k not in exclude and base.lower() not in exclude:
+                found.setdefault(k, 3)
     return list(found.items())
 
 
@@ -5426,7 +5509,7 @@ def call_gemini_vocab_extract(text, count, pos, idioms, exclude, api_key, model)
 
     names = {"noun": "nouns (n.)", "verb": "verbs (v.)", "adj": "adjectives (adj.)", "adv": "adverbs (adv.)"}
     cands = _vocab_extract_candidates(text, exclude)
-    level = {1: "중학교·공통", 2: "고등(선택)"}
+    level = {1: "중학교·공통", 2: "고등(선택)", 3: "수능 빈출", 4: "고등(선택)·수능 빈출"}
     user = [
         f"Number of entries: up to {count}.",
         "Allowed parts of speech: " + ", ".join(names[k] for k in _VOCAB_EXTRACT_POS if k in pos) + ".",
@@ -5436,6 +5519,10 @@ def call_gemini_vocab_extract(text, count, pos, idioms, exclude, api_key, model)
     if exclude:
         user.append("Already chosen from other passages — do NOT choose these again: "
                     + ", ".join(sorted(exclude)[:VOCAB_EXTRACT_EXCLUDE_MAX]))
+    if any(r in (3, 4) for _k, r in cands):
+        user.append("Candidates marked 수능 빈출 appeared again and again across Korean CSAT (수능) passages "
+                    "(some are not even on the curriculum lists) — they are worth learning; prefer them when "
+                    "they matter here.")
     user.append("\n## Candidates (on the curriculum lists, in passage order)\n"
                 + (", ".join(f"{k} [{level[r]}]" for k, r in cands) if cands
                    else "(none found — choose the most useful words yourself)"))
@@ -5478,7 +5565,7 @@ def call_gemini_vocab_extract(text, count, pos, idioms, exclude, api_key, model)
             hit = _curriculum_rank(w)
             if hit and hit[0] == 0:
                 continue   # 초등 단어
-            if not (hit and hit[1] in cand_keys):
+            if not (hit and hit[1] in cand_keys) and _ksat_frequent(w) not in cand_keys:
                 if len(off_kept) < off_max:   # 목록 밖(전문 용어 등)은 일부만
                     seen.add(lw)
                     off_kept.append(it)
@@ -9875,6 +9962,10 @@ def build_workbook_user_prompt(passage, complete_hint=None, stages=None, target_
     if word_counts:
         # 영영풀이에 답이 든 것은 걸러 버리므로(normalize_workbook_words) 여유를 몇 개 더 받는다
         lines.append(_workbook_words_prompt(sum(word_counts.values()) + 3))
+        ksat = _ksat_in_passage(passage)
+        if ksat:
+            lines.append("참고 — 이 지문의 수능 빈출 낱말(수능의 여러 지문에 거듭 나온 어려운 낱말): "
+                         + ", ".join(ksat) + ". 단어를 고를 때 글에서 중요하게 쓰였다면 우선 넣으세요(억지로 넣지는 말 것).")
         lines.append("")
     if complete_hint is not None:
         expected, got = complete_hint
@@ -11197,6 +11288,10 @@ def call_gemini_decode(passage, api_key, model, complete_hint=None):
         exp, got = complete_hint
         user += (f"⚠️ 앞서 만든 답에는 문장이 {got}개뿐이었다. 이 지문은 약 {exp}문장이다. "
                  "**모든 문장을 빠짐없이** 담아 다시 만들어라.\n\n")
+    ksat = _ksat_in_passage(passage)
+    if ksat:
+        user += ("참고 — 이 지문의 수능 빈출 낱말(수능의 여러 지문에 거듭 나온 어려운 낱말): " + ", ".join(ksat)
+                 + ". 주요 어휘를 고를 때 글에서 중요하게 쓰였다면 우선 넣어라(억지로 넣지는 말 것).\n\n")
     user += "## 지문\n" + passage
     payload = {
         "systemInstruction": {"parts": [{"text": DECODE_SYSTEM_PROMPT}]},
@@ -11655,6 +11750,7 @@ _TOPIC_DERIV_PAIRS = (
     ("icial", "it"), ("ee", ""), ("orian", "ory"), ("icist", "ics"), ("tial", "ce"),
     ("teenth", ""), ("en", "e"), ("ise", "ize"), ("gry", "ger"), ("ician", "ics"), ("arian", "ary"),
     ("faction", "fy"), ("age", "e"), ("age", ""), ("osion", "ode"), ("hood", ""), ("nist", "no"),
+    ("ant", "ate"), ("ite", "e"), ("ent", "e"),   # participant → participate, opposite → oppose, resident → reside
 )
 # 하이픈 앞에만 붙는 접두 조각(non-verbal의 non) — 낱말로 세지 않는다
 _TOPIC_HYPHEN_PREFIX = {"non", "mid", "co", "pre", "anti", "semi", "multi", "ex", "sub", "pseudo", "quasi",
@@ -11737,8 +11833,14 @@ def _topic_tokens(text):
     """지문 → [(셀 낱말, 원래 모양, 대문자로 시작했나)]. 고유명사(문장 가운데 대문자)·한 글자(a·I 제외)·숫자는 뺀다.
     don't → do, it's → it처럼 줄임은 앞 낱말만 센다."""
     out = []
-    text = str(text or "")
+    # PDF 글자층의 깨진 글자 표시 '(cid:123)'는 낱말이 아니다
+    text = re.sub(r"\(cid:\d+\)", " ", str(text or ""))
     for m in _TOPIC_TOKEN_RE.finditer(text):
+        # mettā·bhāvanā처럼 영문 밖 글자(ā)가 붙은 낱말은 조각(mett·bh)으로 잘리니 세지 않는다
+        prev = text[m.start() - 1] if m.start() else ""
+        nxt = text[m.end()] if m.end() < len(text) else ""
+        if (prev.isalpha() and not prev.isascii()) or (nxt.isalpha() and not nxt.isascii()):
+            continue
         tok = m.group(0).replace("’", "'")
         low = tok.lower()
         if low.endswith("n't"):
@@ -13269,6 +13371,12 @@ def build_user_prompt(passage, target_grammar, mode, complete_hint=None,
             "⚠️ 이전 시도에서 일부 chunk의 평문 영어(`text`)가 비어 있거나 누락됐습니다. "
             "모든 chunk의 `text`에 지문의 영어 단어가 그대로(원문대로·순서대로) 들어가야 하며, "
             "전체를 이으면 지문 전체 영어가 빠짐없이 복원되어야 합니다. 빠짐없이 다시 출력하세요."
+        )
+    ksat = _ksat_in_passage(passage)
+    if ksat:
+        lines.append(
+            "참고 — 이 지문의 수능 빈출 낱말(수능의 여러 지문에 거듭 나온 어려운 낱말): "
+            + ", ".join(ksat) + ". 핵심 어휘(vocab)를 고를 때 글에서 중요하게 쓰였다면 우선 넣으세요(억지로 넣지는 말 것)."
         )
     lines.append("")
     lines.append("[지문]")
@@ -16960,6 +17068,17 @@ CHANGELOG = [
             "추가 어휘는 골라서 뜻을 달아 단어장 탭으로 바로 보낼 수 있습니다. 어휘 분석은 무료입니다.",
         ],
     },
+    {
+        "version": 136,
+        "date": "2026-11-18",
+        "items": [
+            "📊 성적표가 그래프 중심으로 바뀌었습니다 — 월간 성적표와 시험별 성적표 맨 위에 '한눈에 보기'(결과 원형, "
+            "점수대 분포, 학생별 막대)가 생겼고, 문제 시험은 유형별 정답률을 방사형 그래프로 보여 줘 약한 유형이 바로 보입니다.",
+            "✍️ 월간 성적표의 '확인 중 N ›'을 누르면 그 시험의 채점할 답안으로 바로 이동합니다.",
+            "🗂️ 기출 소재·어휘와 시험지 분석 리포트에도 원형·분포·방사형 그래프가 더해졌습니다"
+            "(시험지가 둘 이상이면 시험지별 영역 비중을 겹쳐 비교).",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -20559,6 +20678,8 @@ def _student_test_rows(student_id, assignments, attempts_by):
             "questionCount": a["n_questions"] if "n_questions" in a else len(a.get("questions") or []),
             "pending": (last.get("pending") or 0) if (quiz and last) else 0,
             "qc": _qt_counts_for(a, last.get("qdetails")) if (quiz and last) else None,
+            # 유형별 맞음·틀림 — 월간 성적표의 방사형 그래프(2026-11-18 사용자). 문항이 없는 가벼운 목록에서는 빈 값
+            "qtypes": _qt_type_counts(a, last.get("qdetails")) if (quiz and last) else None,
             "wordCount": a["n_words"] if "n_words" in a else len(a.get("vocab") or []), "maxWrong": a.get("max_wrong"),
             "createdAt": a.get("created_at", ""),
             # 문제 시험은 합격/불합격이 없다 — 냈으면 'done'(제출)
@@ -21415,6 +21536,27 @@ def grade_quiz_unit(teacher_id, assignment_id, student_id, no, unit, ok, round_n
                 "wrong": total - score - pending})
     return {"score": score, "total": total, "pending": pending,
             "qc": _qt_q_counts(qdetails) if rnd > 0 else _qt_counts_for(a_doc, qdetails)}
+
+
+def _qt_type_counts(assignment, qdetails):
+    """학생 답안 하나 → {유형: [맞음, 틀림]} (문항 단위, 확인 대기·읽기 단계는 뺀다). 문항이 없으면 {}."""
+    qs = assignment.get("questions") or []
+    out = {}
+    for d in qdetails or []:
+        n = d.get("no")
+        if not isinstance(n, int) or not (1 <= n <= len(qs)):
+            continue
+        q = qs[n - 1] or {}
+        if q.get("format") == "read":
+            continue
+        c = _qt_q_counts([d])
+        if not (c["right"] or c["wrong"]):
+            continue
+        t = str(q.get("type") or "기타").split("›")[0].strip()[:20] or "기타"
+        cell = out.setdefault(t, [0, 0])
+        cell[0] += c["right"]
+        cell[1] += c["wrong"]
+    return out
 
 
 def _qt_question_stats(assignment, attempts):

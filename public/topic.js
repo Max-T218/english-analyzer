@@ -14,14 +14,17 @@ const TOPIC_NAME = "기출 소재·어휘";
 const TOPIC_FIELDS = ["인문·철학", "심리·행동", "사회·문화", "경제·경영", "정치·법·윤리", "교육·학습",
   "언어·문학", "역사", "예술", "생명과학·의학", "물리·화학·지구과학", "환경·생태",
   "기술·정보", "스포츠·건강", "실용문"];
-const TOPIC_FIELD_COLORS = ["#7b61c9", "#d0587e", "#e07b39", "#c9a227", "#8a6d3b", "#3f9c6b",
-  "#b5577a", "#9a7b4f", "#c25bb5", "#2e9fb3", "#3d6fd1", "#4a9c3a", "#5a6b8c", "#d9534f", "#8f8f8f"];
+// 분야마다 또렷이 갈리는 색(2026-11-18 사용자: 레벨테스트 성적표처럼 색을 많이 써서 구분이 잘 가게) — TOPIC_FIELDS 차례
+const TOPIC_FIELD_COLORS = ["#8e44d6", "#e6194b", "#f58231", "#e6b800", "#9a6324", "#3cb44b",
+  "#f032e6", "#800000", "#ff7eb6", "#00a6c8", "#4363d8", "#7cb518", "#1f3a93", "#469990", "#8f8f8f"];
+const TOPIC_GENRE_COLORS = { 설명: "#4363d8", 주장: "#e6194b", 이야기: "#f5a623", 실용문: "#20b2aa" };
+const TOPIC_OFF_COLOR = "#ff8a3d";   // 교육과정 3,000단어 밖
 const TOPIC_BATCH = 10;          // server.py TOPIC_SCAN_BATCH
 const TOPIC_PARALLEL = 3;        // 함께 보내는 묶음 수
 const TOPIC_WORDS_BATCH = 100;   // server.py TOPIC_WORDS_MAX
 const TOPIC_TARGET = 95;         // 읽기 기준선(%)
 const TOPIC_LEVELS = ["초등", "중학교·공통", "고등(선택)"];
-const TOPIC_LEVEL_COLORS = ["#9cc6f5", "#4d94ec", "#1f5fb8"];
+const TOPIC_LEVEL_COLORS = ["#5cc26b", "#3d8bfd", "#8e5cd9"];
 
 const tpState = {
   rounds: [],     // [{id, name, passages:[{id, name, text, on}]}]
@@ -368,14 +371,14 @@ function tpTopicHtml() {
     || TOPIC_FIELDS.indexOf(a) - TOPIC_FIELDS.indexOf(b));
   const max = Math.max(...fields.map((f) => byField[f].length));
   const bars = fields.map((f) => `<div class="tp-bar"><span class="tp-bar-name">${esc(f)}</span>
-    <span class="tp-bar-track"><i style="width:${(byField[f].length / max) * 100}%;background:${tpFieldColor(f)}"></i></span>
+    <span class="tp-bar-track"><i style="width:${(byField[f].length / max) * 100}%;background-color:${tpFieldColor(f)}"></i></span>
     <b>${byField[f].length}</b></div>`).join("");
   // 회차 × 분야
   const cnt = (f, r) => byField[f].filter((x) => x.round === r.name && tpState.rounds[x.ri] === r).length;
   const grid = `<table class="tp-grid"><thead><tr><th>분야</th>${rounds.map((r) => `<th>${esc(r.name)}</th>`).join("")}<th>합계</th></tr></thead>
     <tbody>${fields.map((f) => `<tr><th><i class="tp-dot" style="background:${tpFieldColor(f)}"></i>${esc(f)}</th>${rounds.map((r) => {
       const n = cnt(f, r);
-      return `<td style="${n ? `background:rgba(77,148,236,${Math.min(0.15 + n * 0.17, 0.85)});${n >= 3 ? "color:#fff;" : ""}` : ""}">${n || ""}</td>`;
+      return `<td${n ? ` class="tp-heat" style="background-color:rgba(77,148,236,${Math.min(0.15 + n * 0.17, 0.85)});${n >= 3 ? "color:#fff;" : ""}"` : ""}>${n || ""}</td>`;
     }).join("")}<td><b>${byField[f].length}</b></td></tr>`).join("")}</tbody></table>`;
   const every = rounds.length > 1 ? fields.filter((f) => rounds.every((r) => cnt(f, r) > 0)) : [];
   const never = TOPIC_FIELDS.filter((f) => !byField[f] && f !== "실용문");
@@ -393,9 +396,21 @@ function tpTopicHtml() {
       ${byField[f].map((x) => `<tr><td>${esc(x.round)}</td><td>${esc(x.p.name)}</td><td>${esc(x.t.topic)}</td>
         <td class="tp-kw">${esc((x.t.keywords || []).join(", "))}</td><td>${esc(x.t.genre)}</td></tr>`).join("")}
       </tbody></table></div>`).join("");
+  const fieldParts = fields.map((f) => ({ label: f, value: byField[f].length, color: tpFieldColor(f) }));
+  const genreParts = Object.entries(genres).sort((a, b) => b[1] - a[1])
+    .map(([g, n]) => ({ label: g, value: n, color: TOPIC_GENRE_COLORS[g] || "#999" }));
+  const donuts = `<div class="tp-charts">
+      ${rpDonutBlock("분야 비율", fieldParts, `${fields.length}가지`, `지문 ${rows.length}개`)}
+      ${rpDonutBlock("글의 성격", genreParts, `${rows.length}`, "지문")}
+    </div>`;
+  const stack = rounds.length > 1 ? `<div class="rp-keep"><h5>회차별 분야 구성 <small>회차마다 100%로 펼친 막대 — 칸 안 숫자는 지문 수</small></h5>
+      ${rpStackRows(rounds.map((r) => ({ label: r.name, parts: fields.map((f) => ({ label: f, value: cnt(f, r), color: tpFieldColor(f) })) })))}
+      <div class="tp-legend">${fields.map((f) => `<span><i style="background:${tpFieldColor(f)}"></i>${esc(f)}</span>`).join("")}</div></div>` : "";
   return `<h4 class="sec">소재 분석</h4>
     <ul class="tp-summary">${summary}</ul>
+    ${donuts}
     <div class="tp-two"><div><h5>분야별 출제 수</h5>${bars}</div><div><h5>회차별 분야</h5>${grid}</div></div>
+    ${stack}
     <h4 class="sec">분야별 소재 목록</h4>${tables}`;
 }
 
@@ -410,7 +425,7 @@ function tpCovBar(cov, label, sub) {
   const [a, b, c] = cov;
   return `<div class="tp-cov"><div class="tp-cov-label">${esc(label)}${sub ? ` <small>${esc(sub)}</small>` : ""}</div>
     <div class="tp-cov-track">
-      <i style="width:${a}%;background:${TOPIC_LEVEL_COLORS[0]}"></i><i style="width:${b - a}%;background:${TOPIC_LEVEL_COLORS[1]}"></i><i style="width:${c - b}%;background:${TOPIC_LEVEL_COLORS[2]}"></i>
+      <i style="width:${a}%;background-color:${TOPIC_LEVEL_COLORS[0]}"></i><i style="width:${b - a}%;background-color:${TOPIC_LEVEL_COLORS[1]}"></i><i style="width:${c - b}%;background-color:${TOPIC_LEVEL_COLORS[2]}"></i><i style="width:${Math.max(0, 100 - c)}%;background-color:${TOPIC_OFF_COLOR}"></i>
       <span class="tp-cov-line" style="left:${TOPIC_TARGET}%"></span>
     </div><b class="${c >= TOPIC_TARGET ? "ok" : ""}">${tpPct(c)}</b></div>`;
 }
@@ -421,7 +436,23 @@ function tpVocabHtml(forPrint) {
   const stale = tpState.statsKey !== tpKey();
   const need = tpWordsToTarget(st);
   const gap = Math.max(0, TOPIC_TARGET - st.coverage[2]);
-  const legend = `<div class="tp-legend">${TOPIC_LEVELS.map((l, i) => `<span><i style="background:${TOPIC_LEVEL_COLORS[i]}"></i>${esc(l)}${i ? "까지" : ""}</span>`).join("")}<span><i class="tp-line-i"></i>읽기 기준선 ${TOPIC_TARGET}%</span></div>`;
+  const legend = `<div class="tp-legend">${TOPIC_LEVELS.map((l, i) => `<span><i style="background:${TOPIC_LEVEL_COLORS[i]}"></i>${esc(l)}${i ? "까지" : ""}</span>`).join("")}<span><i style="background:${TOPIC_OFF_COLOR}"></i>3,000단어 밖</span><span><i class="tp-line-i"></i>읽기 기준선 ${TOPIC_TARGET}%</span></div>`;
+  // 원형: 낱말이 어느 학교급 목록에서 왔는지 / 세로 막대: 지문마다 읽는 비율이 어디에 몰렸는지
+  const [c0, c1, c2] = st.coverage;
+  const levelDonut = rpDonutBlock("낱말이 속한 학교급", [
+    { label: "초등", value: Math.round(st.tokens * c0 / 100), color: TOPIC_LEVEL_COLORS[0] },
+    { label: "중학교·공통", value: Math.round(st.tokens * (c1 - c0) / 100), color: TOPIC_LEVEL_COLORS[1] },
+    { label: "고등(선택)", value: Math.round(st.tokens * (c2 - c1) / 100), color: TOPIC_LEVEL_COLORS[2] },
+    { label: "3,000단어 밖", value: Math.round(st.tokens * (100 - c2) / 100), color: TOPIC_OFF_COLOR },
+  ], tpPct(c2), "읽는 비율");
+  const allP = st.rounds.flatMap((r) => r.passages).filter((p) => p.tokens >= 30);
+  const BINS = [[0, 90, "~90"], [90, 92, "90~92"], [92, 94, "92~94"], [94, 95, "94~95"], [95, 96, "95~96"],
+    [96, 97, "96~97"], [97, 98, "97~98"], [98, 99, "98~99"], [99, 100.1, "99~"]];
+  const BIN_COLORS = ["#d7263d", "#f46036", "#f5a623", "#f2c94c", "#a3d977", "#5cc26b", "#2ec4b6", "#3d8bfd", "#5a4fcf"];
+  const hist = allP.length ? `<div class="tp-chart rp-keep tp-chart-wide"><h5>지문별 읽기 비율 분포 <small>지문 ${allP.length}개 — 3,000단어로 읽는 비율(%)별 지문 수, ${TOPIC_TARGET}% 아래는 붉은 쪽</small></h5>
+      ${rpColumns(BINS.map(([lo, hi, label], i) => ({ label, color: BIN_COLORS[i],
+        value: allP.filter((p) => p.coverage[2] >= lo && p.coverage[2] < hi).length })), "")}</div>` : "";
+  const vocabCharts = `<div class="tp-charts">${levelDonut}${hist}</div>`;
   const covs = tpCovBar(st.coverage, "전체", `낱말 ${st.tokens.toLocaleString()}개`) +
     (st.rounds.length > 1 ? st.rounds.map((r) => tpCovBar(r.coverage, r.name, `낱말 ${r.tokens.toLocaleString()}개`)).join("") : "");
   const levelLine = `초등 단어로 <b>${tpPct(st.coverage[0])}</b> → 중학교·공통까지 <b>${tpPct(st.coverage[1])}</b> → 교육과정 3,000단어(파생어 포함)까지 <b>${tpPct(st.coverage[2])}</b>`;
@@ -474,10 +505,11 @@ function tpVocabHtml(forPrint) {
     <h4 class="sec">어휘 분석 — 교육과정 어휘로 몇 % 읽을까</h4>
     <ul class="tp-summary"><li>${levelLine}</li><li>${gapLine}</li>
       <li>교육과정 3,000단어 밖 낱말은 모두 <b>${st.offlistTotal.toLocaleString()}개</b>(같은 낱말의 변화형은 하나로 셉니다)입니다.</li></ul>
+    ${vocabCharts}
     ${legend}${covs}
     ${hardHtml ? `<div class="rp-keep"><h5>어휘가 어려운 지문</h5>${hardHtml}</div>` : ""}
     ${forPrint ? "" : tpPeekHtml()}
-    <h4 class="sec">${TOPIC_TARGET}%까지 필요한 추가 어휘</h4>
+    <h4 class="sec">${gap > 0 ? `${TOPIC_TARGET}%까지 필요한 추가 어휘` : "교육과정 3,000단어 밖 어휘"}</h4>
     <div class="hint">교육과정 3,000단어 밖 낱말을 많이 나온 차례로 모았습니다. '익히면'은 위에서부터 그 낱말까지 익혔을 때 읽을 수 있는 낱말 비율입니다${need ? ` — 색칠한 ${need}개가 ${TOPIC_TARGET}%까지입니다` : ""}. 지문은 PDF의 문제 모양 그대로라 빈칸 자리의 낱말은 빠져 있습니다(보기 줄은 세지 않습니다).</div>
     ${tools}
     <table class="tp-list tp-words"><thead><tr>${forPrint ? "" : `<th class="no-print">고르기</th>`}<th>순위</th><th>낱말</th><th>나온 횟수</th><th>나온 지문</th><th>익히면</th></tr></thead>
@@ -791,8 +823,13 @@ const TOPIC_CSS = `
 .tp-summary{margin:6px 0 12px;padding-left:18px;line-height:1.7;font-size:13.5px}
 .tp-two{display:grid;grid-template-columns:1fr 1.2fr;gap:18px;align-items:start}
 .tp-bar{display:grid;grid-template-columns:96px 1fr 28px;gap:8px;align-items:center;font-size:12.5px;margin:3px 0}
-.tp-bar-track{height:12px;background:#eef1f5;border-radius:6px;overflow:hidden}
-.tp-bar-track i{display:block;height:100%;border-radius:6px}
+/* 막대 입체감 — 시험지 분석 리포트 막대(.tv-bar)와 같은 광택·그림자(2026-11-18 사용자) */
+.tp-bar-track{height:14px;background:#eef1f5;border-radius:0 7px 7px 0;overflow:visible;box-shadow:inset 0 1px 2px rgba(26,31,43,.08)}
+.tp-bar-track i{display:block;height:100%;border-radius:0 7px 7px 0;min-width:3px;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.55) 0,rgba(255,255,255,.12) 45%,rgba(0,0,0,.06) 100%);
+  box-shadow:0 1px 2px rgba(26,31,43,.22),inset 0 -1px 0 rgba(0,0,0,.08)}
+.tp-heat{background-image:linear-gradient(180deg,rgba(255,255,255,.45) 0,rgba(255,255,255,.08) 50%,rgba(0,0,0,.06) 100%);
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,.08)}
 .tp-bar b{text-align:right}
 .tp-grid,.tp-list{width:100%;border-collapse:collapse;font-size:12.5px}
 .tp-grid th,.tp-grid td,.tp-list th,.tp-list td{border:1px solid #e3e6ea;padding:4px 6px;text-align:center}
@@ -808,8 +845,9 @@ const TOPIC_CSS = `
 .tp-legend .tp-line-i{width:2px;height:13px;background:#d9534f;border-radius:0}
 .tp-cov{display:grid;grid-template-columns:150px 1fr 56px;gap:10px;align-items:center;margin:5px 0;font-size:13px}
 .tp-cov-label small{color:#888;font-size:11px}
-.tp-cov-track{position:relative;height:16px;background:#eef1f5;border-radius:4px;display:flex;overflow:visible}
-.tp-cov-track i{display:block;height:100%}
+.tp-cov-track{position:relative;height:16px;background:#eef1f5;border-radius:4px;display:flex;overflow:visible;box-shadow:0 1px 2px rgba(26,31,43,.22)}
+.tp-cov-track i{display:block;height:100%;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.55) 0,rgba(255,255,255,.12) 45%,rgba(0,0,0,.08) 100%)}
 .tp-cov-track i:first-child{border-radius:4px 0 0 4px}
 .tp-cov-line{position:absolute;top:-3px;bottom:-3px;width:2px;background:#d9534f}
 .tp-cov b{text-align:right}.tp-cov b.ok{color:#2c7a3f}
@@ -828,6 +866,7 @@ const TOPIC_CSS = `
 .tp-peek-pct{margin-left:auto}
 .tp-peek-text{font-family:Georgia,"Times New Roman",serif;font-size:14.5px;line-height:1.75}
 mark.tp-unk{background:#ffd6a5;color:inherit;padding:0 1px;border-radius:2px}
+.tp-legend{margin-top:6px}
 @media (max-width:700px){.tp-two{grid-template-columns:1fr}.tp-cov{grid-template-columns:90px 1fr 50px}.tp-peek-pct{margin-left:0}}
 `;
 (() => {

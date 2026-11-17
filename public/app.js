@@ -19470,7 +19470,96 @@ function studentLastScoreHtml(s) {
    시험지 분석 리포트(public/trend.js)와 같은 틀을 쓴다 — 표지 머리(.rp-head) · 숫자 카드
    (.trend-tile) · 번호 붙은 소제목(h4.sec) · 요약 상자 · 학원 마크/워터마크 인쇄.
    스타일은 TREND_CSS(trend.js)를 그대로 쓰고 아래는 성적표에만 필요한 것만 더한다. */
+/* ══════ 보고서 공용 그래프(원형·100% 막대·세로 막대) — 기출 소재·어휘(topic.js)가 쓴다, 성적표에도 쓸 것 (2026-11-18 사용자) ══════
+   시험지 분석 리포트 원형처럼 그림자·광택으로 입체감을 준다. CSS는 CHART_CSS(REPORT_CSS에 함께 들어가 인쇄 창에도 나온다). */
+// 원형(도넛) — parts [{label, value, color}], 가운데 큰 글씨·작은 글씨
+function rpDonut(parts, center, sub) {
+  const total = parts.reduce((n, p) => n + p.value, 0) || 1;
+  const R = 62, r = 38, cx = 75, cy = 75;
+  let a = -Math.PI / 2;
+  const arcs = parts.filter((p) => p.value > 0).map((p) => {
+    const frac = p.value / total;
+    if (frac >= 0.9999) {
+      return `<circle cx="${cx}" cy="${cy}" r="${(R + r) / 2}" fill="none" stroke="${p.color}" stroke-width="${R - r}"/>`;
+    }
+    const b = a + frac * Math.PI * 2;
+    const big = frac > 0.5 ? 1 : 0;
+    const pt = (rad, ang) => `${(cx + rad * Math.cos(ang)).toFixed(2)} ${(cy + rad * Math.sin(ang)).toFixed(2)}`;
+    const d = `M ${pt(R, a)} A ${R} ${R} 0 ${big} 1 ${pt(R, b)} L ${pt(r, b)} A ${r} ${r} 0 ${big} 0 ${pt(r, a)} Z`;
+    a = b;
+    return `<path d="${d}" fill="${p.color}" stroke="#fff" stroke-width="1.2"/>`;
+  }).join("");
+  const id = "rd" + Math.random().toString(36).slice(2, 7);
+  return `<svg class="tp-donut" viewBox="0 0 150 150" width="150" height="150" role="img"><defs><filter id="${id}s" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2.5" stdDeviation="2.2" flood-color="#1a1f2b" flood-opacity=".28"/></filter><linearGradient id="${id}g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".32"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".12"/></linearGradient></defs><g filter="url(#${id}s)">${arcs}</g><circle cx="75" cy="75" r="50" fill="none" stroke="url(#${id}g)" stroke-width="24" pointer-events="none"/>
+    <text x="75" y="${sub ? 74 : 81}" text-anchor="middle" class="tp-donut-c">${esc(center)}</text>
+    ${sub ? `<text x="75" y="93" text-anchor="middle" class="tp-donut-s">${esc(sub)}</text>` : ""}</svg>`;
+}
+function rpDonutBlock(title, parts, center, sub) {
+  const total = parts.reduce((n, p) => n + p.value, 0) || 1;
+  const leg = parts.filter((p) => p.value > 0).map((p) => `<li><i style="background:${p.color}"></i>${esc(p.label)}
+    <b>${p.value}</b><small>${((p.value / total) * 100).toFixed(0)}%</small></li>`).join("");
+  const many = parts.filter((p) => p.value > 0).length > 8;   // 범례가 길면 두 줄로 — 칸이 세로로 늘어지지 않게
+  return `<div class="tp-chart rp-keep${many ? " tp-chart-wide" : ""}"><h5>${esc(title)}</h5><div class="tp-donut-wrap">${rpDonut(parts, center, sub)}
+    <ul class="tp-leg${many ? " two" : ""}">${leg}</ul></div></div>`;
+}
+// 100% 쌓은 막대(분포) — rows [{label, parts:[{label,value,color}]}]
+function rpStackRows(rows) {
+  return rows.map((row) => {
+    const total = row.parts.reduce((n, p) => n + p.value, 0) || 1;
+    return `<div class="tp-stack"><span class="tp-stack-name">${esc(row.label)}</span><span class="tp-stack-track">${row.parts
+      .filter((p) => p.value > 0).map((p) => {
+        const w = (p.value / total) * 100;
+        return `<i style="width:${w}%;background:${p.color}" title="${esc(p.label)} ${p.value}">${w >= 9 ? p.value : ""}</i>`;
+      }).join("")}</span></div>`;
+  }).join("");
+}
+// 세로 막대(지문 분포) — bins [{label, value, color}]
+function rpColumns(bins, unit) {
+  const max = Math.max(1, ...bins.map((b) => b.value));
+  const W = 560, H = 170, pad = 26, bw = (W - pad) / bins.length;
+  const bars = bins.map((b, i) => {
+    const h = (b.value / max) * (H - 50);
+    const x = pad + i * bw + bw * 0.15, y = H - 28 - h;
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw * 0.7).toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="${b.color}" style="filter:drop-shadow(0 2px 2px rgba(26,31,43,.25))"/><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw * 0.7).toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="url(#rpColGloss)"/>
+      ${b.value ? `<text x="${(x + bw * 0.35).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" class="tp-col-v">${b.value}${unit || ""}</text>` : ""}
+      <text x="${(x + bw * 0.35).toFixed(1)}" y="${H - 12}" text-anchor="middle" class="tp-col-l">${esc(b.label)}</text>`;
+  }).join("");
+  return `<svg class="tp-cols" viewBox="0 0 ${W} ${H}" width="100%" role="img"><defs><linearGradient id="rpColGloss" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset=".45" stop-color="#fff" stop-opacity=".05"/><stop offset="1" stop-color="#000" stop-opacity=".12"/></linearGradient></defs><line x1="${pad}" x2="${W}" y1="${H - 28}" y2="${H - 28}" stroke="#cfd6df"/>${bars}</svg>`;
+}
+
+const CHART_CSS = `
+.tp-charts{display:flex;flex-wrap:wrap;gap:14px;margin:8px 0 12px}
+.tp-chart{flex:1 1 300px;border:1px solid #e3e6ea;border-radius:12px;padding:10px 12px;background:#fff}
+.tp-chart-wide{flex:2 1 420px}
+.tp-chart h5{margin:0 0 6px}
+.tp-donut-wrap{display:flex;align-items:center;gap:14px}
+.tp-donut{flex:0 0 150px}
+.tp-donut-c{font-size:20px;font-weight:800;fill:#1b2430}
+.tp-donut-s{font-size:10px;fill:#777}
+.tp-leg{list-style:none;margin:0;padding:0;font-size:12px;line-height:1.75;columns:1}
+.tp-leg li{display:flex;align-items:center;gap:6px;white-space:nowrap;break-inside:avoid}
+.tp-leg.two{columns:2;column-gap:22px;flex:1}
+.tp-leg i{display:inline-block;width:11px;height:11px;border-radius:3px}
+.tp-leg b{margin-left:auto;padding-left:8px}.tp-leg small{color:#888;width:32px;text-align:right}
+.tp-stack{display:grid;grid-template-columns:130px 1fr;gap:8px;align-items:center;margin:4px 0;font-size:12.5px}
+.tp-stack-track{display:flex;height:20px;border-radius:5px;overflow:hidden;background:#eef1f5;box-shadow:0 1px 3px rgba(26,31,43,.25)}
+.tp-stack-track i{display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-style:normal;font-weight:700;text-shadow:0 0 2px rgba(0,0,0,.45)}
+.tp-col-v{font-size:11px;font-weight:700;fill:#333}.tp-col-l{font-size:10.5px;fill:#555}
+.tp-cols{display:block;max-width:600px;margin:0 auto}
+.rp-hbars{display:grid;grid-template-columns:max-content 1fr 54px;gap:5px 10px;align-items:center;font-size:12.5px}
+.rp-hbars .l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;color:#1a1f2b}
+.rp-hbars .t{height:14px;background:#eef1f5;border-radius:0 7px 7px 0;box-shadow:inset 0 1px 2px rgba(26,31,43,.08)}
+.rp-hbars .t i{display:block;height:100%;min-width:3px;border-radius:0 7px 7px 0;
+  background-image:linear-gradient(180deg,rgba(255,255,255,.55) 0,rgba(255,255,255,.12) 45%,rgba(0,0,0,.06) 100%);
+  box-shadow:0 1px 2px rgba(26,31,43,.22),inset 0 -1px 0 rgba(0,0,0,.08)}
+.rp-hbars .v{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+.rp-hbars .v.none{color:#9ca3af;font-weight:400}
+.tp-stack-track i{background-image:linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,0) 55%,rgba(0,0,0,.12))}
+.tp-chart{box-shadow:0 2px 6px rgba(26,31,43,.10)}
+@media print{.tp-chart{break-inside:avoid}}
+`;
 const REPORT_CSS = `
+${CHART_CSS}
 .trend-report .rp-comment{margin:4px 0;padding:10px 14px;background:#f4f7fc;border-left:3px solid #4d94ec;
   border-radius:0 8px 8px 0;font-size:13.5px;line-height:1.7;white-space:pre-wrap;color:#1a1f2b;font-family:inherit}
 .trend-report textarea.rp-comment{width:100%;box-sizing:border-box;border-top:0;border-right:0;border-bottom:0;resize:vertical}
@@ -19481,6 +19570,11 @@ const REPORT_CSS = `
 .trend-report .rp-sub-table{margin:4px 0 8px;font-size:12px}
 .trend-report .rp-chart{display:block;margin:0 auto}
 .rp-batch-page + .rp-batch-page{break-before:page}
+.trend-report .rp-go-grade{font:inherit;font-weight:700;color:#b45309;background:#fff4e0;border:1px solid #f5c77e;
+  border-radius:10px;padding:1px 8px;cursor:pointer}
+.trend-report .rp-go-grade:hover{background:#ffe7bf}
+@media print{.trend-report .rp-go-grade{border:0;background:none;padding:0;color:inherit;font-weight:400}}
+.qt-flash{outline:3px solid #f59e0b;outline-offset:2px;border-radius:8px;transition:outline-color 1.5s}
 `;
 (function injectReportStyle() {
   const st = document.createElement("style");
@@ -19584,6 +19678,7 @@ function renderTestResults(data, title) {
       { label: "합격", value: sm.passed, unit: `/${sm.targets}명`, sub: sm.targets ? `합격률 ${Math.round((100 * sm.passed) / sm.targets)}%` : "", color: "#2fd197" },
       { label: "평균 점수", value: sm.avgPercent != null ? sm.avgPercent : "—", unit: sm.avgPercent != null ? "점" : "", sub: "각자 최고 회차 · 100점 환산", color: "#ffc02e" },
     ])}
+    ${testChartsHtml(rows, data.noCriterion)}
     <h4 class="sec">학생별 결과</h4>
     <table>
       <thead><tr><th>학생</th><th>결과</th><th>회차별 점수</th><th class="no-print">단어 학습</th><th>마지막 제출</th><th class="no-print"></th></tr></thead>
@@ -19634,13 +19729,14 @@ function wrongTestName(reportRow) {
 function reportChartSvg(tests, avg) {
   const done = tests.filter((t) => t.status !== "none" && t.bestPercent != null);
   if (!done.length) return `<p class="hint">이 기간에 응시한 시험이 없어 그래프가 없습니다.</p>`;
-  const slot = 80, L = 40, R = 16, T = 30, B = 58, H = 260;
-  const W = Math.max(480, L + R + slot * done.length);
+  const slot = 80, L = 40, R = 16, T = 42, B = 58, H = 270;   // T: 범례와 100점 숫자가 겹치지 않게
+  const W = Math.max(640, L + R + slot * done.length);   // 점수대 범례가 들어갈 폭
   const y = (p) => T + (H - T - B) * (1 - p / 100);
   const gradId = "rpg" + Math.random().toString(36).slice(2, 7);
   let g = `<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".45" stop-color="#fff" stop-opacity=".12"/>
-      <stop offset="1" stop-color="#000" stop-opacity=".06"/></linearGradient></defs>`;
+      <stop offset="1" stop-color="#000" stop-opacity=".06"/></linearGradient>
+      <filter id="${gradId}s" x="-30%" y="-10%" width="160%" height="130%"><feDropShadow dx="1.5" dy="2" stdDeviation="1.6" flood-color="#1a1f2b" flood-opacity=".28"/></filter></defs>`;
   [0, 25, 50, 75, 100].forEach((p) => {
     g += `<line x1="${L}" x2="${W - R}" y1="${y(p)}" y2="${y(p)}" stroke="${p === 0 ? "#c3c2b7" : "#e6e8ee"}"/>
           <text x="${L - 7}" y="${y(p) + 4}" font-size="11" text-anchor="end" fill="#898781">${p}</text>`;
@@ -19651,10 +19747,12 @@ function reportChartSvg(tests, avg) {
   }
   done.forEach((t, i) => {
     const cx = L + slot * i + slot / 2, bw = 36;
-    const col = t.status === "failed" ? "#ff8a4c" : "#4d94ec";
+    // 막대 색 = 점수대(REPORT_BANDS), 미통과는 빨간 점선 테두리(2026-11-18 사용자 — 여러 색으로)
+    const col = reportBand(t.bestPercent)[3];
     const top = y(t.bestPercent), h = y(0) - top;
     const name = t.title.length > 7 ? t.title.slice(0, 7) + "…" : t.title;
-    g += `<rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${h}" rx="4" fill="${col}"/>
+    g += `<rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${h}" rx="4" fill="${col}" filter="url(#${gradId}s)"
+        ${t.status === "failed" ? `stroke="#dc2626" stroke-width="2" stroke-dasharray="4 3"` : ""}/>
       <rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${h}" rx="4" fill="url(#${gradId})"/>
       <text x="${cx}" y="${top - 6}" font-size="13" font-weight="700" text-anchor="middle" fill="#0b0b0b">${t.bestPercent}</text>`;
     if (t.passPercent != null) {
@@ -19667,9 +19765,168 @@ function reportChartSvg(tests, avg) {
       <text x="${cx}" y="${H - B + 31}" font-size="10.5" text-anchor="middle" fill="#898781">${esc(fmtDateTime(t.lastAt).slice(0, 5))}</text>`;
   });
   const legend = `<text x="${L}" y="15" font-size="11.5" fill="#52514e">
-      <tspan fill="#4d94ec">■</tspan> 합격<tspan dx="12" fill="#ff8a4c">■</tspan> 미통과<tspan dx="12" fill="#dc2626">━</tspan> 합격선<tspan dx="12" fill="#0b0b0b">━</tspan> 첫 시도(재시험을 본 경우)</text>`;
+      ${REPORT_BANDS.map(([, , label, c], i) => `<tspan ${i ? 'dx="8" ' : ""}fill="${c}">■</tspan> ${label}`).join("")}<tspan dx="12" fill="#dc2626">┅</tspan> 미통과<tspan dx="10" fill="#dc2626">━</tspan> 합격선<tspan dx="10" fill="#0b0b0b">━</tspan> 첫 시도</text>`;
   return `<svg class="rp-chart" viewBox="0 0 ${W} ${H}" style="width:100%; max-width:${W}px; height:auto;"
       font-family="Malgun Gothic, 맑은 고딕, sans-serif" role="img" aria-label="시험별 점수 그래프">${legend}${g}</svg>`;
+}
+
+// 점수대 색 — 낮은 점수 빨강 → 높은 점수 파랑·보라(성적표 막대·분포 그래프가 같이 쓴다)
+const REPORT_BANDS = [[0, 60, "~59점", "#e6194b"], [60, 70, "60점대", "#f58231"], [70, 80, "70점대", "#f5b800"],
+  [80, 90, "80점대", "#3cb44b"], [90, 100, "90점대", "#4363d8"], [100, 101, "100점", "#8e44d6"]];
+const reportBand = (p) => REPORT_BANDS.find(([lo, hi]) => p >= lo && p < hi) || REPORT_BANDS[0];
+
+// 월간 성적표 그래프 묶음(2026-11-18 사용자 — 레벨테스트·시험지 분석 리포트처럼 원형·분포·막대를 여러 색으로)
+// ① 시험 결과 원형 ② 점수대 분포 막대 ③ 합격까지 걸린 회차 원형. 그리는 함수는 공용 rpDonutBlock·rpColumns
+function reportChartsHtml(tests) {
+  if (!tests.length) return "";
+  const n = (st) => tests.filter((t) => t.status === st).length;
+  const result = rpDonutBlock("시험 결과", [
+    { label: "합격", value: n("passed"), color: "#3cb44b" },
+    { label: "제출(문제 시험)", value: n("done"), color: "#4363d8" },
+    { label: "미통과", value: n("failed"), color: "#f58231" },
+    { label: "재시험 대기", value: n("retake"), color: "#e6b800" },
+    { label: "미응시", value: n("none"), color: "#9ca3af" },
+  ], `${tests.length}`, "시험");
+  const scored = tests.filter((t) => t.status !== "none" && t.bestPercent != null);
+  const dist = scored.length ? `<div class="tp-chart rp-keep tp-chart-wide"><h5>점수대 분포 <small>시험 ${scored.length}개 — 시험마다 이 기간의 최고 점수</small></h5>
+      ${rpColumns(REPORT_BANDS.map(([lo, hi, label, color]) => ({ label, color,
+        value: scored.filter((t) => t.bestPercent >= lo && t.bestPercent < hi).length })), "개")}</div>` : "";
+  // 합격 기준이 있는 단어시험만 — 몇 회차 만에 합격했나
+  const crit = tests.filter((t) => t.kind !== "quiz" && t.maxWrong != null && t.status !== "none");
+  const tries = crit.length ? rpDonutBlock("합격까지 걸린 회차", [
+    { label: "1회에 합격", value: crit.filter((t) => t.status === "passed" && (t.passedRound || 1) === 1).length, color: "#00a6c8" },
+    { label: "2회에 합격", value: crit.filter((t) => t.status === "passed" && t.passedRound === 2).length, color: "#7cb518" },
+    { label: "3회 이상", value: crit.filter((t) => t.status === "passed" && t.passedRound >= 3).length, color: "#f032e6" },
+    { label: "아직 미통과", value: crit.filter((t) => t.status !== "passed").length, color: "#f58231" },
+  ], `${crit.length}`, "단어시험") : "";
+  // 이 기간에 푼 문제 시험을 모두 합친 유형별 정답률(방사형) — 학생마다 약한 유형이 보이게
+  const byType = {};
+  tests.forEach((t) => Object.entries(t.qtypes || {}).forEach(([k, c]) => {
+    const cell = byType[k] || (byType[k] = [0, 0]);
+    cell[0] += c[0];
+    cell[1] += c[1];
+  }));
+  const radar = rpTypeRadarBlock("유형별 정답률", "이 기간 문제 시험 합계 · 맞힌 비율(%)", byType, "#4363d8");
+  return `<h4 class="sec">한눈에 보기</h4><div class="tp-charts">${result}${tries}${radar}</div><div class="tp-charts">${dist}</div>`;
+}
+
+// 가로 막대 — rows [{label, value(0~max 또는 null), color, text}], max 기준 길이(입체감은 CHART_CSS .rp-hbars)
+function rpHBars(rows, max) {
+  return `<div class="rp-hbars">${rows.map((r) => `<span class="l" title="${esc(r.label)}">${esc(r.label)}</span>
+    <span class="t">${r.value != null ? `<i style="width:${Math.max(0, Math.min(100, (r.value / (max || 100)) * 100))}%;background-color:${r.color}"></i>` : ""}</span>
+    <span class="v${r.value == null ? " none" : ""}">${esc(r.text)}</span>`).join("")}</div>`;
+}
+
+// 방사형(거미줄) — axes [이름], series [{name, color, values[0~max]}]. 같은 잣대(%)인 항목이 3~8개일 때만 쓴다
+// (2026-11-18 사용자 — 레벨테스트 영역별 그래프처럼). 그림자·광택은 다른 공용 그래프와 같다.
+function rpRadar(axes, series, max) {
+  max = max || 100;
+  const n = axes.length;
+  if (n < 3 || !series.length) return "";
+  const W = 340, H = 290, cx = W / 2, cy = 148, R = 100;
+  const pt = (i, v) => {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / n, r = (R * Math.max(0, v)) / max;   // 글자 자리는 바깥 테두리 밖으로도 — 값은 아래에서 max로 자른다
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  };
+  const id = "rr" + Math.random().toString(36).slice(2, 7);
+  let g = `<defs><filter id="${id}s" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#1a1f2b" flood-opacity=".25"/></filter>
+    <radialGradient id="${id}g"><stop offset="0" stop-color="#fff" stop-opacity=".9"/><stop offset="1" stop-color="#eef3fb" stop-opacity="1"/></radialGradient></defs>`;
+  g += `<polygon points="${axes.map((_, i) => pt(i, max).join(",")).join(" ")}" fill="url(#${id}g)" stroke="#cfd6e3"/>`;
+  [25, 50, 75].forEach((p) => {
+    g += `<polygon points="${axes.map((_, i) => pt(i, (max * p) / 100).join(",")).join(" ")}" fill="none" stroke="#dde3ec" stroke-dasharray="${p === 50 ? "" : "3 3"}"/>`;
+  });
+  axes.forEach((name, i) => {
+    const [x, y] = pt(i, max), [lx, ly0] = pt(i, max * 1.16);
+    const ly = ly0 + (ly0 > cy + 20 ? 10 : ly0 < cy - 20 ? -2 : 4);   // 아래 꼭짓점 글자는 점·숫자와 안 겹치게 더 아래로
+    g += `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="#dde3ec"/>
+      <text x="${lx}" y="${ly}" text-anchor="${Math.abs(lx - cx) < 8 ? "middle" : lx > cx ? "start" : "end"}" font-size="11.5" font-weight="600" fill="#1a1f2b">${esc(name.length > 9 ? name.slice(0, 8) + "…" : name)}</text>`;
+  });
+  g += `<g filter="url(#${id}s)">${series.map((s) => `<polygon points="${s.values.map((v, i) => pt(i, Math.min(v, max)).join(",")).join(" ")}"
+      fill="${s.color}" fill-opacity="${series.length > 1 ? 0.16 : 0.28}" stroke="${s.color}" stroke-width="2.4" stroke-linejoin="round"/>
+      ${s.values.map((v, i) => { const [x, y] = pt(i, Math.min(v, max)); return `<circle cx="${x}" cy="${y}" r="4" fill="${s.color}" stroke="#fff" stroke-width="1.5"/>`; }).join("")}`).join("")}</g>`;
+  if (series.length === 1) {
+    series[0].values.forEach((v, i) => {
+      // 숫자는 점 안쪽에(바깥 테두리 가까이면 꼭짓점 이름과 겹친다)
+      const [x, y] = pt(i, v > max * 0.3 ? v - max * 0.13 : v + max * 0.12);
+      g += `<text x="${x}" y="${y + 4}" text-anchor="middle" font-size="11" font-weight="800" fill="${series[0].color}">${Math.round(v)}</text>`;
+    });
+  }
+  // 범례는 인라인 스타일 — 시험지 분석 리포트 인쇄 창처럼 CHART_CSS가 없는 곳에서도 모양이 같게
+  const legend = series.length > 1 ? `<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px 16px;font-size:12px;color:#444;margin-top:4px">${series.map((s) =>
+    `<span><i style="display:inline-block;width:14px;height:4px;border-radius:2px;margin-right:5px;vertical-align:3px;background:${s.color}"></i>${esc(s.name)}</span>`).join("")}</div>` : "";
+  return `<svg class="rp-radar" viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${series.length > 1 ? 440 : W}px;display:block;margin:0 auto" role="img">${g}</svg>${legend}`;
+}
+// 유형별 [맞음, 틀림] 묶음 → 방사형 한 칸(문항이 많은 유형부터 8개까지). 유형이 3개보다 적으면 빈 글자
+function rpTypeRadarBlock(title, sub, typeCounts, color) {
+  const list = Object.entries(typeCounts).filter(([, c]) => c[0] + c[1] > 0)
+    .sort((a, b) => (b[1][0] + b[1][1]) - (a[1][0] + a[1][1])).slice(0, 8);
+  if (list.length < 3) return "";
+  const vals = list.map(([, c]) => (100 * c[0]) / (c[0] + c[1]));
+  const weak = list.map(([t, c], i) => ({ t, p: vals[i], r: c[0], w: c[1] })).sort((a, b) => a.p - b.p)[0];
+  return `<div class="tp-chart rp-keep"><h5>${esc(title)} <small>${esc(sub)}</small></h5>
+    ${rpRadar(list.map(([t]) => t), [{ name: title, color: color || "#4363d8", values: vals }])}
+    <div style="text-align:center;margin-top:2px;font-size:12.5px;color:#444">가장 약한 유형: <b style="color:#e6194b">${esc(weak.t)}</b> ${Math.round(weak.p)}% (맞음 ${weak.r} · 틀림 ${weak.w})</div></div>`;
+}
+
+// 시험 하나의 성적표(단어시험) 그래프 — 결과 원형 · 점수대 분포 · 학생별 최고 점수 막대(2026-11-18 사용자: 글보다 그림 위주로)
+function testChartsHtml(rows, noCriterion) {
+  const best = (r) => {
+    const ps = (r.rounds || []).filter((x) => x.total).map((x) => Math.round((100 * x.score) / x.total));
+    return ps.length ? Math.max(...ps) : null;
+  };
+  const n = (st) => rows.filter((r) => r.status === st).length;
+  const result = rpDonutBlock("시험 결과", [
+    { label: noCriterion ? "시험 마침" : "합격", value: n("passed"), color: "#3cb44b" },
+    { label: "미통과", value: n("failed"), color: "#f58231" },
+    { label: "재시험 대기", value: n("retake"), color: "#e6b800" },
+    { label: "미제출", value: n("none"), color: "#9ca3af" },
+  ], `${rows.length}`, "학생");
+  const scored = rows.map((r) => ({ r, p: best(r) }));
+  const got = scored.filter((x) => x.p != null);
+  const dist = got.length ? `<div class="tp-chart rp-keep tp-chart-wide"><h5>점수대 분포 <small>학생 ${got.length}명 — 각자 최고 회차</small></h5>
+      ${rpColumns(REPORT_BANDS.map(([lo, hi, label, color]) => ({ label, color, value: got.filter((x) => x.p >= lo && x.p < hi).length })), "명")}</div>` : "";
+  const bars = `<div class="tp-chart rp-keep tp-chart-wide"><h5>학생별 최고 점수 <small>높은 차례 · 색은 점수대</small></h5>
+      ${rpHBars(scored.sort((a, b) => (b.p ?? -1) - (a.p ?? -1)).map(({ r, p }) => ({
+        label: r.studentName, value: p, color: p == null ? "#ccc" : reportBand(p)[3], text: p == null ? "미제출" : `${p}점` })), 100)}</div>`;
+  return `<h4 class="sec">한눈에 보기</h4><div class="tp-charts">${result}${dist}</div><div class="tp-charts">${bars}</div>`;
+}
+
+// 문제 시험 성적표 그래프 — 제출·채점 원형 · 학생별 맞음/틀림/확인 중 100% 막대 · 문항별 정답률 막대
+function quizTestChartsHtml(rows, stats) {
+  const sub = rows.filter((r) => r.status !== "none");
+  const pend = sub.filter((r) => r.qc && r.qc.pending).length;
+  const result = rpDonutBlock("제출·채점", [
+    { label: "제출 · 채점 끝", value: sub.length - pend, color: "#3cb44b" },
+    { label: "제출 · 채점 필요", value: pend, color: "#e6b800" },
+    { label: "미제출", value: rows.length - sub.length, color: "#9ca3af" },
+  ], `${rows.length}`, "학생");
+  const tot = sub.reduce((a, r) => { const q = r.qc || {}; a[0] += q.right || 0; a[1] += q.wrong || 0; a[2] += q.pending || 0; return a; }, [0, 0, 0]);
+  const all = rpDonutBlock("반 전체 답", [
+    { label: "맞음", value: tot[0], color: "#3cb44b" },
+    { label: "틀림", value: tot[1], color: "#e6194b" },
+    { label: "확인 중", value: tot[2], color: "#e6b800" },
+  ], tot[0] + tot[1] ? `${Math.round((100 * tot[0]) / (tot[0] + tot[1]))}%` : "–", "맞힌 비율");
+  const stack = sub.length ? `<div class="tp-chart rp-keep tp-chart-wide"><h5>학생별 맞음 · 틀림 <small>칸 안 숫자는 문항 수 — 초록 맞음 · 빨강 틀림 · 노랑 확인 중</small></h5>
+      ${rpStackRows(sub.slice().sort((a, b) => ((b.qc || {}).right || 0) - ((a.qc || {}).right || 0)).map((r) => ({ label: r.studentName, parts: [
+        { label: "맞음", value: (r.qc || {}).right || 0, color: "#3cb44b" },
+        { label: "틀림", value: (r.qc || {}).wrong || 0, color: "#e6194b" },
+        { label: "확인 중", value: (r.qc || {}).pending || 0, color: "#e6b800" }] })))}</div>` : "";
+  const qs = (stats || []).filter((s) => s.format !== "read" && s.right + s.wrong > 0);
+  const rate = qs.length ? `<div class="tp-chart rp-keep tp-chart-wide"><h5>문항별 정답률 <small>번호마다 맞힌 학생 비율 — 빨강일수록 반 전체가 많이 틀린 문항</small></h5>
+      ${rpColumns(qs.map((s) => {
+        const p = Math.round((100 * s.right) / (s.right + s.wrong));
+        return { label: String(s.no), value: p, color: p >= 80 ? "#3cb44b" : p >= 60 ? "#7cb518" : p >= 40 ? "#f5b800" : p >= 20 ? "#f58231" : "#e6194b" };
+      }), "%")}</div>` : "";
+  // 반 전체 유형별 정답률(방사형) — 문항별 결과를 유형으로 묶는다
+  const byType = {};
+  qs.forEach((s) => {
+    const t = String(s.type || "기타").split("›")[0].trim() || "기타";
+    const c = byType[t] || (byType[t] = [0, 0]);
+    c[0] += s.right;
+    c[1] += s.wrong;
+  });
+  const radar = rpTypeRadarBlock("유형별 정답률", "반 전체 · 맞힌 비율(%)", byType, "#8e44d6");
+  return `<h4 class="sec">한눈에 보기</h4><div class="tp-charts">${result}${all}${radar}</div>${stack || rate ? `<div class="tp-charts">${stack}${rate}</div>` : ""}`;
 }
 
 // 코멘트 초안 — 평균 → 추이 → 재시험·미통과 → 미응시 → 자주 틀린 단어 순으로 이어 쓴다
@@ -19731,7 +19988,10 @@ function studentReportPrintableHtml(data, period, commentHtml) {
   const testRows = tests.length ? byName.map((t) => `<tr><td class="tk">${esc(t.title)}</td>
       <td>${statusTagHtml(t.status, t.passedRound, t.kind !== "quiz" && t.maxWrong == null)}</td>
       <td class="tk">${t.kind === "quiz"
-        ? (t.qc ? `📝 ${QT.countsText(t.qc)}` : "—")
+        ? (t.qc ? `📝 ${QT.countsText({ ...t.qc, pending: 0 })}${t.qc.pending
+          // 확인 중 — 누르면 그 시험 결과의 이 학생 답안으로 간다(2026-11-18 사용자)
+          ? ` · <button type="button" class="rp-go-grade" data-aid="${esc(t.assignmentId)}" data-sid="${esc(st.id || "")}"
+              title="눌러서 채점 화면으로 이동">확인 중 ${t.qc.pending}${t.qc.unit ? "칸" : ""} ›</button>` : ""}` : "—")
         : esc(roundsText(t.rounds)) || "—"}</td><td>${esc(fmtDateTime(t.lastAt))}</td></tr>`).join("")
     : `<tr><td colspan="4" class="hint">이 기간에 해당하는 시험이 없습니다.</td></tr>`;
   return `<div class="trend-report results-printable">
@@ -19746,6 +20006,7 @@ function studentReportPrintableHtml(data, period, commentHtml) {
       { label: "합격", value: sm.passed, unit: `/${sm.done}개`, sub: sm.done ? `합격률 ${Math.round((100 * sm.passed) / sm.done)}%` : "", color: "#ff8a4c" },
       { label: "최고 점수", value: top ? top.bestPercent : "—", unit: top ? "점" : "", sub: top ? esc(top.title.length > 12 ? top.title.slice(0, 11) + "…" : top.title) : "", color: "#9b6cf0" },
     ])}
+    ${reportChartsHtml(tests)}
     <h4 class="sec">시험별 점수</h4>
     <div class="trend-dash">${reportChartSvg(tests, sm.avgPercent)}</div>
     <h4 class="sec">선생님 코멘트</h4>
@@ -19867,7 +20128,45 @@ addStudentBtn.addEventListener("click", async () => {
   }
 });
 
+// 성적표의 '확인 중 N' → 아래 시험 목록에서 그 시험의 결과를 열고 이 학생 답안(확인 대기만)을 펼친다
+async function goToQuizGrading(aid, sid) {
+  if (assignedKind !== "all") assignedKind = "all";
+  let card = assignedTestListEl.querySelector(`[data-aid="${CSS.escape(aid)}"]`);
+  if (!card) {
+    await loadAssignedTests();
+    card = assignedTestListEl.querySelector(`[data-aid="${CSS.escape(aid)}"]`);
+  }
+  if (!card) {
+    alert("이 시험을 아래 시험 목록에서 찾지 못했습니다. 다른 반에서 낸 시험이면 그 반을 고른 뒤 열어 주세요.");
+    return;
+  }
+  const body = card.querySelector(".results-body");
+  body.hidden = false;
+  body.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+  await loadTestResultsInto(card);
+  const ans = card.querySelector(`.quiz-answers-btn[data-sid="${CSS.escape(sid)}"]`);
+  if (!ans) return;
+  const row = ans.closest("tr").nextElementSibling;
+  row.hidden = false;
+  await loadQuizAnswers(row, aid, sid);
+  const filter = row.querySelector(".quiz-answers-filter");
+  if (filter) {   // 틀린 문항·확인 대기만 보이게 — 맞은 문항 사이에서 찾지 않게
+    filter.checked = true;
+    filter.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  const first = row.querySelector('.qt-card[data-status="wait"]') || row;
+  first.scrollIntoView({ behavior: "smooth", block: "center" });
+  first.classList.add("qt-flash");
+  setTimeout(() => first.classList.remove("qt-flash"), 2200);
+}
+
 studentTableBodyEl.addEventListener("click", async (e) => {
+  const goGrade = e.target.closest(".rp-go-grade");
+  if (goGrade) {
+    goToQuizGrading(goGrade.dataset.aid, goGrade.dataset.sid);
+    return;
+  }
   const wrongBtn = e.target.closest(".wrong-to-vocab-btn");
   if (wrongBtn) {
     const rr = wrongBtn.closest("tr.report-row");
@@ -21255,6 +21554,7 @@ function renderQuizTestResults(data, title) {
       { label: "문항", value: sm.questionCount, unit: "문항", sub: "", color: "#2fd197" },
       { label: "채점 필요", value: rows.filter((r) => r.qc && r.qc.pending).length, unit: "명", sub: sm.pending ? "[답안 보기]에서 채점" : "모두 채점됨", color: "#ffc02e" },
     ])}
+    ${quizTestChartsHtml(rows, stats)}
     <h4 class="sec">학생별 결과</h4>
     <table>
       <thead><tr><th>학생</th><th>결과</th><th>맞음 · 틀림</th>${data.retryOn ? "<th>보충 학습</th>" : ""}<th>제출</th><th class="no-print"></th></tr></thead>
