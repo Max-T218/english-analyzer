@@ -4185,6 +4185,20 @@ _CURRICULUM_IRREGULAR = {
     "children": "child", "men": "man", "women": "woman", "people": "person", "feet": "foot", "teeth": "tooth",
     "mice": "mouse", "lives": "life", "better": "good", "best": "good", "worse": "bad", "worst": "bad",
     "less": "little", "least": "little", "more": "many", "most": "many", "further": "far", "farther": "far",
+    # 2026-11-18 수능 12년 지문을 세어 보니 목록 밖으로 잘못 잡히던 것들
+    "won": "win", "sold": "sell", "shown": "show", "stuck": "stick", "bound": "bind", "being": "be",
+    "phenomena": "phenomenon", "criteria": "criterion", "shelves": "shelf", "leaves": "leaf", "halves": "half",
+    "knives": "knife", "wolves": "wolf", "thieves": "thief", "selves": "self", "dug": "dig", "fed": "feed",
+    "shot": "shoot", "slept": "sleep", "swam": "swim", "struck": "strike", "hung": "hang", "lit": "light",
+    "bent": "bend", "sank": "sink", "sunk": "sink", "sang": "sing", "sung": "sing", "rang": "ring",
+    "stole": "steal", "stolen": "steal", "froze": "freeze", "frozen": "freeze", "shook": "shake",
+    "shaken": "shake", "woke": "wake", "woken": "wake", "tore": "tear", "torn": "tear", "bore": "bear",
+    "borne": "bear", "swore": "swear", "sworn": "swear", "fled": "flee", "dealt": "deal", "lent": "lend",
+    "wept": "weep", "crept": "creep", "swept": "sweep", "bit": "bite", "bitten": "bite", "forgave": "forgive",
+    "forgiven": "forgive", "thirteen": "three", "fifteen": "five", "eighteen": "eight",
+    "thirteenth": "three", "fifteenth": "five", "eighteenth": "eight", "leapt": "leap", "swung": "swing",
+    "twenty": "two", "thirty": "three", "forty": "four", "fifty": "five", "sixty": "six", "seventy": "seven",
+    "eighty": "eight", "ninety": "nine",
 }
 
 
@@ -11417,7 +11431,7 @@ TOPIC_FIELDS = ("인문·철학", "심리·행동", "사회·문화", "경제·�
 TOPIC_GENRES = ("설명", "주장", "이야기", "실용문")
 TOPIC_SCAN_BATCH = 10          # 한 번에 보내는 지문 수(화면 TOPIC_BATCH와 같다)
 TOPIC_TEXT_MAX = 6000          # 지문 하나의 글자 상한
-TOPIC_STATS_MAX_PASSAGES = 400 # 어휘 통계 한 번에 받는 지문 수(4회 × 28지문 넉넉히)
+TOPIC_STATS_MAX_PASSAGES = 2500  # 어휘 통계 한 번에 받는 지문 수(유형별 모음집 7년 치 34권이 1,336지문이었다)
 TOPIC_OFFLIST_MAX = 400        # 돌려주는 '추가 어휘' 상한
 TOPIC_WORDS_MAX = 100          # 뜻 채우기 한 번에 받는 낱말 수(화면 TOPIC_WORDS_BATCH와 같다)
 
@@ -11458,6 +11472,110 @@ TOPIC_SCAN_SYSTEM_PROMPT = """너는 한국 고등학교 영어 교사다. 모�
 - `genre` — 설명(정보·현상 설명) / 주장(필자의 주장·요지) / 이야기(일화·서사·심경) / 실용문 중 하나.
 
 받은 지문 수만큼 빠짐없이, 받은 차례대로 답한다."""
+
+
+# ── PDF 글자를 문항별로 그대로 자르기(2026-11-18 사용자 — 지문을 원래 모양으로 되살리느라 시간이 다 갔다) ──
+# 소재·어휘를 보는 데는 정답이 필요 없다. 문항 머리줄('18. 다음 글의 …')부터 다음 머리줄까지의 영어 줄을
+# 문제 모양 그대로 모은다 — 보기(①~⑤)·각주(*)·우리말 줄은 버리고 (A)(B)(C)·( ① ) 표시만 걷어낸다.
+# 유형별 모음집은 문항마다 위에 출처 줄('2019_3월_고3_서울교육청_36')이 있어 어느 시험 몇 번인지 함께 읽는다.
+# 뒤쪽 '정답 및 해설'부터는 읽지 않는다. AI를 부르지 않는다(0원).
+_TOPIC_SRC_RE = re.compile(r"^\s*(20\d\d)_(\d{1,2})월_(고\d|중\d)_([^_\s]+)_(\d{1,2})\s*$")
+_TOPIC_ANSWER_HEAD_RE = re.compile(r"^\s*(?:정\s*답\s*(?:및|과)?\s*해\s*설|빠른\s*정답|정답표)\s*$")
+_TOPIC_GROUP_RE = re.compile(r"^\s*\[\s*(\d{1,2})\s*[~～∼-]\s*(\d{1,2})\s*\]")
+_TOPIC_NO_RE = re.compile(r"^\s*(\d{1,2})\s*[.．]")
+TOPIC_PDF_MIN_CHARS = 150
+
+
+def topic_pdf_passages(pages):
+    """쪽별 줄 목록 → [{no, src, text}] (문제 모양 그대로, 읽은 차례). src는 '2019 3월 고3 서울교육청' 또는 ''."""
+    # 처음부터 빈 자리를 열어 둔다 — 모음집 장문은 맨 앞 지문이 어느 문항보다 먼저 나온다(번호 0인 자리는 내보내지 않는다)
+    out, pending = [], None
+    cur = {"no": 0, "end": 0, "src": "", "seq": 0, "lines": [], "paras": set()}
+    cur_waiting = [False]   # 출처 줄을 읽고 아직 문항 줄을 못 만났다
+
+    def flush():
+        if not cur:
+            return
+        text = " ".join(cur["lines"]).replace("\xad", "-")
+        if cur["src"] and cur["no"] >= 41:
+            # 모음집 장문은 2단 배치라 지문이 이웃 묶음의 출처 줄 뒤에 읽힌다 — 43~45번 지문은 늘 (A)~(D) 네 문단이라 그것으로 가린다
+            cur["no"], cur["end"] = (43, 45) if set("BCD") <= cur["paras"] else (41, 42)
+        text = _PDF_PARA_LABEL_RE.sub(" ", text)
+        text = _PDF_SLOT_RE.sub(" ", text)
+        text = re.sub(r"\[\d{1,2}\s*[~～∼-]\s*\d{1,2}\]", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        if len(text) >= TOPIC_PDF_MIN_CHARS and cur["no"]:
+            out.append({"no": cur["no"], "end": cur["end"], "src": cur["src"], "text": text})
+
+    for lines in pages:
+        for r in lines:
+            t = r["t"].strip()
+            if _TOPIC_ANSWER_HEAD_RE.match(t):
+                flush()
+                return _topic_drop_listening(out)
+            m = _TOPIC_SRC_RE.match(t)
+            if m:
+                name, n = f"{m.group(1)} {int(m.group(2))}월 {m.group(3)} {m.group(4)}", int(m.group(5))
+                # 장문은 출처 줄이 41·42처럼 둘 이어 온다 — 같은 시험이면 범위로 합친다
+                if pending and pending[0] == name and cur_waiting[0]:
+                    pending = (name, min(pending[1], n), max(pending[2], n))
+                else:
+                    pending = (name, n, n)
+                cur_waiting[0] = True
+                continue
+            # 묶음 머리줄 '[41 ~ 42] 다음 글을 읽고 …' — 장문은 지문이 이 줄 바로 뒤에 오고, 문항 줄은 지문 뒤에 온다
+            g = _TOPIC_GROUP_RE.match(t)
+            # 문항 머리줄 — 발문이 같은 줄에 있으면(우리말) 그대로, 묶음 안의 '31.In the …'·'36.'처럼 번호만 있으면
+            # 앞 번호의 다음 번호일 때만(영어 본문의 '1. Introduction' 같은 줄을 문항으로 잘못 보지 않게)
+            q = None if g else _TOPIC_NO_RE.match(t)
+            if q and not _pdf_is_question_line(t):
+                if int(q.group(1)) != (cur["seq"] if cur else 0) + 1:
+                    q = None
+            # '위 글의 …'·'윗글의 …' 문항은 앞에 읽은 글에 대한 문항이다 — 모음집 장문은 지문이 먼저 나오고 그 뒤에
+            # 출처 줄과 이 문항이 온다. 앞에 모은 글을 이 문항(의 출처)의 지문으로 내보내고, 다음 글을 받을 빈 자리를 연다.
+            # 시험지의 '[41~42]' 묶음 머리줄로 시작한 지문은 이미 번호가 맞으니 그대로 내보낸다.
+            if q and cur is not None and re.search(r"위\s*(?:주어진\s*)?글|윗\s*글", t):
+                if not cur.get("group"):
+                    if pending:
+                        cur["src"], cur["no"], cur["end"] = pending[0], pending[1], pending[2]
+                    elif not cur["lines"] or cur["no"] == 0:
+                        cur["no"] = cur["end"] = int(q.group(1))
+                flush()
+                pending = None
+                cur_waiting[0] = False
+                cur = {"no": 0, "end": 0, "src": "", "seq": int(q.group(1)), "lines": [], "paras": set()}
+                continue
+            if g or q:
+                flush()
+                no = int((g or q).group(1))
+                end = int(g.group(2)) if g else no
+                src = ""
+                seq = no - 1 if g else no   # 묶음 머리줄 다음에는 그 첫 번호가 와야 한다
+                if pending:
+                    src, no, end = pending[0], pending[1], max(pending[2], pending[1] if not g else end)
+                    pending = None
+                cur_waiting[0] = False
+                cur = {"no": no, "end": end, "src": src, "seq": seq, "lines": [], "paras": set(), "group": bool(g)}
+                rest = t[(g or q).end():]
+                if q and _ko_ratio(rest) < 0.3 and re.search(r"[A-Za-z]{2}", rest):
+                    cur["lines"].append(rest)   # '31.In the Indian …' — 번호 뒤가 곧 본문
+                continue
+            if cur is None or _PDF_CHOICE_RE.match(t) or t.startswith("*"):
+                continue
+            lab = re.match(r"^\(([B-E])\)", t)
+            if lab:
+                cur["paras"].add(lab.group(1))
+            if _ko_ratio(t) < 0.3 and re.search(r"[A-Za-z]{2}", t):
+                cur["lines"].append(t)
+    flush()
+    return _topic_drop_listening(out)
+
+
+def _topic_drop_listening(out):
+    """출처 줄이 없는 모의고사(29번을 넘는 번호가 있다)면 듣기 자리(1~17번)는 뺀다."""
+    if any(p["no"] >= 29 for p in out if not p["src"]):
+        return [p for p in out if p["src"] or p["no"] >= 18]
+    return out
 
 
 def parse_topic_passages(req, limit):
@@ -11528,7 +11646,23 @@ _TOPIC_DERIV_PAIRS = (
     ("ment", ""), ("ness", ""), ("ity", ""), ("ity", "e"), ("ive", ""), ("ive", "e"), ("al", ""), ("al", "e"),
     ("ly", ""), ("er", ""), ("or", ""), ("ful", ""), ("less", ""), ("ous", ""), ("ure", ""), ("ure", "e"),
     ("atic", "a"), ("tic", ""), ("ieth", "y"), ("en", ""), ("ening", ""), ("ing", ""),
+    # 2026-11-18 수능 12년 지문 점검에서 더한 것(user → use, planner → plan, safety → safe, length → long …)
+    ("er", "e"), ("or", "e"), ("nner", "n"), ("pper", "p"), ("tter", "t"), ("mmer", "m"), ("gger", "g"),
+    ("nny", "n"), ("atically", "a"), ("ically", "ic"), ("ated", "e"), ("ate", "e"), ("ant", "ance"),
+    ("ty", ""), ("teenth", "teen"), ("teen", ""), ("th", ""), ("engthen", "ong"), ("uctive", "uce"),
+    ("uctivity", "uce"), ("acy", "ate"), ("usion", "ude"), ("nsion", "nd"), ("arison", "are"),
+    ("nition", "nize"), ("ter", ""), ("ssity", "ssary"), ("cy", "t"), ("ical", "ics"), ("etical", "y"),
+    ("icial", "it"), ("ee", ""), ("orian", "ory"), ("icist", "ics"), ("tial", "ce"),
+    ("teenth", ""), ("en", "e"), ("ise", "ize"), ("gry", "ger"), ("ician", "ics"), ("arian", "ary"),
+    ("faction", "fy"), ("age", "e"), ("age", ""), ("osion", "ode"), ("hood", ""), ("nist", "no"),
 )
+# 하이픈 앞에만 붙는 접두 조각(non-verbal의 non) — 낱말로 세지 않는다
+_TOPIC_HYPHEN_PREFIX = {"non", "mid", "co", "pre", "anti", "semi", "multi", "ex", "sub", "pseudo", "quasi",
+                        "neo", "bi", "tri", "inter", "intra", "micro", "macro", "mega", "mini"}
+_TOPIC_SKIP = {"etc", "vs", "ah", "uh", "um", "hmm", "huh", "oops"}
+# -ies / -ches 복수를 단수로 돌릴 때 -y·-ch가 아니라 -ie·-che로 끝나는 낱말(calories → calorie, niches → niche)
+_TOPIC_IE_WORDS = {"calorie", "movie", "cookie", "prairie", "zombie", "rookie", "selfie", "smoothie", "brownie",
+                   "goalie", "hippie", "genie", "niche", "cliche", "headache", "moustache", "avalanche", "quiche"}
 # 인칭·지시 낱말의 다른 모양 — 목록에는 표제어(she, they …)만 있다
 _TOPIC_FUNCTION_FORMS = {
     "me": "i", "my": "i", "mine": "i", "myself": "i", "him": "he", "his": "he", "himself": "he",
@@ -11549,26 +11683,39 @@ def _curriculum_level(word):
     if hit:
         return hit[0]
     # 흔한 파생 꼴 — explanation → explain, scientific → science, freedom → free … (낱말 가족으로 센다)
-    tries = {w}
-    if w.endswith("ies") and len(w) > 5:
-        tries.add(w[:-3] + "y")
-    elif w.endswith("es") and len(w) > 5:
-        tries.update({w[:-2], w[:-1]})
-    elif w.endswith("s") and not w.endswith("ss") and len(w) > 4:
-        tries.add(w[:-1])
+    # 굴절을 먼저 떼어 둔다 — strengthened → strengthen, landowners → landowner, unexpectedly → unexpected
+    tries = [w]   # 차례가 있어야 학교급 짐작이 돌릴 때마다 같다(집합은 실행마다 차례가 바뀐다)
+    for end, rep in (("ies", "y"), ("es", ""), ("s", ""), ("ied", "y"), ("ed", ""), ("ed", "e"),
+                     ("ing", ""), ("ing", "e"), ("ly", "")):
+        if w.endswith(end) and len(w) - len(end) >= 3 and not (end == "s" and w.endswith("ss")):
+            b = w[:-len(end)] + rep
+            for x in (b, b[:-1]) if len(b) > 3 and b[-1] == b[-2] else (b,):
+                if x not in tries:
+                    tries.append(x)
+    for t in tries:
+        hit = _curriculum_rank(t)          # settings → setting → set(겹친 자음)
+        if hit:
+            return hit[0]
     for t in tries:
         for a, b in _TOPIC_DERIV_PAIRS:
-            if t.endswith(a) and len(t) - len(a) >= (2 if len(a) >= 4 else 3):   # ability·response는 줄기가 둘
+            # ability·response는 줄기가 둘(user → use도), length·depth는 하나
+            if t.endswith(a) and len(t) - len(a) >= (1 if len(a) >= 4 else 2):
                 hit = _curriculum_rank(t[:-len(a)] + b)
                 if hit:
                     return hit[0]
-    if not _curriculum_known(w):
-        # 합성어(feedback, workplace) — 앞뒤가 모두 목록 낱말이면 아는 낱말로 친다
-        for i in range(3, len(w) - 2):
-            a, b = _curriculum_rank(w[:i]), _curriculum_rank(w[i:])
-            if a and b:
-                return max(a[0], b[0])
+
+    def part_rank(x):   # 합성어의 뒤쪽 — songwriter의 writer(write + r)
+        return _curriculum_rank(x) or (_curriculum_rank(x[:-1]) if x.endswith("er") else None)
+
+    if not any(_curriculum_known(t) for t in tries):
+        # 합성어(feedback, workplace, online, onto) — 앞뒤가 모두 목록 낱말이면 아는 낱말로 친다
+        for t in tries:
+            for i in range(2, len(t) - 1):
+                a, b = _curriculum_rank(t[:i]), part_rank(t[i:])
+                if a and b:
+                    return max(a[0], b[0])
         return None
+    w = next((t for t in tries if _curriculum_known(t)), w)
     # 어느 학교급인지는 접사를 뗀 표제어들 중 가장 이른 것으로 — 짐작이라 통계용으로만 쓴다
     best = None
     for p in ("",) + _CURRICULUM_PREFIXES:
@@ -11599,8 +11746,12 @@ def _topic_tokens(text):
             base = _TOPIC_NT.get(base, base)
         else:
             base = low.split("'")[0]
-        if not base or (len(base) == 1 and base not in ("a", "i")):
+        if not base or (len(base) == 1 and base not in ("a", "i")) or base in _TOPIC_SKIP:
             continue
+        if m.start() and text[m.start() - 1].isdigit():
+            continue   # 19th·1990s·3D의 글자 조각
+        if base in _TOPIC_HYPHEN_PREFIX and text[m.end():m.end() + 1] in ("-", "‐", "–"):
+            continue   # non-verbal의 non
         before = text[:m.start()].rstrip()
         if tok[0].isupper() and base != "i" and before and before[-1] not in ".?!\"“”:;([—-\n①②③④⑤":
             continue   # 문장 가운데 대문자 — 사람·땅 이름으로 본다
@@ -11624,11 +11775,13 @@ def _topic_offlist_key(word, present):
     if hits:
         return min(hits, key=len)
     # 복수형만 나왔으면 단수로 적는다(participants → participant) — 단어장에 표제어 모양으로 넘어가게
+    if word.endswith("s") and word[:-1] in _TOPIC_IE_WORDS:
+        return word[:-1]
     if word.endswith("ies") and len(word) > 5:
         return word[:-3] + "y"
     if re.search(r"(?:ch|sh|x|ss)es$", word):
         return word[:-2]
-    if word.endswith("s") and len(word) > 4 and not re.search(r"(?:ss|us|is|ics)$", word):
+    if word.endswith("s") and len(word) > 3 and not re.search(r"(?:ss|us|is|ics)$", word):
         return word[:-1]
     return word
 
@@ -23711,7 +23864,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                         "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/hwpx", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
-                        "/api/topicscan", "/api/topicwords", "/api/vocabstats",
+                        "/api/topicscan", "/api/topicwords", "/api/vocabstats", "/api/topicpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/auth/reset-request", "/api/auth/reset-confirm",
                         "/api/logout", "/api/auth/delete",
@@ -23804,7 +23957,7 @@ class Handler(BaseHTTPRequestHandler):
                            "/api/topicscan", "/api/topicwords")
         # /api/docx·/api/hwpx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
         # 않는다(그래서 GENERATE_PATHS가 아니라 여기 따로 붙는다).
-        if path in GENERATE_PATHS + ("/api/models", "/api/docx", "/api/hwpx", "/api/vocabstats"):
+        if path in GENERATE_PATHS + ("/api/models", "/api/docx", "/api/hwpx", "/api/vocabstats", "/api/topicpdf"):
             if DB is None:
                 self._send_json(
                     {"error": "로그인 기능이 아직 설정되지 않았습니다 (관리자에게 문의하세요)."}, 503
@@ -25201,6 +25354,28 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e), "code": "quota"}, 429)
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
+            return
+
+        # 기출 소재·어휘 — PDF 글자를 문항별로 그대로 자른다(topic_pdf_passages). AI 없음·0원(로그인만 본다).
+        if path == "/api/topicpdf":
+            file = req.get("file") if isinstance(req.get("file"), dict) else {}
+            data = file.get("data") or ""
+            if (file.get("mime") or "").lower().split(";")[0].strip() != PDF_MIME or not data:
+                self._send_json({"error": "PDF 파일만 올릴 수 있습니다."}, 400)
+                return
+            if len(data) > MAX_FILE_BYTES:
+                self._send_json({"error": f"PDF가 너무 큽니다 (최대 {MAX_FILE_BYTES // 1048576}MB). 쪽을 나눠 올려 주세요."}, 413)
+                return
+            try:
+                pages = read_pdf_pages(base64.b64decode(data))
+            except Exception as e:
+                self._send_json({"error": str(e) or "PDF를 읽지 못했습니다."}, 400)
+                return
+            if not any(pages):
+                self._send_json({"error": "이 PDF에는 글자가 들어 있지 않습니다(스캔본). 글자가 든 PDF를 올려 주세요.",
+                                 "code": "no_text"}, 422)
+                return
+            self._send_json({"passages": topic_pdf_passages(pages)})
             return
 
         # 기출 소재·어휘 — 어휘 통계. AI를 부르지 않아 값이 없다(로그인만 본다).

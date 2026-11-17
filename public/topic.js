@@ -55,11 +55,15 @@ function tpStatus(html, kind) {
   el.className = "hint" + (kind ? " " + kind : "");
 }
 
+/* PDF → 회차. 서버(/api/topicpdf, AI 없음·0원)가 글자를 문항별로 '문제 모양 그대로' 잘라 준다 — 원래 지문으로
+   되살리지 않는다(2026-11-18 사용자: 여러 개를 올리면 지문을 채우느라 시간이 다 갔다. 소재·어휘에는 정답이 필요 없다).
+   유형별 모음집처럼 문항마다 출처('2019 3월 고3 서울교육청 36번')가 붙은 PDF는 파일이 아니라 시험별로 회차를 묶는다 —
+   여러 권을 올리면 같은 시험의 문항이 한 회차로 모인다. 출처가 없으면 파일 하나가 회차 하나다. */
 async function tpAddPdfs(files) {
   files = [...files].filter(isPdf);
   if (!files.length) return tpStatus("PDF 파일만 올릴 수 있습니다.", "warn");
   const notes = [];
-  const missing = [];   // [{round, data, need, who}] — 규칙으로 못 꺼낸 번호
+  let added = 0;
   tpEl("tpPdfBtn").disabled = true;
   try {
     for (let i = 0; i < files.length; i++) {
@@ -72,83 +76,70 @@ async function tpAddPdfs(files) {
           notes.push(`${esc(who)} — 파일이 너무 큽니다. 쪽을 나눠 올려 주세요.`);
           continue;
         }
-        const res = await postGenerate("/api/pdfsplit", { file: { mime: "application/pdf", data } },
-          "PDF에서 지문을 꺼내지 못했습니다.");
+        const res = await postJson("/api/topicpdf", { file: { mime: "application/pdf", data } }, "PDF를 읽지 못했습니다.");
         const list = res.passages || [];
         if (!list.length) {
-          notes.push(`${esc(who)} — 영어 지문을 찾지 못했습니다(스캔본이면 글자가 없어 읽을 수 없습니다).`);
+          notes.push(`${esc(who)} — 문항을 찾지 못했습니다(문항 번호가 '18. 다음 글의 …'처럼 붙은 PDF만 읽습니다).`);
           continue;
         }
-        const nos = list.map((p) => pdfQuestionNos(p.name));
-        const mock = Math.max(0, ...nos.flat()) >= 29;
-        const passages = list.map((p, k) => tpPassageOf(p, nos[k], k, mock));
-        const round = { id: tpId("r"), name: tpRoundName(who) || `회차 ${tpState.rounds.length + 1}`, passages };
-        tpState.rounds.push(round);
-        if (mock) {
-          /* 규칙으로는 빈칸·순서·삽입 문제(31~34·36~39·41·43~45번 등)를 꺼내지 못한다 — 그 지문이 아예 빠진다.
-             모의고사면 빠진 번호를 모아 두었다가 아래에서 'AI로 되살릴지' 한 번에 묻는다(app.js runPdfImport와 같은 셈). */
-          const found = new Set(nos.flat());
-          const last = Math.max(...found) >= 40 ? 45 : Math.max(...found);
-          const need = [];
-          for (let n = 18; n <= last; n++) if (!PDF_SKIP_NOS.has(n) && !found.has(n)) need.push(n);
-          if (need.length) missing.push({ round, data, need, who });
-        }
+        const fileRound = tpRoundName(who) || `회차 ${tpState.rounds.length + 1}`;
+        list.forEach((p) => {
+          const rname = p.src || fileRound;
+          let round = tpState.rounds.find((r) => r.name === rname);
+          if (!round) {
+            round = { id: tpId("r"), name: rname, passages: [] };
+            tpState.rounds.push(round);
+          }
+          if (round.passages.some((x) => x.no === p.no)) return;   // 같은 시험의 같은 번호(겹친 파일)는 한 번만
+          const nos = [];
+          for (let n = p.no; n <= (p.end || p.no); n++) nos.push(n);
+          round.passages.push({
+            id: tpId("p"), name: nos.length > 1 ? `${p.no}~${p.end}번` : `${p.no}번`, text: p.text,
+            // 25~28번(도표·인물·안내문)은 처음엔 빼 둔다 — 눌러서 넣을 수 있다
+            on: !nos.some((n) => PDF_SKIP_NOS.has(n)), no: p.no, nos,
+          });
+          added++;
+        });
+        tpState.rounds.forEach((r) => r.passages.sort((a, b) => (a.no || 999) - (b.no || 999)));
+        tpSortRounds();
         tpRenderRounds();
       } catch (err) {
         notes.push(`${esc(who)} — ${esc(err.message || String(err))}`);
-        if (isQuotaError(err)) break;
       }
     }
-    if (missing.length) await tpRestoreMissing(missing, notes);
   } finally {
     tpEl("tpPdfBtn").disabled = false;
   }
-  tpStatus(notes.length ? notes.join("<br>") : "회차를 넣었습니다. 회차 이름을 확인하고, 뺄 지문은 눌러서 끄세요.",
-    notes.length ? "warn" : "ok");
+  tpStatus((added ? `문항 <b>${added}개</b>를 회차에 넣었습니다. 문제 모양 그대로라 빈칸·순서·삽입 문제도 바로 분석합니다. ` : "") +
+    (notes.length ? notes.join("<br>") : "회차 이름을 확인하고, 뺄 지문은 눌러서 끄세요."), notes.length ? "warn" : "ok");
   tpAfterChange();
 }
 
-// 꺼낸 지문 하나 → 회차의 지문. 모의고사의 25~28번(도표·인물·안내문)은 처음엔 빼 둔다 — 눌러서 넣을 수 있다
-function tpPassageOf(p, n, k, mock, restored) {
-  const name = n.length ? (n.length > 1 ? `${n[0]}~${n[n.length - 1]}번` : `${n[0]}번`) : `지문 ${k + 1}`;
-  return { id: tpId("p"), name, text: p.text, on: !(mock && n.some((x) => PDF_SKIP_NOS.has(x))),
-    no: n.length ? n[0] : 999, nos: n, restored: !!restored };
+// 회차 이름이 '2019 3월 …'처럼 연도·월로 시작하면 시험 차례(이른 것부터)로 놓는다. 하나라도 못 읽으면 건드리지 않는다
+function tpSortRounds() {
+  const key = (r) => {
+    const m = /^(20\d\d)\s*(\d{1,2})월/.exec(r.name);
+    return m ? Number(m[1]) * 100 + Number(m[2]) : null;
+  };
+  if (tpState.rounds.every((r) => key(r) !== null)) tpState.rounds.sort((a, b) => key(a) - key(b));
 }
 
-/* 빠진 번호를 AI로 되살려 채운다(/api/mockrestore — 지문 분석 PDF 가져오기와 같은 길, 값도 같다 PRICING.mockRestore).
-   선생님이 거절하면 빠진 채로 분석한다(소재·어휘가 그만큼 덜 잡힌다). */
-async function tpRestoreMissing(missing, notes) {
-  const total = missing.reduce((n, m) => n + m.need.length, 0);
-  const per = PRICING ? PRICING.mockRestore : 0;
-  const ask = `규칙으로 꺼내지 못한 지문이 ${total}개 있습니다(빈칸·순서·삽입 문제 등).\n` +
-    missing.map((m) => `· ${m.round.name}: ${mockNosText(m.need)}번`).join("\n") +
-    `\n\nAI가 문제를 풀어 원래 지문으로 되살려 넣을까요?` +
-    (per ? `\n지문 1개당 ${pt(per)} — 약 ${pt(per * total)}` : "") +
-    `\n[취소]를 누르면 그 지문 없이 분석합니다.`;
-  if (!(await hasEnoughPoints(per * total, `빠진 지문 ${total}개 되살리기`, total)) || !confirm(ask)) {
-    notes.push(`빠진 지문 ${total}개(${missing.map((m) => `${esc(m.round.name)} ${esc(mockNosText(m.need))}번`).join(" / ")})는 넣지 않았습니다 — 그만큼 소재·어휘가 덜 잡힙니다.`);
-    return;
-  }
-  for (let i = 0; i < missing.length; i++) {
-    const m = missing[i];
-    tpStatus(`<span class="spinner"></span> ${esc(m.who)} — AI가 ${esc(mockNosText(m.need))}번 지문을 되살리는 중… (${i + 1}/${missing.length})`);
-    try {
-      const res = await postGenerate("/api/mockrestore", { file: { mime: "application/pdf", data: m.data }, nos: m.need },
-        "지문을 되살리지 못했습니다.");
-      const got = (res.passages || []).map((p, k) => tpPassageOf(p, pdfQuestionNos(p.name), k, true, true));
-      // 41~42번처럼 묶음 지문을 되살리면 규칙이 따로 꺼낸 '42번' 토막과 겹친다 — 되살린 온전한 지문만 남긴다
-      const gotNos = new Set(got.flatMap((p) => p.nos));
-      const kept = m.round.passages.filter((p) => !(p.nos && p.nos.length && p.nos.every((n) => gotNos.has(n))));
-      m.round.passages = kept.concat(got).sort((a, b) => (a.no || 999) - (b.no || 999));
-      const left = m.need.filter((n) => !gotNos.has(n));
-      if (left.length) notes.push(`${esc(m.round.name)} — ${esc(mockNosText(left))}번은 되살리지 못했습니다.`);
-    } catch (err) {
-      notes.push(`${esc(m.round.name)} — ${esc(err.message || String(err))}`);
-      if (err.code === "quota" || err.code === "no_tokens") break;
-    }
-    tpRenderRounds();
-  }
-  refreshTokenDisplay();
+// 요청할 때만 — 이 회차의 지문을 위쪽 공용 지문 칸에 넣는다(거기서 [지문 저장]이나 다른 탭에 쓴다). 문제 모양 그대로다
+function tpRoundToPassages(ri) {
+  const r = tpState.rounds[ri];
+  const jobs = r.passages.filter((p) => p.on).map((p) => ({ name: `${r.name} · ${p.name}`, text: p.text, named: true }));
+  if (!jobs.length) return;
+  if (!confirm(`'${r.name}' 지문 ${jobs.length}개를 위쪽 지문 칸에 넣을까요?
+
+` +
+    "PDF 글자를 문제 모양 그대로 자른 것이라 빈칸·순서·삽입 문제는 원래 지문 모양이 아닙니다. " +
+    "지문 칸에서 [지문 저장]을 누르면 저장함에 남습니다.")) return;
+  const put = passageMgr.appendJobs(jobs);
+  tpStatus(`'${esc(r.name)}' 지문 ${put.added}개를 위쪽 지문 칸에 넣었습니다.` +
+    (put.full ? " 지문 칸이 가득 차 나머지는 넣지 못했습니다." : "") + " 저장하려면 지문 칸의 [💾 지문 저장]을 누르세요.",
+  put.full ? "warn" : "ok");
+  const panel = document.querySelector(".passage-panel");
+  if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function tpPullShared() {
@@ -179,6 +170,7 @@ function tpRenderRounds() {
         <span class="tp-round-count">지문 ${r.passages.length}개 중 <b>${on}개</b> 분석</span>
         <button type="button" class="btn ghost small" data-act="up" ${ri ? "" : "disabled"} title="앞으로">▲</button>
         <button type="button" class="btn ghost small" data-act="down" ${ri < tpState.rounds.length - 1 ? "" : "disabled"} title="뒤로">▼</button>
+        <button type="button" class="btn ghost small" data-act="pass" title="이 회차의 지문을 위쪽 지문 칸에 넣습니다(저장은 거기서).">⬆ 지문 칸으로</button>
         <button type="button" class="btn ghost small" data-act="del">회차 빼기</button>
       </div>
       <div class="tp-chips">${r.passages.map((p, pi) => `<button type="button" class="tp-chip${p.on ? " on" : ""}${tpState.topics[p.id] ? " done" : ""}" data-p="${pi}"
@@ -200,6 +192,10 @@ tpEl("tpRounds").addEventListener("click", (e) => {
   const act = e.target.closest("[data-act]");
   if (!act) return;
   const rs = tpState.rounds;
+  if (act.dataset.act === "pass") {
+    tpRoundToPassages(ri);
+    return;
+  }
   if (act.dataset.act === "del") {
     if (!confirm(`'${rs[ri].name}' 회차를 뺄까요?`)) return;
     rs.splice(ri, 1);
@@ -482,7 +478,7 @@ function tpVocabHtml(forPrint) {
     ${hardHtml ? `<div class="rp-keep"><h5>어휘가 어려운 지문</h5>${hardHtml}</div>` : ""}
     ${forPrint ? "" : tpPeekHtml()}
     <h4 class="sec">${TOPIC_TARGET}%까지 필요한 추가 어휘</h4>
-    <div class="hint">교육과정 3,000단어 밖 낱말을 많이 나온 차례로 모았습니다. '익히면'은 위에서부터 그 낱말까지 익혔을 때 읽을 수 있는 낱말 비율입니다${need ? ` — 색칠한 ${need}개가 ${TOPIC_TARGET}%까지입니다` : ""}. 문제 상태로 넣은 지문(어법·어휘 문제 등)은 선택지의 낱말도 함께 셉니다.</div>
+    <div class="hint">교육과정 3,000단어 밖 낱말을 많이 나온 차례로 모았습니다. '익히면'은 위에서부터 그 낱말까지 익혔을 때 읽을 수 있는 낱말 비율입니다${need ? ` — 색칠한 ${need}개가 ${TOPIC_TARGET}%까지입니다` : ""}. 지문은 PDF의 문제 모양 그대로라 빈칸 자리의 낱말은 빠져 있습니다(보기 줄은 세지 않습니다).</div>
     ${tools}
     <table class="tp-list tp-words"><thead><tr>${forPrint ? "" : `<th class="no-print">고르기</th>`}<th>순위</th><th>낱말</th><th>나온 횟수</th><th>나온 지문</th><th>익히면</th></tr></thead>
       <tbody>${wordRows}</tbody></table>${more}
@@ -745,7 +741,12 @@ TAB_LIBRARY_WORDS.topic = {
 };
 SAVE_TITLE_SUGGEST.topic = () => tpState.title || `${tpState.rounds.map((r) => r.name).join(" · ")} 소재·어휘`.slice(0, 60);
 TAB_SAVE.topic = {
-  canSave: () => (tpState.rounds.length ? "" : "저장할 회차가 없습니다. 먼저 회차를 넣어 주세요."),
+  canSave: () => {
+    if (!tpState.rounds.length) return "저장할 회차가 없습니다. 먼저 회차를 넣어 주세요.";
+    // 저장본 문서는 1MiB 한도다 — 지문 글이 대부분이라 회차가 아주 많으면 나눠 저장하게 한다
+    const size = JSON.stringify({ rounds: tpState.rounds, topics: tpState.topics }).length;
+    return size > 900000 ? `회차·지문이 너무 많아 한 번에 저장할 수 없습니다(지문 ${tpOnPassages().length}개). 회차를 몇 개 빼고 나눠 저장해 주세요.` : "";
+  },
   getPayload: () => ({
     v: 1,
     title: tpState.title,
@@ -850,13 +851,13 @@ if (typeof HOWTO !== "undefined") {
     title: `🗂️ ${TOPIC_NAME} 만드는 법`,
     lead: "모의고사·수능 여러 회차를 넣으면 어떤 소재가 나왔는지 분야별로 정리하고, 교육과정 3,000단어로 지문을 몇 % 읽을 수 있는지와 그 간격을 메울 추가 어휘를 뽑아 단어장으로 보냅니다.",
     steps: [
-      "<b>📄 모의고사 PDF로 회차 추가</b>로 시험지 PDF를 올립니다 — 파일 하나가 회차 하나입니다(여러 개를 한 번에 골라도 됩니다). 위쪽 지문 칸에 넣은 지문은 <b>⬇ 위 지문 칸에서 회차 추가</b>로 가져옵니다.",
-      "PDF에서 바로 꺼내지 못한 빈칸·순서·삽입 문제가 있으면 <b>AI로 원래 지문을 되살릴지</b> 묻습니다(지문당 값). 회차 이름을 확인하고, 뺄 지문은 번호 단추를 눌러 끕니다(모의고사 25~28번 도표·안내문은 처음엔 꺼져 있습니다).",
+      "<b>📄 모의고사 PDF로 회차 추가</b>로 시험지·유형별 모음집 PDF를 여러 개 한꺼번에 올립니다. 위쪽 지문 칸에 넣은 지문은 <b>⬇ 위 지문 칸에서 회차 추가</b>로 가져옵니다.",
+      "PDF 글자를 문항별로 문제 모양 그대로 잘라 넣습니다(무료). 유형별 모음집은 출처를 읽어 시험별로 회차를 묶습니다. 회차 이름을 확인하고, 뺄 지문은 번호 단추를 눌러 끕니다(25~28번 도표·안내문은 처음엔 꺼져 있습니다). 지문을 저장하려면 회차의 <b>⬆ 지문 칸으로</b>를 누른 뒤 위쪽 지문 칸에서 저장합니다.",
       "<b>🗂️ 소재 분석하기</b>를 누르면 지문마다 분야·한 줄 소재·핵심어를 정리합니다(지문당 값). <b>📊 어휘 분석하기</b>는 무료입니다.",
       "어휘 분석 아래 <b>추가 어휘</b>에서 낱말을 고르고(<b>상위 ○개 고르기</b>·<b>95%까지 고르기</b>), <b>한 단어장에 ○개씩</b>·<b>정리 순서</b>·<b>묶음 이름</b>·<b>단어장 이름</b>(예: Day {n})을 정한 뒤 <b>📒 고른 낱말로 단어장 만들기</b>를 누릅니다 — 600개를 30개씩이면 단어장 20개가 단어장 탭에 생기고, [💾 사이트 저장]으로 한 폴더에 하나씩 저장됩니다.",
       "<b>🖨️ 인쇄 / PDF 변환</b>으로 보고서를 뽑거나 <b>💾 사이트 저장</b>으로 남겨 두고, 나중에 불러와 회차를 더 붙입니다.",
     ],
-    tip: "되살리기를 하지 않으면 그 번호의 지문은 빠진 채로 분석합니다. 어법·어휘·무관한 문장 문제(29·30·35번 등)는 문제 상태 그대로 셉니다(선택지 낱말도 함께 셉니다). 인쇄 보고서에는 지문 원문을 싣지 않습니다. '같은 지문, 아는 어휘가 달라지면' 칸은 화면에서만 보입니다.",
+    tip: "빈칸·순서·삽입 문제도 문제 모양 그대로 분석합니다 — 소재를 정하는 데 정답은 필요 없고, 어휘는 본문 낱말을 셉니다(보기 ①~⑤ 줄과 각주는 뺍니다). 인쇄 보고서에는 지문 원문을 싣지 않습니다. '같은 지문, 아는 어휘가 달라지면' 칸은 화면에서만 보입니다.",
   };
 }
 
