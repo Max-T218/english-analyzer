@@ -316,8 +316,8 @@ PRICE_DECODE_PIC_KRW = int(os.environ.get("PRICE_DECODE_PIC_KRW", "300"))
 PRICE_EXPLAIN_KRW = int(os.environ.get("PRICE_EXPLAIN_KRW", "100"))
 # 기출 소재·어휘(2026-11-18 사용자 — "테스트해 보면서 가격 정하자"). 둘 다 원가 실측 전 임시값이다 —
 # Render 로그 [usage] topicscan·topicwords로 재서 맞출 것. 어휘 통계(/api/vocabstats)는 AI가 없어 0원.
-PRICE_TOPIC_KRW = int(os.environ.get("PRICE_TOPIC_KRW", "100"))              # 소재 분석, 지문 1개당
-PRICE_TOPIC_WORDS_KRW = int(os.environ.get("PRICE_TOPIC_WORDS_KRW", "100"))  # 단어장으로 보낼 때 뜻 달기, 한 번(100단어까지)당
+PRICE_TOPIC_KRW = int(os.environ.get("PRICE_TOPIC_KRW", "20"))              # 소재 분석, 지문 1개당
+PRICE_TOPIC_WORDS_KRW = int(os.environ.get("PRICE_TOPIC_WORDS_KRW", "30"))  # 단어장으로 보낼 때 뜻 달기, 한 번(100단어까지)당
 PRICE_MCQ_PLAIN_KRW = int(os.environ.get("PRICE_MCQ_PLAIN_KRW", "250"))    # 객관식·지문유지, (지문×유형) 1개당
 PRICE_MCQ_TRANSFORM_KRW = int(os.environ.get("PRICE_MCQ_TRANSFORM_KRW", "250"))  # 객관식·지문변형, (지문×유형) 1개당
 # 주관식, (지문×유형) 1개당. 객관식과 같은 250원으로 맞춘다 — 주관식도 열다섯 유형 중
