@@ -85,7 +85,8 @@ async function tpAddPdfs(files) {
           notes.push(`${esc(who)} — 문항을 찾지 못했습니다(문항 번호가 '18. 다음 글의 …'처럼 붙은 PDF만 읽습니다).`);
           continue;
         }
-        const fileRound = tpRoundName(who) || `회차 ${tpState.rounds.length + 1}`;
+        // 회차 이름은 시험지 머리글에서 읽은 이름(2026학년도 3월 고2 학력평가)을 먼저 쓴다 — 못 읽으면 파일 이름(2026-11-18 사용자)
+        const fileRound = res.title || tpRoundName(who) || `회차 ${tpState.rounds.length + 1}`;
         list.forEach((p) => {
           const rname = p.src || fileRound;
           let round = tpState.rounds.find((r) => r.name === rname);
@@ -124,8 +125,9 @@ async function tpAddPdfs(files) {
 // 회차 이름이 '2019 3월 …'처럼 연도·월로 시작하면 시험 차례(이른 것부터)로 놓는다. 하나라도 못 읽으면 건드리지 않는다
 function tpSortRounds() {
   const key = (r) => {
-    const m = /^(20\d\d)\s*(\d{1,2})월/.exec(r.name);
-    return m ? Number(m[1]) * 100 + Number(m[2]) : null;
+    // '2019 3월 …'(모음집 출처) · '2026학년도 3월 고2 학력평가' · '2026학년도 수능'(11월로 본다)
+    const m = /^(20\d\d)(?:학년도)?\s*(?:(\d{1,2})월|수능)/.exec(r.name);
+    return m ? Number(m[1]) * 100 + Number(m[2] || 11) : null;
   };
   if (tpState.rounds.every((r) => key(r) !== null)) tpState.rounds.sort((a, b) => key(a) - key(b));
 }
@@ -274,19 +276,39 @@ tpEl("tpPdfFile").addEventListener("change", (e) => {
 });
 tpEl("tpPullBtn").addEventListener("click", tpPullShared);
 // 이 탭 칸에 PDF를 끌어다 놓아도 회차로(2026-11-18 사용자). 위쪽 지문칸에 놓은 것도 app.js wirePassageDrop이 이리 보낸다
+// 끌어다 놓기 쉽게(2026-11-18 사용자): 이 탭을 보는 동안에는 화면 어디에 놓아도 받는다 — 파일을 끌고 들어오면
+// 큰 칸(#tpDrop)이 파랗게 커지며 '놓으세요'로 바뀐다. 칸을 누르면 파일 고르기. 지문칸(app.js)이 먼저 받은 것은 건너뛴다
 (() => {
-  const sec = document.getElementById("tab-topic");
-  if (!sec) return;
+  const zone = tpEl("tpDrop");
   const hasFiles = (e) => [...((e.dataTransfer && e.dataTransfer.types) || [])].includes("Files");
-  ["dragenter", "dragover"].forEach((ev) => sec.addEventListener(ev, (e) => { if (hasFiles(e)) e.preventDefault(); }));
-  sec.addEventListener("drop", (e) => {
-    const files = e.dataTransfer && e.dataTransfer.files;
-    if (!files || !files.length) return;
+  const onTab = () => activeTabId() === "topic";
+  let timer = 0;
+  const lit = (on) => {
+    if (!zone) return;
+    zone.classList.toggle("on", on);
+    clearTimeout(timer);
+    if (on) timer = setTimeout(() => zone.classList.remove("on"), 250);   // dragover가 끊기면(창 밖으로 나가면) 끈다
+  };
+  ["dragenter", "dragover"].forEach((ev) => window.addEventListener(ev, (e) => {
+    if (!onTab() || !hasFiles(e)) return;
+    e.preventDefault();   // 놓은 PDF를 브라우저가 열어 버리지 않게
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    lit(true);
+  }));
+  window.addEventListener("drop", (e) => {
+    if (!onTab() || !hasFiles(e)) return;
+    lit(false);
+    if (e.defaultPrevented) return;   // 지문칸이 이미 받았다(wirePassageDrop도 이 탭이면 회차로 보낸다)
     e.preventDefault();
-    const pdfs = [...files].filter(isPdf);
+    const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+    const pdfs = files.filter(isPdf);
     if (pdfs.length) tpAddPdfs(pdfs);
     else tpStatus("여기에는 시험지 <b>PDF</b>만 놓을 수 있습니다.", "warn");
   });
+  if (zone) {
+    zone.addEventListener("click", () => tpEl("tpPdfFile").click());
+    zone.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); tpEl("tpPdfFile").click(); } });
+  }
 })();
 tpEl("tpClearBtn").addEventListener("click", () => {
   if (!confirm("넣은 회차와 분석 결과를 모두 비울까요? 저장함에 저장한 것은 그대로 남습니다.")) return;
@@ -939,6 +961,14 @@ mark.tp-unk{background:#ffd6a5;color:inherit;padding:0 1px;border-radius:2px}
 .tp-chip{font-size:12px;padding:2px 8px;border:1px solid #cfd6df;border-radius:12px;background:#fff;color:#999;cursor:pointer;text-decoration:line-through}
 .tp-chip.on{color:#1b2430;text-decoration:none;border-color:#4d94ec;background:#eef5ff}
 .tp-chip.on.done::after{content:" ✓";color:#2c7a3f}
+.tp-drop{display:flex;align-items:center;gap:14px;margin:8px 0 10px;padding:18px 20px;border:2px dashed #9fb8db;border-radius:14px;
+  background:#f6f9ff;cursor:pointer;transition:background .15s,border-color .15s,transform .15s,box-shadow .15s}
+.tp-drop:hover,.tp-drop:focus{border-color:#4d94ec;background:#eef5ff;outline:none}
+.tp-drop-ic{font-size:30px;line-height:1}
+.tp-drop-t b{display:block;font-size:15px;color:#1b2430}
+.tp-drop-t span{display:block;font-size:12.5px;color:#66707f;margin-top:3px}
+.tp-drop.on{border-color:#2563eb;border-style:solid;background:#e3eeff;transform:scale(1.01);box-shadow:0 0 0 4px rgba(37,99,235,.15)}
+.tp-drop.on .tp-drop-t b::after{content:" — 지금 놓으세요!";color:#2563eb}
 .tp-title-field{margin-bottom:10px}
 `;
   document.head.appendChild(st);

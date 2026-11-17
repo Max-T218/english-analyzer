@@ -11673,6 +11673,30 @@ def _topic_drop_listening(out):
     return out
 
 
+# 시험지 머리글 → 회차 이름(2026-11-18 사용자 — 파일 이름 '01 3월_고2_영어_문제지' 대신 시험지에 적힌 이름으로).
+# 학력평가 '2026학년도 3월 고2 전국연합학력평가 문제지', 평가원 '2026학년도 대학수학능력시험 6월 모의평가 문제지',
+# 수능 '2026학년도 대학수학능력시험 문제지'. 첫 두 쪽의 앞 20줄만 본다. 못 찾으면 빈 글자(화면이 파일 이름을 쓴다)
+_TOPIC_TITLE_RES = (
+    (re.compile(r"(20\d\d)\s*학년도\s*(\d{1,2})\s*월\s*(고\s*\d|중\s*\d)\s*전국\s*연합\s*학력\s*평가"),
+     lambda m: f"{m.group(1)}학년도 {m.group(2)}월 {m.group(3).replace(' ', '')} 학력평가"),
+    (re.compile(r"(20\d\d)\s*학년도\s*대학\s*수학\s*능력\s*시험\s*(\d{1,2})\s*월\s*모의\s*평가"),
+     lambda m: f"{m.group(1)}학년도 {m.group(2)}월 모의평가"),
+    (re.compile(r"(20\d\d)\s*학년도\s*대학\s*수학\s*능력\s*시험"),
+     lambda m: f"{m.group(1)}학년도 수능"),
+)
+
+
+def topic_exam_title(pages):
+    for lines in pages[:2]:
+        for r in lines[:20]:
+            t = re.sub(r"\s+", " ", str(r.get("t") or ""))
+            for rx, fmt in _TOPIC_TITLE_RES:
+                m = rx.search(t)
+                if m:
+                    return fmt(m)
+    return ""
+
+
 def parse_topic_passages(req, limit):
     """[{id, text}] — 화면이 보낸 지문을 다듬는다. id는 화면이 정한 짧은 열쇠다."""
     out = []
@@ -25517,7 +25541,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "이 PDF에는 글자가 들어 있지 않습니다(스캔본). 글자가 든 PDF를 올려 주세요.",
                                  "code": "no_text"}, 422)
                 return
-            self._send_json({"passages": topic_pdf_passages(pages)})
+            self._send_json({"passages": topic_pdf_passages(pages), "title": topic_exam_title(pages)})
             return
 
         # 기출 소재·어휘 — 어휘 통계. AI를 부르지 않아 값이 없다(로그인만 본다).
