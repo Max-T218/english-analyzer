@@ -370,6 +370,49 @@
     return "";
   }
 
+  /* 학생 답과 정답의 다른 낱말을 빨갛게(2026-11-18 사용자 — 왜 확인해야 하는지 한눈에).
+     낱말 단위로 가장 길게 겹치는 차례(LCS)를 찾아, 학생 답에서 정답에 없는 낱말은 빨간 바탕, 정답에서 학생이 빠뜨린
+     낱말은 빨간 물결 밑줄. 대소문자·앞뒤 문장부호는 무시한다(채점 _qt_key와 같은 셈). 정답이 'A / B'처럼 여럿이면
+     가장 가까운 것과 견준다. 표시일 뿐 채점에는 쓰지 않는다. */
+  const DIFF_X = 'style="background:#fde2e2;color:#c0392b;font-weight:700;border-radius:3px;padding:0 2px"';
+  const DIFF_MISS = 'style="color:#c0392b;text-decoration:underline wavy #e6194b;text-underline-offset:3px"';
+  const diffKey = (w) => String(w).toLowerCase().replace(/[’‘]/g, "'").replace(/^[^a-z0-9가-힣']+|[^a-z0-9가-힣']+$/g, "");
+  function lcsMarks(a, b) {
+    const A = a.map(diffKey), B = b.map(diffKey);
+    const n = A.length, m = B.length;
+    const T = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let x = n - 1; x >= 0; x--) for (let y = m - 1; y >= 0; y--) {
+      T[x][y] = A[x] && A[x] === B[y] ? T[x + 1][y + 1] + 1 : Math.max(T[x + 1][y], T[x][y + 1]);
+    }
+    const inA = new Array(n).fill(false), inB = new Array(m).fill(false);
+    let x = 0, y = 0;
+    while (x < n && y < m) {
+      if (A[x] && A[x] === B[y]) { inA[x] = inB[y] = true; x++; y++; }
+      else if (T[x + 1][y] >= T[x][y + 1]) x++;
+      else y++;
+    }
+    A.forEach((k, idx) => { if (!k) inA[idx] = true; });   // 문장부호만 있는 조각은 표시하지 않는다
+    B.forEach((k, idx) => { if (!k) inB[idx] = true; });
+    return { inA, inB, same: T[0][0] };
+  }
+  function diffPair(given, correct) {
+    const g = String(given).split(/\s+/).filter(Boolean);
+    const alts = String(correct).split(/\s+\/\s+/).map((s) => s.split(/\s+/).filter(Boolean));
+    let best = null;
+    alts.forEach((c) => {
+      const r = lcsMarks(g, c);
+      if (!best || r.same > best.r.same) best = { r, c };
+    });
+    const paint = (toks, keep, style) => toks.map((t, k) => (keep[k] ? esc(t) : `<span ${style}>${esc(t)}</span>`)).join(" ");
+    return {
+      given: paint(g, best.r.inA, DIFF_X),
+      // 정답이 여럿이면 견준 것 하나만 표시하고 나머지는 그대로 덧붙인다
+      correct: alts.length > 1
+        ? alts.map((c) => (c === best.c ? paint(c, best.r.inB, DIFF_MISS) : esc(c.join(" ")))).join(" / ")
+        : paint(best.c, best.r.inB, DIFF_MISS),
+    };
+  }
+
   // 칸마다 내 답 · 정답 · 맞음 — opts.grading이면 선생님이 고를 [맞음][틀림] 단추를 단다
   function unitsHtml(q, i, opts) {
     if (q.format === "read") return "";
@@ -384,13 +427,19 @@
         ? `<td style="white-space:nowrap;"><button type="button" class="btn ghost small qt-grade" data-q="${i}" data-u="${j}" data-ok="1">맞음</button>` +
           ` <button type="button" class="btn ghost small qt-grade" data-q="${i}" data-u="${j}" data-ok="0">틀림</button></td>`
         : opts.grading ? "<td></td>" : "";
+      // 맞지 않은(틀림·확인 중) 글 답은 다른 낱말을 빨갛게 — 객관식 번호·한 낱말 답은 그대로
+      const words = q.format !== "mc" && u.ok !== true && u.given && u.correct &&
+        (String(u.given).trim().includes(" ") || String(u.correct).trim().includes(" "));
+      const d = words ? diffPair(u.given, u.correct) : null;
       return `<tr>${showNo ? `<td>(${j + 1})</td>` : ""}` +
-        `<td${u.ok === false ? ' class="bad"' : ""}>${u.given ? esc(label(u.given)) : `<span class="hint">(무응답)</span>`}</td>` +
-        `<td><b>${esc(label(u.correct))}</b></td>${res}${btns}</tr>`;
+        `<td${u.ok === false ? ' class="bad"' : ""}>${u.given ? (d ? d.given : esc(label(u.given))) : `<span class="hint">(무응답)</span>`}</td>` +
+        `<td><b>${d ? d.correct : esc(label(u.correct))}</b></td>${res}${btns}</tr>`;
     }).join("");
+    const marked = rows.includes(DIFF_X) || rows.includes(DIFF_MISS);
     return `<div class="table-wrap" style="margin-top:8px;"><table class="qt-units">
       <thead><tr>${showNo ? "<th>#</th>" : ""}<th>${opts.grading ? "학생 답" : "내 답"}</th><th>정답</th><th></th>${opts.grading ? "<th></th>" : ""}</tr></thead>
-      <tbody>${rows}</tbody></table></div>`;
+      <tbody>${rows}</tbody></table>${marked ? `<div class="hint" style="margin-top:3px;font-size:12px">
+        <span ${DIFF_X}>빨간 바탕</span> = 정답에 없는 낱말 · <span ${DIFF_MISS}>물결 밑줄</span> = ${opts.grading ? "학생이" : "내가"} 빠뜨린 낱말 (대소문자·문장부호는 무시)</div>` : ""}</div>`;
   }
 
   /* mode: "take"(풀기) | "review"(결과 — 정답·해설). opts.grading: 선생님 채점 단추 */
