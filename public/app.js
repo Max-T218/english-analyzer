@@ -12427,8 +12427,9 @@ function buildWorkbookHtml(d, stages, job, total, exam, pi = 0) {
   const answerStages = [];
   const label = job && (job.named || total > 1) ? job.name : "";
 
+  // 지문 제목 띠(영어·우리말 제목)는 싣지 않는다 — 지문끼리 이어 붙이면 제목만 앞 쪽 바닥에 남았고,
+  // 단계 머리의 지문 이름(5-1 등)으로 어느 지문인지 충분하다(2026-11-17 사용자).
   parts.push(`<section class="wb-passage" data-key="p${pi}">`);
-  parts.push(wbTitlebarHtml(d));
 
   const sentences = (d.sentences || []).filter((s) => s && s.en);
   // 지면에 찍히는 번호는 1부터 연속. 내용이 없어 건너뛴 단계는 번호를 쓰지 않으므로
@@ -12483,7 +12484,7 @@ function buildWorkbookByStage(entries, stages, exam) {
     const word = WB_WORD_STAGES.includes(stageId);
     builtAll.forEach(({ it, built }) => {
       // 내용 O/X도 단계별 묶기에서는 지문끼리 잇는다(2026-11-17 사용자 — 지문마다 새 쪽이라 쪽 아래가 60%씩 비었다)
-      parts.push(`<section class="wb-passage${word ? " wb-passage-word" : ""}${stageId === 12 ? " wb-passage-ox" : ""}" data-key="s${stageId}p${it.pi}">${wbTitlebarHtml(it.d)}` +
+      parts.push(`<section class="wb-passage${word ? " wb-passage-word" : ""}${stageId === 12 ? " wb-passage-ox" : ""}" data-key="s${stageId}p${it.pi}">` +
         wbStageTableHtml(head, it.label, exam, meta.guide, built.html, word, stageId) + `</section>`);
       if (built.answers && built.answers.length) {
         groups.push({ head: it.label || head, items: built.answers });
@@ -12492,15 +12493,6 @@ function buildWorkbookByStage(entries, stages, exam) {
     answers.push(wbAnswerGroupHtml(head, groups));
   });
   return { html: parts.join(""), answerHtml: answers.join("") };
-}
-
-function wbTitlebarHtml(d) {
-  if (!d.englishTitle && !d.koreanTitle) return "";
-  return `
-      <div class="wb-titlebar">
-        <b>${esc(d.englishTitle || "")}</b>
-        ${d.koreanTitle ? `<span>${esc(d.koreanTitle)}</span>` : ""}
-      </div>`;
 }
 
 // 표의 <thead>는 브라우저가 쪽마다 다시 그려 준다 — 참고 자료의 '쪽 머리말'이 된다
