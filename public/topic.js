@@ -36,6 +36,8 @@ const tpState = {
   // 단어장으로 나눠 보내기(2026-11-18 사용자 — '600개를 30개씩이면 단어장 20개'): 한 단어장 개수 · 정리 순서 · 이름
   pack: { size: 30, order: "freq", base: "", label: "Day {n}" },
   peek: { id: "", level: 2 },
+  // 암기 목록 범위(2026-11-18 사용자 — 암기가 필요한 낱말을 다): off = 지정 어휘 밖만 · hi = +고등 지정 어휘 · mid = +중학교 지정 어휘
+  scope: "hi",
   title: "",
   busy: false,
 };
@@ -498,6 +500,16 @@ function tpTopicHtml() {
     <h4 class="sec">분야별 소재 목록</h4>${tables}`;
 }
 
+// 외워야 할 낱말 목록 — 지정 어휘 밖 낱말에, 고르면 고등(·중학교) 지정 어휘 낱말까지 합쳐 많이 나온 차례로
+function tpWordList(st) {
+  const off = (st.offlist || []).map((w) => ({ ...w, tag: "off" }));
+  if (tpState.scope === "off") return off;
+  const lw = st.levelWords || {};
+  const add = (lw["2"] || []).map((w) => ({ ...w, tag: "hi" }))
+    .concat(tpState.scope === "mid" ? (lw["3"] || []).map((w) => ({ ...w, tag: "deriv" }))
+      .concat((lw["1"] || []).map((w) => ({ ...w, tag: "mid" }))) : []);
+  return off.concat(add).sort((a, b) => b.count - a.count || b.passages - a.passages || a.word.localeCompare(b.word));
+}
 // 기준선(95%)까지 — 추가 어휘를 위에서부터 몇 개 익히면 넘는지
 function tpWordsToTarget(st) {
   if (st.coverage[2] >= TOPIC_TARGET) return 0;
@@ -550,18 +562,30 @@ function tpVocabHtml(forPrint) {
   const hardHtml = hard.length ? `<table class="tp-list"><thead><tr><th>순위</th><th>회차</th><th>번호</th><th>지정 어휘 비율</th><th>지정 어휘 밖 낱말(많이 나온 차례)</th></tr></thead><tbody>
     ${hard.map((p, i) => `<tr><td>${i + 1}</td><td>${esc(p.r)}</td><td>${esc(p.name)}</td><td><b>${tpPct(p.coverage[2])}</b></td>
       <td class="tp-kw">${esc(p.offlist.slice(0, 8).join(", "))}</td></tr>`).join("")}</tbody></table>` : "";
-  // 추가 어휘 표
-  const shown = forPrint ? Math.min(st.offlist.length, need ? Math.max(need, 60) : 60) : Math.min(st.offlist.length, tpState.wordsShown);
-  const words = st.offlist.slice(0, shown);
-  const wordRows = words.map((w, i) => `<tr class="${need && i < need ? "tp-need" : ""}">
+  // 암기할 낱말 표 — 지정 어휘 밖 낱말에 고르면 고등·중학교 지정 어휘 낱말까지(tpWordList)
+  const all = tpWordList(st);
+  const needSet = new Set(need ? st.offlist.slice(0, need).map((w) => w.word) : []);
+  const shown = forPrint ? Math.min(all.length, Math.max(needSet.size, 60)) : Math.min(all.length, tpState.wordsShown);
+  const words = all.slice(0, shown);
+  const TAG = { off: ["지정 밖", "#ff8a3d"], hi: ["고등", TOPIC_LEVEL_COLORS[2]], deriv: ["파생어", "#c25bb5"], mid: ["중학교", TOPIC_LEVEL_COLORS[1]] };
+  const lw = st.levelWords || {};
+  const nHi = (lw["2"] || []).length, nMid = (lw["1"] || []).length + (lw["3"] || []).length;
+  const scopeSel = forPrint ? "" : `<div class="tp-scope no-print">목록에 넣을 낱말
+      <select id="tpScope">
+        <option value="off"${tpState.scope === "off" ? " selected" : ""}>지정 어휘 밖 낱말만 (${st.offlist.length}개)</option>
+        <option value="hi"${tpState.scope === "hi" ? " selected" : ""}>+ 고등 지정 어휘 (모두 ${st.offlist.length + nHi}개)</option>
+        <option value="mid"${tpState.scope === "mid" ? " selected" : ""}>+ 고등 + 중학교 지정 어휘·파생어 (모두 ${st.offlist.length + nHi + nMid}개)</option>
+      </select> <span class="hint">초등 어휘는 넣지 않습니다. 고등·중학교 지정 어휘도 학생에 따라 외워야 할 수 있어 함께 고를 수 있습니다.</span></div>`;
+  const wordRows = words.map((w, i) => `<tr class="${needSet.has(w.word) ? "tp-need" : ""}">
     ${forPrint ? "" : `<td class="no-print"><input type="checkbox" class="tp-pick" data-w="${esc(w.word)}"${tpState.picked.has(w.word) ? " checked" : ""}></td>`}
     <td>${i + 1}</td><td><b>${esc(w.word)}</b>${w.forms.length ? ` <small>(${esc(w.forms.join(", "))})</small>` : ""}</td>
-    <td>${w.count}</td><td>${w.passages}</td><td>${tpPct(w.cumulative)}</td></tr>`).join("");
+    <td><span class="tp-tag" style="background:${TAG[w.tag][1]}">${TAG[w.tag][0]}</span></td>
+    <td>${w.count}</td><td>${w.passages}</td><td>${w.tag === "off" ? tpPct(w.cumulative) : "—"}</td></tr>`).join("");
   const tools = forPrint ? "" : `<div class="tp-word-tools no-print">
       ${need ? `<button type="button" class="btn ghost small" data-wpick="need">${TOPIC_TARGET}%까지 ${need}개 고르기</button>` : ""}
-      <span class="tp-topn">상위 <input type="number" id="tpTopN" min="1" max="${st.offlist.length}" step="10" value="${Math.min(st.offlist.length, tpState.picked.size || 100)}"> 개
+      <span class="tp-topn">상위 <input type="number" id="tpTopN" min="1" max="${all.length}" step="10" value="${Math.min(all.length, tpState.picked.size || 100)}"> 개
         <button type="button" class="btn ghost small" data-wpick="topn">고르기</button></span>
-      <button type="button" class="btn ghost small" data-wpick="all">모두 (${st.offlist.length}개)</button>
+      <button type="button" class="btn ghost small" data-wpick="all">모두 (${all.length}개)</button>
       <button type="button" class="btn ghost small" data-wpick="none">모두 해제</button>
     </div>
     <div class="tp-pack no-print">
@@ -582,8 +606,8 @@ function tpVocabHtml(forPrint) {
       <button type="button" class="btn small" id="tpSendBtn" ${tpState.picked.size ? "" : "disabled"}>📒 고른 낱말로 단어장 만들기</button>
       <span class="hint">AI가 지문에서 쓰인 뜻을 달아(${TOPIC_WORDS_BATCH}단어마다 한 번) 단어장 탭으로 넘깁니다. 단어장 탭에서 [💾 사이트 저장]을 누르면 묶음 이름의 폴더 하나에 단어장마다 하나씩 저장됩니다.</span>
     </div>`;
-  const more = !forPrint && st.offlist.length > shown
-    ? `<button type="button" class="btn ghost small no-print" id="tpMoreWords">더 보기 (${shown}/${st.offlist.length})</button>` : "";
+  const more = !forPrint && all.length > shown
+    ? `<button type="button" class="btn ghost small no-print" id="tpMoreWords">더 보기 (${shown}/${all.length})</button>` : "";
   return `<div class="tp-vocab-sec">
     ${stale && !forPrint ? `<div class="tp-stale no-print">⚠️ 회차나 지문이 바뀌었습니다. [📊 어휘만 분석]을 누르면 지금 지문으로 다시 셉니다(무료).</div>` : ""}
     <h4 class="sec">어휘 분석 — 교육부 지정 어휘로 지문을 얼마나 읽을 수 있나</h4>
@@ -594,10 +618,10 @@ function tpVocabHtml(forPrint) {
     ${legend}${covs}
     ${hardHtml ? `<div class="rp-keep"><h5>어휘가 어려운 지문 <small>지정 어휘 비율이 낮은 차례</small></h5>${hardHtml}</div>` : ""}
     ${forPrint ? "" : tpPeekHtml()}
-    <h4 class="sec">교육부 지정 어휘 밖 낱말 — 따로 외워야 할 어휘</h4>
-    <div class="hint">교육부 지정 어휘에 없어 따로 외워야 하는 낱말을 많이 나온 차례로 모았습니다. '외우면'은 위에서부터 그 낱말까지 외웠을 때 지문 낱말을 몇 % 알게 되는지입니다${need ? ` — 색칠한 ${need}개까지 외우면 ${TOPIC_TARGET}%를 넘습니다` : ""}. 지문은 PDF의 문제 모양 그대로라 빈칸 자리의 낱말은 빠져 있습니다(보기 줄은 세지 않습니다).</div>
-    ${tools}
-    <table class="tp-list tp-words"><thead><tr>${forPrint ? "" : `<th class="no-print">고르기</th>`}<th>순위</th><th>낱말</th><th>나온 횟수</th><th>나온 지문 수</th><th>외우면</th></tr></thead>
+    <h4 class="sec">외워야 할 낱말 — 시험지에 나온 암기 어휘</h4>
+    <div class="hint">시험지에 나온 낱말 중 학생이 외워야 할 낱말을 많이 나온 차례로 모았습니다. <b>지정 밖</b>은 교육부 지정 어휘에 없는 낱말, <b>고등</b>·<b>중학교</b>는 지정 어휘 중 그 단계 낱말, <b>파생어</b>는 고등 지정 어휘에 파생어로 함께 실린 낱말(different·alternative 등 — 쉬운 낱말도 섞여 있어 따로 둡니다)입니다(위 '목록에 넣을 낱말'에서 고릅니다). '외우면'은 위에서부터 그 낱말까지 외웠을 때 지문 낱말을 몇 % 알게 되는지입니다${need ? ` — 색칠한 ${need}개까지 외우면 ${TOPIC_TARGET}%를 넘습니다` : ""}. 지문은 PDF의 문제 모양 그대로라 빈칸 자리의 낱말은 빠져 있습니다(보기 줄은 세지 않습니다).</div>
+    ${scopeSel}${tools}
+    <table class="tp-list tp-words"><thead><tr>${forPrint ? "" : `<th class="no-print">고르기</th>`}<th>순위</th><th>낱말</th><th>구분</th><th>나온 횟수</th><th>나온 지문 수</th><th>외우면</th></tr></thead>
       <tbody>${wordRows}</tbody></table>${more}
   </div>`;
 }
@@ -686,6 +710,10 @@ tpEl("tpResult").addEventListener("change", (e) => {
     if (t.checked) tpState.picked.add(t.dataset.w);
     else tpState.picked.delete(t.dataset.w);
     tpSyncSendBtn();
+  } else if (t.id === "tpScope") {
+    tpState.scope = t.value;
+    tpState.wordsShown = 100;
+    tpRenderReport();
   } else if (t.id === "tpPackOrder") {
     tpState.pack.order = t.value;
     tpSyncSendBtn();
@@ -711,13 +739,13 @@ function tpSyncSendBtn() {
 /* ── 단어장 나누기 ── */
 function tpPackBaseDefault() {
   // 회차 이름(파일 이름)을 이으면 너무 길어 보고서 제목이 있을 때만 쓴다
-  return tpState.title ? `${tpState.title.replace(/ · /g, " ").slice(0, 30)} 추가 어휘` : "기출 추가 어휘";
+  return tpState.title ? `${tpState.title.replace(/ · /g, " ").slice(0, 30)} 암기 어휘` : "기출 암기 어휘";
 }
 const tpPackSize = () => Math.max(5, Math.min(500, Math.round(Number(tpState.pack.size) || 30)));
 // 고른 낱말을 정리 순서대로
 function tpPackOrdered() {
   const st = tpState.stats;
-  const list = st.offlist.filter((w) => tpState.picked.has(w.word));
+  const list = tpWordList(st).filter((w) => tpState.picked.has(w.word));
   if (tpState.pack.order === "alpha") return list.slice().sort((a, b) => a.word.localeCompare(b.word));
   if (tpState.pack.order === "first") return list.slice().sort((a, b) => (a.first ?? 1e9) - (b.first ?? 1e9));
   return list;   // 많이 나온 순 — 서버가 준 차례 그대로
@@ -748,9 +776,15 @@ tpEl("tpResult").addEventListener("click", (e) => {
   const pick = e.target.closest("[data-wpick]");
   if (pick && st) {
     const v = pick.dataset.wpick;
-    const n = v === "need" ? tpWordsToTarget(st) || 0 : v === "none" ? 0 : v === "all" ? st.offlist.length
+    const all = tpWordList(st);
+    if (v === "need") {
+      tpState.picked = new Set(st.offlist.slice(0, tpWordsToTarget(st) || 0).map((w) => w.word));
+      tpRenderReport();
+      return;
+    }
+    const n = v === "none" ? 0 : v === "all" ? all.length
       : v === "topn" ? Math.max(0, Math.round(Number(tpEl("tpTopN").value) || 0)) : Number(v);
-    tpState.picked = new Set(st.offlist.slice(0, n).map((w) => w.word));
+    tpState.picked = new Set(all.slice(0, n).map((w) => w.word));
     tpState.wordsShown = Math.max(tpState.wordsShown, n);
     tpRenderReport();
     return;
@@ -939,6 +973,8 @@ const TOPIC_CSS = `
 .tp-cov b{text-align:right}.tp-cov b.ok{color:#2c7a3f}
 .tp-words td:nth-child(3),.tp-words td:nth-child(2){text-align:left}
 .tp-words tr.tp-need td{background:#fff6e0}
+.tp-tag{display:inline-block;padding:0 7px;border-radius:9px;font-size:11px;color:#fff;font-weight:700;white-space:nowrap}
+.tp-scope{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0;font-size:13px;font-weight:600}
 .tp-word-tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}
 .tp-topn input{width:70px}
 .tp-pack{border:1px solid #d6e4f5;background:#f6faff;border-radius:10px;padding:10px 12px;margin:8px 0 10px;display:flex;flex-direction:column;gap:8px;font-size:13px}

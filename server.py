@@ -4133,6 +4133,9 @@ def _load_curriculum_vocab():
 
 
 _CURRICULUM_HEADS, _CURRICULUM_FORMS = _load_curriculum_vocab()
+# 표제어·다른 철자만(파생어 칸은 뺀다) — different·important처럼 고등 표제어(differ·import)의 파생어로 실린 쉬운 낱말을
+# 기출 소재·어휘의 '고등 지정 어휘' 암기 목록에 올리지 않으려고 쓴다(2026-11-18)
+_CURRICULUM_HEADSET = {h.strip().lower() for lv in _CURRICULUM_HEADS.values() for e in lv for h in e.split(" / ") if h.strip()}
 
 REWORD_CURRICULUM_RULES = r"""
 
@@ -11527,7 +11530,8 @@ TOPIC_GENRES = ("설명", "주장", "이야기", "실용문")
 TOPIC_SCAN_BATCH = 10          # 한 번에 보내는 지문 수(화면 TOPIC_BATCH와 같다)
 TOPIC_TEXT_MAX = 6000          # 지문 하나의 글자 상한
 TOPIC_STATS_MAX_PASSAGES = 2500  # 어휘 통계 한 번에 받는 지문 수(유형별 모음집 7년 치 34권이 1,336지문이었다)
-TOPIC_OFFLIST_MAX = 400        # 돌려주는 '추가 어휘' 상한
+TOPIC_OFFLIST_MAX = 3000       # 돌려주는 '지정 어휘 밖 낱말' 상한 — 400개로 자르니 암기할 낱말이 다 안 나왔다(2026-11-18 사용자)
+TOPIC_LEVEL_WORDS_MAX = 2000   # 고등·중학교 지정 어휘 낱말 목록 상한(학교급마다)
 TOPIC_WORDS_MAX = 100          # 뜻 채우기 한 번에 받는 낱말 수(화면 TOPIC_WORDS_BATCH와 같다)
 
 TOPIC_SCAN_SCHEMA = {
@@ -11938,6 +11942,7 @@ def topic_vocab_stats(rounds):
     counted = {}         # 센 낱말 → 학교급(목록 밖 None) — 화면이 지문에 색을 칠할 때 쓴다(화면 전용)
     off_forms = {}       # 원래 모양 → 횟수
     off_where = {}       # 원래 모양 → {지문 id}
+    lvl_words = {1: {}, 2: {}, 3: {}}   # 1 중학교·공통 · 2 고등 표제어 · 3 고등 표제어의 파생어 → 낱말 → 횟수·지문·처음 자리
     out_rounds = []
     for r in rounds:
         rc, rt = [0, 0, 0], 0
@@ -11962,6 +11967,18 @@ def topic_vocab_stats(rounds):
                     hard[base] = hard.get(base, 0) + 1
                 else:
                     pc[lv] += 1
+                    if lv in (1, 2):
+                        # 지정 어휘 중 중학교·고등 낱말도 모은다 — 암기 단어장에 '고등까지'·'중학교까지' 넣을 수 있게
+                        hit = _curriculum_rank(base)
+                        key = hit[1] if hit else _topic_offlist_key(base, ())   # 파생어는 단수로(researchers → researcher)
+                        # 고등 낱말이라도 표제어가 아니라 파생어로만 맞은 것(different ← differ, alternative ← alternate)은
+                        # '파생어' 묶음(3)으로 따로 둔다 — 쉬운 낱말이 섞여 '고등' 목록에서는 뺀다
+                        tier = lv if (lv == 1 or (hit and hit[1] in _CURRICULUM_HEADSET)) else 3
+                        g = lvl_words[tier].setdefault(key, {"word": key, "count": 0, "where": set(), "first": pos, "forms": set()})
+                        g["count"] += 1
+                        g["where"].add(p["id"])
+                        if low != key:
+                            g["forms"].add(low)
             plist.append({"id": p["id"], "name": p["name"], "tokens": pt, "coverage": cov(pc, pt),
                           "offlist": [w for w, _n in sorted(hard.items(), key=lambda x: -x[1])][:12]})
             for i in range(3):
@@ -11998,6 +12015,12 @@ def topic_vocab_stats(rounds):
         "offlist": words,
         "ready": bool(_CURRICULUM_FORMS),
         "levels": counted,
+        # 지정 어휘 중 고등 표제어(2)·고등 파생어(3)·중학교·공통(1) 낱말 — 많이 나온 차례
+        "levelWords": {str(lv): [{"word": g["word"], "count": g["count"], "passages": len(g["where"]),
+                                  "forms": sorted(g["forms"])[:4], "first": g["first"]}
+                                 for g in sorted(lvl_words[lv].values(),
+                                                 key=lambda g: (-g["count"], -len(g["where"]), g["word"]))[:TOPIC_LEVEL_WORDS_MAX]]
+                       for lv in (1, 2, 3)},
     }
 
 
