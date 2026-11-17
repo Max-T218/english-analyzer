@@ -343,12 +343,15 @@ async function tpRunTopic() {
     errEl.textContent = "먼저 ① 회차를 넣어 주세요.";
     return;
   }
+  // 소재 분석을 누르면 어휘 분석(무료)도 함께 — 보고서가 한 번에 채워지게(2026-11-18 사용자). 어휘는 금방 끝나 먼저 센다
   if (!todo.length) {
-    errEl.textContent = "분석할 지문의 소재를 모두 정리했습니다. 지문을 더 넣으면 그 지문만 새로 분석합니다.";
+    await tpRunVocab();
+    errEl.textContent = "소재는 모두 정리돼 있어 어휘만 다시 셌습니다. 지문을 더 넣으면 그 지문만 새로 분석합니다.";
     return;
   }
   const per = PRICING ? PRICING.topic : 0;
-  if (!(await costConfirmed(per * todo.length, `${TOPIC_NAME} · 소재 분석 · 지문 ${todo.length}개`, todo.length))) return;
+  if (!(await costConfirmed(per * todo.length, `${TOPIC_NAME} · 소재 분석 · 지문 ${todo.length}개 (어휘 분석은 무료로 함께)`, todo.length))) return;
+  await tpRunVocab();
   if (typeof dropStaleSavedLink === "function") dropStaleSavedLink("topic");
   tpState.busy = true;
   tpEl("tpTopicBtn").disabled = true;
@@ -517,34 +520,34 @@ function tpVocabHtml(forPrint) {
   const stale = tpState.statsKey !== tpKey();
   const need = tpWordsToTarget(st);
   const gap = Math.max(0, TOPIC_TARGET - st.coverage[2]);
-  const legend = `<div class="tp-legend">${TOPIC_LEVELS.map((l, i) => `<span><i style="background:${TOPIC_LEVEL_COLORS[i]}"></i>${esc(l)}${i ? "까지" : ""}</span>`).join("")}<span><i style="background:${TOPIC_OFF_COLOR}"></i>3,000단어 밖</span><span><i class="tp-line-i"></i>읽기 기준선 ${TOPIC_TARGET}%</span></div>`;
+  const legend = `<div class="tp-legend">${TOPIC_LEVELS.map((l, i) => `<span><i style="background:${TOPIC_LEVEL_COLORS[i]}"></i>${esc(l)}${i ? "까지" : ""}</span>`).join("")}<span><i style="background:${TOPIC_OFF_COLOR}"></i>지정 어휘 밖</span><span><i class="tp-line-i"></i>편하게 읽는 기준 ${TOPIC_TARGET}%</span></div>`;
   // 원형: 낱말이 어느 학교급 목록에서 왔는지 / 세로 막대: 지문마다 읽는 비율이 어디에 몰렸는지
   const [c0, c1, c2] = st.coverage;
-  const levelDonut = rpDonutBlock("낱말이 속한 학교급", [
+  const levelDonut = rpDonutBlock("지문 낱말은 어느 단계 어휘일까", [
     { label: "초등", value: Math.round(st.tokens * c0 / 100), color: TOPIC_LEVEL_COLORS[0] },
     { label: "중학교·공통", value: Math.round(st.tokens * (c1 - c0) / 100), color: TOPIC_LEVEL_COLORS[1] },
     { label: "고등(선택)", value: Math.round(st.tokens * (c2 - c1) / 100), color: TOPIC_LEVEL_COLORS[2] },
-    { label: "3,000단어 밖", value: Math.round(st.tokens * (100 - c2) / 100), color: TOPIC_OFF_COLOR },
-  ], tpPct(c2), "읽는 비율");
+    { label: "지정 어휘 밖", value: Math.round(st.tokens * (100 - c2) / 100), color: TOPIC_OFF_COLOR },
+  ], tpPct(c2), "지정 어휘");
   const allP = st.rounds.flatMap((r) => r.passages).filter((p) => p.tokens >= 30);
   const BINS = [[0, 90, "~90"], [90, 92, "90~92"], [92, 94, "92~94"], [94, 95, "94~95"], [95, 96, "95~96"],
     [96, 97, "96~97"], [97, 98, "97~98"], [98, 99, "98~99"], [99, 100.1, "99~"]];
   const BIN_COLORS = ["#d7263d", "#f46036", "#f5a623", "#f2c94c", "#a3d977", "#5cc26b", "#2ec4b6", "#3d8bfd", "#5a4fcf"];
-  const hist = allP.length ? `<div class="tp-chart rp-keep tp-chart-wide"><h5>지문별 읽기 비율 분포 <small>지문 ${allP.length}개 — 3,000단어로 읽는 비율(%)별 지문 수, ${TOPIC_TARGET}% 아래는 붉은 쪽</small></h5>
+  const hist = allP.length ? `<div class="tp-chart rp-keep tp-chart-wide"><h5>지문별 교육부 지정 어휘 비율 <small>지문 ${allP.length}개를 지정 어휘 비율(%)로 나눠 센 지문 수 — ${TOPIC_TARGET}% 아래(붉은 쪽)는 학생이 읽기 버거운 지문</small></h5>
       ${rpColumns(BINS.map(([lo, hi, label], i) => ({ label, color: BIN_COLORS[i],
         value: allP.filter((p) => p.coverage[2] >= lo && p.coverage[2] < hi).length })), "")}</div>` : "";
   const vocabCharts = `<div class="tp-charts">${levelDonut}${hist}</div>`;
   const covs = tpCovBar(st.coverage, "전체", `낱말 ${st.tokens.toLocaleString()}개`) +
     (st.rounds.length > 1 ? st.rounds.map((r) => tpCovBar(r.coverage, r.name, `낱말 ${r.tokens.toLocaleString()}개`)).join("") : "");
-  const levelLine = `초등 단어로 <b>${tpPct(st.coverage[0])}</b> → 중학교·공통까지 <b>${tpPct(st.coverage[1])}</b> → 교육과정 3,000단어(파생어 포함)까지 <b>${tpPct(st.coverage[2])}</b>`;
+  const levelLine = `초등 어휘만 알면 지문 낱말의 <b>${tpPct(st.coverage[0])}</b>, 중학교 어휘까지 알면 <b>${tpPct(st.coverage[1])}</b>, 고등 어휘까지(교육부 지정 어휘 전부) 알면 <b>${tpPct(st.coverage[2])}</b>를 압니다.`;
   const gapLine = gap > 0
-    ? `기준선 ${TOPIC_TARGET}%까지 <b>${gap.toFixed(1)}%p</b> 모자랍니다 — 그 간격이 곧 '추가 어휘'입니다.` +
-      (need ? ` 아래 목록을 위에서부터 <b>${need}개</b> 익히면 ${TOPIC_TARGET}%를 넘습니다.` : "")
-    : `교육과정 3,000단어만으로 기준선 ${TOPIC_TARGET}%를 넘습니다.`;
+    ? `편하게 읽는 기준(${TOPIC_TARGET}%)까지 <b>${gap.toFixed(1)}%p</b> 모자랍니다 — 지정 어휘만으로는 조금 버거운 시험입니다.` +
+      (need ? ` 아래 '지정 어휘 밖 낱말'을 위에서부터 <b>${need}개</b> 외우면 ${TOPIC_TARGET}%를 넘습니다.` : "")
+    : `교육부 지정 어휘만 알아도 편하게 읽는 기준(${TOPIC_TARGET}%)을 넘습니다.`;
   // 어휘가 어려운 지문
   const hard = st.rounds.flatMap((r) => r.passages.map((p) => ({ r: r.name, ...p })))
     .filter((p) => p.tokens >= 30).sort((a, b) => a.coverage[2] - b.coverage[2]).slice(0, 10);
-  const hardHtml = hard.length ? `<table class="tp-list"><thead><tr><th>순위</th><th>회차</th><th>번호</th><th>3,000단어로 읽는 비율</th><th>낯선 낱말(많이 나온 차례)</th></tr></thead><tbody>
+  const hardHtml = hard.length ? `<table class="tp-list"><thead><tr><th>순위</th><th>회차</th><th>번호</th><th>지정 어휘 비율</th><th>지정 어휘 밖 낱말(많이 나온 차례)</th></tr></thead><tbody>
     ${hard.map((p, i) => `<tr><td>${i + 1}</td><td>${esc(p.r)}</td><td>${esc(p.name)}</td><td><b>${tpPct(p.coverage[2])}</b></td>
       <td class="tp-kw">${esc(p.offlist.slice(0, 8).join(", "))}</td></tr>`).join("")}</tbody></table>` : "";
   // 추가 어휘 표
@@ -582,18 +585,19 @@ function tpVocabHtml(forPrint) {
   const more = !forPrint && st.offlist.length > shown
     ? `<button type="button" class="btn ghost small no-print" id="tpMoreWords">더 보기 (${shown}/${st.offlist.length})</button>` : "";
   return `<div class="tp-vocab-sec">
-    ${stale && !forPrint ? `<div class="tp-stale no-print">⚠️ 회차나 지문이 바뀌었습니다. [📊 어휘 분석하기]를 다시 누르면 지금 지문으로 다시 셉니다(무료).</div>` : ""}
-    <h4 class="sec">어휘 분석 — 교육과정 어휘로 몇 % 읽을까</h4>
+    ${stale && !forPrint ? `<div class="tp-stale no-print">⚠️ 회차나 지문이 바뀌었습니다. [📊 어휘만 분석]을 누르면 지금 지문으로 다시 셉니다(무료).</div>` : ""}
+    <h4 class="sec">어휘 분석 — 교육부 지정 어휘로 지문을 얼마나 읽을 수 있나</h4>
+    <div class="tp-explain"><b>교육부 지정 어휘 비율</b>이란? 지문에 나온 낱말 100개 가운데 <b>교육부 지정 어휘</b>(2022 개정 교육과정이 정한 3,000단어 — 초등 800·중학교 1,200·고등 1,000, 변화형·파생어 포함)에 드는 낱말이 몇 개인지입니다. <b>${TOPIC_TARGET}%</b>를 넘으면 지정 어휘를 익힌 학생이 모르는 낱말 없이 편하게 읽는 수준으로 봅니다. 낮을수록 어휘가 어려운 시험입니다.</div>
     <ul class="tp-summary"><li>${levelLine}</li><li>${gapLine}</li>
-      <li>교육과정 3,000단어 밖 낱말은 모두 <b>${st.offlistTotal.toLocaleString()}개</b>(같은 낱말의 변화형은 하나로 셉니다)입니다.</li></ul>
+      <li>교육부 지정 어휘에 없는 낱말은 모두 <b>${st.offlistTotal.toLocaleString()}개</b>(같은 낱말의 변화형은 하나로 셉니다)입니다 — 맨 아래 목록에서 골라 단어장으로 만들 수 있습니다.</li></ul>
     ${vocabCharts}
     ${legend}${covs}
-    ${hardHtml ? `<div class="rp-keep"><h5>어휘가 어려운 지문</h5>${hardHtml}</div>` : ""}
+    ${hardHtml ? `<div class="rp-keep"><h5>어휘가 어려운 지문 <small>지정 어휘 비율이 낮은 차례</small></h5>${hardHtml}</div>` : ""}
     ${forPrint ? "" : tpPeekHtml()}
-    <h4 class="sec">${gap > 0 ? `${TOPIC_TARGET}%까지 필요한 추가 어휘` : "교육과정 3,000단어 밖 어휘"}</h4>
-    <div class="hint">교육과정 3,000단어 밖 낱말을 많이 나온 차례로 모았습니다. '익히면'은 위에서부터 그 낱말까지 익혔을 때 읽을 수 있는 낱말 비율입니다${need ? ` — 색칠한 ${need}개가 ${TOPIC_TARGET}%까지입니다` : ""}. 지문은 PDF의 문제 모양 그대로라 빈칸 자리의 낱말은 빠져 있습니다(보기 줄은 세지 않습니다).</div>
+    <h4 class="sec">교육부 지정 어휘 밖 낱말 — 따로 외워야 할 어휘</h4>
+    <div class="hint">교육부 지정 어휘에 없어 따로 외워야 하는 낱말을 많이 나온 차례로 모았습니다. '외우면'은 위에서부터 그 낱말까지 외웠을 때 지문 낱말을 몇 % 알게 되는지입니다${need ? ` — 색칠한 ${need}개까지 외우면 ${TOPIC_TARGET}%를 넘습니다` : ""}. 지문은 PDF의 문제 모양 그대로라 빈칸 자리의 낱말은 빠져 있습니다(보기 줄은 세지 않습니다).</div>
     ${tools}
-    <table class="tp-list tp-words"><thead><tr>${forPrint ? "" : `<th class="no-print">고르기</th>`}<th>순위</th><th>낱말</th><th>나온 횟수</th><th>나온 지문</th><th>익히면</th></tr></thead>
+    <table class="tp-list tp-words"><thead><tr>${forPrint ? "" : `<th class="no-print">고르기</th>`}<th>순위</th><th>낱말</th><th>나온 횟수</th><th>나온 지문 수</th><th>외우면</th></tr></thead>
       <tbody>${wordRows}</tbody></table>${more}
   </div>`;
 }
@@ -625,7 +629,7 @@ function tpPeekHtml() {
     <h5>같은 지문, 아는 어휘가 달라지면 <small>화면에서만 보입니다</small></h5>
     <div class="tp-peek-ctl">
       <select id="tpPeekSel">${all.map(({ r, p }) => `<option value="${p.id}"${p.id === cur.p.id ? " selected" : ""}>${esc(r.name)} · ${esc(p.name)}</option>`).join("")}</select>
-      ${TOPIC_LEVELS.map((l, i) => `<label class="chk"><input type="radio" name="tpPeekLv" value="${i}"${i === lv ? " checked" : ""}> ${i === 2 ? "교육과정 3,000단어" : esc(l) + (i ? "까지" : " 단어")}</label>`).join("")}
+      ${TOPIC_LEVELS.map((l, i) => `<label class="chk"><input type="radio" name="tpPeekLv" value="${i}"${i === lv ? " checked" : ""}> ${i === 2 ? "고등까지(지정 어휘 전부)" : esc(l) + (i ? "까지" : " 어휘만")}</label>`).join("")}
       <span class="tp-peek-pct">읽을 수 있는 낱말 <b>${tpPct(pct)}</b> <small><mark class="tp-unk">주황</mark> = 모르는 낱말</small></span>
     </div>
     <div class="tp-peek-text">${body}</div>
@@ -645,7 +649,7 @@ function tpReportHtml(forPrint) {
     { label: "회차", value: rounds.length, unit: "회", color: "#4d94ec", sub: rounds.slice(0, 3).map((r) => r.name).join(" · ") + (rounds.length > 3 ? " …" : "") },
     { label: "분석한 지문", value: nPass, unit: "개", color: "#3f9c6b", sub: rows.length ? `소재 정리 ${rows.length}개` : "소재 분석 전" },
     { label: "나온 분야", value: rows.length ? nFields : "–", unit: rows.length ? "가지" : "", color: "#e07b39", sub: `분야 목록 ${TOPIC_FIELDS.length}가지 중` },
-    { label: "3,000단어로 읽는 비율", value: st && st.tokens ? Number(st.coverage[2]).toFixed(1) : "–", unit: st && st.tokens ? "%" : "", color: "#1f5fb8", sub: st && st.tokens ? `기준선 ${TOPIC_TARGET}%` : "어휘 분석 전" },
+    { label: "교육부 지정 어휘 비율", value: st && st.tokens ? Number(st.coverage[2]).toFixed(1) : "–", unit: st && st.tokens ? "%" : "", color: "#1f5fb8", sub: st && st.tokens ? `지문 낱말 중 · ${TOPIC_TARGET}% 넘으면 편하게 읽힘` : "어휘 분석 전" },
   ]);
   const head = reportHeadHtml("기출 소재·어휘 분석", tpState.title || `${rounds.map((r) => r.name).join(" · ")} 소재·어휘 분석`,
     [["회차", esc(rounds.map((r) => r.name).join(", "))], ["지문", `${nPass}개`]]);
@@ -902,6 +906,7 @@ const TOPIC_CSS = `
 .tp-report h5{margin:14px 0 6px;font-size:14px}
 .tp-report h5 small{font-weight:400;color:#777}
 .tp-summary{margin:6px 0 12px;padding-left:18px;line-height:1.7;font-size:13.5px}
+.tp-explain{margin:4px 0 10px;padding:9px 12px;background:#f2f7ff;border-left:4px solid #4d94ec;border-radius:0 8px 8px 0;font-size:13px;line-height:1.7;color:#1b2430}
 .tp-two{display:grid;grid-template-columns:1fr 1.2fr;gap:18px;align-items:start}
 .tp-bar{display:grid;grid-template-columns:96px 1fr 28px;gap:8px;align-items:center;font-size:12.5px;margin:3px 0}
 /* 막대 입체감 — 시험지 분석 리포트 막대(.tv-bar)와 같은 광택·그림자(2026-11-18 사용자) */
@@ -981,8 +986,8 @@ if (typeof HOWTO !== "undefined") {
     steps: [
       "<b>📄 모의고사 PDF로 회차 추가</b>로 시험지·유형별 모음집 PDF를 여러 개 한꺼번에 올립니다. PDF는 이 탭 칸에 끌어다 놓아도 됩니다. 다른 탭의 지문 칸에 넣어 둔 지문은 <b>⬇ 지문 칸에서 회차 추가</b>로 가져옵니다.",
       "PDF 글자를 문항별로 문제 모양 그대로 잘라 넣습니다(무료). 유형별 모음집은 출처를 읽어 시험별로 회차를 묶습니다. 회차 이름을 확인하고, 뺄 지문은 번호 단추를 눌러 끕니다(25~28번 도표·안내문은 처음엔 꺼져 있습니다). 지문으로 저장하려면 회차의 <b>⬆ 지문 칸으로</b>를 누릅니다 — 지문 칸이 펼쳐지고, 답을 채워야 하는 문항(빈칸·순서·삽입 등)이 있으면 <b>AI로 채울지</b>(지문당 값)·정답표대로·문제 모양 그대로 중에서 고른 뒤 [💾 지문 저장]으로 저장합니다.",
-      "<b>🗂️ 소재 분석하기</b>를 누르면 지문마다 분야·한 줄 소재·핵심어를 정리합니다(지문당 값). <b>📊 어휘 분석하기</b>는 무료입니다.",
-      "어휘 분석 아래 <b>추가 어휘</b>에서 낱말을 고르고(<b>상위 ○개 고르기</b>·<b>95%까지 고르기</b>), <b>한 단어장에 ○개씩</b>·<b>정리 순서</b>·<b>묶음 이름</b>·<b>단어장 이름</b>(예: Day {n})을 정한 뒤 <b>📒 고른 낱말로 단어장 만들기</b>를 누릅니다 — 600개를 30개씩이면 단어장 20개가 단어장 탭에 생기고, [💾 사이트 저장]으로 한 폴더에 하나씩 저장됩니다.",
+      "<b>🗂️ 소재·어휘 분석하기</b>를 누르면 지문마다 분야·한 줄 소재·핵심어를 정리하고(지문당 값), 교육부 지정 어휘로 지문을 몇 % 읽을 수 있는지도 함께 셉니다(무료). 어휘만 다시 셀 때는 <b>📊 어휘만 분석</b>.",
+      "어휘 분석 아래 <b>지정 어휘 밖 낱말</b>에서 외울 낱말을 고르고(<b>상위 ○개 고르기</b>·<b>95%까지 고르기</b>), <b>한 단어장에 ○개씩</b>·<b>정리 순서</b>·<b>묶음 이름</b>·<b>단어장 이름</b>(예: Day {n})을 정한 뒤 <b>📒 고른 낱말로 단어장 만들기</b>를 누릅니다 — 600개를 30개씩이면 단어장 20개가 단어장 탭에 생기고, [💾 사이트 저장]으로 한 폴더에 하나씩 저장됩니다.",
       "<b>🖨️ 인쇄 / PDF 변환</b>으로 보고서를 뽑거나 <b>💾 사이트 저장</b>으로 남겨 두고, 나중에 불러와 회차를 더 붙입니다.",
     ],
     tip: "빈칸·순서·삽입 문제도 문제 모양 그대로 분석합니다 — 소재를 정하는 데 정답은 필요 없고, 어휘는 본문 낱말을 셉니다(보기 ①~⑤ 줄과 각주는 뺍니다). 인쇄 보고서에는 지문 원문을 싣지 않습니다. '같은 지문, 아는 어휘가 달라지면' 칸은 화면에서만 보입니다.",
