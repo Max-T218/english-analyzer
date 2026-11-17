@@ -4165,7 +4165,13 @@ function wirePassageDrop(panelEl, mgr, statusFn, opts) {
     // 사진과 PDF는 가는 길이 다르다 — 섞어서 놓아도 각각 제 길로 보낸다
     const pdfs = [...files].filter(isPdf);
     const shots = [...files].filter((f) => !isPdf(f));
-    if (pdfs.length) runPdfImport(pdfs, mgr, statusFn);
+    // 기출 소재·어휘 탭에서는 시험지 PDF를 지문칸이 아니라 그 탭의 회차로 보낸다(2026-11-18 사용자 — 끌어다 놓았더니
+    // 지문칸에 40개가 차고 나머지가 버려졌다. 그 탭은 지문칸에 넣지 않기로 했다)
+    if (pdfs.length && mgr === passageMgr && activeTabId() === "topic" && typeof tpAddPdfs === "function") {
+      tpAddPdfs(pdfs);
+      const sec = document.getElementById("tab-topic");
+      if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (pdfs.length) runPdfImport(pdfs, mgr, statusFn);
     if (!shots.length) return;
     if (withOcr) runOcr(shots, mgr, statusFn);
     else
@@ -4286,7 +4292,7 @@ function syncTabChrome(tab) {
   // 문법문제 마법사는 '넣은 지문으로'를 골랐을 때만 지문칸을 쓴다(grammar.js grammarWantsPassage)
   const grammarNoPassage = tab === "grammar" && !(typeof grammarWantsPassage === "function" && grammarWantsPassage());
   const vocabNoPassage = tab === "vocab" && !(typeof vocabWantsPassage === "function" && vocabWantsPassage());
-  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || grammarNoPassage || vocabNoPassage || tab === "students" || tab === "leveltest" || tab === "pricing";
+  if (sharedPassagePanel) sharedPassagePanel.hidden = onExam || onTrend || grammarNoPassage || vocabNoPassage || tab === "students" || tab === "leveltest" || tab === "pricing" || (tab === "topic" && !(typeof topicWantsPassage === "function" && topicWantsPassage()));   // 기출 소재·어휘는 회차를 탭 안에서 넣고, [⬆ 지문 칸으로]를 눌렀을 때만 지문칸을 편다(2026-11-18 사용자)
   // 단어장 '지문에서 뽑기'는 목표 어법을 쓰지 않는다(사용자) — 칸만 감추고 적어 둔 값은 다른 탭을 위해 그대로 둔다
   const targetGrammarRow = $("targetGrammarRow");
   // 리딩노트도 목표 어법을 쓰지 않는다
@@ -19559,6 +19565,10 @@ const CHART_CSS = `
   box-shadow:0 1px 2px rgba(26,31,43,.22),inset 0 -1px 0 rgba(0,0,0,.08)}
 .rp-hbars .v{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
 .rp-hbars .v.none{color:#9ca3af;font-weight:400}
+.rp-qcols{display:grid;grid-template-columns:repeat(var(--c),1fr);gap:4px 28px}
+.rp-qcols .rp-hbars{gap:4px 8px}.rp-qcols .rp-hbars .t{height:12px}
+@media (max-width:700px){.rp-qcols{grid-template-columns:1fr}}
+.tp-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:#444}.tp-legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:-2px}
 .tp-stack-track i{background-image:linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,0) 55%,rgba(0,0,0,.12))}
 .tp-chart{box-shadow:0 2px 6px rgba(26,31,43,.10)}
 @media print{.tp-chart{break-inside:avoid}}
@@ -19911,18 +19921,23 @@ function quizTestChartsHtml(rows, stats) {
     { label: "틀림", value: tot[1], color: "#e6194b" },
     { label: "확인 중", value: tot[2], color: "#e6b800" },
   ], tot[0] + tot[1] ? `${Math.round((100 * tot[0]) / (tot[0] + tot[1]))}%` : "–", "맞힌 비율");
-  const stack = sub.length ? `<div class="tp-chart rp-keep tp-chart-wide"><h5>학생별 맞음 · 틀림 <small>칸 안 숫자는 문항 수 — 초록 맞음 · 빨강 틀림 · 노랑 확인 중</small></h5>
-      ${rpStackRows(sub.slice().sort((a, b) => ((b.qc || {}).right || 0) - ((a.qc || {}).right || 0)).map((r) => ({ label: r.studentName, parts: [
-        { label: "맞음", value: (r.qc || {}).right || 0, color: "#3cb44b" },
-        { label: "틀림", value: (r.qc || {}).wrong || 0, color: "#e6194b" },
-        { label: "확인 중", value: (r.qc || {}).pending || 0, color: "#e6b800" }] })))}</div>` : "";
   const qs = (stats || []).filter((s) => s.format !== "read" && s.right + s.wrong > 0);
-  // 막대는 문항마다 다른 색(모두 100%면 한 색이라 밋밋했다), 60% 밑은 숫자를 빨갛게(2026-11-18 사용자)
-  const rate = qs.length ? `<div class="tp-chart rp-keep tp-chart-wide"><h5>문항별 정답률 <small>번호마다 맞힌 학생 비율(%) — <b style="color:#d7263d">빨간 숫자</b>는 60% 밑, 반 전체가 많이 틀린 문항</small></h5>
-      ${rpColumns(qs.map((s, k) => {
-        const p = Math.round((100 * s.right) / (s.right + s.wrong));
-        return { label: String(s.no), value: p, color: RP_PALETTE[k % RP_PALETTE.length], warn: p < 60 };
-      }), "%")}</div>` : "";
+  // 문항별 정답률 — 가로 막대(세로 막대는 문항 60개면 숫자가 뭉개졌다, 2026-11-18 사용자). 색은 정답률 구간(초록 → 노랑 → 빨강)
+  const RATE_BANDS = [[90, "#2e9e48", "90% 이상"], [75, "#7cb518", "75~89%"], [60, "#e6b800", "60~74%"],
+    [40, "#f58231", "40~59%"], [0, "#e6194b", "40% 밑"]];
+  const band = (p) => RATE_BANDS.find(([lo]) => p >= lo);
+  const rate = qs.length ? `<div class="tp-chart rp-keep" style="flex:1 1 100%"><h5>문항별 정답률 <small>번호마다 맞힌 학생 비율 — 빨간 막대일수록 반 전체가 많이 틀린 문항</small></h5>
+      <div class="rp-qcols" style="--c:${qs.length > 40 ? 3 : qs.length > 15 ? 2 : 1}">${(() => {
+        // 가로 막대(2026-11-18 사용자) — 문항이 많으면 2~3단으로 나눠 위에서 아래로 번호 차례
+        const per = Math.ceil(qs.length / (qs.length > 40 ? 3 : qs.length > 15 ? 2 : 1));
+        const cols = [];
+        for (let k = 0; k < qs.length; k += per) cols.push(qs.slice(k, k + per));
+        return cols.map((c) => rpHBars(c.map((s) => {
+          const p = Math.round((100 * s.right) / (s.right + s.wrong));
+          return { label: `${s.no}번`, value: p, color: band(p)[1], text: `${p}%` };
+        }), 100)).join("");
+      })()}</div>
+      <div class="tp-legend" style="margin-top:8px">${RATE_BANDS.map(([, c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("")}</div></div>` : "";
   // 반 전체 유형별 정답률(방사형) — 문항별 결과를 유형으로 묶는다
   const byType = {};
   qs.forEach((s) => {
@@ -19932,7 +19947,7 @@ function quizTestChartsHtml(rows, stats) {
     c[1] += s.wrong;
   });
   const radar = rpTypeRadarBlock("유형별 정답률", "반 전체 · 맞힌 비율(%)", byType, "#8e44d6");
-  return `<h4 class="sec">한눈에 보기</h4><div class="tp-charts">${result}${all}${radar}</div>${stack || rate ? `<div class="tp-charts">${stack}${rate}</div>` : ""}`;
+  return `<h4 class="sec">한눈에 보기</h4><div class="tp-charts">${result}${all}${radar}</div>${rate ? `<div class="tp-charts">${rate}</div>` : ""}`;
 }
 
 // 코멘트 초안 — 평균 → 추이 → 재시험·미통과 → 미응시 → 자주 틀린 단어 순으로 이어 쓴다

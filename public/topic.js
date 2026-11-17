@@ -92,6 +92,9 @@ async function tpAddPdfs(files) {
           if (!round) {
             round = { id: tpId("r"), name: rname, passages: [] };
             tpState.rounds.push(round);
+            // 파일 하나 = 회차 하나인 시험지면 PDF를 기억해 둔다 — [⬆ 지문 칸으로]에서 답을 채워 원래 지문으로
+            // 되살릴 때 쓴다(/api/mockrestore). 모음집(출처로 묶은 회차)·저장본에서 불러온 회차에는 없다(저장하지 않는다)
+            if (!p.src) tpPdfData.set(round.id, { data, who });
           }
           if (round.passages.some((x) => x.no === p.no)) return;   // 같은 시험의 같은 번호(겹친 파일)는 한 번만
           const nos = [];
@@ -127,27 +130,68 @@ function tpSortRounds() {
   if (tpState.rounds.every((r) => key(r) !== null)) tpState.rounds.sort((a, b) => key(a) - key(b));
 }
 
-// 요청할 때만 — 이 회차의 지문을 위쪽 공용 지문 칸에 넣는다(거기서 [지문 저장]이나 다른 탭에 쓴다). 문제 모양 그대로다
-function tpRoundToPassages(ri) {
-  const r = tpState.rounds[ri];
-  const jobs = r.passages.filter((p) => p.on).map((p) => ({ name: `${r.name} · ${p.name}`, text: p.text, named: true }));
-  if (!jobs.length) return;
-  if (!confirm(`'${r.name}' 지문 ${jobs.length}개를 위쪽 지문 칸에 넣을까요?
-
-` +
-    "PDF 글자를 문제 모양 그대로 자른 것이라 빈칸·순서·삽입 문제는 원래 지문 모양이 아닙니다. " +
-    "지문 칸에서 [지문 저장]을 누르면 저장함에 남습니다.")) return;
-  const put = passageMgr.appendJobs(jobs);
-  tpStatus(`'${esc(r.name)}' 지문 ${put.added}개를 위쪽 지문 칸에 넣었습니다.` +
-    (put.full ? " 지문 칸이 가득 차 나머지는 넣지 못했습니다." : "") + " 저장하려면 지문 칸의 [💾 지문 저장]을 누르세요.",
-  put.full ? "warn" : "ok");
+/* [⬆ 지문 칸으로] — 이 회차의 지문을 공용 지문 칸에 넣는다(거기서 [지문 저장]이나 다른 탭에 쓴다).
+   이 탭은 평소 지문 칸을 숨기고(2026-11-18 사용자), 이때만 지문 칸을 펼쳐 보인다(topicWantsPassage).
+   빈칸·순서·삽입처럼 답을 채워야 원래 지문이 되는 문항(MOCK_SOLVE_NOS)이 있으면, 지문 칸으로 PDF를 가져올 때와
+   같은 창(askMockFill — AI로 채우기 / 정답표대로 / 원문 그대로)으로 묻는다. 채우기는 그 회차의 PDF가 있어야 한다. */
+const tpPdfData = new Map();   // 회차 id → {data, who} — 저장하지 않는다
+let tpPassageOpen = false;
+function topicWantsPassage() { return tpPassageOpen; }
+function tpShowPassageBox(open) {
+  tpPassageOpen = open;
+  if (typeof syncTabChrome === "function") syncTabChrome(activeTabId());
   const panel = document.querySelector(".passage-panel");
-  if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (open && panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
+async function tpRoundToPassages(ri) {
+  const r = tpState.rounds[ri];
+  const on = r.passages.filter((p) => p.on);
+  if (!on.length) return;
+  const need = [...new Set(on.flatMap((p) => (p.nos && p.nos.length ? p.nos : [p.no]).filter((n) => MOCK_SOLVE_NOS.has(n))))].sort((a, b) => a - b);
+  const pdf = tpPdfData.get(r.id);
+  const status = (html, kind) => tpStatus(html, kind);
+  const closeBtn = ` <button type="button" class="btn ghost small" data-act="hidepass">지문 칸 접기</button>`;
+  if (need.length && pdf) {
+    const pick = await askMockFill(r.name, need);
+    let useAi = pick.mode === "ai";
+    const per = PRICING ? PRICING.mockRestore : 0;
+    if (useAi && per) useAi = await hasEnoughPoints(per * need.length, "모의고사 지문 자동 채우기");
+    const isNeed = (p) => (p.nos && p.nos.length ? p.nos : [p.no]).some((n) => MOCK_SOLVE_NOS.has(n));
+    const plain = on.filter((p) => !isNeed(p)).map((p) => ({ name: p.name, text: p.text }));
+    tpShowPassageBox(true);
+    if (useAi) {
+      try {
+        tpStatus(await mockRestoreInto(passageMgr, pdf.data, need, status, pick, plain) + closeBtn, "ok");
+        refreshTokenDisplay();
+        return;
+      } catch (err) {
+        tpStatus(`❌ ${esc(err.message || "지문을 되살리지 못했습니다.")} 문제 모양 그대로 넣습니다.`, "warn");
+      }
+    }
+    const put = passageMgr.appendJobs(mockJobsInOrder(on.map((p) => ({ name: p.name, text: p.text }))));
+    tpStatus(`'${esc(r.name)}' 지문 ${put.added}개를 아래 지문 칸에 <b>문항 번호 순서대로</b> 넣었습니다. ` +
+      `${esc(mockNosText(need))}번은 답을 채우지 않은 문제 모양 그대로입니다.` +
+      (put.full ? " 지문 칸이 가득 차 나머지는 넣지 못했습니다." : "") +
+      " 지문 칸의 [💾 지문 저장]을 누르면 저장함에 남습니다." + closeBtn, put.full ? "warn" : "ok");
+    return;
+  }
+  if (!confirm(`'${r.name}' 지문 ${on.length}개를 지문 칸에 넣을까요?` +
+    (need.length ? `\n\n${mockNosText(need)}번은 답을 채워야 원래 지문이 되는데, 이 회차는 PDF가 남아 있지 않아(유형별 모음집이거나 ` +
+      "저장함에서 불러온 회차) 자동으로 채울 수 없습니다. 문제 모양 그대로 넣습니다." : "") +
+    "\n\n지문 칸에서 [지문 저장]을 누르면 저장함에 남습니다.")) return;
+  tpShowPassageBox(true);
+  const put = passageMgr.appendJobs(on.map((p) => ({ name: `${r.name} · ${p.name}`, text: p.text, named: true })));
+  tpStatus(`'${esc(r.name)}' 지문 ${put.added}개를 아래 지문 칸에 넣었습니다.` +
+    (put.full ? " 지문 칸이 가득 차 나머지는 넣지 못했습니다." : "") +
+    " 지문 칸의 [💾 지문 저장]을 누르면 저장함에 남습니다." + closeBtn, put.full ? "warn" : "ok");
+}
+tpEl("tpInStatus").addEventListener("click", (e) => {
+  if (e.target.closest('[data-act="hidepass"]')) tpShowPassageBox(false);
+});
 
 function tpPullShared() {
   const jobs = (typeof passageMgr !== "undefined" ? passageMgr.getJobs() : []).filter((j) => (j.text || "").trim().length >= 20);
-  if (!jobs.length) return tpStatus("위쪽 영어 지문 칸이 비어 있습니다. 지문을 넣거나 저장함에서 불러온 뒤 눌러 주세요.", "warn");
+  if (!jobs.length) return tpStatus("지문 칸이 비어 있습니다. 지문 분석 같은 다른 탭에서 지문을 넣거나 저장함에서 불러온 뒤 이 탭에 돌아와 눌러 주세요.", "warn");
   const name = prompt("이 회차의 이름을 적어 주세요 (예: 2026 고3 6월)", `회차 ${tpState.rounds.length + 1}`);
   if (name === null) return;
   tpState.rounds.push({
@@ -173,7 +217,7 @@ function tpRenderRounds() {
         <span class="tp-round-count">지문 ${r.passages.length}개 중 <b>${on}개</b> 분석</span>
         <button type="button" class="btn ghost small" data-act="up" ${ri ? "" : "disabled"} title="앞으로">▲</button>
         <button type="button" class="btn ghost small" data-act="down" ${ri < tpState.rounds.length - 1 ? "" : "disabled"} title="뒤로">▼</button>
-        <button type="button" class="btn ghost small" data-act="pass" title="이 회차의 지문을 위쪽 지문 칸에 넣습니다(저장은 거기서).">⬆ 지문 칸으로</button>
+        <button type="button" class="btn ghost small" data-act="pass" title="이 회차의 지문을 다른 탭이 함께 쓰는 지문 칸에 넣습니다(저장은 거기서).">⬆ 지문 칸으로</button>
         <button type="button" class="btn ghost small" data-act="del">회차 빼기</button>
       </div>
       <div class="tp-chips">${r.passages.map((p, pi) => `<button type="button" class="tp-chip${p.on ? " on" : ""}${tpState.topics[p.id] ? " done" : ""}" data-p="${pi}"
@@ -229,6 +273,21 @@ tpEl("tpPdfFile").addEventListener("change", (e) => {
   e.target.value = "";
 });
 tpEl("tpPullBtn").addEventListener("click", tpPullShared);
+// 이 탭 칸에 PDF를 끌어다 놓아도 회차로(2026-11-18 사용자). 위쪽 지문칸에 놓은 것도 app.js wirePassageDrop이 이리 보낸다
+(() => {
+  const sec = document.getElementById("tab-topic");
+  if (!sec) return;
+  const hasFiles = (e) => [...((e.dataTransfer && e.dataTransfer.types) || [])].includes("Files");
+  ["dragenter", "dragover"].forEach((ev) => sec.addEventListener(ev, (e) => { if (hasFiles(e)) e.preventDefault(); }));
+  sec.addEventListener("drop", (e) => {
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || !files.length) return;
+    e.preventDefault();
+    const pdfs = [...files].filter(isPdf);
+    if (pdfs.length) tpAddPdfs(pdfs);
+    else tpStatus("여기에는 시험지 <b>PDF</b>만 놓을 수 있습니다.", "warn");
+  });
+})();
 tpEl("tpClearBtn").addEventListener("click", () => {
   if (!confirm("넣은 회차와 분석 결과를 모두 비울까요? 저장함에 저장한 것은 그대로 남습니다.")) return;
   TAB_SAVE.topic.clearResults();
@@ -890,8 +949,8 @@ if (typeof HOWTO !== "undefined") {
     title: `🗂️ ${TOPIC_NAME} 만드는 법`,
     lead: "모의고사·수능 여러 회차를 넣으면 어떤 소재가 나왔는지 분야별로 정리하고, 교육과정 3,000단어로 지문을 몇 % 읽을 수 있는지와 그 간격을 메울 추가 어휘를 뽑아 단어장으로 보냅니다.",
     steps: [
-      "<b>📄 모의고사 PDF로 회차 추가</b>로 시험지·유형별 모음집 PDF를 여러 개 한꺼번에 올립니다. 위쪽 지문 칸에 넣은 지문은 <b>⬇ 위 지문 칸에서 회차 추가</b>로 가져옵니다.",
-      "PDF 글자를 문항별로 문제 모양 그대로 잘라 넣습니다(무료). 유형별 모음집은 출처를 읽어 시험별로 회차를 묶습니다. 회차 이름을 확인하고, 뺄 지문은 번호 단추를 눌러 끕니다(25~28번 도표·안내문은 처음엔 꺼져 있습니다). 지문을 저장하려면 회차의 <b>⬆ 지문 칸으로</b>를 누른 뒤 위쪽 지문 칸에서 저장합니다.",
+      "<b>📄 모의고사 PDF로 회차 추가</b>로 시험지·유형별 모음집 PDF를 여러 개 한꺼번에 올립니다. PDF는 이 탭 칸에 끌어다 놓아도 됩니다. 다른 탭의 지문 칸에 넣어 둔 지문은 <b>⬇ 지문 칸에서 회차 추가</b>로 가져옵니다.",
+      "PDF 글자를 문항별로 문제 모양 그대로 잘라 넣습니다(무료). 유형별 모음집은 출처를 읽어 시험별로 회차를 묶습니다. 회차 이름을 확인하고, 뺄 지문은 번호 단추를 눌러 끕니다(25~28번 도표·안내문은 처음엔 꺼져 있습니다). 지문으로 저장하려면 회차의 <b>⬆ 지문 칸으로</b>를 누릅니다 — 지문 칸이 펼쳐지고, 답을 채워야 하는 문항(빈칸·순서·삽입 등)이 있으면 <b>AI로 채울지</b>(지문당 값)·정답표대로·문제 모양 그대로 중에서 고른 뒤 [💾 지문 저장]으로 저장합니다.",
       "<b>🗂️ 소재 분석하기</b>를 누르면 지문마다 분야·한 줄 소재·핵심어를 정리합니다(지문당 값). <b>📊 어휘 분석하기</b>는 무료입니다.",
       "어휘 분석 아래 <b>추가 어휘</b>에서 낱말을 고르고(<b>상위 ○개 고르기</b>·<b>95%까지 고르기</b>), <b>한 단어장에 ○개씩</b>·<b>정리 순서</b>·<b>묶음 이름</b>·<b>단어장 이름</b>(예: Day {n})을 정한 뒤 <b>📒 고른 낱말로 단어장 만들기</b>를 누릅니다 — 600개를 30개씩이면 단어장 20개가 단어장 탭에 생기고, [💾 사이트 저장]으로 한 폴더에 하나씩 저장됩니다.",
       "<b>🖨️ 인쇄 / PDF 변환</b>으로 보고서를 뽑거나 <b>💾 사이트 저장</b>으로 남겨 두고, 나중에 불러와 회차를 더 붙입니다.",
