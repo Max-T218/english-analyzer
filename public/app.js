@@ -19514,14 +19514,19 @@ function rpStackRows(rows) {
   }).join("");
 }
 // 세로 막대(지문 분포) — bins [{label, value, color}]
+// 막대마다 다른 색(2026-11-18 사용자 — 값이 같아 한 색으로만 칠해지면 밋밋하다). 이웃끼리 잘 갈리는 차례
+const RP_PALETTE = ["#4363d8", "#f58231", "#3cb44b", "#e6194b", "#8e44d6", "#00a6c8", "#e6b800", "#f032e6",
+  "#469990", "#9a6324", "#7cb518", "#1f3a93", "#ff7eb6", "#800000"];
 function rpColumns(bins, unit) {
   const max = Math.max(1, ...bins.map((b) => b.value));
   const W = 560, H = 170, pad = 26, bw = (W - pad) / bins.length;
   const bars = bins.map((b, i) => {
     const h = (b.value / max) * (H - 50);
     const x = pad + i * bw + bw * 0.15, y = H - 28 - h;
+    // 막대가 좁으면(문항 30개 등) 숫자가 옆 숫자와 겹친다 — 글씨를 줄이고 단위를 뗀다
+    const narrow = bw < 30, vtxt = `${b.value}${narrow ? "" : unit || ""}`;
     return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw * 0.7).toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="${b.color}" style="filter:drop-shadow(0 2px 2px rgba(26,31,43,.25))"/><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw * 0.7).toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="url(#rpColGloss)"/>
-      ${b.value ? `<text x="${(x + bw * 0.35).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" class="tp-col-v">${b.value}${unit || ""}</text>` : ""}
+      ${b.value || b.warn ? `<text x="${(x + bw * 0.35).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" class="tp-col-v" style="${narrow ? `font-size:${bw < 20 ? 8 : 9.5}px;` : ""}${b.warn ? "fill:#d7263d;" : ""}">${vtxt}</text>` : ""}
       <text x="${(x + bw * 0.35).toFixed(1)}" y="${H - 12}" text-anchor="middle" class="tp-col-l">${esc(b.label)}</text>`;
   }).join("");
   return `<svg class="tp-cols" viewBox="0 0 ${W} ${H}" width="100%" role="img"><defs><linearGradient id="rpColGloss" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset=".45" stop-color="#fff" stop-opacity=".05"/><stop offset="1" stop-color="#000" stop-opacity=".12"/></linearGradient></defs><line x1="${pad}" x2="${W}" y1="${H - 28}" y2="${H - 28}" stroke="#cfd6df"/>${bars}</svg>`;
@@ -19747,8 +19752,8 @@ function reportChartSvg(tests, avg) {
   }
   done.forEach((t, i) => {
     const cx = L + slot * i + slot / 2, bw = 36;
-    // 막대 색 = 점수대(REPORT_BANDS), 미통과는 빨간 점선 테두리(2026-11-18 사용자 — 여러 색으로)
-    const col = reportBand(t.bestPercent)[3];
+    // 미통과는 빨간 점선 테두리
+    const col = RP_PALETTE[i % RP_PALETTE.length];   // 시험마다 다른 색(2026-11-18 사용자 — 점수가 같으면 한 색뿐이었다)
     const top = y(t.bestPercent), h = y(0) - top;
     const name = t.title.length > 7 ? t.title.slice(0, 7) + "…" : t.title;
     g += `<rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${h}" rx="4" fill="${col}" filter="url(#${gradId}s)"
@@ -19765,7 +19770,7 @@ function reportChartSvg(tests, avg) {
       <text x="${cx}" y="${H - B + 31}" font-size="10.5" text-anchor="middle" fill="#898781">${esc(fmtDateTime(t.lastAt).slice(0, 5))}</text>`;
   });
   const legend = `<text x="${L}" y="15" font-size="11.5" fill="#52514e">
-      ${REPORT_BANDS.map(([, , label, c], i) => `<tspan ${i ? 'dx="8" ' : ""}fill="${c}">■</tspan> ${label}`).join("")}<tspan dx="12" fill="#dc2626">┅</tspan> 미통과<tspan dx="10" fill="#dc2626">━</tspan> 합격선<tspan dx="10" fill="#0b0b0b">━</tspan> 첫 시도</text>`;
+      막대 색은 시험마다 다릅니다<tspan dx="12" fill="#dc2626">┅</tspan> 미통과<tspan dx="10" fill="#dc2626">━</tspan> 합격선<tspan dx="10" fill="#0b0b0b">━</tspan> 첫 시도</text>`;
   return `<svg class="rp-chart" viewBox="0 0 ${W} ${H}" style="width:100%; max-width:${W}px; height:auto;"
       font-family="Malgun Gothic, 맑은 고딕, sans-serif" role="img" aria-label="시험별 점수 그래프">${legend}${g}</svg>`;
 }
@@ -19912,10 +19917,11 @@ function quizTestChartsHtml(rows, stats) {
         { label: "틀림", value: (r.qc || {}).wrong || 0, color: "#e6194b" },
         { label: "확인 중", value: (r.qc || {}).pending || 0, color: "#e6b800" }] })))}</div>` : "";
   const qs = (stats || []).filter((s) => s.format !== "read" && s.right + s.wrong > 0);
-  const rate = qs.length ? `<div class="tp-chart rp-keep tp-chart-wide"><h5>문항별 정답률 <small>번호마다 맞힌 학생 비율 — 빨강일수록 반 전체가 많이 틀린 문항</small></h5>
-      ${rpColumns(qs.map((s) => {
+  // 막대는 문항마다 다른 색(모두 100%면 한 색이라 밋밋했다), 60% 밑은 숫자를 빨갛게(2026-11-18 사용자)
+  const rate = qs.length ? `<div class="tp-chart rp-keep tp-chart-wide"><h5>문항별 정답률 <small>번호마다 맞힌 학생 비율(%) — <b style="color:#d7263d">빨간 숫자</b>는 60% 밑, 반 전체가 많이 틀린 문항</small></h5>
+      ${rpColumns(qs.map((s, k) => {
         const p = Math.round((100 * s.right) / (s.right + s.wrong));
-        return { label: String(s.no), value: p, color: p >= 80 ? "#3cb44b" : p >= 60 ? "#7cb518" : p >= 40 ? "#f5b800" : p >= 20 ? "#f58231" : "#e6194b" };
+        return { label: String(s.no), value: p, color: RP_PALETTE[k % RP_PALETTE.length], warn: p < 60 };
       }), "%")}</div>` : "";
   // 반 전체 유형별 정답률(방사형) — 문항별 결과를 유형으로 묶는다
   const byType = {};
