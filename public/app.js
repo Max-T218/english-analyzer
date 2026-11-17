@@ -6711,7 +6711,14 @@ function buildBriefHtml(d, job, total, images) {
   const bo = d.outline;
   const bStages = bo && Array.isArray(bo.stages) ? bo.stages : [];
   if (bo && (bo.oneLine || bo.topicEn || bStages.length)) {
+    /* 세 토막으로 나눈다(2026-11-17 사용자) — (가) 제목·한 줄 요약 (나) 흐름표
+       (다) 흐름도·되풀이 낱말. 한 덩어리였을 때는 마지막 문장 카드 뒤에 70%가 비어
+       있어도 통째로 다음 쪽으로 넘어가, 지문마다 반쪽짜리 쪽이 두 장씩 생겼다
+       (25년 10월 고2 18지문 89쪽 중 내용은 61쪽 분량). 토막마다 쪼개지지만 않게
+       두고, 앞 토막은 남는 자리로 올라간다. 그림 크기는 그대로 둔다(사용자). */
     const body = [];
+    const flowBody = [];
+    const restBody = [];
     if (bo.topicEn) {
       body.push(`<div class="bf-topic">${safeHTML(bo.topicEn)}</div>`);
     }
@@ -6728,13 +6735,13 @@ function buildBriefHtml(d, job, total, images) {
         <td class="ol-cue">${st && st.cue ? `<code>${esc(st.cue)}</code>` : ""}</td>
         <td>${safeHTML((st && st.content) || "")}</td>
       </tr>`).join("");
-      body.push(`<div class="bf-sub">어떤 차례로 흘러가는가</div>`);
-      body.push(`<div class="table-wrap"><table class="outline">
+      flowBody.push(`<div class="bf-sub">어떤 차례로 흘러가는가</div>`);
+      flowBody.push(`<div class="table-wrap"><table class="outline">
         <thead><tr><th>단계</th><th>문장</th><th>이 대목이 하는 일</th><th>시작 신호</th><th>내용</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`);
     }
     if (bStages.length) {
-      body.push(`<div class="bf-sub">글이 이렇게 이어집니다</div>`);
+      restBody.push(`<div class="bf-sub">글이 이렇게 이어집니다</div>`);
       const nodes = bStages.map((st, i) => {
         const q = String((st && st.bridge) || "").trim();
         const box = `<div class="bf-node"><b>${esc((st && st.name) || "")}</b>` +
@@ -6745,23 +6752,26 @@ function buildBriefHtml(d, job, total, images) {
           : `<div class="bf-arrow">${q ? `<span>${esc(q)}</span>` : ""}</div>`;
         return box + arrow;
       }).join("");
-      body.push(`<div class="bf-flow">${nodes}</div>`);
+      restBody.push(`<div class="bf-flow">${nodes}</div>`);
     }
     // 되풀이되는 말 — 주제문 판정(②)은 소책자에 없지만, 주제를 스스로 잡아 보는
     // 재료로는 이 낱말 모음이 그대로 쓸모가 있다.
     const bKw = bo && Array.isArray(bo.keywords) ? bo.keywords : [];
     if (bKw.length) {
-      body.push(`<div class="bf-sub">되풀이되는 말 — 주제를 가리키는 낱말들</div>`);
-      body.push(`<div class="ol-keywords">${
+      restBody.push(`<div class="bf-sub">되풀이되는 말 — 주제를 가리키는 낱말들</div>`);
+      restBody.push(`<div class="ol-keywords">${
         bKw.map((k) => `<span><b>${esc((k && k.en) || "")}</b> ${esc((k && k.ko) || "")}</span>`).join("")
       }</div>`);
-      if (bo.keywordNote) body.push(`<div class="ol-kw-note">${safeHTML(bo.keywordNote)}</div>`);
+      if (bo.keywordNote) restBody.push(`<div class="ol-kw-note">${safeHTML(bo.keywordNote)}</div>`);
     }
-    parts.push(`
-      <div class="pg-blk brief-tail">
-      <h3 class="section"><span class="num">Ⅱ.</span> 주제 &amp; 흐름 요약</h3>
-      ${body.join("")}
-      </div>`);
+    // 제목은 (가)에 붙인다 — (가)가 비면 다음 토막이 제목을 데려간다(제목만 홀로 남지 않게)
+    const head = `<h3 class="section"><span class="num">Ⅱ.</span> 주제 &amp; 흐름 요약</h3>`;
+    let headUsed = false;
+    [body, flowBody, restBody].forEach((b) => {
+      if (!b.length) return;
+      parts.push(`<div class="pg-blk brief-tail">${headUsed ? "" : head}${b.join("")}</div>`);
+      headUsed = true;
+    });
     /* 배경지식은 덩어리를 따로 둔다. 요약 덩어리에 넣었더니 185px가 늘어 실제 시험지
        지문 6개 중 4개가 A4 한 쪽(1017px)을 넘었다 — brief-tail은 쪽 사이에서 안 잘리게
        묶여 있어 넘치면 통째로 다음 쪽으로 밀린다. 따로 두면 요약은 제자리에 남고
