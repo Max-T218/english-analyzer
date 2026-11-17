@@ -314,6 +314,10 @@ PRICE_DECODE_PIC_KRW = int(os.environ.get("PRICE_DECODE_PIC_KRW", "300"))
 # 내용 한장정리(/api/explain), 지문 1개당 — 원문 없이 우리말로 글 내용을 풀어 주는 한 쪽. Flash 한 번이고
 # 원문을 옮기지 않아 출력이 리딩노트보다 짧다. 100은 원가 실측 전 임시값 — Render 로그 [usage] explain으로 맞출 것
 PRICE_EXPLAIN_KRW = int(os.environ.get("PRICE_EXPLAIN_KRW", "100"))
+# 기출 소재·어휘(2026-11-18 사용자 — "테스트해 보면서 가격 정하자"). 둘 다 원가 실측 전 임시값이다 —
+# Render 로그 [usage] topicscan·topicwords로 재서 맞출 것. 어휘 통계(/api/vocabstats)는 AI가 없어 0원.
+PRICE_TOPIC_KRW = int(os.environ.get("PRICE_TOPIC_KRW", "20"))              # 소재 분석, 지문 1개당
+PRICE_TOPIC_WORDS_KRW = int(os.environ.get("PRICE_TOPIC_WORDS_KRW", "30"))  # 단어장으로 보낼 때 뜻 달기, 한 번(100단어까지)당
 PRICE_MCQ_PLAIN_KRW = int(os.environ.get("PRICE_MCQ_PLAIN_KRW", "250"))    # 객관식·지문유지, (지문×유형) 1개당
 PRICE_MCQ_TRANSFORM_KRW = int(os.environ.get("PRICE_MCQ_TRANSFORM_KRW", "250"))  # 객관식·지문변형, (지문×유형) 1개당
 # 주관식, (지문×유형) 1개당. 객관식과 같은 250원으로 맞춘다 — 주관식도 열다섯 유형 중
@@ -1477,7 +1481,7 @@ def _asset_version():
     stamp = 0.0
     # 만드는 법·결과물 예시 그림(howto-*)도 본다 — 2026-10-07에 그림만 갈아 끼웠다가 표식이 그대로여서
     # 옛 그림('홍보용' 제목)이 계속 보였다.
-    names = ["app.js", "trend.js", "grammar.js", "decode.js", "explain.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
+    names = ["app.js", "trend.js", "grammar.js", "decode.js", "explain.js", "topic.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
         p.name for pat in ("sample-*.jpg", "howto-*.jpg", "howto-*.png") for p in sorted(PUBLIC_DIR.glob(pat))
     ]
     for name in names:
@@ -11401,6 +11405,397 @@ def call_gemini_explain(passage, api_key, model, shorten_from=None):
     return _finish_explain(_gemini_json(payload, api_key, model, _EXPLAIN_TRUNC_MSG, label="explain"))
 
 
+# ══════ 기출 소재·어휘(2026-11-18 사용자) ══════
+# 모의고사·수능 여러 회차의 지문을 넣으면 ① 지문마다 분야·한 줄 소재·핵심어를 붙이고(/api/topicscan, Flash)
+# ② 교육과정 3,000단어로 지문 낱말을 몇 % 읽을 수 있는지 센다(/api/vocabstats, AI 없음·0원)
+# ③ 3,000단어 밖 낱말 중 고른 것에 뜻을 달아 단어장으로 보낸다(/api/topicwords, Flash).
+# 원문은 저장·인쇄하지 않는다 — 결과는 소재·핵심어·낱말 통계뿐이다. 화면은 public/topic.js 한 곳.
+# 분야 목록은 화면 topic.js의 TOPIC_FIELDS와 같은 값이다(차례가 표·그래프 차례).
+TOPIC_FIELDS = ("인문·철학", "심리·행동", "사회·문화", "경제·경영", "정치·법·윤리", "교육·학습",
+                "언어·문학", "역사", "예술", "생명과학·의학", "물리·화학·지구과학", "환경·생태",
+                "기술·정보", "스포츠·건강", "실용문")
+TOPIC_GENRES = ("설명", "주장", "이야기", "실용문")
+TOPIC_SCAN_BATCH = 10          # 한 번에 보내는 지문 수(화면 TOPIC_BATCH와 같다)
+TOPIC_TEXT_MAX = 6000          # 지문 하나의 글자 상한
+TOPIC_STATS_MAX_PASSAGES = 400 # 어휘 통계 한 번에 받는 지문 수(4회 × 28지문 넉넉히)
+TOPIC_OFFLIST_MAX = 400        # 돌려주는 '추가 어휘' 상한
+TOPIC_WORDS_MAX = 100          # 뜻 채우기 한 번에 받는 낱말 수(화면 TOPIC_WORDS_BATCH와 같다)
+
+TOPIC_SCAN_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "items": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "id": {"type": "STRING"},
+                    "field": {"type": "STRING", "enum": list(TOPIC_FIELDS)},
+                    "topic": {"type": "STRING"},
+                    "keywords": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "genre": {"type": "STRING", "enum": list(TOPIC_GENRES)},
+                },
+                "required": ["id", "field", "topic", "keywords", "genre"],
+                "propertyOrdering": ["id", "field", "topic", "keywords", "genre"],
+            },
+        },
+    },
+    "required": ["items"],
+}
+
+TOPIC_SCAN_SYSTEM_PROMPT = """너는 한국 고등학교 영어 교사다. 모의고사·수능 영어 지문 여러 개를 받아, 선생님이 '올해 어떤 소재가
+나왔는지' 표로 정리할 수 있게 지문마다 아래를 정한다. 지문은 문제 상태 그대로일 수 있다 — 빈칸(___), 순서 (A)(B)(C),
+삽입 ①~⑤ 표시가 섞여 있어도 글의 내용으로 판단한다.
+
+- `id` — 받은 지문의 id를 그대로.
+- `field` — 아래 목록에서 가장 가까운 분야 하나: """ + ", ".join(TOPIC_FIELDS) + """.
+  · 글이 다루는 '내용'의 분야로 고른다. 학습·공부 방법이면 교육·학습, 마음·습관·의사결정이면 심리·행동,
+    광고·소비·시장이면 경제·경영, 인공지능·인터넷·기계면 기술·정보, 동식물·생태계·기후면 환경·생태.
+  · 안내문·광고문·도표 설명·인물 소개처럼 정보를 전하는 실용 글은 실용문.
+- `topic` — 한 줄 소재(우리말 명사구, 25자 안쪽). 분야 이름을 되풀이하지 말고 구체적으로.
+  예: "디지털 기기와 주의력 분산", "과학 이론이 바뀌는 과정", "협상에서 첫 제안의 영향".
+- `keywords` — 그 소재를 대표하는 영어 핵심어 3~5개(지문에 나온 낱말 그대로, 소문자, 고유명사 제외).
+- `genre` — 설명(정보·현상 설명) / 주장(필자의 주장·요지) / 이야기(일화·서사·심경) / 실용문 중 하나.
+
+받은 지문 수만큼 빠짐없이, 받은 차례대로 답한다."""
+
+
+def parse_topic_passages(req, limit):
+    """[{id, text}] — 화면이 보낸 지문을 다듬는다. id는 화면이 정한 짧은 열쇠다."""
+    out = []
+    for i, p in enumerate((req.get("passages") or [])[:limit]):
+        if not isinstance(p, dict):
+            continue
+        text = re.sub(r"\s+", " ", str(p.get("text") or "")).strip()[:TOPIC_TEXT_MAX]
+        if len(text) < 20:
+            continue
+        pid = re.sub(r"[^A-Za-z0-9_-]", "", str(p.get("id") or ""))[:20] or f"p{i}"
+        out.append({"id": pid, "text": text, "name": re.sub(r"[\r\n<>]", " ", str(p.get("name") or ""))[:80]})
+    return out
+
+
+def call_gemini_topic_scan(passages, api_key, model):
+    """지문 여러 개 → {items:[{id, field, topic, keywords, genre}]}. 받은 id만 남긴다."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. 관리자에게 문의하세요.")
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+    user = "\n\n".join(f"### id: {p['id']}\n{p['text']}" for p in passages)
+    payload = {
+        "systemInstruction": {"parts": [{"text": TOPIC_SCAN_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 8192,
+            "responseMimeType": "application/json",
+            "responseSchema": TOPIC_SCAN_SCHEMA,
+        },
+    }
+    result = _gemini_json(payload, api_key, model, "소재를 정리하다가 잘렸습니다. 지문을 나눠 다시 시도해 주세요.",
+                          label="topicscan")
+    want = {p["id"] for p in passages}
+    items, seen = [], set()
+    for it in result.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        pid = str(it.get("id") or "").strip()
+        if pid not in want or pid in seen:
+            continue
+        seen.add(pid)
+        field = it.get("field") if it.get("field") in TOPIC_FIELDS else "사회·문화"
+        genre = it.get("genre") if it.get("genre") in TOPIC_GENRES else "설명"
+        kws = []
+        for k in it.get("keywords") or []:
+            k = re.sub(r"[^A-Za-z' -]", "", str(k or "")).strip().lower()[:30]
+            if k and k not in kws:
+                kws.append(k)
+        items.append({"id": pid, "field": field, "genre": genre,
+                      "topic": _decode_plain(it.get("topic"), 60), "keywords": kws[:5]})
+    return {"items": items}
+
+
+# ── 어휘 통계(AI 없음) ──
+_TOPIC_TOKEN_RE = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)*")
+_TOPIC_NT = {"wo": "will", "ca": "can", "sha": "shall", "ai": "be"}
+# (끝 꼴, 바꿀 꼴) — 표제어로 되돌려 보는 파생 꼴. 짐작이라 통계(기출 소재·어휘)에서만 쓴다
+_TOPIC_DERIV_PAIRS = (
+    ("ibility", "ible"), ("ility", "le"), ("anation", "ain"), ("tific", "ce"), ("ification", "ify"),
+    ("iety", "y"), ("ious", "ion"), ("ence", "ent"), ("ency", "ent"), ("ance", "ant"), ("ancy", "ant"),
+    ("iance", "y"), ("sdom", "se"), ("dom", ""), ("duct", "duce"), ("duction", "duce"), ("tral", "ter"), ("tral", "tre"), ("sponse", "spond"), ("ception", "ceive"),
+    ("cription", "cribe"), ("ision", "ide"), ("ission", "it"), ("ution", "ve"), ("ution", "ute"),
+    ("ysis", "yze"), ("ical", "y"), ("ist", "y"), ("ician", "ic"), ("ial", "y"), ("epth", "eep"),
+    ("idth", "ide"), ("ength", "ong"), ("ation", ""), ("ation", "e"), ("ition", ""), ("ition", "e"),
+    ("ment", ""), ("ness", ""), ("ity", ""), ("ity", "e"), ("ive", ""), ("ive", "e"), ("al", ""), ("al", "e"),
+    ("ly", ""), ("er", ""), ("or", ""), ("ful", ""), ("less", ""), ("ous", ""), ("ure", ""), ("ure", "e"),
+    ("atic", "a"), ("tic", ""), ("ieth", "y"), ("en", ""), ("ening", ""), ("ing", ""),
+)
+# 인칭·지시 낱말의 다른 모양 — 목록에는 표제어(she, they …)만 있다
+_TOPIC_FUNCTION_FORMS = {
+    "me": "i", "my": "i", "mine": "i", "myself": "i", "him": "he", "his": "he", "himself": "he",
+    "her": "she", "hers": "she", "herself": "she", "us": "we", "our": "we", "ours": "we", "ourselves": "we",
+    "them": "they", "their": "they", "theirs": "they", "themselves": "they", "its": "it", "itself": "it",
+    "your": "you", "yours": "you", "yourself": "you", "yourselves": "you", "whom": "who", "whose": "who",
+    "these": "this", "those": "that", "an": "a", "born": "bear", "lain": "lie", "laid": "lay",
+}
+
+
+def _curriculum_level(word):
+    """낱말의 교육과정 학교급 차례(0 초등 · 1 중학교·공통 · 2 고등). 목록 밖이면 None.
+    굴절·불규칙(_curriculum_rank)으로 먼저 맞추고, 안 되면 파생어(접사)까지 넉넉히(_curriculum_known과 같은 짐작)
+    본다 — '3,000단어(파생어 포함)로 읽을 수 있는가'를 세는 것이라 파생어도 아는 낱말로 친다."""
+    w = word.lower()
+    w = _TOPIC_FUNCTION_FORMS.get(w, w)
+    hit = _curriculum_rank(w)
+    if hit:
+        return hit[0]
+    # 흔한 파생 꼴 — explanation → explain, scientific → science, freedom → free … (낱말 가족으로 센다)
+    tries = {w}
+    if w.endswith("ies") and len(w) > 5:
+        tries.add(w[:-3] + "y")
+    elif w.endswith("es") and len(w) > 5:
+        tries.update({w[:-2], w[:-1]})
+    elif w.endswith("s") and not w.endswith("ss") and len(w) > 4:
+        tries.add(w[:-1])
+    for t in tries:
+        for a, b in _TOPIC_DERIV_PAIRS:
+            if t.endswith(a) and len(t) - len(a) >= (2 if len(a) >= 4 else 3):   # ability·response는 줄기가 둘
+                hit = _curriculum_rank(t[:-len(a)] + b)
+                if hit:
+                    return hit[0]
+    if not _curriculum_known(w):
+        # 합성어(feedback, workplace) — 앞뒤가 모두 목록 낱말이면 아는 낱말로 친다
+        for i in range(3, len(w) - 2):
+            a, b = _curriculum_rank(w[:i]), _curriculum_rank(w[i:])
+            if a and b:
+                return max(a[0], b[0])
+        return None
+    # 어느 학교급인지는 접사를 뗀 표제어들 중 가장 이른 것으로 — 짐작이라 통계용으로만 쓴다
+    best = None
+    for p in ("",) + _CURRICULUM_PREFIXES:
+        if p and not (w.startswith(p) and len(w) - len(p) >= 3):
+            continue
+        core = w[len(p):]
+        for suf in ("",) + _CURRICULUM_SUFFIXES:
+            if suf and not (core.endswith(suf) and len(core) - len(suf) >= 3):
+                continue
+            b = core[:-len(suf)] if suf else core
+            for c in (b, b + "e", b + "y", b[:-1] + "y" if b.endswith("i") else b):
+                r = _CURRICULUM_FORMS.get(c)
+                if r is not None and (best is None or r < best):
+                    best = r
+    return best if best is not None else 2
+
+
+def _topic_tokens(text):
+    """지문 → [(셀 낱말, 원래 모양, 대문자로 시작했나)]. 고유명사(문장 가운데 대문자)·한 글자(a·I 제외)·숫자는 뺀다.
+    don't → do, it's → it처럼 줄임은 앞 낱말만 센다."""
+    out = []
+    text = str(text or "")
+    for m in _TOPIC_TOKEN_RE.finditer(text):
+        tok = m.group(0).replace("’", "'")
+        low = tok.lower()
+        if low.endswith("n't"):
+            base = low[:-3]
+            base = _TOPIC_NT.get(base, base)
+        else:
+            base = low.split("'")[0]
+        if not base or (len(base) == 1 and base not in ("a", "i")):
+            continue
+        before = text[:m.start()].rstrip()
+        if tok[0].isupper() and base != "i" and before and before[-1] not in ".?!\"“”:;([—-\n①②③④⑤":
+            continue   # 문장 가운데 대문자 — 사람·땅 이름으로 본다
+        if tok.isupper() and len(tok) > 1:
+            continue   # 약어(DNA, CEO)
+        out.append((base, low, tok[0].isupper()))
+    return out
+
+
+def _topic_offlist_key(word, present):
+    """목록 밖 낱말을 묶을 열쇠 — adapted·adapting을 adapt 하나로. 같은 묶음 안에 있는 모양 중 가장 짧은 것."""
+    cands = [word]
+    for end, rep in (("ies", "y"), ("ied", "y"), ("es", ""), ("s", ""), ("ed", ""), ("ed", "e"),
+                     ("ing", ""), ("ing", "e"), ("d", ""), ("ly", "")):
+        if word.endswith(end) and len(word) - len(end) >= 3:
+            b = word[:-len(end)] + rep
+            cands.append(b)
+            if len(b) > 3 and b[-1] == b[-2]:
+                cands.append(b[:-1])
+    hits = [c for c in cands[1:] if c in present]
+    if hits:
+        return min(hits, key=len)
+    # 복수형만 나왔으면 단수로 적는다(participants → participant) — 단어장에 표제어 모양으로 넘어가게
+    if word.endswith("ies") and len(word) > 5:
+        return word[:-3] + "y"
+    if re.search(r"(?:ch|sh|x|ss)es$", word):
+        return word[:-2]
+    if word.endswith("s") and len(word) > 4 and not re.search(r"(?:ss|us|is|ics)$", word):
+        return word[:-1]
+    return word
+
+
+def topic_vocab_stats(rounds):
+    """회차 [{name, passages:[{id, name, text}]}] → 어휘 통계.
+    지문마다: 센 낱말 수, 학교급별 누적 비율(초등 / +중학교·공통 / +고등 = 3,000단어).
+    전체: 같은 비율, 회차별 비율, 3,000단어 밖 낱말을 많이 나온 차례로 + 위에서부터 익히면 오르는 누적 비율."""
+    def cov(counts, total):
+        if not total:
+            return [0, 0, 0]
+        a = counts[0] / total
+        b = a + counts[1] / total
+        c = b + counts[2] / total
+        return [round(a * 100, 1), round(b * 100, 1), round(c * 100, 1)]
+
+    level_cache = {}
+    # 어디서든 소문자로 한 번이라도 나온 낱말 — 문장 첫머리 대문자만으로 나온 목록 밖 낱말(Maria)은 이름으로 보고 뺀다
+    lower_seen = set()
+    for r in rounds:
+        for p in r["passages"]:
+            for base, low, cap in _topic_tokens(p["text"]):
+                if not cap:
+                    lower_seen.add(base)
+    all_counts, all_total = [0, 0, 0], 0
+    off_first = {}       # 원래 모양 → 처음 나온 자리
+    pos = 0
+    counted = {}         # 센 낱말 → 학교급(목록 밖 None) — 화면이 지문에 색을 칠할 때 쓴다(화면 전용)
+    off_forms = {}       # 원래 모양 → 횟수
+    off_where = {}       # 원래 모양 → {지문 id}
+    out_rounds = []
+    for r in rounds:
+        rc, rt = [0, 0, 0], 0
+        plist = []
+        for p in r["passages"]:
+            pc, pt, off_n = [0, 0, 0], 0, 0
+            hard = {}
+            for base, low, cap in _topic_tokens(p["text"]):
+                if base not in level_cache:
+                    level_cache[base] = _curriculum_level(base)
+                lv = level_cache[base]
+                if lv is None and cap and base not in lower_seen:
+                    continue
+                counted[base] = lv
+                pt += 1
+                pos += 1
+                if lv is None:
+                    off_n += 1
+                    off_first.setdefault(base, pos)   # 처음 나온 자리(회차·지문 차례) — '처음 나온 순서' 정리용
+                    off_forms[base] = off_forms.get(base, 0) + 1
+                    off_where.setdefault(base, set()).add(p["id"])
+                    hard[base] = hard.get(base, 0) + 1
+                else:
+                    pc[lv] += 1
+            plist.append({"id": p["id"], "name": p["name"], "tokens": pt, "coverage": cov(pc, pt),
+                          "offlist": [w for w, _n in sorted(hard.items(), key=lambda x: -x[1])][:12]})
+            for i in range(3):
+                rc[i] += pc[i]
+            rt += pt
+        out_rounds.append({"name": r["name"], "tokens": rt, "coverage": cov(rc, rt), "passages": plist})
+        for i in range(3):
+            all_counts[i] += rc[i]
+        all_total += rt
+
+    # 목록 밖 낱말을 표제어 비슷한 열쇠로 묶는다
+    present = set(off_forms)
+    groups = {}
+    for w, n in off_forms.items():
+        k = _topic_offlist_key(w, present)
+        g = groups.setdefault(k, {"word": k, "count": 0, "forms": set(), "where": set(), "first": off_first[w]})
+        g["first"] = min(g["first"], off_first[w])
+        g["count"] += n
+        g["forms"].add(w)
+        g["where"] |= off_where[w]
+    ranked = sorted(groups.values(), key=lambda g: (-g["count"], -len(g["where"]), g["word"]))
+    known = sum(all_counts)
+    words = []
+    for g in ranked[:TOPIC_OFFLIST_MAX]:
+        known += g["count"]
+        words.append({"word": g["word"], "count": g["count"], "passages": len(g["where"]),
+                      "forms": sorted(g["forms"] - {g["word"]})[:4], "first": g["first"],
+                      "cumulative": round(known / all_total * 100, 1) if all_total else 0})
+    return {
+        "tokens": all_total,
+        "coverage": cov(all_counts, all_total),
+        "offlistTotal": len(groups),
+        "rounds": out_rounds,
+        "offlist": words,
+        "ready": bool(_CURRICULUM_FORMS),
+        "levels": counted,
+    }
+
+
+def parse_topic_rounds(req):
+    rounds, n = [], 0
+    for r in (req.get("rounds") or [])[:40]:
+        if not isinstance(r, dict):
+            continue
+        ps = parse_topic_passages({"passages": r.get("passages")}, TOPIC_STATS_MAX_PASSAGES - n)
+        n += len(ps)
+        if ps:
+            rounds.append({"name": re.sub(r"[\r\n<>]", " ", str(r.get("name") or ""))[:60] or f"회차 {len(rounds) + 1}",
+                           "passages": ps})
+        if n >= TOPIC_STATS_MAX_PASSAGES:
+            break
+    return rounds
+
+
+# ── 고른 낱말에 뜻 달기(단어장으로 보내기) ──
+TOPIC_WORDS_SYSTEM_PROMPT = """너는 한국 고등학교 영어 교사다. 모의고사·수능 지문에서 모은 영어 낱말 목록을 받아, 학생 단어장에
+실을 뜻을 단다. 낱말마다 그 낱말이 나온 지문 문장이 함께 오면 **그 문장에서 쓰인 뜻**을 먼저 쓴다.
+
+- `word` — 받은 낱말 그대로(표제어 모양).
+- `pos` — 품사 약어 하나: n. / v. / adj. / adv. / prep. / conj. (지문에서 쓰인 품사)
+- `meaning` — 우리말 뜻 1~3개를 쉼표로(30자 안쪽). 사전식 짧은 뜻.
+- `synonym` — 흔한 영어 유의어 하나(없으면 빈 칸). `antonym`·`definition`은 빈 칸.
+- `note`는 빈 칸.
+
+받은 낱말 수만큼, 받은 차례대로 답한다. 고유명사·오타로 보이는 것도 빼지 말고 뜻을 짐작해 단다."""
+
+
+def parse_topic_words(req):
+    out = []
+    for it in (req.get("words") or [])[:TOPIC_WORDS_MAX]:
+        if not isinstance(it, dict):
+            continue
+        w = re.sub(r"[^A-Za-z' -]", "", str(it.get("word") or "")).strip()[:40]
+        if not w:
+            continue
+        ex = re.sub(r"\s+", " ", str(it.get("example") or "")).strip()[:300]
+        out.append({"word": w, "example": ex})
+    return out
+
+
+def call_gemini_topic_words(words, api_key, model):
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. 관리자에게 문의하세요.")
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+    user = "\n".join(f"- {w['word']}" + (f"  (문장: {w['example']})" if w["example"] else "") for w in words)
+    payload = {
+        "systemInstruction": {"parts": [{"text": TOPIC_WORDS_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 16384,
+            "responseMimeType": "application/json",
+            "responseSchema": VOCAB_ITEMS_SCHEMA,
+        },
+    }
+    result = _gemini_json(payload, api_key, model, "뜻을 다는 중에 잘렸습니다. 낱말을 나눠 다시 시도해 주세요.",
+                          label="topicwords")
+    want = {w["word"].lower() for w in words}
+    items, seen = [], set()
+    for it in result.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        w = str(it.get("word") or "").strip()
+        if w.lower() not in want or w.lower() in seen:
+            continue
+        seen.add(w.lower())
+        items.append({"word": w, "pos": _decode_plain(it.get("pos"), 10),
+                      "meaning": _decode_plain(it.get("meaning"), 60),
+                      "synonym": _decode_plain(it.get("synonym"), 40)})
+    return {"items": items}
+
+
 # ── 리딩노트 4컷 그림(/api/decodepic, 2026-11-03 사용자) ──
 # 지문 흐름을 네 장면으로 — ① Flash가 장면(영어, 그릴 것만)과 컷 설명(쉬운 우리말 한 줄)을 정하고 ② 그림 모델이
 # 정사각형 한 장에 2×2로 네 컷을 그린다(한 번만 부르므로 네 컷이어도 한 장 값). 그림 속에는 글자를 넣지 않는다 —
@@ -16400,6 +16795,16 @@ CHANGELOG = [
             "넘으면 그달만 포인트 차감 · 학생 이용권은 따로). 자동 연장·정기 결제는 없고, 산 지 7일 안에 하나도 만들지 않았으면 "
             "전액, 그 뒤에는 쓴 날수만큼 빼고 위약금 없이 환불합니다. 프리미엄권을 사지 않는 선생님께는 바뀌는 것이 없습니다. "
             "자세한 내용은 사이트 아래 이용약관·환불정책의 '11월 24일 시행 판'에서 보실 수 있습니다.",
+        ],
+    },
+    {
+        "version": 135,
+        "date": "2026-11-18",
+        "items": [
+            "🗂️ 새 탭 '기출 소재·어휘'가 생겼습니다 — 3·6·9·10월처럼 모의고사 여러 회차의 PDF를 넣으면 "
+            "지문마다 분야·소재·핵심어를 표로 정리하고(분야별 출제 수 · 회차별 분야), "
+            "교육과정 3,000단어로 지문 낱말을 몇 % 읽을 수 있는지와 95%까지 모자란 '추가 어휘'를 뽑아 줍니다. "
+            "추가 어휘는 골라서 뜻을 달아 단어장 탭으로 바로 보낼 수 있습니다. 어휘 분석은 무료입니다.",
         ],
     },
 ]
@@ -22759,6 +23164,9 @@ class Handler(BaseHTTPRequestHandler):
                 "decodePic": PRICE_DECODE_PIC_KRW,
                 # 내용 한장정리 — 지문 1개당
                 "explain": PRICE_EXPLAIN_KRW,
+                # 기출 소재·어휘 — 소재 분석은 지문 1개당, 단어장으로 보낼 때 뜻 달기는 한 번(100단어까지)당
+                "topic": PRICE_TOPIC_KRW,
+                "topicWords": PRICE_TOPIC_WORDS_KRW,
             })
             return
 
@@ -23303,6 +23711,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                         "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/hwpx", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
+                        "/api/topicscan", "/api/topicwords", "/api/vocabstats",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
                         "/api/auth/login", "/api/auth/reset-request", "/api/auth/reset-confirm",
                         "/api/logout", "/api/auth/delete",
@@ -23391,10 +23800,11 @@ class Handler(BaseHTTPRequestHandler):
         GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                            "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
-                           "/api/infographic", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract")
+                           "/api/infographic", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
+                           "/api/topicscan", "/api/topicwords")
         # /api/docx·/api/hwpx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
         # 않는다(그래서 GENERATE_PATHS가 아니라 여기 따로 붙는다).
-        if path in GENERATE_PATHS + ("/api/models", "/api/docx", "/api/hwpx"):
+        if path in GENERATE_PATHS + ("/api/models", "/api/docx", "/api/hwpx", "/api/vocabstats"):
             if DB is None:
                 self._send_json(
                     {"error": "로그인 기능이 아직 설정되지 않았습니다 (관리자에게 문의하세요)."}, 503
@@ -23553,6 +23963,13 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/vocabextract":
                     cost = PRICE_VOCAB_EXTRACT_KRW
                     self._pending_label = "지문에서 단어 뽑기"
+                elif path == "/api/topicscan":
+                    n = len(parse_topic_passages(req, TOPIC_SCAN_BATCH))
+                    cost = PRICE_TOPIC_KRW * n
+                    self._pending_label = f"기출 소재 분석 · {n}지문"
+                elif path == "/api/topicwords":
+                    cost = PRICE_TOPIC_WORDS_KRW
+                    self._pending_label = f"기출 어휘 뜻 달기 · {len(parse_topic_words(req))}단어"
                 else:  # /api/ocr
                     cost = PRICE_OCR_KRW
                     self._pending_label = "사진에서 지문 옮기기"
@@ -24752,6 +25169,59 @@ class Handler(BaseHTTPRequestHandler):
                         print(f"[explain] 줄여 쓰기 실패: {e}", flush=True)
                 if not result.get("parts"):
                     raise RuntimeError("내용 한장정리를 만들지 못했습니다. 다시 시도해 주세요.")
+                self._charge_and_send(path, req, result)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        # 기출 소재·어휘 — 소재 분석(지문 TOPIC_SCAN_BATCH개씩). 받아 낸 지문 수만큼만 값을 받는다.
+        if path == "/api/topicscan":
+            passages = parse_topic_passages(req, TOPIC_SCAN_BATCH)
+            if not passages:
+                self._send_json({"error": "소재를 정리할 영어 지문을 넣어 주세요."}, 400)
+                return
+            try:
+                result = call_gemini_topic_scan(passages, req.get("apiKey") or "", MODEL)   # 항상 Flash
+                if not result["items"]:
+                    raise RuntimeError("소재를 정리하지 못했습니다. 다시 시도해 주세요.")
+                self._pending_charge = PRICE_TOPIC_KRW * len(result["items"])
+                self._pending_label = f"기출 소재 분석 · {len(result['items'])}지문"
+                self._charge_and_send(path, req, result)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        # 기출 소재·어휘 — 어휘 통계. AI를 부르지 않아 값이 없다(로그인만 본다).
+        if path == "/api/vocabstats":
+            rounds = parse_topic_rounds(req)
+            if not rounds:
+                self._send_json({"error": "어휘를 셀 지문을 넣어 주세요."}, 400)
+                return
+            self._send_json(topic_vocab_stats(rounds))
+            return
+
+        # 기출 소재·어휘 — 고른 낱말에 뜻 달기(단어장으로 보내기). 한 번에 TOPIC_WORDS_MAX개까지.
+        if path == "/api/topicwords":
+            words = parse_topic_words(req)
+            if not words:
+                self._send_json({"error": "뜻을 달 낱말을 고르세요."}, 400)
+                return
+            try:
+                result = call_gemini_topic_words(words, req.get("apiKey") or "", MODEL)   # 항상 Flash
+                if not result["items"]:
+                    raise RuntimeError("뜻을 달지 못했습니다. 다시 시도해 주세요.")
                 self._charge_and_send(path, req, result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)

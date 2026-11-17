@@ -110,6 +110,8 @@ textarea, input[type=text], input[type=email], input[type=password], input[type=
 textarea{min-height:150px; resize:vertical; line-height:1.55;}
 textarea:focus, input:focus, select:focus{outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent);}
 .row{display:flex; gap:14px; flex-wrap:wrap; margin-top:14px;}
+/* display:flex가 hidden을 덮어 목표 어법 칸(#targetGrammarRow)이 리딩노트·한장정리·단어장 탭에서도 보였다 */
+.row[hidden]{display:none;}
 .row .field{flex:1 1 220px; min-width:0;}
 .actions{display:flex; align-items:center; gap:12px; margin-top:16px; flex-wrap:wrap;}
 .btn{

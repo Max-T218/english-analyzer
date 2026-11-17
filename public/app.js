@@ -983,6 +983,12 @@ function renderPriceTab() {
       row("분석 총평", v(P.examTrend), "리포트 1건당"),
       row("카드뉴스 만들기", v(0)),
     ], `예) 8쪽 시험지 1부 = ${pt(trendEx)} · 범위 대조까지 = ${pt(trendEx + 8 * n(P.trendOcrPage))}`),
+    card("🗂️ 기출 소재·어휘", "", [
+      row("소재 분석", v(P.topic), "지문 1개당"),
+      row("어휘 분석 (교육과정 어휘 커버리지)", v(0)),
+      row("추가 어휘 단어장으로 보내기", v(P.topicWords), `뜻 달기 ${100}단어까지 1번당`),
+      row("PDF에서 못 꺼낸 문제 지문 되살리기 (선택)", plus(P.mockRestore), "되살린 지문 1개당"),
+    ], `예) 모의고사 4회 × 지문 25개 소재 분석 = ${pt(n(P.topic) * 100)}`),
     card("🏫 학생 관리", "", [
       row("반·학생 등록, 시험 내기, 채점, 성적표", v(0)),
       row("성적표 AI 코멘트", v(P.studentComment), "1건당"),
@@ -4284,7 +4290,7 @@ function syncTabChrome(tab) {
   // 단어장 '지문에서 뽑기'는 목표 어법을 쓰지 않는다(사용자) — 칸만 감추고 적어 둔 값은 다른 탭을 위해 그대로 둔다
   const targetGrammarRow = $("targetGrammarRow");
   // 리딩노트도 목표 어법을 쓰지 않는다
-  if (targetGrammarRow) targetGrammarRow.hidden = tab === "vocab" || tab === "decode" || tab === "explain";
+  if (targetGrammarRow) targetGrammarRow.hidden = tab === "vocab" || tab === "decode" || tab === "explain" || tab === "topic";
   // 공용 지문칸 아래 단어장은 문제 탭에서만 쓰인다(분석·워크북은 단어장을 보지 않는다)
   const quizVocabWrap = $("quizVocabWrap");
   if (quizVocabWrap) quizVocabWrap.hidden = !["mcq", "saq", "mix"].includes(tab);
@@ -4297,7 +4303,7 @@ function syncTabChrome(tab) {
      자리가 없는 화면(탭을 고르기 전, 반/학생 관리)에서는 감춘다. */
   const SLOT_ID = { analyze: "analyzeBrandSlot", brief: "briefBrandSlot", mcq: "mcqBrandSlot",
     saq: "saqBrandSlot", mix: "mixBrandSlot", workbook: "wbBrandSlot", vocab: "vocabBrandSlot",
-    grammar: "grammarBrandSlot", decode: "decodeBrandSlot", explain: "explainBrandSlot" };
+    grammar: "grammarBrandSlot", decode: "decodeBrandSlot", explain: "explainBrandSlot", topic: "topicBrandSlot" };
   const slot = onExam ? (!examPaperPanelEl.hidden ? $("examBrandSlot") : null)
     : onTrend ? $("trendBrandSlot")
     : SLOT_ID[tab] ? $(SLOT_ID[tab]) : null;
