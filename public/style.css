@@ -2203,6 +2203,16 @@ table.st-table{min-width:0;}
 table.st-table th:first-child, table.st-table td:first-child{width:2.5em; padding-right:4px;}
 table.st-table td{overflow-wrap:break-word; word-break:keep-all;}   /* 낱말 가운데서 끊지 않는다 */
 table.st-table td.study-meaning[data-revealed="0"]{color:var(--accent);}
+/* 글씨 — 공통 표의 13px은 시험 문항(17px)보다 너무 작아 학생이 읽기 힘들었다(2026-11-17 사용자).
+   단어 칸(둘째 칸)은 굵게, 폰에서는 시험 보기 칸(17px)과 맞춘다 */
+table.st-table{font-size:16px;}
+table.st-table th{font-size:14px;}
+table.st-table td{padding:12px 12px; line-height:1.5;}
+table.st-table td:nth-child(2){font-weight:700; font-size:17px;}
+@media (max-width:640px){
+  table.st-table{font-size:17px;}
+  table.st-table td:nth-child(2){font-size:18px;}
+}
 table.flow td:first-child{font-weight:700; color:var(--accent); white-space:nowrap; width:78px;}
 table.flow tr:last-child td, table.vocab tr:last-child td{border-bottom:none;}
 table.vocab td:first-child{font-weight:600; color:var(--ink);}
