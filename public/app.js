@@ -19572,6 +19572,15 @@ const CHART_CSS = `
 .tp-stack-track i{background-image:linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,0) 55%,rgba(0,0,0,.12))}
 .tp-chart{box-shadow:0 2px 6px rgba(26,31,43,.10)}
 @media print{.tp-chart{break-inside:avoid}}
+.tp-charts.rp-row1{flex-wrap:nowrap;gap:10px}
+.rp-row1>.tp-chart{flex:1 1 0;min-width:0;padding:10px}
+.rp-row1>.tp-chart:has(.rp-radar){flex:1.7 1 0}
+.rp-row1 .tp-donut-wrap{flex-direction:column;gap:8px}
+.rp-row1 .tp-donut{flex:0 0 auto;width:120px;height:120px}
+.rp-row1 .tp-leg{align-self:stretch;font-size:11.5px}
+.rp-row1 .tp-leg li{white-space:normal;gap:5px}.rp-row1 .tp-leg i{flex:0 0 11px}
+.rp-row1 .tp-leg b{padding-left:4px}.rp-row1 .tp-leg small{width:30px;flex:0 0 30px}
+@media (max-width:700px){.tp-charts.rp-row1{flex-wrap:wrap}.rp-row1>.tp-chart{flex:1 1 260px}}
 `;
 const REPORT_CSS = `
 ${CHART_CSS}
@@ -19822,7 +19831,8 @@ function reportChartsHtml(tests) {
     cell[1] += c[1];
   }));
   const radar = rpTypeRadarBlock("유형별 정답률", "이 기간 문제 시험 합계 · 맞힌 비율(%)", byType, "#4363d8");
-  return `<h4 class="sec">한눈에 보기</h4><div class="tp-charts">${result}${tries}${radar}</div><div class="tp-charts">${dist}</div>`;
+  // 원형 둘과 방사형을 한 줄에(2026-11-18 사용자 — 세 칸이 두 줄로 꺾여 1쪽이 길었다). 원형은 그림 아래에 범례를 둔다
+  return `<h4 class="sec">한눈에 보기</h4><div class="tp-charts rp-row1">${result}${tries}${radar}</div><div class="tp-charts">${dist}</div>`;
 }
 
 // 가로 막대 — rows [{label, value(0~max 또는 null), color, text}], max 기준 길이(입체감은 CHART_CSS .rp-hbars)
