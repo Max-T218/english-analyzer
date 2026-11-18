@@ -9246,262 +9246,6 @@ def call_gemini_mock_restore(file, api_key, nos=None, model=None, key=None, key_
     return {"passages": out, "failed": len(errors)}
 
 
-# ── 이 사이트로 만든 문제 PDF → 문제로 복원 ──
-# 객관식·주관식·혼합·문법 탭에서 인쇄해 둔 PDF(시험지 + 정답 및 해설)를 올리면 문항을 문제 탭이 쓰는 모양으로
-# 되살린다. 그러면 화면에서 고치기·인쇄·저장함 저장·반에 시험 내기가 그대로 된다(2026-10-22 사용자).
-# 글자를 규칙으로 뽑지 않고 쪽 모양 그대로 읽게 한다(2단 시험지는 줄 순서가 섞인다 — mockrestore와 같은 사정).
-# 번호 범위로 나눠 동시에 부르는 까닭도 같다: 한 번에 다 시키면 연결이 끊긴다.
-PRICE_QUIZ_RESTORE_KRW = int(os.environ.get("PRICE_QUIZ_RESTORE_KRW", "10"))
-QUIZ_RESTORE_RANGE = 15
-QUIZ_RESTORE_MAX_NO = 300   # 90이었는데 180문항 시험지도 만든다(2026-11-10) — 글자층에서 읽은 마지막 번호까지만 부른다
-QUIZ_RESTORE_PER_PAGE = 10   # 한 쪽에 실리는 문항 수의 넉넉한 어림 — 이 밖의 번호 범위는 부르지 않는다
-QUIZ_RESTORE_FORMATS = ("mc", "tf", "pick", "verb", "fill", "find", "gloss", "fix", "write", "short",
-                        "compose", "convert", "answer")
-
-
-def _quiz_restore_schema():
-    item = copy.deepcopy(QUIZ_SCHEMA["properties"]["questions"]["items"])
-    item["properties"]["alts"] = {"type": "ARRAY", "items": {"type": "STRING"}}
-    item["required"] = ["no", "format", "instruction"]
-    item["propertyOrdering"] = list(item["propertyOrdering"]) + ["alts"]
-    return {"type": "OBJECT", "properties": {"questions": {"type": "ARRAY", "items": item}},
-            "required": ["questions"], "propertyOrdering": ["questions"]}
-
-
-QUIZ_RESTORE_SCHEMA = _quiz_restore_schema()
-QUIZ_RESTORE_SYSTEM_PROMPT = """당신은 영어 시험지 PDF를 문제 데이터로 되옮기는 도우미입니다.
-입력 PDF는 선생님이 이 사이트에서 만들어 인쇄한 영어 시험지로, 앞쪽에 문제지, 뒤쪽에 '정답 및 해설'(또는 정답) 쪽이 있습니다.
-맡은 번호의 문항마다 문제지와 정답·해설을 함께 읽어 한 문항씩 되살립니다.
-
-원칙
-- 글자를 새로 짓거나 고치지 않습니다. 영어 문장·보기·발문·해설을 PDF에 적힌 그대로 옮깁니다(오타가 있어도 그대로).
-- no는 PDF의 문항 번호입니다. 맡은 번호가 없으면 questions를 빈 배열로 돌려줍니다.
-- 쓰지 않는 칸은 빈 글자·빈 배열로 둡니다. passageHtml에는 <br>, <u>, <b>만 씁니다(줄바꿈은 <br>, 밑줄 <u>, 굵게 <b>).
-- type은 문제 이름표(예: "빈칸 추론", "어법 선택형")가 PDF에 있으면 그것, 없으면 빈 글자.
-- instruction은 문제 번호를 뗀 발문(예: "다음 빈칸에 들어갈 말로 알맞은 것은?").
-- explanation은 정답 쪽의 해설을 그대로. 해설이 없으면 빈 글자.
-
-format별 옮기는 법
-- "mc"(객관식): passageHtml=발문 아래 지문·보기 상자(없으면 빈 글자), choices=보기 ①~⑤ 글(번호 기호는 뗀다), answer=정답 번호(1~5, 정답 쪽에서 읽는다). 밑줄 문제는 밑줄 앞에 원문자를 붙여 "①<u>낱말</u>"로 둔다.
-- "pick"(어법·어휘 선택형): 지문의 [A / B] 자리마다 "[정답|오답]"으로 옮긴다(정답 쪽에서 정답을 읽는다). choices·answer는 비운다.
-- "verb"(동사형 쓰기): 지문의 (원형) 자리를 "(원형|정답)"으로. 정답이 둘 이상이면 "(원형|답1 / 답2)".
-- "fill"(빈칸 쓰기): 지문의 (1) ____ 자리를 "(힌트|정답)"으로 통째로 바꾼다 — "(1)" 같은 빈칸 번호 표시는 지운다(번호는 화면이 다시 붙인다). 첫 글자 힌트가 있으면 힌트 자리에, 없으면 "(|정답)". 우리말 줄이 있으면 passageHtml 앞에 "우리말<br>영어" 순서로 둔다.
-- "fix"(틀린 곳 고치기): passageHtml=문장(태그 없이), fixes=[{"wrong": 틀린 낱말, "right": 고친 말}].
-- "tf"(OX): tfItems=[{"text": 문장, "isTrue": 정답}].
-- "find"(표현 찾아 쓰기): findItems=[{"ko": 우리말 뜻, "en": 정답 영어 표현}]. "gloss"(영영풀이 쓰기): glossItems=[{"def": 영어 정의, "en": 정답}].
-- "write"(서술형 배열): passageHtml=우리말 문장, answerText=정답 문장, alts=다른 정답.
-- "compose"(조건 영작): passageHtml=우리말 문장, wordBank=<보기> 낱말, conditions=<조건> 줄(우리말), answerText=모범답안, alts=다른 정답.
-- "convert"(문장 전환·합치기), "short"(짧은 서술), "answer"(질문에 답하기): passageHtml=바꿀/답할 영어 문장(둘이면 <br>), conditions=<조건> 줄, answerText=정답, alts=다른 정답.
-- 문장을 쓰는 문항(write·compose·convert·short·answer)은 정답 쪽의 모범답안(영어 문장)을 반드시 answerText에 적습니다. answerText가 비면 그 문항은 쓸 수 없으니, 정답 쪽을 다시 찾아 읽으세요. 해설 안에 답이 있어도 answerText에 따로 적습니다.
-- 어느 format인지 애매하면 정답이 번호면 "mc", 글이면 정답이 문장일 때 "write"로 둡니다.
-- 문항 하나의 정답을 정답 쪽에서 찾지 못하면 그 문항은 건너뜁니다(추측으로 정답을 적지 않습니다)."""
-
-
-_QR_ANSWER_HEAD_RE = re.compile(r"정답\s*및\s*해설|^정답$")
-_QR_NO_RE = re.compile(r"\d{1,3}\.?")
-# pdfminer가 2단 쪽을 읽으면 번호와 유형 이름표가 '1 주제'처럼 한 줄로 붙어 나온다
-_QR_NO_LINE_RE = re.compile(r"(\d{1,3})\.?(?:\s+(\S.{0,24}))?")
-QUIZ_RESTORE_SCAN_SECONDS = 45   # 글자층 훑기 시간 상한 — 넘으면 번호 범위로 읽는 예전 길로 간다
-QUIZ_RESTORE_SCAN_UNIQUE = 40    # 다시 1번으로 돌아가지 않고 이 번호까지 왔으면 번호가 이어지는 PDF로 보고 그만 읽는다
-
-
-def _quiz_restore_layout(data):
-    """문제 PDF의 글자층을 훑어 문항 번호가 어떻게 매겨졌는지 본다(AI 안 부름).
-
-    이 사이트의 옛 판(2026-09 무렵)은 지문마다 번호를 1번부터 다시 매겼다(지문 8개 × 14문항이면
-    1~14번이 여덟 벌). 번호 범위로 나눠 읽게 하면 1~15번 범위가 지문 1만 가져오고 16번부터는 없는
-    번호라 AI가 아무 지문에서 몇 문항을 골라 붙여, 112문항 중 26문항만 되살아났다(2026-11-10 사용자).
-    그래서 번호가 다시 1번으로 돌아가는 자리마다 지문 묶음을 나누고, 묶음마다 따로 읽게 한다.
-
-    돌려주는 값: {"groups": [{"label": 머리말, "max": 마지막 번호}, …]} — 묶음이 둘 이상일 때만,
-    아니면 {"max": 마지막 번호}(못 읽으면 0). 글자층이 없거나 못 읽으면 {}."""
-    if not PDF_READY:
-        return {}
-    try:
-        s = str(data or "")
-        raw = base64.b64decode(s.split(",", 1)[1] if s.startswith("data:") else s)
-    except Exception:
-        return {}
-    def parse(lines):
-        groups, cur = [], None
-        for i, ln in enumerate(lines):
-            m = _QR_NO_LINE_RE.fullmatch(ln)
-            if not m:
-                continue
-            rest = m.group(2) or ""
-            nxt = lines[i + 1] if i + 1 < len(lines) else ""
-            # 번호 뒤(같은 줄이나 다음 줄)에는 유형 이름표나 발문이 온다 — 보기 번호·숫자면 문항 번호가 아니다
-            after = rest or nxt
-            if not after or after[0] in "①②③④⑤" or after[0].isdigit():
-                continue
-            no = int(m.group(1))
-            if not 1 <= no <= QUIZ_RESTORE_MAX_NO:
-                continue
-            if cur is None or (no == 1 and cur["max"] >= 1):
-                label = lines[i - 1][:40] if i > 0 else ""
-                cur = {"label": "" if _QR_NO_LINE_RE.fullmatch(label) else label, "max": 0}
-                groups.append(cur)
-            cur["max"] = max(cur["max"], no)
-        return groups
-
-    # 쪽마다 읽다가 답지(정답 및 해설)가 나오면 멈춘다 — 답지에도 번호가 줄마다 찍히고, pdfminer는
-    # 쪽당 0.2초 넘게 걸린다(111쪽 27초). 번호가 한 번도 1로 돌아가지 않고 QUIZ_RESTORE_SCAN_UNIQUE번까지
-    # 왔으면 지금 판(번호가 이어짐)으로 보고 거기서 그만 읽는다 — 마지막 번호는 쪽 수로 어림한다.
-    # 시간 상한을 넘기면 끝까지 못 읽은 것이라 쓰지 않는다.
-    lines, started, done = [], time.time(), False
-    try:
-        for page in _pdf_extract_pages(io.BytesIO(raw), laparams=LAParams(), maxpages=QUIZ_RESTORE_MAX_NO):
-            for box in page:
-                if not isinstance(box, LTTextContainer):
-                    continue
-                for ln in box.get_text().splitlines():
-                    ln = ln.strip()
-                    if not ln:
-                        continue
-                    if _QR_ANSWER_HEAD_RE.search(ln):
-                        done = True
-                        break
-                    lines.append(ln)
-                if done:
-                    break
-            if done:
-                break
-            g = parse(lines)
-            if len(g) == 1 and g[0]["max"] >= QUIZ_RESTORE_SCAN_UNIQUE:
-                return {}
-            if time.time() - started > QUIZ_RESTORE_SCAN_SECONDS:
-                return {}
-    except Exception:
-        return {}
-    groups = parse(lines)
-    if len(groups) >= 2:
-        return {"groups": groups}
-    return {"max": groups[0]["max"] if groups else 0}
-
-
-def call_gemini_quiz_restore(file, api_key, n_pages, model=None):
-    """문제 PDF → 문항 목록. 돌려주는 값: {"questions": [...], "failed": 실패한 범위 수,
-    "sections": [{"name": 지문 머리말, "count": 문항 수}, …](지문마다 번호가 다시 시작한 PDF만)}."""
-    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
-                           "관리자에게 문의하세요.")
-    model = model if (model and _MODEL_RE.match(model)) else MODEL
-    pdf = {"inlineData": {"mimeType": PDF_MIME, "data": file["data"]}}
-    layout = _quiz_restore_layout(file.get("data"))
-    groups = layout.get("groups") or []
-    # 할 일: (묶음 차례, 시작 번호, 끝 번호, 콕 집은 번호들 또는 None). 묶음이 없으면 묶음 차례는 0 하나다.
-    tasks = []
-    if groups:
-        for gi, g in enumerate(groups):
-            for lo in range(1, g["max"] + 1, QUIZ_RESTORE_RANGE):
-                tasks.append((gi, lo, min(lo + QUIZ_RESTORE_RANGE - 1, g["max"]), None))
-    else:
-        # 글자층에서 마지막 번호를 읽었으면 거기까지만, 못 읽었으면 쪽 수로 어림한다
-        limit = layout.get("max") or max(QUIZ_RESTORE_RANGE, n_pages * QUIZ_RESTORE_PER_PAGE)
-        tasks = [(0, lo, min(lo + QUIZ_RESTORE_RANGE - 1, QUIZ_RESTORE_MAX_NO), None)
-                 for lo in range(1, QUIZ_RESTORE_MAX_NO + 1, QUIZ_RESTORE_RANGE) if lo <= limit]
-    ranges = list(tasks)
-    got, errors = {}, []
-    labels = _vertex_get_labels()
-
-    def ask(gi, lo, hi, nos):
-        span = (", ".join(f"{n}번" for n in nos) + "만") if nos else f"{lo}번부터 {hi}번까지"
-        if not groups:
-            return f"맡을 번호: {span}. 이 범위의 문항만 되살려 적으세요."
-        g = groups[gi]
-        name = f"머리말 '{g['label']}', " if g["label"] else ""
-        return (f"이 PDF는 지문마다 문항 번호가 1번부터 다시 시작합니다(지문 묶음 {len(groups)}개). "
-                f"맡을 범위: 문제지의 {gi + 1}번째 지문 묶음({name}문항 1~{g['max']}번) 가운데 "
-                f"{span}. 정답 및 해설 쪽에서도 같은 {gi + 1}번째 지문 묶음의 정답·해설을 읽으세요 — "
-                f"다른 지문 묶음에도 같은 번호가 있으니 섞지 마세요. no는 그 묶음 안의 번호로 적습니다. "
-                f"맡은 번호는 빠짐없이 모두 적으세요.")
-
-    def work(gi, lo, hi, nos):
-        _vertex_set_labels(labels)
-        payload = {
-            "systemInstruction": {"parts": [{"text": QUIZ_RESTORE_SYSTEM_PROMPT}]},
-            "contents": [{"role": "user", "parts": [pdf, {"text": ask(gi, lo, hi, nos)}]}],
-            "generationConfig": {
-                "temperature": 0.15,   # 옮겨 적기 — 0으로 두면 재현 차단(RECITATION)이 늘어 조금 둔다
-                "maxOutputTokens": 32768,
-                "responseMimeType": "application/json",
-                "responseSchema": QUIZ_RESTORE_SCHEMA,
-            },
-        }
-        try:
-            res = _gemini_json(payload, api_key, model, "문항이 너무 길어 옮기다가 잘렸습니다.",
-                               salvage=True, label="quizrestore",
-                               cache_system=len(ranges) >= 2, cache_prefix=1)   # 같은 PDF를 범위마다 보낸다
-            got[(gi, lo, hi, nos)] = res.get("questions") or []
-        except Exception as e:   # 한 범위 실패가 전체를 막지 않게
-            errors.append(e)
-
-    def run(batch):
-        threads = [threading.Thread(target=work, args=r, daemon=True) for r in batch]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-    out, seen = [], set()
-
-    def collect(batch):
-        for rng in batch:
-            gi, lo, hi, nos = rng
-            for raw in got.get(rng) or []:
-                if not isinstance(raw, dict) or raw.get("format") not in QUIZ_RESTORE_FORMATS:
-                    continue
-                try:
-                    no = int(raw.get("no"))
-                except (TypeError, ValueError):
-                    continue
-                if (gi, no) in seen or not (lo <= no <= hi) or (nos and no not in nos):
-                    continue
-                # 모범답안을 answerText 대신 alts에만 적는 일이 있다 — 첫 것을 대표 답으로 올린다
-                if not str(raw.get("answerText") or "").strip() and raw.get("alts"):
-                    alts = [a for a in raw["alts"] if str(a or "").strip()]
-                    if alts:
-                        raw = dict(raw, answerText=alts[0], alts=alts[1:])
-                q = _qt_clean_question(raw)
-                if not q:
-                    continue
-                seen.add((gi, no))
-                q["no"] = no
-                out.append((gi, q))
-
-    run(ranges)
-    collect(ranges)
-    # AI가 가끔 맡은 번호 몇 개를 건너뛴다(지문 5의 9·11·13번 — 같은 요청을 다시 보내니 다 나왔다,
-    # 2026-11-10). 지문 묶음마다 마지막 번호를 알고 있으니 빠진 번호만 콕 집어 한 번 더 묻는다.
-    # 한 묶음이 통째로 비었으면 그 범위 호출이 실패한 것이라(errors) 다시 묻지 않는다.
-    if groups:
-        retry = []
-        for gi, g in enumerate(groups):
-            have = {n for x, n in seen if x == gi}
-            miss = tuple(n for n in range(1, g["max"] + 1) if n not in have)
-            if miss and have:
-                retry.append((gi, miss[0], miss[-1], miss))
-        if retry:
-            run(retry)
-            collect(retry)
-    out.sort(key=lambda p: (p[0], p[1]["no"]))
-    if not out:
-        e = errors[0] if errors else None
-        if isinstance(e, (QuotaExceeded, ProUnavailable)):
-            raise e
-        raise RuntimeError(str(e) if e else "문항을 찾지 못했습니다. 이 사이트에서 만든 문제 PDF인지 확인해 주세요.")
-    result = {"questions": [q for _gi, q in out], "failed": len(errors)}
-    if groups:
-        # 번호는 화면이 지문 묶음을 이어 1번부터 다시 매긴다. 묶음마다 머리말과 되살린 문항 수를 알려 준다
-        # (빠진 문항이 있으면 그 묶음의 마지막 번호보다 적다 — expected).
-        result["sections"] = [{"name": g["label"] or f"지문 {gi + 1}",
-                               "count": sum(1 for x, _q in out if x == gi), "expected": g["max"]}
-                              for gi, g in enumerate(groups)]
-        result["sections"] = [s for s in result["sections"] if s["count"]]
-    return result
-
-
 # 지문 하나로 인정하는 최소 길이. 이보다 짧은 것은 <보기> 상자나 각주를 지문으로 잘못
 # 잡은 것이라 버린다 — 입력칸에 부스러기가 쌓이면 선생님이 하나씩 지워야 한다.
 EXAM_OCR_MIN_CHARS = 120
@@ -23560,7 +23304,6 @@ class Handler(BaseHTTPRequestHandler):
                 # 모의고사 문제지 → 지문 복원 — 복원해 받아 낸 지문 1개당
                 "mockRestore": PRICE_MOCK_RESTORE_KRW,
                 # 이 사이트로 만든 문제 PDF → 문제 복원 — 되살려 받아 낸 문항 1개당
-                "quizRestore": PRICE_QUIZ_RESTORE_KRW,
                 # 문제 시험 보충 학습 — 회차마다 새 문제 값에 더해 받는 개념 설명 값(요금표 탭)
                 "retryConcept": PRICE_RETRY_CONCEPT_KRW,
                 "passageSolve": PRICE_PASSAGE_SOLVE_KRW,
@@ -24119,7 +23862,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
-                        "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
+                        "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/hwpx", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
                         "/api/topicscan", "/api/topicwords", "/api/vocabstats", "/api/topicpdf",
                         "/api/auth/google", "/api/auth/signup", "/api/auth/verify",
@@ -24209,7 +23952,7 @@ class Handler(BaseHTTPRequestHandler):
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
-                           "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/quizrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
+                           "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
                            "/api/topicscan", "/api/topicwords")
         # /api/docx·/api/hwpx는 AI를 부르지 않아 요금이 없다 — 로그인만 확인하고 정찰 가격은 매기지
@@ -24357,12 +24100,6 @@ class Handler(BaseHTTPRequestHandler):
                     # 번호를 골라 보냈으면 그 수(장문 묶음은 하나로 줄어드니 넉넉한 쪽이다), 아니면 쪽 수로 어림
                     cost = PRICE_MOCK_RESTORE_KRW * (len(m_nos) if m_nos else min(28, max(4, n_pages * 4)))
                     self._pending_label = "모의고사 지문 복원"
-                elif path == "/api/quizrestore":
-                    # 잔액은 쪽 수로 어림한 문항 수로 미리 보고, 실제 차감은 되살려 받아 낸 문항 수로 다시 센다
-                    f = req.get("file") if isinstance(req.get("file"), dict) else {}
-                    n_pages = _pdf_page_count(f.get("data") or "") or 1
-                    cost = PRICE_QUIZ_RESTORE_KRW * min(QUIZ_TEST_MAX_QUESTIONS, max(5, n_pages * 5))
-                    self._pending_label = "문제 PDF 불러오기"
                 elif path == "/api/vocabocr":
                     cost = PRICE_VOCAB_OCR_KRW
                     self._pending_label = "사진에서 단어장 인식"
@@ -25933,31 +25670,6 @@ class Handler(BaseHTTPRequestHandler):
                 # 받아 낸 지문 수만큼만 받는다 — 못 되살린 지문에 값이 나가면 안 된다
                 self._pending_charge = PRICE_MOCK_RESTORE_KRW * n
                 self._pending_label = f"모의고사 지문 복원 · {n}지문"
-                self._charge_and_send(path, req, result)
-            except QuotaExceeded as e:
-                self._send_json({"error": str(e), "code": "quota"}, 429)
-            except Exception as e:
-                self._send_json({"error": str(e)}, 502)
-            return
-
-        if path == "/api/quizrestore":
-            file = req.get("file")
-            if not isinstance(file, dict) or (file.get("mime") or "").lower().split(";")[0].strip() != PDF_MIME:
-                self._send_json({"error": "이 사이트에서 만든 문제 PDF를 올려 주세요."}, 400)
-                return
-            if not file.get("data"):
-                self._send_json({"error": "PDF 내용이 비어 있습니다."}, 400)
-                return
-            if len(file["data"]) > MAX_FILE_BYTES:
-                self._send_json({"error": f"PDF가 너무 큽니다 (최대 {MAX_FILE_BYTES // 1048576}MB)."}, 413)
-                return
-            try:
-                n_pages = _pdf_page_count(file["data"]) or 1
-                result = call_gemini_quiz_restore(file, req.get("apiKey") or "", n_pages)
-                n = len(result["questions"])
-                # 되살려 받아 낸 문항 수만큼만 받는다 — 못 읽은 문항에 값이 나가면 안 된다
-                self._pending_charge = PRICE_QUIZ_RESTORE_KRW * n
-                self._pending_label = f"문제 PDF 불러오기 · {n}문항"
                 self._charge_and_send(path, req, result)
             except QuotaExceeded as e:
                 self._send_json({"error": str(e), "code": "quota"}, 429)

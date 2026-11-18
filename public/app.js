@@ -955,7 +955,6 @@ function renderPriceTab() {
       row("같은 유형의 둘째 문항부터", plus(extra), "같은 지문에서 같은 유형을 여러 문항 만들 때, 1문항마다"),
       row("고난도 선택", `<span class="price-free">추가 요금 없음</span>`),
       row("지문 변형 (원문 그대로 / 단어 변형)", v(P.reword)),
-      row("문제 PDF에서 불러오기", v(P.quizRestore), "되살린 문항 1개당"),
     ], `예) 지문 1개에서 주제 1문항 + 빈칸 2문항 = ${pt(first)} + (${pt(first)} + ${pt(extra)}) = ${pt(quizEx)}`),
     card("📐 문법문제 마법사", "시험지 1장당", [
       row("기본 요금", v(P.grammarBase)),
@@ -10157,70 +10156,6 @@ function setupQuizTab({ prefix, types, footer }) {
     },
     clearResults: () => renderQuizEntries([]),
   };
-
-  /* ── 이 사이트로 만든 문제 PDF를 올려 문항을 되살리기 ──
-     서버(/api/quizrestore)가 PDF의 문제지와 정답·해설을 함께 읽어 문항을 문제 탭이 쓰는 모양으로 돌려준다.
-     그러면 고치기·인쇄·저장·반에 시험 내기가 만든 문제와 똑같이 된다. 되살린 문항 수만큼만 값이 나간다. */
-  const restoreBtn = $(`${prefix}RestoreBtn`);
-  if (restoreBtn) {
-    const restoreFile = document.createElement("input");
-    restoreFile.type = "file";
-    restoreFile.accept = "application/pdf,.pdf";
-    restoreFile.style.display = "none";
-    restoreBtn.after(restoreFile);
-    restoreBtn.addEventListener("click", () => restoreFile.click());
-    restoreFile.addEventListener("change", async () => {
-      const f = restoreFile.files && restoreFile.files[0];
-      restoreFile.value = "";
-      if (!f) return;
-      errorEl.textContent = "";
-      if (f.size > 20 * 1024 * 1024) {
-        errorEl.textContent = "PDF가 너무 큽니다(20MB까지). 쪽을 나눠 올려 주세요.";
-        return;
-      }
-      if (lastEntries.length && !confirm("지금 화면에 있는 문제가 사라지고 PDF의 문제로 바뀝니다. 계속할까요?")) return;
-      const per = (PRICING && PRICING.quizRestore) || 0;
-      if (!(await costConfirmed(per * 10, `PDF에서 문제 불러오기\n되살린 문항 1개당 ${pt(per)}씩 받습니다(아래는 10문항일 때)`))) return;
-      const label = restoreBtn.textContent;
-      restoreBtn.disabled = true;
-      restoreBtn.textContent = "⏳ PDF 읽는 중…";
-      try {
-        const data = await blobToBase64(f);
-        const res = await postGenerate("/api/quizrestore", { file: { mime: "application/pdf", data } },
-          "문제를 불러오지 못했습니다.",
-          (n) => { restoreBtn.textContent = `⏳ 연결이 끊겨 다시 받는 중… (${n})`; });
-        const qs = res.questions || [];
-        if (!qs.length) throw new Error("문항을 찾지 못했습니다. 이 사이트에서 만든 문제 PDF인지 확인해 주세요.");
-        /* 지문마다 번호를 1번부터 다시 매긴 옛 PDF는 서버가 지문 묶음(sections)별로 읽어 차례대로
-           돌려준다 — 묶음마다 지문 이름표를 단 항목으로 나눠 그리면 번호는 renderQuizEntries가 이어 매긴다. */
-        const secs = Array.isArray(res.sections) ? res.sections : [];
-        let entries;
-        if (secs.length > 1) {
-          let at = 0;
-          entries = secs.map((s) => {
-            const part = qs.slice(at, at + s.count);
-            at += s.count;
-            return { job: { name: s.name, named: true }, label: "", set: { questions: part, variations: [] }, total: secs.length };
-          });
-        } else {
-          entries = [{ job: { name: "", named: false }, label: "", set: { questions: qs, variations: [] }, total: 1 }];
-        }
-        renderQuizEntries(entries);
-        setSheetTitle(f.name.replace(/\.pdf$/i, ""));
-        const short = secs.filter((s) => s.expected && s.count < s.expected);
-        errorEl.textContent = res.failed
-          ? `⚠️ ${qs.length}문항을 불러왔지만 일부 구간은 읽지 못했습니다. 번호가 빠졌는지 확인해 주세요.`
-          : short.length
-            ? `⚠️ ${qs.length}문항을 불러왔지만 ${short.map((s) => `${s.name}(${s.count}/${s.expected})`).join(", ")}에서 빠진 문항이 있습니다.`
-            : "";
-      } catch (err) {
-        errorEl.textContent = err.message || "문제를 불러오지 못했습니다.";
-      } finally {
-        restoreBtn.disabled = false;
-        restoreBtn.textContent = label;
-      }
-    });
-  }
 
   btn.addEventListener("click", generate);
   /* 시험지명을 지면에 반영한다. 만든 뒤(인쇄 직전)에 적어도 되도록 DOM을 직접 고친다 —
