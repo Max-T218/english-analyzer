@@ -15642,6 +15642,19 @@ def _signup_account_fields(starting_krw):
     return {"signup_lots": [{"at": _now_iso(), "expires_at": expires_at, "remaining": int(starting_krw)}]}, expires_at
 
 
+def _sort_iso(iso):
+    """정렬용 UTC ISO 시각 — 글자 순서가 곧 시간 순서가 되게 모양을 맞춘다. 못 읽으면 ""."""
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(iso))
+    except ValueError:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
+
+
 def _kst_date(iso):
     """UTC ISO 문자열 → 사용자가 보는 KST 날짜(YYYY-MM-DD). 못 읽으면 None.
 
@@ -18305,20 +18318,23 @@ def _session_user(handler):
     return user_id
 
 
-# 오늘(KST) 접속을 이미 적어 둔 회원. 세션은 30일 가므로 로그인 때만 last_login을 적으면
-# 매일 쓰는 회원도 마지막 로그인이 한 달 전에 멈춰 보이고, 휴면(1년 미접속) 판정도 틀어진다.
-# 요청마다 쓰지 않도록 하루 한 번만 적는다 — 서버가 재시작되면 그날 한 번 더 쓸 뿐이다.
+# 이번 시간(UTC 기준 한 시간 칸)에 접속을 이미 적어 둔 회원. 세션은 30일 가므로 로그인 때만
+# last_login을 적으면 매일 쓰는 회원도 마지막 로그인이 한 달 전에 멈춰 보이고, 휴면(1년 미접속)
+# 판정도 틀어진다. 요청마다 쓰지 않도록 한 시간에 한 번만 적는다 — 서버가 재시작되면 그 시간에
+# 한 번 더 쓸 뿐이다. 처음엔 하루 한 번이었는데, 그러면 '그날 처음 들어온 때'만 남아 관리자 화면의
+# '최근 접속' 정렬이 같은 날 안에서 실제 순서와 어긋났다(2026-11-19 사용자 — 최근에 쓰는 선생님의
+# 자료를 보려고 그 정렬을 자주 쓴다).
 _active_seen = {}
 
 
 def _touch_active(user_id):
     if not user_id:
         return
-    today = _kst_date(_now_iso())
-    if _active_seen.get(user_id) == today:
+    slot = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
+    if _active_seen.get(user_id) == slot:
         return
     _touch_login(user_id)
-    _active_seen[user_id] = today
+    _active_seen[user_id] = slot
 
 
 # --- 관리자 로그인 (일반 회원 로그인과 완전히 별개) ---------------------------
@@ -18434,6 +18450,8 @@ def list_all_users():
             # 모두에게 열려 있으면 회원별 허용 단추가 뜻이 없다 — 화면이 '전체 공개'로 바꿔 보인다
             "examOpen": EXAM_OPEN_TO_ALL,
             "lastLogin": _kst_date(d.get("last_login")) or "",
+            # 정렬용 전체 시각 — 화면에는 날짜(lastLogin)만 보이고, 같은 날끼리도 이 값으로 줄 세운다
+            "lastLoginAt": _sort_iso(d.get("last_login")),
             "dormant": bool(d.get("dormant")),
             # 휴면 예정 통지를 보낸 계정은 예정일까지 함께 보여 준다
             "dormantDue": _kst_date(d.get("dormant_due_at")) or "",
