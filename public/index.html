@@ -1079,6 +1079,8 @@
     <button type="button" class="tab-btn" data-tab="decode">📘 리딩노트</button>
     <!-- 내용 한장정리 — 원문·해석 없이 우리말로 글 내용을 쉽게 풀어 주는 한 쪽(public/explain.js, 2026-11-03 사용자) -->
     <button type="button" class="tab-btn" data-tab="explain">💡 내용 한장정리</button>
+    <!-- 숏폼 영상 제작 — 지문 하나로 세로 영상(public/reels.js, 2026-11-19 사용자. 처음 이름 '릴스 제작'은 인스타그램 기능 이름이라 바꿨다) -->
+    <button type="button" class="tab-btn" data-tab="reels">🎬 숏폼 영상 제작</button>
     <!-- 문제 제작은 상위 탭 하나에 하위 셋(객관식·주관식·객관식+주관식)을 둔다. 하위 버튼은
          그대로 .tab-btn이라 저장함 불러오기 등이 data-tab으로 누르는 길이 바뀌지 않는다.
          상위 버튼은 탭이 아니라 '마지막에 보던 하위 탭을 여는' 단추다(app.js syncQuizGroup). -->
@@ -2518,6 +2520,32 @@
     <div id="xpResult"></div>
   </section>
 
+  <!-- ══════════ 숏폼 영상 제작 (2026-11-19 사용자) ══════════
+       지문 → (서버) 내용 한장정리 → 장면 대본 → 장면 그림·목소리 → (화면) 캔버스에 그려 재생·녹화.
+       동작은 public/reels.js, 서버는 /api/reelscript · /api/reelimage · /api/reelvoice. -->
+  <section class="tab-page" id="tab-reels">
+    <section class="panel">
+      <label class="group-label" style="margin-top:0 !important">목소리</label>
+      <div class="rl-voicebox" id="rlVoiceBox" role="group" aria-label="목소리"></div>
+      <div class="rl-speedbox" id="rlSpeedBox"></div>
+      <div class="hint">지문마다 세로 숏폼 영상(1분 안팎 — 인스타그램 릴스·유튜브 쇼츠에 올릴 수 있는 크기) 한 편을 만듭니다 — AI가 지문 내용을 먼저 정리하고, 그 내용만으로 대본을 써서 장면 그림을 그리고 고른 목소리로 읽어 줍니다. 영상 녹화는 <b>PC 크롬</b>을 권합니다.</div>
+      <div class="actions">
+        <button type="button" class="btn" id="rlMakeBtn">🎬 영상 만들기</button>
+        <button type="button" class="btn ghost" id="rlLoadBtn">📂 불러오기</button>
+        <button class="btn ghost" id="rlSaveBtn" style="display:none"
+                title="대본·장면 그림·목소리를 계정에 저장합니다(영상 파일은 저장되지 않습니다). 불러오면 AI 값 없이 영상을 다시 만들어 받을 수 있습니다.">💾 사이트 저장</button>
+      </div>
+      <div class="hint rl-save-note" id="rlSaveNote" hidden>💾 <b>사이트 저장</b>은 <b>대본·장면 그림·목소리</b>를 저장합니다. <b>영상 파일은 저장되지 않으니</b> <b>⬇ 영상 받기</b>로 받아 두세요. 저장한 것을 불러오면 AI 값 없이 영상을 다시 만들어 받을 수 있습니다.</div>
+      <div class="hint cost-hint" id="rlCostHint" role="status" aria-live="polite"></div>
+      <div class="error" id="rlError"></div>
+    </section>
+    <div class="loading" id="rlLoading">
+      <span class="spinner"></span>
+      <span id="rlLoadingText">AI가 영상을 만들고 있습니다…</span>
+    </div>
+    <div id="rlResult"></div>
+  </section>
+
   <!-- ══════════ 기출 소재·어휘 (2026-11-18 사용자) ══════════
        모의고사·수능 여러 회차를 회차별로 넣고 ① 소재 분석(AI, /api/topicscan) ② 어휘 분석(교육과정 3,000단어 커버리지,
        AI 없음, /api/vocabstats) ③ 3,000단어 밖 낱말을 골라 뜻을 달아 단어장으로(/api/topicwords). 동작은 public/topic.js. -->
@@ -3368,6 +3396,8 @@
 <script src="/grammar.js?v=%%ASSET_V%%"></script>
 <script src="/decode.js?v=%%ASSET_V%%"></script>
 <script src="/explain.js?v=%%ASSET_V%%"></script>
+<script src="/reels.js?v=%%ASSET_V%%"></script>
+<script src="/reels_mp4.js?v=%%ASSET_V%%"></script>
 <script src="/topic.js?v=%%ASSET_V%%"></script>
 <script src="/ltreport.js?v=%%ASSET_V%%"></script>
 <script src="/leveltest.js?v=%%ASSET_V%%"></script>

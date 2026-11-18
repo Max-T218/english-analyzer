@@ -950,6 +950,12 @@ function renderPriceTab() {
       row("내용 한장정리", v(P.explain)),
       row("내용 한장정리 요약 이미지 (선택)", "위 요약 이미지 값", `인포그래픽 ${pt(P.infographic)} · 4컷 그림 ${pt(P.decodePic)}`),
     ]),
+    card("🎬 숏폼 영상 제작", "지문 1개 = 영상 1편", [
+      row("대본 (내용 정리 + 장면 대본)", v(P.reelScript), "지문 1개당"),
+      row("목소리", plus(P.reelVoice), "영상 1편의 대사 전부"),
+      row("장면 그림", plus(P.reelImage), "그림 1장당 — 보통 8~10장, 한 장만 다시 그릴 때도 같은 값"),
+      row("말 빠르기 바꾸기 · 영상 파일 다시 받기", v(0)),
+    ], `예) 장면 9개 영상 1편 = ${pt(P.reelScript)} + ${pt(P.reelVoice)} + ${pt(P.reelImage)} × 9 = ${pt(n(P.reelScript) + n(P.reelVoice) + n(P.reelImage) * 9)}`),
     card("📝 문제 제작", "객관식 · 주관식 · 객관식+주관식", [
       row("유형 1개의 첫 문항", v(first), "지문 1개 × 유형 1개마다"),
       row("같은 유형의 둘째 문항부터", plus(extra), "같은 지문에서 같은 유형을 여러 문항 만들 때, 1문항마다"),
@@ -4298,7 +4304,7 @@ function syncTabChrome(tab) {
   // 단어장 '지문에서 뽑기'는 목표 어법을 쓰지 않는다(사용자) — 칸만 감추고 적어 둔 값은 다른 탭을 위해 그대로 둔다
   const targetGrammarRow = $("targetGrammarRow");
   // 리딩노트도 목표 어법을 쓰지 않는다
-  if (targetGrammarRow) targetGrammarRow.hidden = tab === "vocab" || tab === "decode" || tab === "explain" || tab === "topic";
+  if (targetGrammarRow) targetGrammarRow.hidden = tab === "vocab" || tab === "decode" || tab === "explain" || tab === "reels" || tab === "topic";
   // 공용 지문칸 아래 단어장은 문제 탭에서만 쓰인다(분석·워크북은 단어장을 보지 않는다)
   const quizVocabWrap = $("quizVocabWrap");
   if (quizVocabWrap) quizVocabWrap.hidden = !["mcq", "saq", "mix"].includes(tab);

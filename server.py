@@ -314,6 +314,12 @@ PRICE_DECODE_PIC_KRW = int(os.environ.get("PRICE_DECODE_PIC_KRW", "300"))
 # 내용 한장정리(/api/explain), 지문 1개당 — 원문 없이 우리말로 글 내용을 풀어 주는 한 쪽. Flash 한 번이고
 # 원문을 옮기지 않아 출력이 리딩노트보다 짧다. 100은 원가 실측 전 임시값 — Render 로그 [usage] explain으로 맞출 것
 PRICE_EXPLAIN_KRW = int(os.environ.get("PRICE_EXPLAIN_KRW", "100"))
+# 릴스 제작(2026-11-19 사용자) — 원가 실측 전 시범 값. 원가 어림(AI Studio): 대본(한장정리+대본 Flash 두 번) 약 30원,
+# 장면 그림 한 장 약 100원, 음성(한 편 14줄 안팎) 수십 원 → 9장면 한 편 약 1,000원.
+# 값은 2026-11-19 사용자가 정했다(처음 200·300·200 → 대본 300 · 목소리 500 · 그림 장당 400) — 9장면 한 편 4,400P, 원가율 약 23%
+PRICE_REEL_SCRIPT_KRW = int(os.environ.get("PRICE_REEL_SCRIPT_KRW", "300"))
+PRICE_REEL_IMAGE_KRW = int(os.environ.get("PRICE_REEL_IMAGE_KRW", "400"))
+PRICE_REEL_VOICE_KRW = int(os.environ.get("PRICE_REEL_VOICE_KRW", "500"))
 # 기출 소재·어휘(2026-11-18 사용자 — "테스트해 보면서 가격 정하자"). 둘 다 원가 실측 전 임시값이다 —
 # Render 로그 [usage] topicscan·topicwords로 재서 맞출 것. 어휘 통계(/api/vocabstats)는 AI가 없어 0원.
 PRICE_TOPIC_KRW = int(os.environ.get("PRICE_TOPIC_KRW", "20"))              # 소재 분석, 지문 1개당
@@ -1481,7 +1487,7 @@ def _asset_version():
     stamp = 0.0
     # 만드는 법·결과물 예시 그림(howto-*)도 본다 — 2026-10-07에 그림만 갈아 끼웠다가 표식이 그대로여서
     # 옛 그림('홍보용' 제목)이 계속 보였다.
-    names = ["app.js", "trend.js", "grammar.js", "decode.js", "explain.js", "topic.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
+    names = ["app.js", "trend.js", "grammar.js", "decode.js", "explain.js", "reels.js", "reels_mp4.js", "topic.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
         p.name for pat in ("sample-*.jpg", "howto-*.jpg", "howto-*.png") for p in sorted(PUBLIC_DIR.glob(pat))
     ]
     for name in names:
@@ -11280,6 +11286,205 @@ def call_gemini_explain(passage, api_key, model, shorten_from=None):
     return _finish_explain(_gemini_json(payload, api_key, model, _EXPLAIN_TRUNC_MSG, label="explain"))
 
 
+# ══════ 숏폼 영상 제작(2026-11-19 사용자 — 화면 이름. 처음엔 '릴스 제작'이었는데 인스타그램 기능 이름이라 바꿨다. 코드 이름 reel*은 그대로) ══════
+# 지문 하나 → 세로 릴스(60초 안팎): ① /api/reelscript — 내용 한장정리(call_gemini_explain)를 만든 뒤 그것만 근거로
+# 장면별 대본(말·큰 글씨·그림 묘사)을 짠다(둘 다 Flash, 값 한 번). ② /api/reelimage — 장면 그림 한 장(세로 9:16, 장면마다
+# 따로 불러 프록시 시간 한도를 넘지 않는다). ③ /api/reelvoice — 대사 전부를 고른 목소리로(Gemini TTS, 줄마다 PCM).
+# 영상 조립(움직임·자막·녹화)은 서버가 아니라 화면(public/reels.js)이 브라우저에서 한다 — 1분 영상이 그림 1,800장이라
+# 서버에서 찍으면 여럿이 동시에 누를 때 서버가 멈춘다. 목소리 목록은 화면 reels.js의 RL_VOICES와 같은 값이다.
+# 앞 넷이 추천(2026-11-19 사용자가 고른 것), 뒤 열은 '더 많은 목소리'(같은 날 사용자 — 선택 폭을 넓혀 달라고)
+REEL_VOICES = ("Charon", "Alnilam", "Orus", "Aoede",
+               "Kore", "Erinome", "Gacrux", "Pulcherrima", "Sulafat",
+               "Iapetus", "Rasalgethi", "Sadaltager", "Achird", "Schedar")
+MODEL_TTS = _env("GEMINI_MODEL_TTS", "gemini-3.8-flash-tts")
+REEL_SCENES_MAX = 10          # 퀴즈 장면 빼고
+REEL_LINES_MAX = 24           # 대사 줄 수 상한(음성 한 번에)
+REEL_LINE_MAX = 90            # 대사 한 줄 글자 상한
+REEL_IMG_DESC_MAX = 900       # 그림 묘사 글자 상한
+# 장면 그림의 공통 모양 — 글자 없는 반실사 그림, 액자 없이 꽉 찬 세로 한 장(2026-11-19 첫 시범에서 그림 속 액자가 나와 넣은 문장)
+REEL_STYLE = ("Semi-realistic digital painting, cinematic lighting, soft painterly texture, rich but calm colors. "
+              "One single full-bleed vertical 9:16 illustration filling the entire canvas edge to edge — no borders, no inner frame, "
+              "no picture-in-picture, no blurred extension bands. Keep the main subject in the middle of the frame, with simple "
+              "background areas near the top and bottom. All people are fictional and must not resemble any real politician, "
+              "celebrity or historical figure. Absolutely no text, letters, numbers, captions, logos, signs or speech bubbles anywhere in the image.")
+
+REEL_SCRIPT_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "title": {"type": "STRING"},
+        "cast": {"type": "STRING"},
+        "scenes": {"type": "ARRAY", "items": {
+            "type": "OBJECT",
+            "properties": {"big": {"type": "STRING"}, "say": {"type": "ARRAY", "items": {"type": "STRING"}},
+                           "img": {"type": "STRING"}},
+            "required": ["big", "say", "img"], "propertyOrdering": ["big", "say", "img"]}},
+        "quiz": {"type": "OBJECT", "properties": {
+            "q": {"type": "STRING"}, "a": {"type": "STRING"}, "ask": {"type": "STRING"},
+            "answer": {"type": "STRING"}, "img": {"type": "STRING"}},
+            "required": ["q", "a", "ask", "answer", "img"]},
+    },
+    "required": ["title", "cast", "scenes", "quiz"],
+    "propertyOrdering": ["title", "cast", "scenes", "quiz"],
+}
+
+REEL_SCRIPT_SYSTEM_PROMPT = """너는 고등학생에게 영어 지문의 '내용'을 이해시키는 세로 릴스 영상(60초 안팎)의 대본 작가다.
+사용자가 주는 [내용 한장정리](선생님용 우리말 내용 정리, JSON)만 근거로 대본을 쓴다.
+
+규칙
+1. 내용은 [내용 한장정리]에 있는 것만 쓴다. 숫자·인물·사례·주장을 지어내거나 바꾸지 않는다. 한장정리에 없는 결론을 덧붙이지 않는다.
+2. scenes는 7~8개(퀴즈 빼고). 흐름: ① 궁금증을 일으키는 첫 질문 한 문장 ② 배경지식 한 장면(primer·concepts) ③~⑥ parts의 대목을
+   순서대로(대목 하나가 길면 두 장면) ⑦ analogy를 쓴 비유 장면(big은 "쉽게 말하면", 첫 대사는 "쉽게 말하면,"으로 시작)
+   ⑧ message — 글쓴이가 하고 싶은 말.
+3. say는 소리 내어 읽을 문장('~해요/~죠' 말투). 한 문장은 45자 안팎, 장면마다 1~2문장, 문장 끝에 마침표나 물음표.
+   대사 전체(퀴즈 포함)를 합쳐 공백 빼고 320~400자. 영어 낱말·약어는 한글 소리로 쓴다(SNS → 에스엔에스). 괄호·따옴표·기호는 쓰지 않는다.
+4. big은 화면 위 큰 글씨 키워드: 2~12자, 길면 \\n으로 두 줄.
+5. quiz는 questions 가운데 하나: q·a는 화면 카드 글(줄마다 16자 이내, \\n으로 줄바꿈, a는 짧게 끝에 느낌표),
+   ask는 읽을 문장("퀴즈! …?"), answer는 읽을 문장("정답은, …예요."), img는 퀴즈 장면 그림 묘사.
+6. img는 그 장면 그림을 영어로 자세히 묘사한다(장소·인물·행동·분위기·빛). 상징적·비유적 장면도 좋다.
+   그림에 글자·숫자·표지·로고·말풍선이 들어가게 묘사하지 않는다. 실존 인물(정치인·연예인·역사 인물)의 얼굴을 그리지 않는다 —
+   필요하면 '익명의 고대 철학자'처럼 가상 인물로 바꾼다. 여러 장면에 같은 주인공이 나오면 cast에 그 인물의 모습을 영어로 한 번 정해 둔다(없으면 빈 글자).
+7. title은 짧은 영상 제목(한국어, 20자 이내)."""
+
+
+def _reel_plain(s, limit):
+    return re.sub(r"[\"“”'‘’()（）\[\]<>]", "", _decode_plain(s, limit)).strip()
+
+
+def _finish_reel_script(raw):
+    """대본을 다듬는다 — 글자만, 길이 상한, 문장 끝 부호. 장면이나 퀴즈가 비면 실패."""
+    def line(s):
+        s = _reel_plain(s, REEL_LINE_MAX)
+        if s and not re.search(r"[.?!]$", s):
+            s += "?" if re.search(r"(까요|나요|가요|을까|일까|할까)$", s) else "."
+        return s
+    # 큰 글씨는 두 줄까지, 퀴즈 카드 글은 네 줄까지(2026-11-19 — 퀴즈 질문이 세 줄이라 셋째 줄이 잘렸다)
+    big = lambda s, n=24, lines=2: "\n".join(_reel_plain(x, n) for x in str(s or "").replace("\\n", "\n").split("\n")[:lines] if x.strip())
+    scenes = []
+    for sc in (raw.get("scenes") or [])[:REEL_SCENES_MAX]:
+        if not isinstance(sc, dict):
+            continue
+        says = [line(x) for x in (sc.get("say") or [])[:3] if isinstance(x, str)]
+        says = [x for x in says if x]
+        img = _decode_plain(sc.get("img"), REEL_IMG_DESC_MAX)
+        if says and img:
+            scenes.append({"big": big(sc.get("big")), "say": says, "img": img})
+    q = raw.get("quiz") if isinstance(raw.get("quiz"), dict) else {}
+    ask, answer = line(q.get("ask")), line(q.get("answer"))
+    qimg = _decode_plain(q.get("img"), REEL_IMG_DESC_MAX)
+    if len(scenes) < 4 or not (ask and answer and qimg):
+        raise RuntimeError("영상 대본을 만들지 못했습니다. 다시 시도해 주세요.")
+    scenes.append({"big": "퀴즈!", "say": [ask, answer], "img": qimg, "pause_before": [0, 2.8],
+                   "quiz": {"q": big(q.get("q"), 40, 4), "a": big(q.get("a"), 40, 4)}})
+    lines = sum(len(s["say"]) for s in scenes)
+    while lines > REEL_LINES_MAX and len(scenes) > 5:   # 너무 길면 퀴즈 앞 장면부터 덜어 낸다
+        lines -= len(scenes.pop(-2)["say"])
+    return {"title": _reel_plain(raw.get("title"), 40), "cast": _decode_plain(raw.get("cast"), 500), "scenes": scenes}
+
+
+def call_gemini_reel_script(explain, api_key, model):
+    """내용 한장정리 결과(dict) → 릴스 대본."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. 관리자에게 문의하세요.")
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+    src = {k: explain.get(k) for k in ("title", "field", "oneLine", "primer", "concepts", "parts", "analogy", "message", "questions")}
+    payload = {
+        "systemInstruction": {"parts": [{"text": REEL_SCRIPT_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": "[내용 한장정리]\n" + json.dumps(src, ensure_ascii=False)}]}],
+        "generationConfig": {"temperature": 0.6, "maxOutputTokens": 12288,
+                             "responseMimeType": "application/json", "responseSchema": REEL_SCRIPT_SCHEMA},
+    }
+    return _finish_reel_script(_gemini_json(payload, api_key, model, "영상 대본이 너무 길어 잘렸습니다. 다시 시도해 주세요.",
+                                            label="reelscript"))
+
+
+def call_gemini_reel_image(cast, scene, api_key):
+    """장면 그림 한 장(세로 9:16). 반환 {"image": base64, "mime"}."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    scene = _decode_plain(scene, REEL_IMG_DESC_MAX)
+    if not scene:
+        raise ValueError("그릴 장면이 비어 있습니다.")
+    cast = _decode_plain(cast, 500)
+    prompt = f"{REEL_STYLE}\n\n{cast}\n\nScene: {scene}".replace("\n\n\n", "\n\n")
+    data = json.dumps({
+        "model": MODEL_IMAGE,
+        "input": [{"type": "text", "text": prompt}],
+        "response_format": {"type": "image", "mime_type": "image/jpeg", "aspect_ratio": "9:16", "image_size": IMAGE_SIZE},
+    }, ensure_ascii=False).encode("utf-8")
+    vertex_data = json.dumps({
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["IMAGE"], "maxOutputTokens": 7168,
+                             "imageConfig": {"aspectRatio": "9:16", "imageSize": IMAGE_SIZE,
+                                             "imageOutputOptions": {"mimeType": "image/jpeg"}}},
+    }, ensure_ascii=False).encode("utf-8")
+    image = mime = reason = None
+    started = time.monotonic()
+    for attempt in (1, 2):
+        if attempt == 2 and time.monotonic() - started > 45:
+            break
+        try:
+            body = _gemini_call_with_retry(data, api_key, MODEL_IMAGE, url=GEMINI_IMAGE_URL,
+                                           vertex_data=vertex_data, allow_fallback=False)
+            _log_usage(body, MODEL_IMAGE, label="reelimage")
+        except ProUnavailable:
+            raise ProUnavailable(f"이 API 키로는 그림 모델({MODEL_IMAGE})을 사용할 수 없습니다. 관리자에게 문의하세요.")
+        image, mime = _image_from_interaction(body)
+        if image:
+            break
+        reason, said = _image_refusal(body)
+        print(f"[릴스 그림] 이미지 없음 ({attempt}회째) · 사유 {reason or '없음'} · 글 {said!r}", flush=True)
+    if not image:
+        raise RuntimeError("그림 모델이 그림을 그리지 못했습니다. 잠시 뒤 다시 눌러 보세요 — "
+                           f"실패한 것은 값이 나가지 않았습니다. (사유: {reason or '알 수 없음'})")
+    return {"image": image, "mime": mime or "image/jpeg"}
+
+
+def _reel_tts_line(text, voice, api_key):
+    """한 줄 → (base64 PCM16 mono, 표본률). 끝의 잡음 자르기·빠르기는 화면이 한다."""
+    data = json.dumps({
+        "contents": [{"parts": [{"text": text}]}],
+        "generationConfig": {"responseModalities": ["AUDIO"],
+                             "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}},
+    }, ensure_ascii=False).encode("utf-8")
+    last = None
+    for _ in range(3):   # 소리가 비거나 터무니없이 길면 한 번 더(실측: 드물게 몇 초짜리 빈 소리가 온다)
+        body = _gemini_call_with_retry(data, api_key, MODEL_TTS, url=GEMINI_URL.format(model=MODEL_TTS),
+                                       allow_fallback=False)
+        _log_usage(body, MODEL_TTS, label="reelvoice")
+        part = next((p for c in body.get("candidates") or [] for p in (c.get("content") or {}).get("parts") or []
+                     if isinstance(p, dict) and "inlineData" in p), None)
+        if part:
+            b64 = part["inlineData"].get("data") or ""
+            m = re.search(r"rate=(\d+)", part["inlineData"].get("mimeType") or "")
+            rate = int(m.group(1)) if m else 24000
+            secs = len(b64) * 3 / 4 / 2 / rate
+            if 0.3 < secs < 2 + len(text) * 0.3:
+                return b64, rate
+            last = f"길이 이상 {secs:.1f}초"
+        else:
+            last = "소리 없음"
+    raise RuntimeError(f"음성을 만들지 못했습니다({last}). 다시 시도해 주세요.")
+
+
+def call_gemini_reel_voice(lines, voice, api_key):
+    """대사 줄마다 음성. 반환 {"voice", "lines":[{"pcm": base64, "rate"}]} — 한 줄이라도 실패하면 전체 실패(값을 안 받는다)."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if voice not in REEL_VOICES:
+        voice = REEL_VOICES[0]
+    lines = [_reel_plain(x, REEL_LINE_MAX) for x in (lines or [])[:REEL_LINES_MAX] if isinstance(x, str)]
+    if not lines or not all(lines):
+        raise ValueError("읽을 대사가 비어 있습니다.")
+    from concurrent.futures import ThreadPoolExecutor
+    labels = _vertex_get_labels()   # 새 스레드로 라벨을 옮겨야 토큰 기록(usage_records)이 빠지지 않는다
+
+    def one(t):
+        _vertex_set_labels(labels)
+        return _reel_tts_line(t, voice, api_key)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        got = list(ex.map(one, lines))
+    return {"voice": voice, "lines": [{"pcm": b, "rate": r} for b, r in got]}
+
+
 # ══════ 기출 소재·어휘(2026-11-18 사용자) ══════
 # 모의고사·수능 여러 회차의 지문을 넣으면 ① 지문마다 분야·한 줄 소재·핵심어를 붙이고(/api/topicscan, Flash)
 # ② 교육과정 3,000단어로 지문 낱말을 몇 % 읽을 수 있는지 센다(/api/vocabstats, AI 없음·0원)
@@ -15246,6 +15451,8 @@ CONTENT_TYPES = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
+    # 릴스 제작의 목소리 미리 듣기(reel-voice-*.mp3)
+    ".mp3": "audio/mpeg",
     # 검색 로봇용 두 파일
     ".txt": "text/plain; charset=utf-8",
     ".xml": "application/xml; charset=utf-8",
@@ -16910,6 +17117,14 @@ CHANGELOG = [
             "🎨 성적표 맨 위 '성적표 색'에서 색을 골라 바꿀 수 있습니다. 고른 색은 계정에 남아 다음에도 그대로 쓰입니다.",
         ],
     },
+    {
+        "version": 138,
+        "date": "2026-11-19",
+        "items": [
+            "🎬 새 탭 '숏폼 영상 제작' — 지문을 넣고 목소리만 고르면 AI가 내용을 정리해 대본을 쓰고, 장면 그림과 목소리를 넣어 1분 안팎의 세로 영상(mp4)을 만듭니다. 인스타그램 릴스·유튜브 쇼츠에 올릴 수 있는 크기입니다.",
+            "🎙️ 목소리 14가지(추천 4가지 + 10가지) 중에서 고르고, 여러 개 고르면 영상마다 다른 목소리를 정할 수 있습니다. 말 빠르기도 0.7~1.5배로 조절됩니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -18457,12 +18672,13 @@ def save_item(item_id, user_id, tab, title, payload):
 # 목록(entry·lang·key)만 적는다. 한 장씩이면 1MiB 안에 들어가므로 줄이지 않고 그대로 쓴다.
 SAVED_IMAGES = "saved_images"
 SAVED_IMAGE_MAX_CHARS = 1_000_000      # base64 글자 수 — 문서 한도(1,048,576바이트)보다 조금 작게
-SAVED_IMAGES_PER_ITEM = 60   # 지문 하나에 영·한 두 장이라 12장이면 지문 6개에서 막혔다(2026-10-23)
+SAVED_IMAGES_PER_ITEM = 120  # 릴스 한 편은 그림 9장 + 목소리 15줄 안팎이라 5편이면 120개(2026-11-19). 그 전 값 60: 지문 하나에 영·한 두 장이라 12장이면 지문 6개에서 막혔다(2026-10-23)
 _SAVED_IMG_KEY_RE = re.compile(r"^[0-9a-z_]{1,24}$")
 _SAVED_IMG_MAGIC = {                    # mime → 파일 첫머리(바이트) — 이름만 속인 파일을 막는다
     "image/jpeg": (b"\xff\xd8\xff",),
     "image/png": (b"\x89PNG",),
     "image/webp": (b"RIFF",),
+    "audio/wav": (b"RIFF",),      # 릴스 제작의 목소리 — 줄마다 한 문서(1MiB 안)
 }
 
 
@@ -23317,6 +23533,10 @@ class Handler(BaseHTTPRequestHandler):
                 "decodePic": PRICE_DECODE_PIC_KRW,
                 # 내용 한장정리 — 지문 1개당
                 "explain": PRICE_EXPLAIN_KRW,
+                # 릴스 제작 — 대본은 지문 1개당, 그림은 장면 한 장당, 목소리는 한 편(대사 전부)당
+                "reelScript": PRICE_REEL_SCRIPT_KRW,
+                "reelImage": PRICE_REEL_IMAGE_KRW,
+                "reelVoice": PRICE_REEL_VOICE_KRW,
                 # 기출 소재·어휘 — 소재 분석은 지문 1개당, 단어장으로 보낼 때 뜻 달기는 한 번(100단어까지)당
                 "topic": PRICE_TOPIC_KRW,
                 "topicWords": PRICE_TOPIC_WORDS_KRW,
@@ -23860,7 +24080,8 @@ class Handler(BaseHTTPRequestHandler):
         self._exam_run = None
 
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
+        if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain",
+                        "/api/reelscript", "/api/reelimage", "/api/reelvoice", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                         "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/hwpx", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
@@ -23950,7 +24171,8 @@ class Handler(BaseHTTPRequestHandler):
         # 로그인이 곧 '누가 관리자 키를 쓰는지' 구분하는 유일한 장치다.
         # 그중 실제로 콘텐츠를 생성하는 여섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
-        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/quiz", "/api/workbook", "/api/grammar",
+        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain",
+                           "/api/reelscript", "/api/reelimage", "/api/reelvoice", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                            "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
@@ -24012,6 +24234,15 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/explain":
                     cost = PRICE_EXPLAIN_KRW
                     self._pending_label = "내용 한장정리"
+                elif path == "/api/reelscript":
+                    cost = PRICE_REEL_SCRIPT_KRW
+                    self._pending_label = "숏폼 영상 · 대본"
+                elif path == "/api/reelimage":
+                    cost = PRICE_REEL_IMAGE_KRW
+                    self._pending_label = "숏폼 영상 · 장면 그림"
+                elif path == "/api/reelvoice":
+                    cost = PRICE_REEL_VOICE_KRW
+                    self._pending_label = "숏폼 영상 · 목소리"
                 elif path == "/api/infographic":
                     # 지문 1개에 그림 1장. 분석과 달리 한 번에 여러 장을 받지 않는다 —
                     # 1장에 8~12초가 걸려서 여러 장을 한 요청에 묶으면 프록시가 끊는다.
@@ -25285,6 +25516,60 @@ class Handler(BaseHTTPRequestHandler):
                 self._charge_and_send(path, req, result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        # 릴스 제작 — 대본: 내용 한장정리(Flash)를 만들고 그것만 근거로 장면 대본(Flash)을 짠다. 값은 한 번.
+        # 화면이 이미 만든 한장정리(explain)를 실어 보내도 그대로 쓰지 않고 새로 만든다 — 대본의 근거를 서버가 쥐고 있게.
+        if path == "/api/reelscript":
+            passage = (req.get("passage") or "").strip()
+            if len(passage) < 20:
+                self._send_json({"error": "영상으로 만들 영어 지문을 입력하세요 (20자 이상)."}, 400)
+                return
+            api_key = req.get("apiKey") or ""
+            try:
+                explain = call_gemini_explain(passage, api_key, MODEL)   # 항상 Flash
+                if not explain.get("parts"):
+                    raise RuntimeError("지문 내용을 정리하지 못했습니다. 다시 시도해 주세요.")
+                script = call_gemini_reel_script(explain, api_key, MODEL)
+                self._charge_and_send(path, req, {"explain": explain, "script": script})
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        # 릴스 제작 — 장면 그림 한 장(장면마다 따로 부른다)
+        if path == "/api/reelimage":
+            try:
+                result = call_gemini_reel_image(req.get("cast"), req.get("scene"), req.get("apiKey") or "")
+                self._charge_and_send(path, req, result)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        # 릴스 제작 — 대사 전부를 고른 목소리로(한 줄이라도 실패하면 값을 받지 않는다)
+        if path == "/api/reelvoice":
+            try:
+                result = call_gemini_reel_voice(req.get("lines"), str(req.get("voice") or ""), req.get("apiKey") or "")
+                self._charge_and_send(path, req, result)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
             except ProUnavailable as e:
                 self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
             except QuotaExceeded as e:
