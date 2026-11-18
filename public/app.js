@@ -4317,7 +4317,7 @@ function syncTabChrome(tab) {
      자리가 없는 화면(탭을 고르기 전, 반/학생 관리)에서는 감춘다. */
   const SLOT_ID = { analyze: "analyzeBrandSlot", brief: "briefBrandSlot", mcq: "mcqBrandSlot",
     saq: "saqBrandSlot", mix: "mixBrandSlot", workbook: "wbBrandSlot", vocab: "vocabBrandSlot",
-    grammar: "grammarBrandSlot", decode: "decodeBrandSlot", explain: "explainBrandSlot", topic: "topicBrandSlot" };
+    grammar: "grammarBrandSlot", decode: "decodeBrandSlot", explain: "explainBrandSlot", reels: "reelsBrandSlot", topic: "topicBrandSlot" };
   const slot = onExam ? (!examPaperPanelEl.hidden ? $("examBrandSlot") : null)
     : onTrend ? $("trendBrandSlot")
     : SLOT_ID[tab] ? $(SLOT_ID[tab]) : null;

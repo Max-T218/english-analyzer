@@ -347,21 +347,60 @@ function rlDraw(ctx, e, tl, imgs, t) {
       ctx.globalAlpha = 1;
     }
   }
+  // 학원 마크 — 맨 아래 띠, 왼쪽 학원명·오른쪽 로고(인쇄물 꼬리말과 같은 자리, 2026-11-19 사용자)
+  const br = imgs.brand;
+  if (br && (br.name || br.logo)) {
+    const y = RL_H - 150, hh = 110;
+    const g = ctx.createLinearGradient(0, y - 40, 0, RL_H);
+    g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(0.35, "rgba(0,0,0,.55)"); g.addColorStop(1, "rgba(0,0,0,.75)");
+    ctx.fillStyle = g; ctx.fillRect(0, y - 40, RL_W, RL_H - y + 40);
+    let logoW = 0;
+    if (br.logo && br.logo.naturalWidth) {
+      const lh = 76, lw = Math.min(300, br.logo.naturalWidth * (lh / br.logo.naturalHeight));
+      const lhh = lw * (br.logo.naturalHeight / br.logo.naturalWidth);
+      logoW = lw + 28;
+      rlRound(ctx, RL_W - 56 - lw - 14, y + (hh - lhh) / 2 - 10, lw + 28, lhh + 20, 14);
+      ctx.fillStyle = "rgba(255,255,255,.92)"; ctx.fill();
+      ctx.drawImage(br.logo, RL_W - 56 - lw, y + (hh - lhh) / 2, lw, lhh);
+    }
+    if (br.name) {
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      let fs = 44;
+      ctx.font = `800 ${fs}px ${RL_FONT}`;
+      const maxW = RL_W - 112 - logoW - 30;
+      while (fs > 26 && ctx.measureText(br.name).width > maxW) { fs -= 2; ctx.font = `800 ${fs}px ${RL_FONT}`; }
+      ctx.fillStyle = "#fff";
+      ctx.fillText(br.name, 56, y + hh / 2);
+      ctx.textAlign = "center";
+    }
+  }
   // 진행 막대
   ctx.fillStyle = "#ffd23f";
   ctx.fillRect(0, 0, RL_W * Math.min(t / tl.total, 1), 10);
 }
+// 학원 마크 — 학원 마크 칸(app.js, trend.js trendBrand)에 넣은 학원명·로고. 칸을 끄면 넣지 않는다
+function rlBrand() {
+  if (!(rlEl("rlBrandOn") && rlEl("rlBrandOn").checked)) return null;
+  const b = typeof trendBrand === "function" ? trendBrand() : { img: "", name: "" };
+  return (b.name || b.img) ? { name: b.name, img: b.img } : null;
+}
+const rlBrandKey = () => { const b = rlBrand(); return b ? `${b.name}|${b.img.length}|${b.img.slice(-40)}` : ""; };
 
 /* ── 재생·녹화 ── */
 let rlPlaying = null;   // 미리 보기 중인 재생(rlPlay가 돌려준 ctl)
-function rlLoadImgs(e) {
-  return Promise.all(e.script.scenes.map((_, i) => new Promise((res) => {
-    const src = e.images[i];
+function rlLoadImg(src) {
+  return new Promise((res) => {
     if (!src) return res(null);
     const im = new Image();
     im.onload = () => res(im); im.onerror = () => res(null);
     im.src = src;
-  })));
+  });
+}
+async function rlLoadImgs(e) {
+  const imgs = await Promise.all(e.script.scenes.map((_, i) => rlLoadImg(e.images[i])));
+  const b = rlBrand();
+  imgs.brand = b ? { name: b.name, logo: await rlLoadImg(b.img) } : null;
+  return imgs;
 }
 // 화면이 다른 탭으로 가도 멈추지 않는 시계 — 브라우저는 숨은 탭의 requestAnimationFrame·setInterval을 멈추거나
 // 1초에 한 번으로 늦추지만, 워커가 보내는 메시지는 그대로 받는다(뒤에서 녹화할 때 쓴다)
@@ -451,7 +490,7 @@ function rlPlay(e, canvas, { record = false, silent = false, onEnd, onProgress }
    릴스가 다 만들어지면(그림·목소리가 모두 있으면) 뒤에서 소리 없이 영상 파일을 녹화해 둔다 — 한 편씩 차례로,
    다음 지문을 만드는 동안에도. 끝나면 [⬇ 영상 받기]가 누르는 즉시 내려받는다. 빠르기·그림·목소리가 바뀌면
    (rlVidSig가 달라지면) 지난 파일을 버리고 다시 녹화한다. 녹화는 영상 길이만큼 걸린다(재생하며 찍는 방식). */
-const rlVidSig = (e) => `${rlSpeedOf(e)}|${e.images.join(",")}|${(e.audio || []).map((a) => a && a.url).join(",")}`;
+const rlVidSig = (e) => `${rlSpeedOf(e)}|${e.images.join(",")}|${(e.audio || []).map((a) => a && a.url).join(",")}|${rlBrandKey()}`;
 const rlReady = (e) => !!(e && e.script && e.audio && e.audio.every(Boolean) && e.images.length && e.images.every(Boolean));
 const rlVidOk = (e) => !!(e.video && e.video.sig === rlVidSig(e));
 let rlMp4Ok = null;   // 정식 mp4를 만들 수 있는 브라우저인가(처음 한 번 묻는다)
@@ -554,6 +593,37 @@ function rlDoneDialog() {
       <button type="button" class="btn ghost rl-done-close">닫기</button></div></div>`;
   ov.hidden = false;
 }
+// 전체 화면 보기(2026-11-19 사용자) — 영상 파일이 있으면 그 mp4를 재생기(컨트롤·초 이동)로, 없으면 미리 보기 캔버스를 전체 화면으로
+function rlFullscreen(e, card) {
+  if (rlVidOk(e)) {
+    const v = document.createElement("video");
+    v.className = "rl-fullvideo";
+    v.src = e.video.url;
+    v.controls = true;
+    v.playsInline = true;
+    document.body.appendChild(v);
+    const drop = () => { v.pause(); v.remove(); document.removeEventListener("fullscreenchange", done); };
+    const done = () => { if (!document.fullscreenElement) drop(); };
+    document.addEventListener("fullscreenchange", done);
+    if (!v.requestFullscreen && v.webkitEnterFullscreen) {   // 아이폰 사파리 — 영상만 전체 화면이 된다
+      v.addEventListener("webkitendfullscreen", drop, { once: true });
+      v.play().then(() => v.webkitEnterFullscreen()).catch(drop);
+      return;
+    }
+    let entered = false;
+    (v.requestFullscreen ? v.requestFullscreen() : Promise.reject()).then(() => { entered = true; v.play().catch(() => {}); }, drop);
+    setTimeout(() => { if (!entered && document.fullscreenElement !== v) drop(); }, 4000);   // 브라우저가 답하지 않으면 치운다
+    return;
+  }
+  const stage = card.querySelector(".rl-stage");
+  if (!stage || !stage.requestFullscreen) return;
+  stage.requestFullscreen().then(() => {
+    const play = card.querySelector(".rl-play");
+    if (play && !play.disabled) play.click();   // 아직 파일이 없으면 미리 보기를 그대로 크게 튼다
+    const out = () => { if (!document.fullscreenElement) { if (rlPlaying) rlPlaying.stop(); document.removeEventListener("fullscreenchange", out); } };
+    document.addEventListener("fullscreenchange", out);
+  }).catch(() => {});
+}
 function rlDownload(e) {
   const a = document.createElement("a");
   a.href = e.video.url;
@@ -586,6 +656,8 @@ function rlCardHtml(e, i) {
       <div class="actions">
         <button type="button" class="btn ghost rl-play"${ready ? "" : " disabled"}>▶ 미리 보기</button>
         <button type="button" class="btn ghost rl-stop" hidden>■ 멈추기</button>
+        <button type="button" class="btn ghost rl-full"${ready ? "" : " disabled"}
+                title="영상 파일이 준비됐으면 그 파일을 전체 화면 재생기로(초 이동 가능), 아직이면 미리 보기를 전체 화면으로 엽니다. Esc로 나옵니다.">⛶ 전체 화면</button>
         <button type="button" class="btn rl-dl"${rlVidOk(e) ? "" : " disabled"}
                 title="다 만든 영상은 뒤에서 영상 파일로 미리 만들어 둡니다(영상 길이만큼 걸립니다). 준비되면 누르는 즉시 내려받습니다.">${
           rlVidOk(e) ? `⬇ 영상 받기 (${e.video.ext}, ${(e.video.blob.size / 1e6).toFixed(0)}MB)` : ready ? "🎞️ 영상 파일 기다리는 중…" : "⬇ 영상 받기"}</button>
@@ -758,6 +830,10 @@ rlEl("rlResult").addEventListener("click", async (ev) => {
     ctl.done.catch((err) => { status.textContent = "⚠️ " + (err.message || err); busy(false); });
     return;
   }
+  if (ev.target.closest(".rl-full")) {
+    rlFullscreen(e, card);
+    return;
+  }
   if (ev.target.closest(".rl-dl")) {
     if (rlVidOk(e)) { rlDownload(e); status.textContent = `✅ 내려받았습니다(${e.video.ext}).`; }
     return;
@@ -904,12 +980,24 @@ if (typeof HOWTO !== "undefined") {
       "<b>목소리</b>를 고르고(<b>🔊 들어 보기</b>로 미리 들어 볼 수 있습니다 — <b>⭐ 추천 목소리</b> 넷 말고도 <b>더 많은 목소리</b>를 펼치면 열 가지가 더 있습니다) <b>🎬 영상 만들기</b>를 누릅니다. " +
         "목소리를 <b>여러 개</b> 고르면 <b>🎙️ 영상마다 목소리</b>에 지문마다 줄이 생겨 영상마다 다른 목소리를 정할 수 있습니다(처음엔 고른 목소리를 차례로 돌려 넣습니다).",
       "<b>⏩ 말 빠르기</b>는 슬라이더로 0.7~1.5배 사이에서 고릅니다(기본 1.15배). 만든 뒤에도 영상마다 <b>빠르기</b> 칸에서 바꿀 수 있고 값은 들지 않습니다. " +
-        "<b>▶ 미리 보기</b>로 확인합니다. 마음에 안 드는 장면은 <b>🔄 그림 다시</b>로 그 그림만 다시 그립니다(그림 값 따로).",
+        "<b>▶ 미리 보기</b>나 <b>⛶ 전체 화면</b>(영상 파일이 준비되면 초 이동이 되는 재생기)으로 확인합니다. 마음에 안 드는 장면은 <b>🔄 그림 다시</b>로 그 그림만 다시 그립니다(그림 값 따로).",
       "다 만든 영상은 곧바로 <b>영상 파일(mp4)</b>로 만들어 둡니다. <b>✅ 제작 완료</b> 창이 뜨면 <b>⬇ 영상 받기</b>로 받습니다. " +
         "<b>💾 사이트 저장</b>은 대본·장면 그림·목소리를 저장합니다 — <b>영상 파일은 저장되지 않으니</b> 꼭 받아 두세요. 저장한 것을 불러오면 AI 값 없이 영상을 다시 만들어 받을 수 있습니다.",
     ],
-    tip: "대본은 이 사이트의 <b>내용 한장정리</b>와 같은 방법으로 지문 내용을 먼저 정리한 뒤, 그 정리에 있는 내용만으로 씁니다 — 첫 질문 → 배경지식 → 대목마다 풀어 읽기 → 쉽게 말하면(비유) → 글쓴이가 하고 싶은 말 → 퀴즈(3·2·1 뒤 정답). 그림에는 글자를 넣지 않고 실존 인물도 그리지 않습니다. 녹화는 <b>PC 크롬</b>을 권합니다(mp4로 저장됩니다. 다른 브라우저는 webm일 수 있습니다). 교재 지문으로 만든 영상을 공개 계정에 올릴 때는 교재 저작권을 확인하세요.",
+    tip: "대본은 이 사이트의 <b>내용 한장정리</b>와 같은 방법으로 지문 내용을 먼저 정리한 뒤, 그 정리에 있는 내용만으로 씁니다 — 첫 질문 → 배경지식 → 대목마다 풀어 읽기 → 쉽게 말하면(비유) → 글쓴이가 하고 싶은 말 → 퀴즈(3·2·1 뒤 정답). 그림에는 글자를 넣지 않고 실존 인물도 그리지 않습니다. 영상 맨 아래에는 <b>학원 마크</b> 칸에 넣은 <b>학원명(왼쪽)·학원 로고(오른쪽)</b>가 들어갑니다(넣기 체크로 끌 수 있습니다). 영상 파일은 <b>PC 크롬</b>을 권합니다. 교재 지문으로 만든 영상을 공개 계정에 올릴 때는 교재 저작권을 확인하세요.",
   };
 }
+
+// 학원 마크 칸(이름 적기·로고 올리기·지우기)이나 '넣기' 체크가 바뀌면 다시 그린다 — 영상 파일은 rlRender가 다시 만든다
+let rlBrandTimer = 0;
+function rlBrandChanged() {
+  if (!rlState.entries.length) return;
+  clearTimeout(rlBrandTimer);
+  rlBrandTimer = setTimeout(() => { if (!rlPlaying) rlRender(); }, 700);
+}
+rlEl("rlBrandOn").addEventListener("change", rlBrandChanged);
+["input", "change", "click"].forEach((ev) => document.addEventListener(ev, (e) => {
+  if (e.target.closest && e.target.closest(".brand-panel") && rlEl("tab-reels").classList.contains("active")) rlBrandChanged();
+}, true));
 
 rlRender();
