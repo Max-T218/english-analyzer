@@ -7568,7 +7568,8 @@ STUDENT_COMMENT_SYSTEM_PROMPT = """당신은 학원·학교 영어 선생님을 
 규칙
 - 입력에 있는 숫자와 사실만 씁니다. 없는 시험, 없는 점수, 학생의 성격·가정 사정·출결을 지어내지 않습니다.
 - 학생 이름은 모르므로 이름 자리는 반드시 {학생}으로 씁니다(예: "{학생} 학생은 …"). 다른 호칭이나 실제 이름을 쓰지 않습니다.
-- 4~6문장. 순서: ① 이 기간 성적 전체 평가(평균, 합격 개수) ② 점수 흐름(오르는지·내리는지·일정한지) ③ 잘한 점(만점, 재시험을 끝까지 합격한 끈기 등 입력에 있는 것) ④ 보완할 점(미통과·미응시·점수가 낮은 시험) ⑤ 앞으로의 격려와 구체적인 학습 방법 한 가지.
+- 3~4문장, 공백 포함 250자 이내로 간략하게 씁니다(성적표 한 쪽에 들어가야 합니다). 순서: ① 이 기간 성적 전체 평가(평균, 합격 개수)와 점수 흐름 ② 잘한 점 한 가지 ③ 보완할 점 한 가지(미통과·미응시·점수가 낮은 시험 — 없으면 생략) ④ 짧은 격려나 학습 방법 한 가지.
+- 시험 이름을 하나하나 늘어놓지 않습니다. 꼭 짚을 때만 한두 개를 씁니다.
 - 점수가 낮아도 비난하지 않고, 높아도 과장하지 않습니다. 따뜻하지만 사실에 충실한 어조입니다.
 - 첫 시도 점수와 최고 점수가 다르면 재시험으로 점수가 오른 것입니다. 합격선(passPercent) 아래이면 통과하지 못한 것입니다.
 - 시험이 하나도 없으면 응시 독려를 짧게 씁니다.
@@ -7628,10 +7629,28 @@ def call_gemini_student_comment(data, api_key, model):
     }
     result = _gemini_json(payload, api_key, model, "코멘트가 너무 길어 잘렸습니다. 다시 시도해 주세요.",
                           label="studentcomment")
-    comment = _trend_text(result.get("comment"), 1200)
+    comment = _student_comment_trim(_trend_text(result.get("comment"), 1200))
     if not comment:
         raise RuntimeError("코멘트를 만들지 못했습니다. 다시 시도해 주세요.")
     return {"comment": comment}
+
+
+# 성적표 2쪽(종합 소견)이 한 장을 넘지 않게(2026-11-18 사용자) — 지시문이 250자를 말해도 넘겨 쓰면
+# 문장 단위로 이 길이 안에서 자른다(문장 하나가 이보다 길면 그 문장까지는 둔다).
+STUDENT_COMMENT_MAX_CHARS = 280
+
+
+def _student_comment_trim(text):
+    text = (text or "").strip()
+    if len(text) <= STUDENT_COMMENT_MAX_CHARS:
+        return text
+    parts = re.findall(r"[^.!?。]+[.!?。]+[\"'”’)]*\s*|[^.!?。]+$", text)
+    out = ""
+    for part in parts:
+        if out and len(out) + len(part.rstrip()) > STUDENT_COMMENT_MAX_CHARS:
+            break
+        out += part
+    return out.strip()
 
 
 # ══════ 문법문제 출제 마법사(/api/grammar) ══════
