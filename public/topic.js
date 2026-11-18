@@ -455,17 +455,10 @@ function tpTopicHtml() {
   rows.forEach((x) => { (byField[x.t.field] = byField[x.t.field] || []).push(x); });
   const fields = TOPIC_FIELDS.filter((f) => byField[f]).sort((a, b) => byField[b].length - byField[a].length
     || TOPIC_FIELDS.indexOf(a) - TOPIC_FIELDS.indexOf(b));
-  const max = Math.max(...fields.map((f) => byField[f].length));
-  const bars = fields.map((f) => `<div class="tp-bar"><span class="tp-bar-name">${esc(f)}</span>
-    <span class="tp-bar-track"><i style="width:${(byField[f].length / max) * 100}%;background-color:${tpFieldColor(f)}"></i></span>
-    <b>${byField[f].length}</b></div>`).join("");
-  // 회차 × 분야
+  // 회차 × 분야 — '분야별 출제 수' 막대와 '회차별 분야' 표는 아래 '회차별 분야 구성' 막대와 겹쳐 뺐다(2026-11-18 사용자).
+  // 회차 이름은 공통 앞·뒤 낱말을 떼어 줄인다('2025학년도 3월 고2 학력평가' → '2025학년도 3월')
   const cnt = (f, r) => byField[f].filter((x) => x.round === r.name && tpState.rounds[x.ri] === r).length;
-  const grid = `<table class="tp-grid"><thead><tr><th>분야</th>${rounds.map((r) => `<th>${esc(r.name)}</th>`).join("")}<th>합계</th></tr></thead>
-    <tbody>${fields.map((f) => `<tr><th><i class="tp-dot" style="background:${tpFieldColor(f)}"></i>${esc(f)}</th>${rounds.map((r) => {
-      const n = cnt(f, r);
-      return `<td${n ? ` class="tp-heat" style="background-color:rgba(77,148,236,${Math.min(0.15 + n * 0.17, 0.85)});${n >= 3 ? "color:#fff;" : ""}"` : ""}>${n || ""}</td>`;
-    }).join("")}<td><b>${byField[f].length}</b></td></tr>`).join("")}</tbody></table>`;
+  const short = trendShortNames(rounds.map((r) => r.name));
   const every = rounds.length > 1 ? fields.filter((f) => rounds.every((r) => cnt(f, r) > 0)) : [];
   const never = TOPIC_FIELDS.filter((f) => !byField[f] && f !== "실용문");
   const genres = {};
@@ -489,15 +482,14 @@ function tpTopicHtml() {
       ${rpDonutBlock("분야 비율", fieldParts, `${fields.length}가지`, `지문 ${rows.length}개`)}
       ${rpDonutBlock("글의 성격", genreParts, `${rows.length}`, "지문")}
     </div>`;
-  const stack = rounds.length > 1 ? `<div class="rp-keep"><h5>회차별 분야 구성 <small>회차마다 100%로 펼친 막대 — 칸 안 숫자는 지문 수</small></h5>
-      ${rpStackRows(rounds.map((r) => ({ label: r.name, parts: fields.map((f) => ({ label: f, value: cnt(f, r), color: tpFieldColor(f) })) })))}
+  const stack = rounds.length > 1 ? `<div class="rp-keep tp-pg"><h5>회차별 분야 구성 <small>회차마다 100%로 펼친 막대 — 칸 안 숫자는 지문 수</small></h5>
+      ${rpStackRows(rounds.map((r, i) => ({ label: short[i], parts: fields.map((f) => ({ label: f, value: cnt(f, r), color: tpFieldColor(f) })) })))}
       <div class="tp-legend">${fields.map((f) => `<span><i style="background:${tpFieldColor(f)}"></i>${esc(f)}</span>`).join("")}</div></div>` : "";
   return `<h4 class="sec">소재 분석</h4>
     <ul class="tp-summary">${summary}</ul>
     ${donuts}
-    <div class="tp-two"><div><h5>분야별 출제 수</h5>${bars}</div><div><h5>회차별 분야</h5>${grid}</div></div>
     ${stack}
-    <h4 class="sec">분야별 소재 목록</h4>${tables}`;
+    <h4 class="sec tp-pg">분야별 소재 목록</h4>${tables}`;
 }
 
 // 외워야 할 낱말 목록 — 지정 어휘 밖 낱말에, 고르면 고등(·중학교) 지정 어휘 낱말까지 합쳐 많이 나온 차례로
@@ -610,7 +602,7 @@ function tpVocabHtml(forPrint) {
     ? `<button type="button" class="btn ghost small no-print" id="tpMoreWords">더 보기 (${shown}/${all.length})</button>` : "";
   return `<div class="tp-vocab-sec">
     ${stale && !forPrint ? `<div class="tp-stale no-print">⚠️ 회차나 지문이 바뀌었습니다. [📊 어휘만 분석]을 누르면 지금 지문으로 다시 셉니다(무료).</div>` : ""}
-    <h4 class="sec">어휘 분석 — 교육부 지정 어휘로 지문을 얼마나 읽을 수 있나</h4>
+    <h4 class="sec tp-pg">어휘 분석 — 교육부 지정 어휘로 지문을 얼마나 읽을 수 있나</h4>
     <div class="tp-explain"><b>교육부 지정 어휘 비율</b>이란? 지문에 나온 낱말 100개 가운데 <b>교육부 지정 어휘</b>(2022 개정 교육과정이 정한 3,000단어 — 초등 800·중학교 1,200·고등 1,000, 변화형·파생어 포함)에 드는 낱말이 몇 개인지입니다. <b>${TOPIC_TARGET}%</b>를 넘으면 지정 어휘를 익힌 학생이 모르는 낱말 없이 편하게 읽는 수준으로 봅니다. 낮을수록 어휘가 어려운 시험입니다.</div>
     <ul class="tp-summary"><li>${levelLine}</li><li>${gapLine}</li>
       <li>교육부 지정 어휘에 없는 낱말은 모두 <b>${st.offlistTotal.toLocaleString()}개</b>(같은 낱말의 변화형은 하나로 셉니다)입니다 — 맨 아래 목록에서 골라 단어장으로 만들 수 있습니다.</li></ul>
@@ -618,7 +610,7 @@ function tpVocabHtml(forPrint) {
     ${legend}${covs}
     ${hardHtml ? `<div class="rp-keep"><h5>어휘가 어려운 지문 <small>지정 어휘 비율이 낮은 차례</small></h5>${hardHtml}</div>` : ""}
     ${forPrint ? "" : tpPeekHtml()}
-    <h4 class="sec">외워야 할 낱말 — 시험지에 나온 암기 어휘</h4>
+    <h4 class="sec tp-pg">외워야 할 낱말 — 시험지에 나온 암기 어휘</h4>
     <div class="hint">시험지에 나온 낱말 중 학생이 외워야 할 낱말을 많이 나온 차례로 모았습니다. <b>지정 밖</b>은 교육부 지정 어휘에 없는 낱말, <b>고등</b>·<b>중학교</b>는 지정 어휘 중 그 단계 낱말, <b>파생어</b>는 고등 지정 어휘에 파생어로 함께 실린 낱말(different·alternative 등 — 쉬운 낱말도 섞여 있어 따로 둡니다)입니다(위 '목록에 넣을 낱말'에서 고릅니다). '외우면'은 위에서부터 그 낱말까지 외웠을 때 지문 낱말을 몇 % 알게 되는지입니다${need ? ` — 색칠한 ${need}개까지 외우면 ${TOPIC_TARGET}%를 넘습니다` : ""}. 지문은 PDF의 문제 모양 그대로라 빈칸 자리의 낱말은 빠져 있습니다(보기 줄은 세지 않습니다).</div>
     ${scopeSel}${tools}
     <table class="tp-list tp-words"><thead><tr>${forPrint ? "" : `<th class="no-print">고르기</th>`}<th>순위</th><th>낱말</th><th>구분</th><th>나온 횟수</th><th>나온 지문 수</th><th>외우면</th></tr></thead>
@@ -941,19 +933,11 @@ const TOPIC_CSS = `
 .tp-report h5 small{font-weight:400;color:#777}
 .tp-summary{margin:6px 0 12px;padding-left:18px;line-height:1.7;font-size:13.5px}
 .tp-explain{margin:4px 0 10px;padding:9px 12px;background:#f2f7ff;border-left:4px solid #4d94ec;border-radius:0 8px 8px 0;font-size:13px;line-height:1.7;color:#1b2430}
-.tp-two{display:grid;grid-template-columns:1fr 1.2fr;gap:18px;align-items:start}
-.tp-bar{display:grid;grid-template-columns:96px 1fr 28px;gap:8px;align-items:center;font-size:12.5px;margin:3px 0}
-/* 막대 입체감 — 시험지 분석 리포트 막대(.tv-bar)와 같은 광택·그림자(2026-11-18 사용자) */
-.tp-bar-track{height:14px;background:#eef1f5;border-radius:0 7px 7px 0;overflow:visible;box-shadow:inset 0 1px 2px rgba(26,31,43,.08)}
-.tp-bar-track i{display:block;height:100%;border-radius:0 7px 7px 0;min-width:3px;
-  background-image:linear-gradient(180deg,rgba(255,255,255,.55) 0,rgba(255,255,255,.12) 45%,rgba(0,0,0,.06) 100%);
-  box-shadow:0 1px 2px rgba(26,31,43,.22),inset 0 -1px 0 rgba(0,0,0,.08)}
-.tp-heat{background-image:linear-gradient(180deg,rgba(255,255,255,.45) 0,rgba(255,255,255,.08) 50%,rgba(0,0,0,.06) 100%);
-  box-shadow:inset 0 -1px 0 rgba(0,0,0,.08)}
-.tp-bar b{text-align:right}
 .tp-grid,.tp-list{width:100%;border-collapse:collapse;font-size:12.5px}
 .tp-grid th,.tp-grid td,.tp-list th,.tp-list td{border:1px solid #e3e6ea;padding:4px 6px;text-align:center}
 .tp-grid tbody th{text-align:left;font-weight:600;white-space:nowrap}
+/* 칸마다 새 쪽에서 시작 — 쪽에 걸쳐 잘리면 보기 어렵다(2026-11-18 사용자) */
+@media print{.tp-pg{break-before:page;page-break-before:always}}
 .tp-list td:nth-child(3){text-align:left}
 .tp-list thead th,.tp-grid thead th{background:#f4f6f9}
 .tp-kw{color:#555;text-align:left !important}
@@ -989,7 +973,7 @@ const TOPIC_CSS = `
 .tp-peek-text{font-family:Georgia,"Times New Roman",serif;font-size:14.5px;line-height:1.75}
 mark.tp-unk{background:#ffd6a5;color:inherit;padding:0 1px;border-radius:2px}
 .tp-legend{margin-top:6px}
-@media (max-width:700px){.tp-two{grid-template-columns:1fr}.tp-cov{grid-template-columns:90px 1fr 50px}.tp-peek-pct{margin-left:0}}
+@media (max-width:700px){.tp-cov{grid-template-columns:90px 1fr 50px}.tp-peek-pct{margin-left:0}}
 `;
 (() => {
   const st = document.createElement("style");
