@@ -1912,6 +1912,8 @@ async function brandPull() {
   if (!brandTouched.has("wm")) brandSetLocal(BRAND_WM_STORE, d.wm || "");
   // 시험지 꾸미기의 자주 쓰는 색(없으면 기본 팔레트)
   if (!sheetPaletteTouched) sheetPaletteSet(Array.isArray(d.palette) ? d.palette : null, false);
+  // 월간 성적표 색
+  if (d.report) rpApplyColors(d.report.main, d.report.warn, false);
   renderBrand();
   syncBrandSaveBtn();
 }
@@ -1926,6 +1928,7 @@ function brandClearLocal() {
   if (brandWmFileEl) brandWmFileEl.value = "";
   sheetPaletteTouched = false;
   sheetPaletteSet(null, false);
+  rpApplyColors(null, null, false);
   renderBrand();
   syncBrandSaveBtn();
 }
@@ -19594,6 +19597,77 @@ ${CHART_CSS}
 .trend-report .rp-sub-table{margin:4px 0 8px;font-size:12px}
 .trend-report .rp-chart{display:block;margin:0 auto}
 .rp-batch-page + .rp-batch-page{break-before:page}
+.rp-pal{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;margin-left:8px;font-size:13px}
+.rp-pal-sw{width:22px;height:22px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px #c3c9d2;cursor:pointer;padding:0}
+.rp-pal-sw.on{box-shadow:0 0 0 2px #14213d}
+.rp-pal input[type=color]{width:30px;height:24px;padding:0;border:1px solid #c3c9d2;vertical-align:middle;cursor:pointer}
+/* 색은 성적표 색 칸(rpPalette)에서 고른다 — 아래 기본값은 .results-printable의 style이 덮는다 */
+.trend-report{--rp-main:#1f4a8a;--rp-ink:#14213d;--rp-warn:#c4561c;--rp-tint:#eef2f8;--rp-track:#e6ebf3;--rp-warn-bg:#fbefe6;--rp-warn-line:#e3a77f}
+/* 월간 성적표 1쪽(rpm-) — 화면과 인쇄 같이 */
+/* 표지와 톤을 맞춘다(2026-11-18 사용자) — 같은 글꼴·같은 머리 띠·납작한(그림자·광택 없는) 원형 */
+.rpm-p1,.rpm-p2,.rp-cover{color:var(--rp-ink);font-family:"Noto Sans KR","Malgun Gothic","맑은 고딕",sans-serif}
+.rp-cover-top{display:flex;justify-content:space-between;align-items:flex-end;padding-bottom:9px;border-bottom:4px solid var(--rp-main)}
+.rp-cover-top b{font-size:20px;font-weight:800;letter-spacing:.06em}
+.rp-cover-top span{font-size:11px;letter-spacing:.2em;color:#3d4a5c}
+.rpm-head{margin-top:16px}
+.rpm-kicker{font-size:11.5px;font-weight:700;letter-spacing:.3em;color:var(--rp-main)}
+.trend-report .rpm-head h3{margin:4px 0 0;font-size:30px;font-weight:900;color:var(--rp-ink);border:0;padding:0;background:none}
+.rpm-meta{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid #cdd3dc;margin-top:14px}
+.rpm-meta div{padding:7px 14px}.rpm-meta div+div{border-left:1px solid #cdd3dc}
+.rpm-meta small{display:block;font-size:11.5px;color:#4a5566}.rpm-meta b{font-size:16px}.rpm-meta b small{display:inline;font-weight:400;font-size:12px}
+.rpm-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:12px}
+.rpm-tiles div{background:var(--rp-tint);border-top:3px solid var(--rp-ink);padding:8px 14px;min-width:0}
+.rpm-tiles small{font-size:12px;font-weight:700;color:#3d4a5c}
+.rpm-tiles b{display:block;font-size:29px;font-weight:900;line-height:1.25}.rpm-tiles b span{font-size:14px;font-weight:600;margin-left:4px}
+.rpm-tiles em{display:block;font-style:normal;font-size:11.5px;color:#4a5566;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trend-report .rpm-sec{display:flex;align-items:baseline;gap:10px;margin:16px 0 9px;padding:0 0 6px;border:0;border-bottom:2px solid var(--rp-ink);font-size:17px;font-weight:800;color:var(--rp-ink);background:none}
+.trend-report .rpm-sec::before{display:none;content:none}
+.rpm-sec small{font-size:14px;color:var(--rp-main);letter-spacing:.06em}.rpm-sec em{font-style:normal;font-weight:400;font-size:12px;color:#4a5566}
+.rpm-cards{display:grid;grid-template-columns:1fr 1fr;gap:14px}.rpm-cards.one{grid-template-columns:1fr}
+.rpm-card{display:flex;align-items:center;gap:14px;border:1px solid #cdd3dc;padding:10px 14px}
+.rpm-donut{flex:0 0 100px;width:100px;height:100px}
+.rpm-card-body{flex:1;min-width:0}.rpm-card-t{display:block;font-size:14px;margin-bottom:6px}
+.rpm-card ul{list-style:none;margin:0;padding:0;font-size:12.5px;line-height:1.8}
+.rpm-card li{display:grid;grid-template-columns:11px 1fr 22px 36px;gap:6px;align-items:center;white-space:nowrap}
+.rpm-card li i{width:11px;height:11px}.rpm-card li b{text-align:right}.rpm-card li em{font-style:normal;color:#4a5566;text-align:right}
+.rpm-card p{margin:4px 0 0;font-size:12px;color:#4a5566}
+.rpm-types{display:grid;grid-template-columns:31% 1fr;gap:18px;align-items:center}
+.rpm-types-art svg{width:100%;height:auto;display:block}
+.trend-report table.rpm-ttable{width:100%;border-collapse:collapse;font-size:13px;margin:0}
+.trend-report .rpm-ttable th,.trend-report .rpm-ttable td{border:0;border-bottom:1px solid #dfe3e9;padding:4px 6px;text-align:left;background:none}
+.trend-report .rpm-ttable thead th{border-bottom:1.5px solid var(--rp-ink);font-size:12px;color:#3d4a5c}
+.rpm-ttable td:first-child,.rpm-ttable th:first-child{width:28px}.rpm-ttable td:nth-child(3){width:48%}
+.trend-report .rpm-ttable td:last-child,.trend-report .rpm-ttable th:last-child{text-align:right;width:36px;font-weight:700}
+.rpm-bar{display:block;height:11px;background:var(--rp-track)}.rpm-bar i{display:block;height:100%;background:var(--rp-main)}
+.trend-report .rpm-ttable tr.low td{color:var(--rp-warn);font-weight:700}.rpm-ttable tr.low .rpm-bar i{background:var(--rp-warn)}
+.rpm-box{border:1px solid #cdd3dc;padding:12px 16px;margin-bottom:12px;background:#fff}
+.rpm-box-t{display:block;font-size:14px;margin-bottom:6px}.rpm-box-t small{font-weight:400;font-size:12px;color:#4a5566;margin-left:6px}
+.rpm-weak{margin-top:10px;padding:7px 14px;background:var(--rp-warn-bg);border:1px solid var(--rp-warn-line);font-size:13px}
+.rpm-weak b{color:var(--rp-warn);margin-right:14px}.rpm-weak strong{margin-right:2px}
+.trend-report .rpm-p1 .rp-comment{border:1px solid #cdd3dc;background:#fff;min-height:60px}
+@media print{.rpm-p2{break-before:page;page-break-before:always}}
+@media (max-width:700px){.rpm-meta,.rpm-tiles{grid-template-columns:1fr 1fr}.rpm-cards,.rpm-types{grid-template-columns:1fr}}
+/* 월간 성적표 표지 — 인쇄에만. 높이는 A4(여백 14mm)에서 학원 마크 띠(9mm)와 zoom .95를 빼고도 남게 잡았다 */
+.rp-cover{display:none}
+@media print{
+.rp-cover{display:flex;flex-direction:column;height:248mm;break-after:page;page-break-after:always;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.rp-cover-kicker{margin-top:26px;font-size:13px;font-weight:700;letter-spacing:.32em;color:var(--rp-main)}
+.rp-cover-title{margin:12px 0 0;font-size:64px;line-height:1.08;font-weight:900;letter-spacing:-.01em;color:var(--rp-ink)}
+.rp-cover-sub{display:flex;align-items:center;gap:14px;margin-top:20px;font-size:14px;color:#3d4a5c}
+.rp-cover-sub span{background:var(--rp-ink);color:#fff;font-weight:700;font-size:14px;padding:8px 14px;letter-spacing:.02em}
+.rp-cover-art{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;padding:14px 0}
+.rp-cover-radar{width:auto;height:100%;max-height:96mm;max-width:100%}
+.rp-cover-score{text-align:center}.rp-cover-score b{display:block;font-size:110px;font-weight:900;color:var(--rp-main);line-height:1}
+.rp-cover-score span{font-size:15px;color:#3d4a5c;letter-spacing:.1em}
+.rp-cover-toc{display:grid;grid-template-columns:repeat(4,1fr);list-style:none;margin:0;padding:0;border-top:2px solid var(--rp-ink);border-bottom:2px solid var(--rp-ink)}
+.rp-cover-toc li{padding:10px 0 12px 2px;font-size:14px;font-weight:700}
+.rp-cover-toc li+li{border-left:1px solid #d4d8de;padding-left:12px}
+.rp-cover-toc small{display:block;font-size:11px;color:var(--rp-main);letter-spacing:.08em;margin-bottom:3px}
+.rp-cover-who{display:grid;grid-template-columns:repeat(3,1fr);gap:28px;margin-top:22px}
+.rp-cover-who div{border-bottom:2px solid var(--rp-ink);padding-bottom:6px;font-size:18px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rp-cover-who small{font-size:11.5px;color:#3d4a5c;font-weight:700;margin-right:10px}
+.rp-cover-foot{display:flex;justify-content:space-between;margin-top:14px;font-size:11.5px;color:#3d4a5c;letter-spacing:.04em}
+}
 .trend-report .rp-go-grade{font:inherit;font-weight:700;color:#b45309;background:#fff4e0;border:1px solid #f5c77e;
   border-radius:10px;padding:1px 8px;cursor:pointer}
 .trend-report .rp-go-grade:hover{background:#ffe7bf}
@@ -19750,48 +19824,102 @@ function wrongTestName(reportRow) {
 // 시험별 점수 막대그래프(SVG). 막대 = 기간 안 최고 점수(100점 환산), 빨간 선 = 합격선,
 // 검은 눈금 = 첫 시도 점수(재시험을 본 경우). 색·광택은 분석 리포트 막대와 같다.
 // 인쇄 창에서는 CSS 변수가 없어 색을 직접 쓴다.
+/* 월간 성적표 색(2026-11-18 사용자 — 언제든 바꾸게). 기본 색(main)과 강조 색(warn, 미통과·가장 약한 유형) 둘만 고르면
+   나머지(진한 글자색·옅은 칸·방사형 채움…)는 섞어서 만든다. 계정의 brand_marks/{uid}__report에 남는다(창을 열 때마다
+   브라우저 저장소를 비우므로) — brandPull이 받아 오고 고를 때마다 바로 올린다. */
+const RP_DEFAULT = { main: "#1f4a8a", warn: "#c4561c" };
+const RP_PRESETS = [
+  ["남색", "#1f4a8a", "#c4561c"], ["하늘", "#2b7bbf", "#e05a2b"], ["청록", "#0f6e6e", "#d9822b"],
+  ["초록", "#2f6b3a", "#c0392b"], ["보라", "#5b3c99", "#d9822b"], ["자주", "#8a1f4a", "#e0a526"], ["먹색", "#333a45", "#c4561c"],
+];
+function rpMix(a, b, t) {   // a를 b 쪽으로 t만큼
+  const h = (x) => [1, 3, 5].map((i) => parseInt(x.slice(i, i + 2), 16));
+  const [x, y] = [h(a), h(b)];
+  return "#" + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, "0")).join("");
+}
+let RP;
+function rpSetColors(main, warn) {
+  const ok = (c) => /^#[0-9a-f]{6}$/i.test(c || "");
+  main = ok(main) ? main.toLowerCase() : RP_DEFAULT.main;
+  warn = ok(warn) ? warn.toLowerCase() : RP_DEFAULT.warn;
+  RP = { main, warn, ink: rpMix(main, "#000000", 0.45), light: rpMix(main, "#ffffff", 0.6), mid: rpMix(main, "#ffffff", 0.35),
+    fill: rpMix(main, "#ffffff", 0.85), grid: rpMix(main, "#ffffff", 0.75), tint: rpMix(main, "#ffffff", 0.92),
+    track: rpMix(main, "#ffffff", 0.88), warnBg: rpMix(warn, "#ffffff", 0.9), warnLine: rpMix(warn, "#ffffff", 0.5) };
+}
+rpSetColors();
+function rpPaletteStyle() {
+  return `--rp-main:${RP.main};--rp-ink:${RP.ink};--rp-warn:${RP.warn};--rp-tint:${RP.tint};--rp-track:${RP.track};--rp-warn-bg:${RP.warnBg};--rp-warn-line:${RP.warnLine}`;
+}
+// 성적표 위 색 칸(인쇄 안 됨)
+function rpPaletteHtml() {
+  return `<span class="rp-pal no-print"><label>성적표 색</label>${RP_PRESETS.map(([n, m, w]) =>
+    `<button type="button" class="rp-pal-sw${RP.main === m && RP.warn === w ? " on" : ""}" data-main="${m}" data-warn="${w}" title="${n}" style="background:linear-gradient(135deg,${m} 0 62%,${w} 62% 100%)"></button>`).join("")}
+    <label title="막대·제목·선 색">기본 <input type="color" class="rp-pal-main" value="${RP.main}"></label>
+    <label title="미통과·가장 약한 유형 색">강조 <input type="color" class="rp-pal-warn" value="${RP.warn}"></label>
+    <button type="button" class="btn ghost small rp-pal-reset">기본 색</button></span>`;
+}
+let rpSaveTimer = 0;
+// 색을 바꾸고 열린 성적표를 다시 그린다. save면 계정에 올린다(잇달아 고르면 마지막 것만)
+function rpApplyColors(main, warn, save) {
+  rpSetColors(main, warn);
+  document.querySelectorAll("tr.report-row").forEach((rr) => {
+    if (!rr._reportData) return;
+    const ta = rr.querySelector("textarea.report-comment");
+    const comment = ta ? ta.value : null;
+    const body = rr.querySelector(".report-body");
+    if (body) body.innerHTML = renderStudentReport(rr._reportData, rr._reportPeriod);
+    const ta2 = rr.querySelector("textarea.report-comment");
+    if (ta2 && comment != null) ta2.value = comment;
+    const pal = rr.querySelector(".rp-pal");
+    if (pal) pal.outerHTML = rpPaletteHtml();
+  });
+  if (save && typeof isLoggedIn !== "undefined" && isLoggedIn) {
+    clearTimeout(rpSaveTimer);
+    rpSaveTimer = setTimeout(() => {
+      postJson("/api/brand", { report: RP.main === RP_DEFAULT.main && RP.warn === RP_DEFAULT.warn ? null : { main: RP.main, warn: RP.warn } },
+        "성적표 색을 계정에 저장하지 못했습니다.").catch(() => { /* 이 창에서는 그대로 쓴다 */ });
+    }, 700);
+  }
+}
+
 function reportChartSvg(tests, avg) {
   const done = tests.filter((t) => t.status !== "none" && t.bestPercent != null);
   if (!done.length) return `<p class="hint">이 기간에 응시한 시험이 없어 그래프가 없습니다.</p>`;
   const slot = 80, L = 40, R = 16, T = 42, B = 58, H = 270;   // T: 범례와 100점 숫자가 겹치지 않게
-  const W = Math.max(640, L + R + slot * done.length);   // 점수대 범례가 들어갈 폭
+  const W = Math.max(640, L + R + slot * done.length);
   const y = (p) => T + (H - T - B) * (1 - p / 100);
-  const gradId = "rpg" + Math.random().toString(36).slice(2, 7);
-  let g = `<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".45" stop-color="#fff" stop-opacity=".12"/>
-      <stop offset="1" stop-color="#000" stop-opacity=".06"/></linearGradient>
-      <filter id="${gradId}s" x="-30%" y="-10%" width="160%" height="130%"><feDropShadow dx="1.5" dy="2" stdDeviation="1.6" flood-color="#1a1f2b" flood-opacity=".28"/></filter></defs>`;
+  let g = "";
   [0, 25, 50, 75, 100].forEach((p) => {
-    g += `<line x1="${L}" x2="${W - R}" y1="${y(p)}" y2="${y(p)}" stroke="${p === 0 ? "#c3c2b7" : "#e6e8ee"}"/>
-          <text x="${L - 7}" y="${y(p) + 4}" font-size="11" text-anchor="end" fill="#898781">${p}</text>`;
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(p)}" y2="${y(p)}" stroke="${p === 0 ? RP.ink : "#e3e7ee"}"/>
+          <text x="${L - 7}" y="${y(p) + 4}" font-size="11" text-anchor="end" fill="#4a5566">${p}</text>`;
   });
   if (avg != null) {
-    g += `<line x1="${L}" x2="${W - R}" y1="${y(avg)}" y2="${y(avg)}" stroke="#2fd197" stroke-width="1.5" stroke-dasharray="5 4"/>
-          <text x="${W - R}" y="${y(avg) - 5}" font-size="11" font-weight="700" text-anchor="end" fill="#1d9d70">평균 ${avg}점</text>`;
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(avg)}" y2="${y(avg)}" stroke="${RP.mid}" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="${W - R}" y="${y(avg) - 5}" font-size="11" font-weight="700" text-anchor="end" fill="${RP.main}">평균 ${avg}점</text>`;
   }
   done.forEach((t, i) => {
-    const cx = L + slot * i + slot / 2, bw = 36;
-    // 미통과는 빨간 점선 테두리
-    const col = RP_PALETTE[i % RP_PALETTE.length];   // 시험마다 다른 색(2026-11-18 사용자 — 점수가 같으면 한 색뿐이었다)
+    const cx = L + slot * i + slot / 2, bw = 34;
+    const fail = t.status === "failed";
     const top = y(t.bestPercent), h = y(0) - top;
     const name = t.title.length > 7 ? t.title.slice(0, 7) + "…" : t.title;
-    g += `<rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${h}" rx="4" fill="${col}" filter="url(#${gradId}s)"
-        ${t.status === "failed" ? `stroke="#dc2626" stroke-width="2" stroke-dasharray="4 3"` : ""}/>
-      <rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${h}" rx="4" fill="url(#${gradId})"/>
-      <text x="${cx}" y="${top - 6}" font-size="13" font-weight="700" text-anchor="middle" fill="#0b0b0b">${t.bestPercent}</text>`;
+    g += `<rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${h}" fill="${fail ? RP.warn : RP.main}"/>
+      <text x="${cx}" y="${top - 6}" font-size="13" font-weight="700" text-anchor="middle" fill="${fail ? RP.warn : RP.ink}">${t.bestPercent}</text>`;
     if (t.passPercent != null) {
-      g += `<line x1="${cx - bw / 2 - 6}" x2="${cx + bw / 2 + 6}" y1="${y(t.passPercent)}" y2="${y(t.passPercent)}" stroke="#dc2626" stroke-width="2"/>`;
+      g += `<line x1="${cx - bw / 2 - 6}" x2="${cx + bw / 2 + 6}" y1="${y(t.passPercent)}" y2="${y(t.passPercent)}" stroke="${RP.warn}" stroke-width="2"/>`;
     }
     if (t.retried && t.firstPercent != null && t.firstPercent !== t.bestPercent) {
-      g += `<line x1="${cx - bw / 2}" x2="${cx + bw / 2}" y1="${y(t.firstPercent)}" y2="${y(t.firstPercent)}" stroke="#0b0b0b" stroke-width="2.5"/>`;
+      g += `<line x1="${cx - bw / 2}" x2="${cx + bw / 2}" y1="${y(t.firstPercent)}" y2="${y(t.firstPercent)}" stroke="${RP.light}" stroke-width="3"/>`;
     }
-    g += `<text x="${cx}" y="${H - B + 17}" font-size="11.5" font-weight="600" text-anchor="middle" fill="#0b0b0b">${esc(name)}</text>
-      <text x="${cx}" y="${H - B + 31}" font-size="10.5" text-anchor="middle" fill="#898781">${esc(fmtDateTime(t.lastAt).slice(0, 5))}</text>`;
+    g += `<text x="${cx}" y="${H - B + 17}" font-size="11.5" font-weight="600" text-anchor="middle" fill="${RP.ink}">${esc(name)}</text>
+      <text x="${cx}" y="${H - B + 31}" font-size="10.5" text-anchor="middle" fill="#4a5566">${esc(fmtDateTime(t.lastAt).slice(0, 5))}</text>`;
   });
-  const legend = `<text x="${L}" y="15" font-size="11.5" fill="#52514e">
-      막대 색은 시험마다 다릅니다<tspan dx="12" fill="#dc2626">┅</tspan> 미통과<tspan dx="10" fill="#dc2626">━</tspan> 합격선<tspan dx="10" fill="#0b0b0b">━</tspan> 첫 시도</text>`;
+  const legend = `<g font-size="11.5" fill="#3d4a5c">
+      <rect x="${L}" y="5" width="11" height="11" fill="${RP.main}"/><text x="${L + 16}" y="15">이 기간 최고 점수</text>
+      <rect x="${L + 128}" y="5" width="11" height="11" fill="${RP.warn}"/><text x="${L + 144}" y="15">미통과</text>
+      <line x1="${L + 200}" x2="${L + 216}" y1="10" y2="10" stroke="${RP.warn}" stroke-width="2"/><text x="${L + 222}" y="15">합격선</text>
+      <line x1="${L + 276}" x2="${L + 292}" y1="10" y2="10" stroke="${RP.light}" stroke-width="3"/><text x="${L + 298}" y="15">첫 시도</text></g>`;
   return `<svg class="rp-chart" viewBox="0 0 ${W} ${H}" style="width:100%; max-width:${W}px; height:auto;"
-      font-family="Malgun Gothic, 맑은 고딕, sans-serif" role="img" aria-label="시험별 점수 그래프">${legend}${g}</svg>`;
+      font-family="Noto Sans KR, Malgun Gothic, 맑은 고딕, sans-serif" role="img" aria-label="시험별 점수 그래프">${legend}${g}</svg>`;
 }
 
 // 점수대 색 — 낮은 점수 빨강 → 높은 점수 파랑·보라(성적표 막대·분포 그래프가 같이 쓴다)
@@ -20005,6 +20133,67 @@ function aiPriceLabel() {
   return won > 0 ? ` (${won.toLocaleString()}P)` : "";
 }
 
+// 월간 성적표 표지(2026-11-18 사용자 — 보내 준 표지 그림을 따랐다). 인쇄에만 나온다(화면은 REPORT_CSS가 숨긴다).
+// 가운데 그림은 이 학생의 유형별 정답률 방사형(문제 시험이 없거나 유형이 3개 미만이면 시험별 최고 점수로),
+// 가장 낮은 꼭짓점을 주황으로. 그림도 못 그리면 평균 점수를 크게 쓴다. 학원 이름은 학원 마크(trendBrand)에서.
+function reportCoverRadar(vals, numbered) {
+  const n = vals.length, cx = 200, cy = 200, R = numbered ? 150 : 170;
+  const pt = (i, v) => {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / n, r = (R * Math.max(0, Math.min(100, v))) / 100;
+    return `${(cx + r * Math.cos(a)).toFixed(1)},${(cy + r * Math.sin(a)).toFixed(1)}`;
+  };
+  const ring = (v) => vals.map((_, i) => pt(i, v)).join(" ");
+  const low = vals.indexOf(Math.min(...vals));
+  return `<svg class="rp-cover-radar" viewBox="0 0 400 400" role="img">
+    <polygon points="${ring(100)}" fill="none" stroke="#c3c9d2" stroke-width="1.2"/>
+    ${[25, 50, 75].map((v) => `<polygon points="${ring(v)}" fill="none" stroke="${RP.grid}" stroke-width="1"/>`).join("")}
+    ${vals.map((_, i) => `<line x1="${cx}" y1="${cy}" x2="${pt(i, 100).split(",")[0]}" y2="${pt(i, 100).split(",")[1]}" stroke="${RP.grid}"/>`).join("")}
+    <polygon points="${vals.map((v, i) => pt(i, v)).join(" ")}" fill="${RP.fill}" fill-opacity=".85" stroke="${RP.main}" stroke-width="3" stroke-linejoin="round"/>
+    ${vals.map((v, i) => { const [x, y] = pt(i, v).split(","); return `<circle cx="${x}" cy="${y}" r="${i === low ? 10 : 8.5}" fill="${i === low ? RP.warn : RP.ink}"/>`; }).join("")}
+    <circle cx="${cx}" cy="${cy}" r="4" fill="${RP.ink}"/>
+    ${numbered ? vals.map((_, i) => { const a = -Math.PI / 2 + (i * 2 * Math.PI) / n, x = (cx + R * 1.17 * Math.cos(a)).toFixed(1), y = cy + R * 1.17 * Math.sin(a); return `<text x="${x}" y="${(y + 7).toFixed(1)}" text-anchor="middle" font-size="20" font-weight="700" fill="${i === low ? RP.warn : RP.ink}">${i + 1}</text>`; }).join("") : ""}</svg>`;
+}
+// 성적표 차례(표지 아래 줄과 쪽마다 번호) — 문제 시험 유형이 3개보다 적으면 '유형별 정답률'을 뺀다
+function reportTocNames(tests) {
+  return ["시험 결과 요약"].concat(reportTypeRows(tests).length >= 3 ? ["유형별 정답률"] : [])
+    .concat(["종합 소견", "시험별 점수", "시험별 결과"]);
+}
+// 이 기간 문제 시험을 합친 유형별 [맞음, 틀림] — 문항이 많은 유형부터 8개까지 [{t, r, w, p}]
+function reportTypeRows(tests) {
+  const byType = {};
+  tests.forEach((t) => Object.entries(t.qtypes || {}).forEach(([k, c]) => {
+    const cell = byType[k] || (byType[k] = [0, 0]);
+    cell[0] += c[0];
+    cell[1] += c[1];
+  }));
+  return Object.entries(byType).filter(([, c]) => c[0] + c[1] > 0)
+    .sort((a, b) => (b[1][0] + b[1][1]) - (a[1][0] + a[1][1])).slice(0, 8)
+    .map(([t, c]) => ({ t, r: c[0], w: c[1], p: (100 * c[0]) / (c[0] + c[1]) }));
+}
+function reportCoverHtml(data, period, cls) {
+  const st = data.student, tests = data.tests || [];
+  const brand = typeof trendBrand === "function" ? trendBrand() : { name: "" };
+  let vals = reportTypeRows(tests).map((x) => x.p);
+  if (vals.length < 3) vals = tests.filter((t) => t.status !== "none" && t.bestPercent != null).slice(-8).map((t) => t.bestPercent);
+  const avg = data.summary && data.summary.avgPercent;
+  const art = vals.length >= 3 ? reportCoverRadar(vals)
+    : `<div class="rp-cover-score"><b>${avg != null ? avg : "—"}</b><span>${avg != null ? "평균 점수" : "응시한 시험 없음"}</span></div>`;
+  const d = new Date();
+  const toc = reportTocNames(tests);
+  return `<section class="rp-cover">
+    <div class="rp-cover-top"><b>${esc(brand.name || "")}</b><span>MONTHLY LEARNING REPORT</span></div>
+    <div class="rp-cover-kicker">MONTHLY LEARNING REPORT</div>
+    <h1 class="rp-cover-title">학습 성취<br>리포트</h1>
+    <div class="rp-cover-sub"><span>Learning Achievement Report</span>월간 학습 성적표</div>
+    <div class="rp-cover-art">${art}</div>
+    <ol class="rp-cover-toc">${toc.slice(0, 4).map((t, i) => `<li><small>0${i + 1}</small>${t}</li>`).join("")}</ol>
+    <div class="rp-cover-who">
+      <div><small>학생</small>${esc(st.name)}</div><div><small>반</small>${esc(cls || "—")}</div>
+      <div><small>기간</small>${esc(period ? period.label : "전체 기간")}</div></div>
+    <div class="rp-cover-foot"><span>작성일 ${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.</span><span>${esc(brand.name ? brand.name + " · " : "")}월간 학습 성적표</span></div>
+  </section>`;
+}
+
 // 학생 한 명의 성적표 중 인쇄되는 부분 — 학생 줄의 [성적표]와 반 전체 인쇄가 같이 쓴다.
 // commentHtml: 화면에서는 고칠 수 있는 입력칸, 반 전체 인쇄에서는 글 상자
 function studentReportPrintableHtml(data, period, commentHtml) {
@@ -20025,27 +20214,109 @@ function studentReportPrintableHtml(data, period, commentHtml) {
               title="눌러서 채점 화면으로 이동">확인 중 ${t.qc.pending}${t.qc.unit ? "칸" : ""} ›</button>` : ""}` : "—")
         : esc(roundsText(t.rounds)) || "—"}</td><td>${esc(fmtDateTime(t.lastAt))}</td></tr>`).join("")
     : `<tr><td colspan="4" class="hint">이 기간에 해당하는 시험이 없습니다.</td></tr>`;
-  return `<div class="trend-report results-printable">
-    ${reportHeadHtml("월간 성적표", `${st.name} 학생 학습 성적표`, [
-      ["학생", `${esc(st.name)}${st.loginId ? ` (${esc(st.loginId)})` : ""}`],
-      ["기간", esc(period ? period.label : "전체 기간")],
-      ["반", esc(cls || "—")],
-    ])}
-    ${reportTilesHtml([
-      { label: "응시 시험", value: sm.done, unit: `/${sm.tests}개`, sub: missing ? `미응시 ${missing}개` : "모두 응시", color: "#4d94ec" },
-      { label: "평균 점수", value: sm.avgPercent != null ? sm.avgPercent : "—", unit: sm.avgPercent != null ? "점" : "", sub: "시험별 최고 점수 평균", color: "#2fd197" },
-      { label: "합격", value: sm.passed, unit: `/${sm.done}개`, sub: sm.done ? `합격률 ${Math.round((100 * sm.passed) / sm.done)}%` : "", color: "#ff8a4c" },
-      { label: "최고 점수", value: top ? top.bestPercent : "—", unit: top ? "점" : "", sub: top ? esc(top.title.length > 12 ? top.title.slice(0, 11) + "…" : top.title) : "", color: "#9b6cf0" },
-    ])}
-    ${reportChartsHtml(tests)}
-    <h4 class="sec">시험별 점수</h4>
-    <div class="trend-dash">${reportChartSvg(tests, sm.avgPercent)}</div>
-    <h4 class="sec">선생님 코멘트</h4>
-    ${commentHtml}
-    <h4 class="sec">시험별 결과</h4>
+  return `<div class="trend-report results-printable" style="${rpPaletteStyle()}">
+    ${reportCoverHtml(data, period, cls)}
+    ${reportPage1Html(data, period, cls, commentHtml, top)}
+    <div class="rpm-p2">
+    <h4 class="rpm-sec"><small>0${reportTocNames(tests).indexOf("시험별 점수") + 1}</small>시험별 점수</h4>
+    <div class="rpm-box">${reportChartSvg(tests, sm.avgPercent)}</div>
+    ${reportDistHtml(tests)}
+    <h4 class="rpm-sec"><small>0${reportTocNames(tests).indexOf("시험별 결과") + 1}</small>시험별 결과</h4>
     <table>
       <thead><tr><th>시험</th><th>결과</th><th>회차별 점수</th><th>마지막 제출</th></tr></thead>
-      <tbody>${testRows}</tbody></table></div>`;
+      <tbody>${testRows}</tbody></table></div></div>`;
+}
+
+// 점수대 분포(2쪽) — 시험마다 이 기간의 최고 점수
+function reportDistHtml(tests) {
+  const scored = tests.filter((t) => t.status !== "none" && t.bestPercent != null);
+  if (!scored.length) return "";
+  const bins = REPORT_BANDS.map(([lo, hi, label]) => ({ label, lo,
+    value: scored.filter((t) => t.bestPercent >= lo && t.bestPercent < hi).length }));
+  const max = Math.max(1, ...bins.map((b) => b.value));
+  const W = 560, H = 150, pad = 20, bw = (W - pad * 2) / bins.length;
+  const bars = bins.map((b, i) => {
+    const h = (b.value / max) * (H - 48), x = pad + i * bw + bw * 0.25, yy = H - 26 - h;
+    const col = b.lo < 60 ? RP.warn : RP.main;
+    return `${b.value ? `<rect x="${x.toFixed(1)}" y="${yy.toFixed(1)}" width="${(bw * 0.5).toFixed(1)}" height="${h.toFixed(1)}" fill="${col}"/>
+      <text x="${(x + bw * 0.25).toFixed(1)}" y="${(yy - 5).toFixed(1)}" text-anchor="middle" font-size="12" font-weight="700" fill="${RP.ink}">${b.value}개</text>` : ""}
+      <text x="${(x + bw * 0.25).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="11" fill="#3d4a5c">${esc(b.label)}</text>`;
+  }).join("");
+  return `<div class="rpm-box"><b class="rpm-box-t">점수대 분포 <small>시험 ${scored.length}개 — 시험마다 이 기간의 최고 점수</small></b>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;max-width:${W}px;margin:0 auto" font-family="Noto Sans KR, Malgun Gothic, sans-serif" role="img">
+    <line x1="${pad}" x2="${W - pad}" y1="${H - 26}" y2="${H - 26}" stroke="${RP.ink}"/>${bars}</svg></div>`;
+}
+
+// 월간 성적표 1쪽(2026-11-18 사용자가 보낸 구성 그림을 따랐다) — 머리·기본 정보·숫자 칸 넷 /
+// 01 시험 결과 요약(원형 둘) / 02 유형별 정답률(번호 방사형 + 막대 표 + 보완 필요 유형) / 03 종합 소견.
+// 남색 한 가지로 맞추고 가장 약한 것만 주황. 시험별 점수·결과 표는 2쪽(.rpm-p2)으로 넘긴다.
+// 문제 시험 유형이 3개보다 적으면 02를 빼고 번호를 당긴다.
+
+function reportPage1Html(data, period, cls, commentHtml, top) {
+  const st = data.student, sm = data.summary, tests = data.tests || [];
+  const brand = typeof trendBrand === "function" ? trendBrand() : { name: "" };
+  const d = new Date();
+  const missing = sm.tests - sm.done;
+  const meta = [["학생", `${esc(st.name)}${st.loginId ? ` <small>(${esc(st.loginId)})</small>` : ""}`],
+    ["반", esc(cls || "—")], ["기간", esc(period ? period.label : "전체 기간")],
+    ["작성일", `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.`]];
+  const tiles = [
+    ["응시 시험", sm.done, `/ ${sm.tests}개`, missing ? `미응시 ${missing}개` : "모두 응시"],
+    ["평균 점수", sm.avgPercent != null ? sm.avgPercent : "—", sm.avgPercent != null ? "점" : "", "시험별 최고 점수 평균"],
+    ["합격", sm.passed, `/ ${sm.done}개`, sm.done ? `합격률 ${Math.round((100 * sm.passed) / sm.done)}%` : "&nbsp;"],
+    ["최고 점수", top ? top.bestPercent : "—", top ? "점" : "", top ? esc(top.title) : "&nbsp;"],
+  ];
+  const n = (s) => tests.filter((t) => t.status === s).length;
+  const card = (title, parts, center, sub, note) => {
+    const total = parts.reduce((a, p) => a + p.value, 0) || 1;
+    const shown = parts.filter((p) => p.value > 0);
+    const donut = rpDonut(shown.length ? shown : [{ label: "", value: 1, color: "#e3e7ee" }], center, sub)
+      .replace('class="tp-donut"', 'class="tp-donut rpm-donut"')
+      .replace(/<g filter="url\(#[^)]+\)">/, "<g>").replace(/<circle [^>]*stroke="url\(#[^)]+\)"[^>]*\/>/, "");
+    return `<div class="rpm-card">${donut}
+      <div class="rpm-card-body"><b class="rpm-card-t">${title}</b>
+      <ul>${shown.map((p) => `<li><i style="background:${p.color}"></i><span>${esc(p.label)}</span><b>${p.value}</b><em>${Math.round((100 * p.value) / total)}%</em></li>`).join("")}</ul>
+      ${note ? `<p>${note}</p>` : ""}</div></div>`;
+  };
+  const result = card("시험 결과", [
+    { label: "합격", value: n("passed"), color: RP.main },
+    { label: "제출 (문제 시험)", value: n("done"), color: RP.light },
+    { label: "미통과", value: n("failed"), color: RP.warn },
+    { label: "재시험 대기", value: n("retake"), color: "#e0a526" },
+    { label: "미응시", value: n("none"), color: "#c3c9d2" },
+  ], `${tests.length}`, "시험");
+  const crit = tests.filter((t) => t.kind !== "quiz" && t.maxWrong != null && t.status !== "none");
+  const first = crit.filter((t) => t.status === "passed" && (t.passedRound || 1) === 1).length;
+  const tries = crit.length ? card("합격까지 걸린 회차", [
+    { label: "1회에 합격", value: first, color: RP.main },
+    { label: "2회에 합격", value: crit.filter((t) => t.status === "passed" && t.passedRound === 2).length, color: RP.light },
+    { label: "3회 이상", value: crit.filter((t) => t.status === "passed" && t.passedRound >= 3).length, color: RP.mid },
+    { label: "아직 미통과", value: crit.filter((t) => t.status !== "passed").length, color: RP.warn },
+  ], `${crit.length}`, "단어시험", first === crit.length ? `단어시험 ${crit.length}개 모두 첫 응시에 합격` : "") : "";
+  const types = reportTypeRows(tests);
+  let sec = 2, typeHtml = "";
+  if (types.length >= 3) {
+    const low = types.reduce((a, x, i) => (x.p < types[a].p ? i : a), 0);
+    const rows = types.map((x, i) => `<tr${i === low ? ' class="low"' : ""}><td>${i + 1}</td><td>${esc(x.t)}</td>
+      <td><span class="rpm-bar"><i style="width:${Math.max(1, x.p)}%"></i></span></td><td>${Math.round(x.p)}</td></tr>`).join("");
+    const w = types[low];
+    typeHtml = `<h4 class="rpm-sec"><small>0${sec}</small>유형별 정답률 <em>이 기간 문제 시험 합계 · 맞힌 비율(%)</em></h4>
+      <div class="rpm-types"><div class="rpm-types-art">${reportCoverRadar(types.map((x) => x.p), true)}</div>
+      <table class="rpm-ttable"><thead><tr><th>No</th><th>유형</th><th>정답률</th><th>%</th></tr></thead><tbody>${rows}</tbody></table></div>
+      ${w.p < 100 ? `<div class="rpm-weak"><b>보완 필요 유형</b><strong>${esc(w.t)}</strong> · 정답률 ${Math.round(w.p)}% (맞음 ${w.r} · 틀림 ${w.w})</div>` : ""}`;
+    sec++;
+  }
+  return `<div class="rpm-p1">
+    <div class="rp-cover-top"><b>${esc(brand.name || "")}</b><span>MONTHLY LEARNING REPORT</span></div>
+    <div class="rpm-head"><div class="rpm-kicker">LEARNING ACHIEVEMENT REPORT</div><h3>월간 학습 성적표</h3></div>
+    <div class="rpm-meta">${meta.map(([k, v]) => `<div><small>${k}</small><b>${v}</b></div>`).join("")}</div>
+    <div class="rpm-tiles">${tiles.map(([k, v, u, sub]) => `<div><small>${k}</small><b>${v}<span>${u}</span></b><em>${sub}</em></div>`).join("")}</div>
+    <h4 class="rpm-sec"><small>01</small>시험 결과 요약</h4>
+    <div class="rpm-cards${tries ? "" : " one"}">${result}${tries}</div>
+    ${typeHtml}
+    <h4 class="rpm-sec"><small>0${sec}</small>종합 소견</h4>
+    ${commentHtml}
+  </div>`;
 }
 
 // 학생 한 명의 성적표 본문(월 선택 칸은 따로 — 인쇄에는 안 들어간다)
@@ -20078,6 +20349,7 @@ async function loadStudentReport(tr, studentId, monthStr) {
       <button type="button" class="btn ghost small report-week-btn" data-week="lastweek">지난 주</button>
       <button type="button" class="btn ghost small report-week-btn" data-week="week">이번 주</button>
       <button type="button" class="btn ghost small report-all-btn">전체 기간</button>
+      ${rpPaletteHtml()}
     </div><div class="report-body"><p class="hint">불러오는 중…</p></div>`;
   const bodyEl = cell.querySelector(".report-body");
   try {
@@ -20086,6 +20358,7 @@ async function loadStudentReport(tr, studentId, monthStr) {
     const data = await getJson(`/api/students/report?${qs}`, "성적표를 불러오지 못했습니다.");
     bodyEl.innerHTML = renderStudentReport(data, period);
     tr._reportData = data;
+    tr._reportPeriod = period;
     tr.dataset.title = `${data.student.name} 성적표${period ? ` (${period.label})` : ""}`;
     tr.dataset.period = period ? period.label : "전체 기간";
   } catch (err) {
@@ -20629,6 +20902,18 @@ $("classReportPrintBtn").addEventListener("click", async (e) => {
   });
   const cls = (classesCache.find((c) => c.id === selectedClassId) || {}).name || "";
   openPrintWindow(`${cls ? cls + " " : ""}월간 성적표${period ? ` (${period.label})` : ""}`, pages.join(""), win);
+});
+
+// 성적표 색 칸 — 색 동그라미·기본 색 단추는 누르면 바로, 색 고르기 칸은 고르는 동안 미리 보이고 놓으면 계정에 남긴다
+studentTableBodyEl.addEventListener("click", (e) => {
+  const sw = e.target.closest(".rp-pal-sw");
+  if (sw) rpApplyColors(sw.dataset.main, sw.dataset.warn, true);
+  else if (e.target.closest(".rp-pal-reset")) rpApplyColors(RP_DEFAULT.main, RP_DEFAULT.warn, true);
+});
+studentTableBodyEl.addEventListener("change", (e) => {
+  const pal = e.target.closest(".rp-pal");
+  if (!pal || e.target.type !== "color") return;
+  rpApplyColors(pal.querySelector(".rp-pal-main").value, pal.querySelector(".rp-pal-warn").value, true);
 });
 
 // 월 선택을 바꾸면 그 달 성적표로 다시 불러온다

@@ -17126,6 +17126,14 @@ CHANGELOG = [
             "(시험지가 둘 이상이면 시험지별 영역 비중을 겹쳐 비교).",
         ],
     },
+    {
+        "version": 137,
+        "date": "2026-11-18",
+        "items": [
+            "📘 월간 성적표 인쇄본에 표지가 생기고, 다음 쪽이 '시험 결과 요약 · 유형별 정답률 · 종합 소견' 한 장으로 정리됐습니다.",
+            "🎨 성적표 맨 위 '성적표 색'에서 색을 골라 바꿀 수 있습니다. 고른 색은 계정에 남아 다음에도 그대로 쓰입니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -18820,7 +18828,7 @@ _BRAND_HEX_RE = re.compile(r"^#[0-9a-f]{6}$")
 def get_brand_mark(user_id):
     _require_db()
     col = DB.collection(BRAND_MARKS)
-    out = {"name": "", "logo": "", "wm": "", "palette": None}
+    out = {"name": "", "logo": "", "wm": "", "palette": None, "report": None}
     snap = col.document(user_id).get()
     if snap.exists:
         out["name"] = str((snap.to_dict() or {}).get("name") or "")
@@ -18829,6 +18837,11 @@ def get_brand_mark(user_id):
         d = ps.to_dict() or {}
         if d.get("user_id") == user_id and isinstance(d.get("colors"), list):
             out["palette"] = [c for c in d["colors"] if isinstance(c, str) and _BRAND_HEX_RE.match(c)]
+    rs = col.document(f"{user_id}__report").get()
+    if rs.exists:
+        d = rs.to_dict() or {}
+        if d.get("user_id") == user_id and all(_BRAND_HEX_RE.match(str(d.get(k) or "")) for k in ("main", "warn")):
+            out["report"] = {"main": d["main"], "warn": d["warn"]}
     for kind in BRAND_IMAGE_KINDS:
         s = col.document(f"{user_id}__{kind}").get()
         if s.exists:
@@ -18855,6 +18868,18 @@ def save_brand_mark(user_id, req):
                 if _BRAND_HEX_RE.match(c) and c not in palette:
                     palette.append(c)
             palette = palette[:BRAND_PALETTE_MAX]
+        else:
+            return "잘못된 요청입니다."
+    # 월간 성적표 색(2026-11-18 사용자 — 언제든 바꾸게) — {main, warn} #rrggbb, null이면 기본 색으로
+    report = "keep"
+    if "report" in req:
+        raw = req.get("report")
+        if raw is None:
+            report = None
+        elif isinstance(raw, dict):
+            report = {k: str(raw.get(k) or "").strip().lower() for k in ("main", "warn")}
+            if not all(_BRAND_HEX_RE.match(v) for v in report.values()):
+                return "잘못된 색입니다."
         else:
             return "잘못된 요청입니다."
     imgs = {}
@@ -18896,6 +18921,12 @@ def save_brand_mark(user_id, req):
             ref.delete()
         else:
             ref.set({"user_id": user_id, "colors": palette, "updated_at": _now_iso()})
+    if report != "keep":
+        ref = col.document(f"{user_id}__report")
+        if report is None:
+            ref.delete()
+        else:
+            ref.set({"user_id": user_id, **report, "updated_at": _now_iso()})
     return None
 
 
