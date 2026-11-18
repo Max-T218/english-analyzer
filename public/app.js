@@ -19644,7 +19644,7 @@ ${CHART_CSS}
 .rpm-box-t{display:block;font-size:14px;margin-bottom:6px}.rpm-box-t small{font-weight:400;font-size:12px;color:#4a5566;margin-left:6px}
 .rpm-weak{margin-top:10px;padding:7px 14px;background:var(--rp-warn-bg);border:1px solid var(--rp-warn-line);font-size:13px}
 .rpm-weak b{color:var(--rp-warn);margin-right:14px}.rpm-weak strong{margin-right:2px}
-.trend-report .rpm-p1 .rp-comment{border:1px solid #cdd3dc;background:#fff;min-height:60px}
+.trend-report .rpm-p1 .rp-comment,.trend-report .rpm-p2 .rp-comment{border:1px solid #cdd3dc;background:#fff;min-height:60px}
 @media print{.rpm-p2{break-before:page;page-break-before:always}}
 @media (max-width:700px){.rpm-meta,.rpm-tiles{grid-template-columns:1fr 1fr}.rpm-cards,.rpm-types{grid-template-columns:1fr}}
 /* 월간 성적표 표지 — 인쇄에만. 높이는 A4(여백 14mm)에서 학원 마크 띠(9mm)와 zoom .95를 빼고도 남게 잡았다 */
@@ -20156,7 +20156,7 @@ function reportCoverRadar(vals, numbered) {
 // 성적표 차례(표지 아래 줄과 쪽마다 번호) — 문제 시험 유형이 3개보다 적으면 '유형별 정답률'을 뺀다
 function reportTocNames(tests) {
   return ["시험 결과 요약"].concat(reportTypeRows(tests).length >= 3 ? ["유형별 정답률"] : [])
-    .concat(["종합 소견", "시험별 점수", "시험별 결과"]);
+    .concat(["시험별 점수", "시험별 결과", "종합 소견"]);
 }
 // 이 기간 문제 시험을 합친 유형별 [맞음, 틀림] — 문항이 많은 유형부터 8개까지 [{t, r, w, p}]
 function reportTypeRows(tests) {
@@ -20186,7 +20186,7 @@ function reportCoverHtml(data, period, cls) {
     <h1 class="rp-cover-title">학습 성취<br>리포트</h1>
     <div class="rp-cover-sub"><span>Learning Achievement Report</span>월간 학습 성적표</div>
     <div class="rp-cover-art">${art}</div>
-    <ol class="rp-cover-toc">${toc.slice(0, 4).map((t, i) => `<li><small>0${i + 1}</small>${t}</li>`).join("")}</ol>
+    <ol class="rp-cover-toc" style="grid-template-columns:repeat(${toc.length},1fr)">${toc.map((t, i) => `<li><small>0${i + 1}</small>${t}</li>`).join("")}</ol>
     <div class="rp-cover-who">
       <div><small>학생</small>${esc(st.name)}</div><div><small>반</small>${esc(cls || "—")}</div>
       <div><small>기간</small>${esc(period ? period.label : "전체 기간")}</div></div>
@@ -20224,7 +20224,9 @@ function studentReportPrintableHtml(data, period, commentHtml) {
     <h4 class="rpm-sec"><small>0${reportTocNames(tests).indexOf("시험별 결과") + 1}</small>시험별 결과</h4>
     <table>
       <thead><tr><th>시험</th><th>결과</th><th>회차별 점수</th><th>마지막 제출</th></tr></thead>
-      <tbody>${testRows}</tbody></table></div></div>`;
+      <tbody>${testRows}</tbody></table>
+    <div class="rp-keep"><h4 class="rpm-sec"><small>0${reportTocNames(tests).indexOf("종합 소견") + 1}</small>종합 소견</h4>
+    ${commentHtml}</div></div></div>`;
 }
 
 // 점수대 분포(2쪽) — 시험마다 이 기간의 최고 점수
@@ -20248,7 +20250,8 @@ function reportDistHtml(tests) {
 }
 
 // 월간 성적표 1쪽(2026-11-18 사용자가 보낸 구성 그림을 따랐다) — 머리·기본 정보·숫자 칸 넷 /
-// 01 시험 결과 요약(원형 둘) / 02 유형별 정답률(번호 방사형 + 막대 표 + 보완 필요 유형) / 03 종합 소견.
+// 01 시험 결과 요약(원형 둘) / 02 유형별 정답률(번호 방사형 + 막대 표 + 보완 필요 유형).
+// 종합 소견은 코멘트 길이에 따라 이 쪽을 넘쳐 맨 끝(시험별 결과 아래)으로 옮겼다(2026-11-18 사용자).
 // 남색 한 가지로 맞추고 가장 약한 것만 주황. 시험별 점수·결과 표는 2쪽(.rpm-p2)으로 넘긴다.
 // 문제 시험 유형이 3개보다 적으면 02를 빼고 번호를 당긴다.
 
@@ -20314,8 +20317,6 @@ function reportPage1Html(data, period, cls, commentHtml, top) {
     <h4 class="rpm-sec"><small>01</small>시험 결과 요약</h4>
     <div class="rpm-cards${tries ? "" : " one"}">${result}${tries}</div>
     ${typeHtml}
-    <h4 class="rpm-sec"><small>0${sec}</small>종합 소견</h4>
-    ${commentHtml}
   </div>`;
 }
 
