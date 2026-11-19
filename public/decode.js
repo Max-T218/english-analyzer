@@ -235,6 +235,10 @@ function dcRender() {
   dcEl("dcResult").innerHTML = dcState.entries.map(dcSheetHtml).join("") + dcGpAllHtml();
   ["dcPrintBtn", "dcEditBtn", "dcSaveBtn"].forEach((id) => { dcEl(id).style.display = ok ? "" : "none"; });
   dcEl("dcPicBtn").style.display = dcState.entries.some((e) => e.data && !e.picSrc) ? "" : "none";
+  // 목표 어법 한 번에(2026-11-19 사용자 — 표시 없이 만든 자료에 지문마다 누르지 않게). 표시 안 한 지문이 있으면 그것만, 다 했으면 모두 다시
+  const gpMissing = dcState.entries.some((e) => e.data && !e.data.gp);
+  dcEl("dcGpBtn").style.display = ok ? "" : "none";
+  dcEl("dcGpBtn").textContent = gpMissing ? "🎯 목표 어법 표시 (모든 지문)" : "🔄 목표 어법 모두 다시 뽑기";
   dcSetEditing(dcState.editing && ok);
   dcFitSoon();
   if (typeof syncFloatPrint === "function") syncFloatPrint();
@@ -549,7 +553,15 @@ async function dcDrawGp(e, onRetry) {
     return false;
   }
 }
-// 이미 만든 지문들에 차례로 넣는다(지문마다의 [🎯 목표 어법 문장 넣기])
+// 위 단추 [🎯 목표 어법 표시 (모든 지문)] — 표시 안 한 지문만, 모두 했으면 모두 다시(목표 어법을 바꿨을 때)
+dcEl("dcGpBtn").addEventListener("click", () => {
+  if (dcState.busy) return;
+  if (dcState.editing) dcHarvest();
+  const done = dcState.entries.filter((e) => e.data);
+  const missing = done.filter((e) => !e.data.gp);
+  dcDrawGps(missing.length ? missing : done);
+});
+// 이미 만든 지문들에 차례로 넣는다(위 단추·지문마다의 [🎯 목표 어법 표시 넣기])
 async function dcDrawGps(list) {
   const errEl = dcEl("dcError");
   errEl.textContent = "";
@@ -560,7 +572,7 @@ async function dcDrawGps(list) {
     `${DECODE_NAME} 목표 어법 문장 · ${list.length}지문`, list.length))) return;
   if (dcState.editing) { dcHarvest(); dcSetEditing(false); }
   dcState.busy = true;
-  dcEl("dcMakeBtn").disabled = true;
+  dcEl("dcMakeBtn").disabled = dcEl("dcGpBtn").disabled = true;
   const loading = dcEl("dcLoading");
   loading.classList.add("on");
   try {
@@ -570,9 +582,11 @@ async function dcDrawGps(list) {
       dcRender();
     }
     dcRender();
+    const bad = list.filter((e) => e.gpError).length;
+    if (bad) errEl.textContent = `${bad}개 지문은 목표 어법을 뽑지 못했습니다 — 지문 위의 안내를 보고 다시 눌러 주세요(값은 나가지 않았습니다).`;
   } finally {
     dcState.busy = false;
-    dcEl("dcMakeBtn").disabled = false;
+    dcEl("dcMakeBtn").disabled = dcEl("dcGpBtn").disabled = false;
     loading.classList.remove("on");
     refreshTokenDisplay();
   }
