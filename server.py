@@ -9703,6 +9703,26 @@ def _workbook_words_prompt(total):
 """
 
 
+# 목표 어법 판정 기준 — 워크북 '목표어법 배열 영작'(fromPassage 문장 고르기)과 리딩노트 목표 어법(GRAMMAR_PICK_SYSTEM_PROMPT)이
+# 함께 쓴다(2026-11-19 사용자 — 워크북이 관계대명사 that 문장을 '동격 that'으로 뽑았다). 고치면 두 곳이 함께 바뀐다.
+TARGET_GRAMMAR_CRITERIA = """- **분사구문**: 접속사·주어 없이 분사(-ing / p.p. / Having p.p. / Being p.p.)로 시작하는 부사구(문두·문중·문미, 콤마로 떨어진 것 포함),
+  접속사를 남긴 분사구문(When asked, ~), With+명사+분사도 넣는다. 명사를 꾸미는 분사(the man standing there)·진행형·수동태·동명사 주어는 **아니다**.
+- **접속사 as**: 뒤에 주어+동사가 오는 as(~할 때 / ~ 때문에 / ~처럼 / ~함에 따라 / 양보). just as, as soon as, as long as 포함.
+  전치사 as(as a teacher), as ~ as 비교, such as는 **아니다**.
+- **to부정사 의미상 주어**: for/of + 목적격 + to부정사(It is hard for me to ~ / It's kind of you to ~ / too ~ for A to ~ / enough for A to ~).
+  want/ask/allow + 목적어 + to부정사(5형식 목적격보어)는 **아니다**.
+- **가정법 과거**: If + 주어 + 과거동사(be는 were) ~, 주어 + would/could/might + 동사원형. I wish + 과거, as if + 과거, If it were not for,
+  Without/But for ~ would, Were I ~ 도치 포함. **현재·미래 사실의 조건문(If ~ is/does ~, will/can)은 가정법이 아니다.**
+- **가정법 과거완료**: If + had p.p., would/could/might have p.p. (Had + 주어 + p.p. 도치 포함).
+- **가목적어-진목적어**: make/find/think/consider/believe 등 + **it** + 목적격보어(형용사·명사) + to부정사/that절(make it possible to ~,
+  find it difficult to ~, think it important that ~). **It is ~ to/that ~(가주어-진주어)는 아니다** — it이 동사의 목적어 자리여야 한다.
+- **동격 that**: 추상명사(fact·idea·belief·news·possibility·risk·concern·evidence·claim·hope 등) 바로 뒤에서 그 **내용**을 풀어 주는
+  완전한 절을 이끄는 that(There's a risk that hackers could ~). that 뒤 절에 빠진 성분이 없어야 한다.
+  **관계대명사 that**(뒤 절에 주어·목적어가 빠짐 — chips that can be implanted), 명사절·부사절 that, 지시사 that은 **아니다**.
+- **관계대명사 / 관계부사**: 선행사를 꾸미는 절을 이끄는 것만(생략된 목적격 관계대명사 포함). 의문사·명사절 접속사 that·지시대명사 that은 아니다.
+- 그 밖의 어법도 위처럼 **교과서·내신에서 그 이름으로 가르치는 형태**를 기준으로 판정한다."""
+
+
 def _workbook_arrange_prompt(target_grammar):
     n, k = WORKBOOK_ARRANGE_ITEMS, WORKBOOK_ARRANGE_FROM_PASSAGE
     if target_grammar:
@@ -9718,7 +9738,12 @@ def _workbook_arrange_prompt(target_grammar):
 {pick}
 - `items`: 정확히 {n}개. 학생은 우리말(`ko`)을 보고, 화면이 `en`의 낱말을 모두 섞어 준 것을 배열한다.
   · 처음 {k}개는 `fromPassage: true` — 목표 어법이 쓰인 **지문의 문장 그대로**(`en`은 지문 원문과 한 글자도
-    다르지 않게, `ko`는 그 문장의 자연스러운 해석). 그런 문장이 모자라면 이 자리도 아래처럼 새로 지어 채운다.
+    다르지 않게 — 쉼표·따옴표도 그대로, `ko`는 그 문장의 자연스러운 해석). 지문을 첫 문장부터 끝까지 하나씩 보며
+    **아래 판정 기준으로 그 어법이 정말 쓰였는지** 형태로 확인한 문장만 고른다. 비슷해 보이는 다른 구조(관계대명사 that을
+    동격 that으로, 가주어 it을 가목적어로)를 고르지 마라. 그런 문장이 없거나 모자라면 **억지로 고르지 말고** 이 자리도
+    아래처럼 새로 지어 채운다(`fromPassage: false`).
+    판정 기준:
+{_indent(TARGET_GRAMMAR_CRITERIA, "    ")}
   · 나머지는 `fromPassage: false` — **지문에 없는 새 문장**. 지문의 내용·어휘를 써서 목표 어법을 연습하게
     짓는다(예: 지문 "Expanding infrastructure requires significant funding, which many cities lack." →
     새 문장 "Without enough funding, cities would not expand their infrastructure.").
@@ -9726,7 +9751,12 @@ def _workbook_arrange_prompt(target_grammar):
   · 목표 어법을 고르게 돌려 쓴다 — 한 문법만 몰아 쓰지 않는다. `grammar`에 그 문항이 연습하는 문법 이름
     (`grammars` 중 하나와 같은 글자)을 적는다.
   · `en`은 8~22낱말의 한 문장, 평문(꾸밈표·괄호·번호 없음). `ko`는 우리말 문장 하나.
+  · 새로 짓는 문장도 `grammar`에 적은 어법이 위 판정 기준대로 **정말 들어 있어야** 한다.
 """
+
+
+def _indent(text, pad):
+    return "\n".join(pad + line for line in text.splitlines())
 
 
 def build_workbook_user_prompt(passage, complete_hint=None, stages=None, target_grammar="",
@@ -11336,17 +11366,7 @@ GRAMMAR_PICK_SYSTEM_PROMPT = r"""너는 한국 고등학교 영어 교사다. �
 3. 판정이 끝난 뒤 결과를 담는다.
 
 ## 자주 나오는 목표 어법 — 이렇게 판정한다
-- **분사구문**: 접속사·주어 없이 분사(-ing / p.p. / Having p.p. / Being p.p.)로 시작하는 부사구(문두·문중·문미, 콤마로 떨어진 것 포함),
-  접속사를 남긴 분사구문(When asked, ~), With+명사+분사도 넣는다. 명사를 꾸미는 분사(the man standing there)·진행형·수동태·동명사 주어는 **아니다**.
-- **접속사 as**: 뒤에 주어+동사가 오는 as(~할 때 / ~ 때문에 / ~처럼 / ~함에 따라 / 양보). just as, as soon as, as long as 포함.
-  전치사 as(as a teacher), as ~ as 비교, such as는 **아니다**.
-- **to부정사 의미상 주어**: for/of + 목적격 + to부정사(It is hard for me to ~ / It's kind of you to ~ / too ~ for A to ~ / enough for A to ~).
-  want/ask/allow + 목적어 + to부정사(5형식 목적격보어)는 **아니다**.
-- **가정법 과거**: If + 주어 + 과거동사(be는 were) ~, 주어 + would/could/might + 동사원형. I wish + 과거, as if + 과거, If it were not for,
-  Without/But for ~ would, Were I ~ 도치 포함. **현재·미래 사실의 조건문(If ~ is/does ~, will/can)은 가정법이 아니다.**
-- **가정법 과거완료**: If + had p.p., would/could/might have p.p. (Had + 주어 + p.p. 도치 포함).
-- **관계대명사 / 관계부사**: 선행사를 꾸미는 절을 이끄는 것만(생략된 목적격 관계대명사 포함). 의문사·명사절 접속사 that·지시대명사 that은 아니다.
-- 그 밖의 어법도 위처럼 **교과서·내신에서 그 이름으로 가르치는 형태**를 기준으로 판정한다.
+""" + TARGET_GRAMMAR_CRITERIA + r"""
 
 ## 규칙
 1. 목표 어법은 입력에 적힌 순서대로, 하나도 빼지 말고 `results`에 하나씩 담는다. `target`은 입력에 적힌 글자 그대로 쓴다.
