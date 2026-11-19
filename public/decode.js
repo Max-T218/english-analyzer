@@ -52,6 +52,113 @@ function dcHeadHtml(name, page) {
 const dcSecHead = (no, en, ko) =>
   `<h4 class="dc-h"><span class="dc-h-no">${no}</span><span class="dc-h-en">${en}</span><span class="dc-h-ko">${ko}</span></h4>`;
 
+/* ── 목표 어법 문장(2026-11-19 사용자) ──
+   '🎯 목표 어법 문장' 선택을 켜고 만들면 ① 01 본문에서 목표 어법이 쓰인 곳을 형광으로 칠하고 ② 모든 지문의 그 문장만 어법별로 모은 "목표 어법 문장 정리"를 맨 뒤에 덧붙인다.
+   서버는 /api/grammarpick(Flash, 지문 1개당 PRICE_GRAMMAR_PICK_KRW) — 문장은 지문에서 그대로 베낀 것을 서버가 지문과 대조해 걸러 온다.
+   결과는 e.data.gp = [{target, items:[{sentence, key, ko, note}]}]로 저장본에도 함께 담긴다. 쪽 맞추기(dcFit)는 이 쪽을 재지 않는다
+   — 지문 칸 옆 형제 요소(.dc-gpsheet)라 2~3쪽 계산에 끼지 않고, 인쇄에서는 지문마다 새 쪽으로 이어진다. */
+const dcGpOn = () => true;   // 목표 어법을 적으면 본문 형광 표시와 문장 모음을 늘 함께 한다(2026-11-19 사용자 — 체크 없음)
+// 목표 어법 칸(공용) → 목록. 서버 parse_grammar_pick_targets와 같은 규칙(쉼표·세미콜론·줄바꿈, 상한 8)
+function dcGpTargets() {
+  const seen = new Set();
+  const out = [];
+  String(grammarEl.value || "").split(/[,;\n，、]+/).forEach((p) => {
+    const t = p.replace(/\s+/g, " ").trim().slice(0, 80);
+    const k = t.toLowerCase();
+    if (t && !seen.has(k)) { seen.add(k); out.push(t); }
+  });
+  return out.slice(0, 8);
+}
+const dcRe = (s) => String(s).trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+// 어법 낱말(key)은 낱말 단위로만 찾는다 — "as"가 "forecast" 속 글자에 칠해지던 것을 막는다(2026-11-19)
+const dcKeyRe = (k) => new RegExp("(?<![A-Za-z0-9])" + dcRe(k) + "(?![A-Za-z0-9])", "i");
+// 본문(원문 그대로) 위에서 어법 낱말(key)의 자리를 찾아 형광으로 감싼 HTML — 문장 안에서만 찾는다
+function dcPassageHtml(text, gp) {
+  const ranges = [];
+  (gp || []).forEach((g, gi) => (g.items || []).forEach((it) => {
+    if (!it.sentence) return;
+    const sm = new RegExp(dcRe(it.sentence), "i").exec(text);
+    if (!sm) return;
+    const km = it.key ? dcKeyRe(it.key).exec(sm[0]) : null;
+    if (km) ranges.push([sm.index + km.index, sm.index + km.index + km[0].length, gi]);
+    else ranges.push([sm.index, sm.index + sm[0].length, gi]);   // 낱말을 못 짚으면 문장 전체
+  }));
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  ranges.forEach((r) => {
+    const last = merged[merged.length - 1];
+    if (last && r[0] < last[1]) last[1] = Math.max(last[1], r[1]); else merged.push(r.slice());   // 겹치면 먼저 나온 어법 색
+  });
+  let html = "";
+  let pos = 0;
+  merged.forEach(([s, e, gi]) => {
+    html += esc(text.slice(pos, s)) + `<mark class="dc-gp-key c${gi % 6}">${esc(text.slice(s, e))}</mark>`;
+    pos = e;
+  });
+  html += esc(text.slice(pos));
+  return html.split(/\n\s*\n/).map((p) => `<p>${p.replace(/\n/g, " ")}</p>`).join("");
+}
+// 끊어 읽기 한 문장(조각들)에 목표 어법 형광 — 조각을 " "로 이어 그 문장에 해당하는 결과의 key 자리를 찾고,
+// 조각마다 겹치는 부분만 감싼다(조각 경계를 넘는 key도 조각마다 나눠 칠한다). 돌려주는 것은 조각마다의 HTML(esc 된 것)
+const dcNormS = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+function dcChunkMarks(chunks, gp) {
+  const texts = chunks.map((c) => String(c.en || ""));
+  const joined = texts.join(" ");
+  const nj = dcNormS(joined);
+  const ranges = [];
+  if (nj.length >= 8) (gp || []).forEach((g, gi) => (g.items || []).forEach((it) => {
+    const ns = dcNormS(it.sentence);
+    if (!ns || !(ns.includes(nj) || nj.includes(ns))) return;   // 이 문장의 결과만
+    const km = it.key ? dcKeyRe(it.key).exec(joined) : null;
+    if (km) ranges.push([km.index, km.index + km[0].length, gi]);
+  }));
+  let off = 0;
+  return texts.map((t) => {
+    const s0 = off;
+    off += t.length + 1;
+    const mine = ranges.map(([a, b, gi]) => [Math.max(a, s0) - s0, Math.min(b, s0 + t.length) - s0, gi])
+      .filter(([a, b]) => a < b).sort((x, y) => x[0] - y[0]);
+    if (!mine.length) return null;
+    let html = "", pos = 0;
+    mine.forEach(([a, b, gi]) => {
+      if (a < pos) a = pos;
+      if (a >= b) return;
+      html += esc(t.slice(pos, a)) + `<mark class="dc-gp-key c${gi % 6}">${esc(t.slice(a, b))}</mark>`;
+      pos = b;
+    });
+    return html + esc(t.slice(pos));
+  });
+}
+function dcGpSentHtml(s, key, ci) {
+  const m = key ? dcKeyRe(key).exec(s) : null;
+  if (!m) return esc(s);
+  const i = m.index, n = m[0].length;
+  return esc(s.slice(0, i)) + `<mark class="dc-gp-key c${ci % 6}">${esc(s.slice(i, i + n))}</mark>` + esc(s.slice(i + n));
+}
+// 중요 문법 문장 모음 — 모든 지문의 결과를 어법별로 모아 한 덩어리로(어법마다 색 제목, 문장마다 지문 이름표·하이라이트·해석·설명).
+// 지문 칸들 뒤에 붙는 형제 요소라 쪽 맞추기(dcFit) 계산 밖이다. 지문마다 e.data.gpPage가 켜진 것만 담는다
+function dcGpAllHtml() {
+  const list = dcState.entries.filter((e) => e.data && e.data.gp && e.data.gpPage);
+  if (!list.length) return "";
+  const targets = [];
+  list.forEach((e) => e.data.gp.forEach((g) => { if (!targets.includes(g.target)) targets.push(g.target); }));
+  let total = 0;
+  const groups = targets.map((t, ti) => {
+    const rows = [];
+    list.forEach((e) => e.data.gp.filter((g) => g.target === t).forEach((g) => g.items.forEach((it) => rows.push([e.name, it]))));
+    total += rows.length;
+    const body = rows.length ? rows.map(([name, it]) =>
+      `<div class="dc-gp-item"><div class="dc-gp-line"><span class="dc-gp-tag">${esc(name)}</span>${dcGpSentHtml(it.sentence, it.key, ti)}</div>` +
+      (it.ko ? `<div class="dc-gp-ko">${esc(it.ko)}</div>` : "") +
+      (it.note ? `<div class="dc-gp-note">${esc(it.note)}</div>` : "") + `</div>`).join("")
+      : `<div class="dc-gp-none">선택한 지문에는 이 어법이 쓰인 문장이 없어요.</div>`;
+    return `<div class="dc-gp-group"><div class="dc-gp-gh c${ti % 6}">${"①②③④⑤⑥⑦⑧"[ti] || ti + 1} ${esc(t)}</div>${body}</div>`;
+  }).join("");
+  return `<section class="passage-block dc-gpsheet"><div class="dc-gpsheet-page">` +
+    `<div class="dc-gp-kicker">READING NOTE · GRAMMAR PICK</div><div class="dc-gp-title">목표 어법 문장 정리</div>` +
+    `<div class="dc-gp-sub">${esc(list.map((e) => e.name).join(", "))} · 목표 어법 ${targets.length}가지가 들어간 문장 ${total}개 · 하이라이트 색상 = 어법 제목 색상</div>${groups}</div></section>`;
+}
+
 function dcSheetHtml(e, i) {
   if (e.error || !e.data) {
     return `<section class="passage-block dc-sheet" data-i="${i}"><div class="passage-error">` +
@@ -60,7 +167,7 @@ function dcSheetHtml(e, i) {
   const d = e.data;
   const sents = d.sentences || [];
   // 원문은 선생님이 넣은 지문 그대로 — 조각을 이어 붙인 것보다 정확하다(문단 나눔도 남는다)
-  const enHtml = esc(e.text).split(/\n\s*\n/).map((p) => `<p>${p.replace(/\n/g, " ")}</p>`).join("");
+  const enHtml = dcPassageHtml(e.text, d.gp);
   const koHtml = sents.map((s, k) => dcEd(`s.${k}.ko`, s.ko)).join(" ");
   const flow = (d.summary || []).map((t, k) =>
     `<div class="dc-step"><span class="dc-step-no">${k + 1}</span>${dcEd(`sum.${k}`, t)}</div>`).join("");
@@ -70,7 +177,10 @@ function dcSheetHtml(e, i) {
     `${v.pos ? `<span class="dc-w-pos">${esc(DC_POS_LABEL[v.pos] || v.pos)}</span>` : ""}` +
     `${dcEd(`voc.${k}.meaning`, v.meaning, "span", "dc-w-mean")}</span></div>`).join("");
   const lines = sents.map((s, k) => {
-    const en = (s.chunks || []).map((c, j) => dcEd(`c.${k}.${j}.en`, c.en)).join('<span class="dc-sl">/</span>');
+    const marks = d.gp ? dcChunkMarks(s.chunks || [], d.gp) : [];
+    const en = (s.chunks || []).map((c, j) => (marks[j]
+      ? `<span class="dc-ed" data-f="c.${k}.${j}.en">${marks[j]}</span>`   // 형광만 더한 같은 칸(고친 글은 innerText로 거둔다)
+      : dcEd(`c.${k}.${j}.en`, c.en))).join('<span class="dc-sl">/</span>');
     const ko = (s.chunks || []).map((c, j) => dcEd(`c.${k}.${j}.ko`, c.ko)).join('<span class="dc-sl">/</span>');
     return `<li class="dc-s"><span class="dc-s-no">${String(k + 1).padStart(2, "0")}</span>` +
       `<div class="dc-s-body"><div class="dc-s-en">${en}</div><div class="dc-s-ko">${ko}</div></div></li>`;
@@ -85,7 +195,12 @@ function dcSheetHtml(e, i) {
     (pic ? `<button type="button" class="btn ghost small" data-act="pic">🔄 그림 다시 그리기</button>` +
       `<button type="button" class="btn ghost small" data-act="nopic">그림 빼기</button>`
       : `<button type="button" class="btn ghost small" data-act="pic">🖼️ 4컷 그림 넣기</button>`) +
-    (e.picError ? `<span class="dc-tools-err">⚠️ ${esc(e.picError)}</span>` : "") + `</div>`;
+    (d.gp ? `<button type="button" class="btn ghost small" data-act="gp">🔄 목표 어법 다시 뽑기</button>` +
+      `<button type="button" class="btn ghost small" data-act="gppage">${d.gpPage ? "문장 정리에서 빼기" : "🎯 문장 정리에 넣기"}</button>` +
+      `<button type="button" class="btn ghost small" data-act="nogp">어법 표시 빼기</button>`
+      : `<button type="button" class="btn ghost small" data-act="gp">🎯 목표 어법 표시 넣기</button>`) +
+    (e.picError ? `<span class="dc-tools-err">⚠️ ${esc(e.picError)}</span>` : "") +
+    (e.gpError ? `<span class="dc-tools-err">⚠️ ${esc(e.gpError)}</span>` : "") + `</div>`;
   return `<section class="passage-block dc-sheet" data-i="${i}">
     ${tools}
     <div class="dc-fitnote" hidden></div>
@@ -117,7 +232,7 @@ function dcSheetHtml(e, i) {
 
 function dcRender() {
   const ok = dcState.entries.some((e) => e.data);
-  dcEl("dcResult").innerHTML = dcState.entries.map(dcSheetHtml).join("");
+  dcEl("dcResult").innerHTML = dcState.entries.map(dcSheetHtml).join("") + dcGpAllHtml();
   ["dcPrintBtn", "dcEditBtn", "dcSaveBtn"].forEach((id) => { dcEl(id).style.display = ok ? "" : "none"; });
   dcEl("dcPicBtn").style.display = dcState.entries.some((e) => e.data && !e.picSrc) ? "" : "none";
   dcSetEditing(dcState.editing && ok);
@@ -394,10 +509,12 @@ const dcPicStyle = () => (document.querySelector('input[name="dcPicStyle"]:check
 // 웹툰 말풍선 말 — 한국어·영어(서버 DECODE_PIC_BUBBLE_RULES와 같은 열쇠). 일러스트면 서버가 쓰지 않는다
 const dcPicBubble = () => (document.querySelector('input[name="dcPicBubble"]:checked') || {}).value || "ko";
 const dcPicPrice = () => (typeof PRICING !== "undefined" && PRICING && Number.isFinite(PRICING.decodePic) ? PRICING.decodePic : null);
-function dcCost(n, withPic) {
+const dcGpPrice = () => (typeof PRICING !== "undefined" && PRICING && Number.isFinite(PRICING.grammarPick) ? PRICING.grammarPick : null);
+function dcCost(n, withPic, withGp) {
   if (typeof PRICING === "undefined" || !PRICING || !Number.isFinite(PRICING.decode)) return null;
   const pic = withPic ? dcPicPrice() : 0;
-  return pic === null ? null : (PRICING.decode + pic) * n;
+  const gp = withGp ? dcGpPrice() : 0;
+  return pic === null || gp === null ? null : (PRICING.decode + pic + gp) * n;
 }
 function dcJobs() {
   return passageMgr.getJobs().filter((j) => j.text && j.text.length >= 20);
@@ -405,13 +522,61 @@ function dcJobs() {
 function dcSyncCost() {
   const n = dcJobs().length;
   const withPic = dcPicOn();
-  const cost = dcCost(n, withPic);
+  const withGp = dcGpTargets().length > 0;   // 목표 어법을 적었으면 본문 형광 표시는 늘 한다
+  const cost = dcCost(n, withPic, withGp);
   dcEl("dcCostHint").innerHTML = n && cost !== null
-    ? `예상 비용 <b>${pt(cost)}</b> (지문 ${n}개 × ${pt(PRICING.decode)}${withPic ? ` + 4컷 그림 ${n}세트(지문마다 1세트) × ${pt(dcPicPrice())}` : ""})` : "";
+    ? `예상 비용 <b>${pt(cost)}</b> (지문 ${n}개 × ${pt(PRICING.decode)}${withPic ? ` + 4컷 그림 ${n}세트(지문마다 1세트) × ${pt(dcPicPrice())}` : ""}${withGp ? ` + 목표 어법 문장 × ${pt(dcGpPrice())}` : ""})` : "";
+  const tg = dcGpTargets();
+  dcEl("dcGpHint").textContent = tg.length ? `목표 어법 ${tg.length}개: ${tg.join(" · ")} — 본문 형광 표시와 맨 뒤 '목표 어법 문장 정리'를 함께 만듭니다.` : "";
   const pp = dcPicPrice();
   dcEl("dcPicPrice").textContent = pp !== null ? `4컷 한 세트(지문 1개)에 ${pt(pp)}입니다 — 컷마다 따로 받지 않습니다.` : "";
 }
 dcEl("dcPicChk").addEventListener("change", dcSyncCost);
+document.addEventListener("input", (e) => { if (e.target.id === "targetGrammar") dcSyncCost(); });
+
+// 목표 어법 문장 뽑기 — 실패해도 리딩노트는 그대로 두고 그 지문 위에 이유만 적는다(값은 서버가 성공했을 때만 받는다)
+async function dcDrawGp(e, onRetry) {
+  e.gpError = "";
+  try {
+    const r = await postGenerate("/api/grammarpick", { passage: e.text, targetGrammar: dcGpTargets().join(", ") },
+      "목표 어법 문장을 뽑지 못했습니다.", onRetry);
+    e.data.gp = r.results || [];
+    if (dcGpOn()) e.data.gpPage = true;
+    return true;
+  } catch (err) {
+    e.gpError = err.message || String(err);
+    if (err.code === "quota" || err.code === "no_tokens") throw err;
+    return false;
+  }
+}
+// 이미 만든 지문들에 차례로 넣는다(지문마다의 [🎯 목표 어법 문장 넣기])
+async function dcDrawGps(list) {
+  const errEl = dcEl("dcError");
+  errEl.textContent = "";
+  if (!list.length) return;
+  if (!dcGpTargets().length) { errEl.textContent = "위쪽 '목표 어법' 칸에 어법을 적어 주세요(여럿이면 쉼표로 나눕니다)."; return; }
+  const each = dcGpPrice();
+  if (!(await costConfirmed(each === null ? null : each * list.length,
+    `${DECODE_NAME} 목표 어법 문장 · ${list.length}지문`, list.length))) return;
+  if (dcState.editing) { dcHarvest(); dcSetEditing(false); }
+  dcState.busy = true;
+  dcEl("dcMakeBtn").disabled = true;
+  const loading = dcEl("dcLoading");
+  loading.classList.add("on");
+  try {
+    for (let i = 0; i < list.length; i++) {
+      dcEl("dcLoadingText").textContent = `AI가 ${list[i].name}에서 목표 어법 문장을 찾고 있습니다… (${i + 1}/${list.length})`;
+      try { await dcDrawGp(list[i]); } catch (err) { errEl.textContent = err.message; break; }
+      dcRender();
+    }
+    dcRender();
+  } finally {
+    dcState.busy = false;
+    dcEl("dcMakeBtn").disabled = false;
+    loading.classList.remove("on");
+    refreshTokenDisplay();
+  }
+}
 if (typeof onPricingReady === "function") onPricingReady(dcSyncCost);
 document.addEventListener("input", (e) => {
   if (e.target.closest && e.target.closest(".passage-panel")) dcSyncCost();
@@ -480,7 +645,17 @@ dcEl("dcResult").addEventListener("click", (ev) => {
   const e = dcState.entries[Number(b.closest(".dc-sheet").dataset.i)];
   if (!e || !e.data) return;
   if (dcState.editing) dcHarvest();
-  if (b.dataset.act === "pic") {
+  if (b.dataset.act === "gp") {
+    dcDrawGps([e]);
+  } else if (b.dataset.act === "gppage") {
+    e.data.gpPage = !e.data.gpPage;
+    dcRender();
+  } else if (b.dataset.act === "nogp") {
+    delete e.data.gp;
+    delete e.data.gpPage;
+    e.gpError = "";
+    dcRender();
+  } else if (b.dataset.act === "pic") {
     dcDrawPics([e]);
   } else if (b.dataset.act === "nopic") {
     if (!confirm("이 지문의 4컷 그림을 뺄까요? 다시 넣으려면 새로 그려야 합니다(값이 다시 나갑니다).")) return;
@@ -501,9 +676,14 @@ async function dcMake() {
     return;
   }
   const withPic = dcPicOn();
+  const withGp = dcGpTargets().length > 0;
   const style = dcPicStyle();
-  if (!(await costConfirmed(dcCost(jobs.length, withPic),
-    `${DECODE_NAME} · 지문 ${jobs.length}개${withPic ? ` + 4컷 그림(${DC_PIC_STYLES[style]}) ${jobs.length}세트(지문마다 1세트)` : ""}`,
+  if (dcGpOn() && !withGp) {
+    errEl.textContent = "'목표 어법 문장 쪽'을 켰으니 위쪽 '목표 어법' 칸에 어법을 적어 주세요(여럿이면 쉼표로 나눕니다). 안 쓰려면 체크를 끄세요.";
+    return;
+  }
+  if (!(await costConfirmed(dcCost(jobs.length, withPic, withGp),
+    `${DECODE_NAME} · 지문 ${jobs.length}개${withPic ? ` + 4컷 그림(${DC_PIC_STYLES[style]}) ${jobs.length}세트(지문마다 1세트)` : ""}${withGp ? ` + 목표 어법 표시(${dcGpTargets().length}개 어법)` : ""}`,
     jobs.length, reduceAdvice(jobs.length, withPic ? "4컷 그림을 빼면" : "")))) return;
   if (typeof dropStaleSavedLink === "function") dropStaleSavedLink("decode");
   dcState.busy = true;
@@ -532,6 +712,14 @@ async function dcMake() {
         const entry = { name: j.name, text: j.text, data };
         dcState.entries.push(entry);
         ok++;
+        if (withGp) {
+          dcRender();
+          text.textContent = `AI가 ${j.name}에서 목표 어법 문장을 찾고 있습니다… (${i + 1}/${jobs.length})`;
+          // 어법 문장은 실패해도 리딩노트는 남긴다. 한도 소진·잔액 부족이면 여기서 멈춘다
+          const stopGp = await dcDrawGp(entry, (n) => { text.textContent = `연결이 끊겨 다시 받아 오는 중… (${n})`; })
+            .then(() => false, (err) => { errEl.textContent = err.message; return true; });
+          if (stopGp) { dcRender(); break; }
+        }
         if (withPic) {
           dcRender();
           text.textContent = `AI가 ${j.name}의 4컷 그림을 그리고 있습니다… (${i + 1}/${jobs.length})`;

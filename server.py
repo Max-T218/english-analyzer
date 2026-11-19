@@ -314,6 +314,10 @@ PRICE_DECODE_PIC_KRW = int(os.environ.get("PRICE_DECODE_PIC_KRW", "300"))
 # 내용 한장정리(/api/explain), 지문 1개당 — 원문 없이 우리말로 글 내용을 풀어 주는 한 쪽. Flash 한 번이고
 # 원문을 옮기지 않아 출력이 리딩노트보다 짧다. 100은 원가 실측 전 임시값 — Render 로그 [usage] explain으로 맞출 것
 PRICE_EXPLAIN_KRW = int(os.environ.get("PRICE_EXPLAIN_KRW", "100"))
+# 목표 어법 문장 뽑기(/api/grammarpick, 2026-11-19 사용자), 지문 1개당 — 지문 하나와 목표 어법 몇 개를 주면 Flash가
+# 그 어법이 쓰인 문장만 골라 준다. 입력 약 1천·출력 수백 토큰이라 원가는 1~2원. 50은 실측 전 임시값 — Render 로그 [usage] grammarpick으로 맞출 것
+PRICE_GRAMMAR_PICK_KRW = int(os.environ.get("PRICE_GRAMMAR_PICK_KRW", "50"))
+GRAMMAR_PICK_MAX_TARGETS = 8
 # 릴스 제작(2026-11-19 사용자) — 원가 실측 전 시범 값. 원가 어림(AI Studio): 대본(한장정리+대본 Flash 두 번) 약 30원,
 # 장면 그림 한 장 약 100원, 음성(한 편 14줄 안팎) 수십 원 → 9장면 한 편 약 1,000원.
 # 값은 2026-11-19 사용자가 정했다(처음 200·300·200 → 대본 300 · 목소리 500 · 그림 장당 400) — 9장면 한 편 4,400P, 원가율 약 23%
@@ -11286,6 +11290,156 @@ def call_gemini_explain(passage, api_key, model, shorten_from=None):
     return _finish_explain(_gemini_json(payload, api_key, model, _EXPLAIN_TRUNC_MSG, label="explain"))
 
 
+# ══════ 목표 어법 문장 뽑기(/api/grammarpick, 2026-11-19 사용자) ══════
+# 지문 + 목표 어법(쉼표로 여럿) → 어법마다 '그 어법이 쓰인 문장'만 모아 준다. 문장은 AI가 쓰지 않고 지문에서
+# 그대로 베끼게 한 뒤 서버가 지문에 실제로 있는지 다시 확인한다(없으면 버린다 — 지어낸 문장이 나가면 안 된다).
+GRAMMAR_PICK_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "results": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "target": {"type": "STRING"},
+                    "items": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "sentence": {"type": "STRING"},
+                                "key": {"type": "STRING"},
+                                "ko": {"type": "STRING"},
+                                "note": {"type": "STRING"},
+                            },
+                            "required": ["sentence", "key", "ko", "note"],
+                            "propertyOrdering": ["sentence", "key", "ko", "note"],
+                        },
+                    },
+                },
+                "required": ["target", "items"],
+                "propertyOrdering": ["target", "items"],
+            },
+        },
+    },
+    "required": ["results"],
+}
+
+GRAMMAR_PICK_SYSTEM_PROMPT = r"""너는 한국 고등학교 영어 교사다. 영어 지문 하나와 '목표 어법' 목록을 받아, 목표 어법마다
+**그 어법이 실제로 쓰인 문장만** 지문에서 골라 JSON으로 돌려준다. 상세분석에서 목표 어법을 "tg"로 짚는 것과 같은 판단을
+지문 전체에 대해 빠짐없이 하는 일이다.
+
+## 찾는 순서 (반드시 이렇게)
+1. 지문을 문장 단위로 나눠 **첫 문장부터 마지막 문장까지 하나씩** 본다. 건너뛰지 마라.
+2. 문장마다 목표 어법 하나하나에 대해 "이 문장에 이 구조가 실제로 있는가"를 **형태를 보고** 판정한다
+   (주절·종속절·삽입구·생략된 자리까지 본다). 그 자리에 실제로 쓰인 것 하나로 판정한다.
+3. 판정이 끝난 뒤 결과를 담는다.
+
+## 자주 나오는 목표 어법 — 이렇게 판정한다
+- **분사구문**: 접속사·주어 없이 분사(-ing / p.p. / Having p.p. / Being p.p.)로 시작하는 부사구(문두·문중·문미, 콤마로 떨어진 것 포함),
+  접속사를 남긴 분사구문(When asked, ~), With+명사+분사도 넣는다. 명사를 꾸미는 분사(the man standing there)·진행형·수동태·동명사 주어는 **아니다**.
+- **접속사 as**: 뒤에 주어+동사가 오는 as(~할 때 / ~ 때문에 / ~처럼 / ~함에 따라 / 양보). just as, as soon as, as long as 포함.
+  전치사 as(as a teacher), as ~ as 비교, such as는 **아니다**.
+- **to부정사 의미상 주어**: for/of + 목적격 + to부정사(It is hard for me to ~ / It's kind of you to ~ / too ~ for A to ~ / enough for A to ~).
+  want/ask/allow + 목적어 + to부정사(5형식 목적격보어)는 **아니다**.
+- **가정법 과거**: If + 주어 + 과거동사(be는 were) ~, 주어 + would/could/might + 동사원형. I wish + 과거, as if + 과거, If it were not for,
+  Without/But for ~ would, Were I ~ 도치 포함. **현재·미래 사실의 조건문(If ~ is/does ~, will/can)은 가정법이 아니다.**
+- **가정법 과거완료**: If + had p.p., would/could/might have p.p. (Had + 주어 + p.p. 도치 포함).
+- **관계대명사 / 관계부사**: 선행사를 꾸미는 절을 이끄는 것만(생략된 목적격 관계대명사 포함). 의문사·명사절 접속사 that·지시대명사 that은 아니다.
+- 그 밖의 어법도 위처럼 **교과서·내신에서 그 이름으로 가르치는 형태**를 기준으로 판정한다.
+
+## 규칙
+1. 목표 어법은 입력에 적힌 순서대로, 하나도 빼지 말고 `results`에 하나씩 담는다. `target`은 입력에 적힌 글자 그대로 쓴다.
+2. `sentence`는 **지문에서 한 글자도 바꾸지 말고 그대로 베낀 한 문장**이다. 줄이거나 고치거나 합치지 마라. 지문 순서대로 나열한다.
+3. 그 어법이 **정말 쓰인** 문장만 고른다. 비슷해 보이지만 다른 어법(예: 목표가 관계대명사 whose인데 의문사 whose, 목표가 현재완료인데 단순 과거)이면 넣지 마라.
+   단어가 같아도 쓰임이 다르면 뺀다. 확신이 없으면 빼라 — 빠뜨리는 쪽이 틀린 문장을 넣는 것보다 낫다.
+4. 지문에 그 어법이 없으면 `items`를 빈 배열로 둔다. 억지로 채우지 마라.
+5. 한 문장이 여러 목표 어법에 해당하면 각각의 `items`에 모두 넣는다.
+6. `key`는 그 문장 안에서 **목표 어법을 드러내는 낱말·구** — 문장에서 그대로 떼어 낸 **온전한 낱말들**(낱말 일부를 자르지 마라), 가장 짧게
+   (예: "whose", "as", "Having finished", "for him to solve", "If I were"). 한 곳만 적는다. 생략된 관계대명사면 생략 자리 바로 뒤 낱말.
+   후보를 빗금으로 늘어놓지 말고 하나로 판정해 적는다.
+7. `ko`는 그 문장의 **자연스러운 우리말 해석 한 문장**이다.
+8. `note`는 이 문장에서 그 어법이 어떻게 쓰였는지 **우리말 한 줄**(40자 안팎, '~해요' 말투 쓰지 말고 명사형으로 끝내라.
+   예: "선행사 a girl을 수식하는 소유격 관계대명사", "과거 사실의 반대를 가정하는 가정법 과거완료").
+9. 문제를 만들지 마라. 문장 고르기·해석·설명만 한다."""
+
+
+def parse_grammar_pick_targets(raw):
+    """'관계대명사 whose, 가정법 과거' → ['관계대명사 whose', '가정법 과거'] (쉼표·세미콜론·줄바꿈 기준, 중복·빈 칸 제거)."""
+    seen, out = set(), []
+    for part in re.split(r"[,;\n，、]+", str(raw or "")):
+        t = re.sub(r"\s+", " ", part).strip()[:80]
+        k = t.lower()
+        if t and k not in seen:
+            seen.add(k)
+            out.append(t)
+    return out[:GRAMMAR_PICK_MAX_TARGETS]
+
+
+_GRAMMAR_PICK_TRUNC_MSG = "지문이 너무 길어 문장을 고르다가 잘렸습니다. 지문을 나눠 시도해 주세요."
+
+
+def _finish_grammar_pick(result, passage, targets):
+    """AI가 돌려준 문장을 지문과 대조해 정리한다 — 지문에 없는 문장·중복은 버리고, 지문 순서로 세운다.
+    목표 어법은 요청한 순서·글자 그대로 하나씩 돌려준다(AI가 글자를 바꿔 써도 순서로 짝을 맞춘다)."""
+    norm = lambda s: re.sub(r"\s+", " ", str(s or "")).strip()
+    npass = norm(passage)
+    lpass = npass.lower()
+    got = result.get("results") if isinstance(result, dict) else None
+    got = got if isinstance(got, list) else []
+    by_name = {norm(g.get("target")).lower(): g for g in got if isinstance(g, dict)}
+    out = []
+    for i, t in enumerate(targets):
+        g = by_name.get(t.lower())
+        if g is None and len(got) == len(targets) and isinstance(got[i], dict):
+            g = got[i]
+        rows, seen = [], set()
+        for it in ((g or {}).get("items") or []):
+            if not isinstance(it, dict):
+                continue
+            s = norm(it.get("sentence"))
+            pos = lpass.find(s.lower()) if s else -1
+            if pos < 0 or pos in seen:
+                continue
+            seen.add(pos)
+            real = npass[pos:pos + len(s)]   # 지문에 적힌 글자(대소문자 포함) 그대로
+            key = norm(it.get("key"))
+            # 낱말 단위로 있어야 한다 — "as"가 "forecast" 속 글자로 통과하지 않게
+            if key and not re.search(r"(?<![A-Za-z0-9])" + r"\s+".join(map(re.escape, key.split())) + r"(?![A-Za-z0-9])",
+                                     real, re.I):
+                key = ""
+            rows.append({"pos": pos, "sentence": real, "key": key, "ko": _decode_plain(norm(it.get("ko")), 300), "note": _decode_plain(norm(it.get("note")), 120)})
+        rows.sort(key=lambda r: r["pos"])
+        for r in rows:
+            del r["pos"]
+        out.append({"target": t, "items": rows})
+    return {"results": out}
+
+
+def call_gemini_grammar_pick(passage, targets, api_key, model):
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. "
+            "관리자에게 문의하세요."
+        )
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+    payload = {
+        "systemInstruction": {"parts": [{"text": GRAMMAR_PICK_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": (
+            "## 목표 어법\n" + "\n".join(f"{i + 1}. {t}" for i, t in enumerate(targets))
+            + "\n\n## 지문\n" + passage)}]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 8192,
+            "responseMimeType": "application/json",
+            "responseSchema": GRAMMAR_PICK_SCHEMA,
+        },
+    }
+    raw = _gemini_json(payload, api_key, model, _GRAMMAR_PICK_TRUNC_MSG, label="grammarpick")
+    return _finish_grammar_pick(raw, passage, targets)
+
+
 # ══════ 숏폼 영상 제작(2026-11-19 사용자 — 화면 이름. 처음엔 '릴스 제작'이었는데 인스타그램 기능 이름이라 바꿨다. 코드 이름 reel*은 그대로) ══════
 # 지문 하나 → 세로 릴스(60초 안팎): ① /api/reelscript — 내용 한장정리(call_gemini_explain)를 만든 뒤 그것만 근거로
 # 장면별 대본(말·큰 글씨·그림 묘사)을 짠다(둘 다 Flash, 값 한 번). ② /api/reelimage — 장면 그림 한 장(세로 9:16, 장면마다
@@ -11302,11 +11456,20 @@ REEL_LINES_MAX = 24           # 대사 줄 수 상한(음성 한 번에)
 REEL_LINE_MAX = 90            # 대사 한 줄 글자 상한
 REEL_IMG_DESC_MAX = 900       # 그림 묘사 글자 상한
 # 장면 그림의 공통 모양 — 글자 없는 반실사 그림, 액자 없이 꽉 찬 세로 한 장(2026-11-19 첫 시범에서 그림 속 액자가 나와 넣은 문장)
-REEL_STYLE = ("Semi-realistic digital painting, cinematic lighting, soft painterly texture, rich but calm colors. "
-              "One single full-bleed vertical 9:16 illustration filling the entire canvas edge to edge — no borders, no inner frame, "
-              "no picture-in-picture, no blurred extension bands. Keep the main subject in the middle of the frame, with simple "
-              "background areas near the top and bottom. All people are fictional and must not resemble any real politician, "
-              "celebrity or historical figure. Absolutely no text, letters, numbers, captions, logos, signs or speech bubbles anywhere in the image.")
+REEL_STYLE_COMMON = ("One single full-bleed vertical 9:16 image filling the entire canvas edge to edge — no borders, no inner frame, "
+                     "no picture-in-picture, no blurred extension bands. Keep the main subject in the middle of the frame, with simple "
+                     "background areas near the top and bottom. All people are fictional and must not resemble any real politician, "
+                     "celebrity or historical figure. Absolutely no text, letters, numbers, captions, logos, signs or speech bubbles anywhere in the image.")
+# 그림 느낌(2026-11-19 사용자 — 선생님이 고른다). 열쇠·차례는 화면 reels.js의 RL_IMG_STYLES와 같다. 첫째가 기본(예전 그대로)
+REEL_IMG_STYLES = {
+    "illust": "Semi-realistic digital painting, cinematic lighting, soft painterly texture, rich but calm colors.",
+    "photo": "Photorealistic documentary-style photograph, natural lighting, shallow depth of field, realistic textures and colors, shot on a full-frame camera.",
+    "webtoon": "Korean webtoon illustration style, clean bold ink outlines, flat cel-shaded colors, expressive characters, dynamic composition.",
+    "anime": "Soft Japanese anime film style, hand-painted backgrounds, gentle gradients, luminous light, expressive but calm characters.",
+    "watercolor": "Delicate watercolor painting on textured paper, soft bleeding washes, light pencil outlines, pastel and airy palette.",
+}   # 카드뉴스(글자형)는 그림을 그리지 않아 서버에 없다 — 화면 reels.js가 배경 카드를 직접 그린다
+REEL_IMG_STYLE_DEFAULT = "illust"
+REEL_STYLE = REEL_IMG_STYLES[REEL_IMG_STYLE_DEFAULT] + " " + REEL_STYLE_COMMON
 
 REEL_SCRIPT_SCHEMA = {
     "type": "OBJECT",
@@ -11398,14 +11561,15 @@ def call_gemini_reel_script(explain, api_key, model):
                                             label="reelscript"))
 
 
-def call_gemini_reel_image(cast, scene, api_key):
-    """장면 그림 한 장(세로 9:16). 반환 {"image": base64, "mime"}."""
+def call_gemini_reel_image(cast, scene, api_key, style=None):
+    """장면 그림 한 장(세로 9:16). style = REEL_IMG_STYLES 열쇠(모르는 값은 기본). 반환 {"image": base64, "mime"}."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     scene = _decode_plain(scene, REEL_IMG_DESC_MAX)
     if not scene:
         raise ValueError("그릴 장면이 비어 있습니다.")
     cast = _decode_plain(cast, 500)
-    prompt = f"{REEL_STYLE}\n\n{cast}\n\nScene: {scene}".replace("\n\n\n", "\n\n")
+    look = REEL_IMG_STYLES.get(style if isinstance(style, str) else "", REEL_IMG_STYLES[REEL_IMG_STYLE_DEFAULT])
+    prompt = f"{look} {REEL_STYLE_COMMON}\n\n{cast}\n\nScene: {scene}".replace("\n\n\n", "\n\n")
     data = json.dumps({
         "model": MODEL_IMAGE,
         "input": [{"type": "text", "text": prompt}],
@@ -17131,6 +17295,13 @@ CHANGELOG = [
         "items": [
             "🏫 숏폼 영상 맨 아래에 학원명(왼쪽)·학원 로고(오른쪽)가 들어갑니다 — 학원 마크 칸에 넣어 둔 것을 쓰고, 체크로 끌 수 있습니다.",
             "⛶ 만든 영상을 사이트에서 전체 화면으로 볼 수 있습니다(초 이동 가능).",
+        ],
+    },
+    {
+        "version": 140,
+        "date": "2026-11-19",
+        "items": [
+            "🎯 리딩노트에 목표 어법을 적으면 본문과 끊어 읽기에서 그 어법이 쓰인 곳을 형광으로 칠하고, 맨 뒤에 '목표 어법 문장 정리'(어법별 문장·해석·설명)를 붙여 줍니다. 지문 칸 아래 '목표 어법' 칸에 쉼표로 여럿 적을 수 있습니다.",
         ],
     },
 ]
@@ -23541,6 +23712,8 @@ class Handler(BaseHTTPRequestHandler):
                 "decodePic": PRICE_DECODE_PIC_KRW,
                 # 내용 한장정리 — 지문 1개당
                 "explain": PRICE_EXPLAIN_KRW,
+                # 목표 어법 문장 뽑기 — 지문 1개당
+                "grammarPick": PRICE_GRAMMAR_PICK_KRW,
                 # 릴스 제작 — 대본은 지문 1개당, 그림은 장면 한 장당, 목소리는 한 편(대사 전부)당
                 "reelScript": PRICE_REEL_SCRIPT_KRW,
                 "reelImage": PRICE_REEL_IMAGE_KRW,
@@ -24088,7 +24261,7 @@ class Handler(BaseHTTPRequestHandler):
         self._exam_run = None
 
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain",
+        if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/grammarpick",
                         "/api/reelscript", "/api/reelimage", "/api/reelvoice", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                         "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
@@ -24179,7 +24352,7 @@ class Handler(BaseHTTPRequestHandler):
         # 로그인이 곧 '누가 관리자 키를 쓰는지' 구분하는 유일한 장치다.
         # 그중 실제로 콘텐츠를 생성하는 여섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
-        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain",
+        GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/grammarpick",
                            "/api/reelscript", "/api/reelimage", "/api/reelvoice", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                            "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
@@ -24242,6 +24415,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/explain":
                     cost = PRICE_EXPLAIN_KRW
                     self._pending_label = "내용 한장정리"
+                elif path == "/api/grammarpick":
+                    cost = PRICE_GRAMMAR_PICK_KRW
+                    self._pending_label = "목표 어법 문장 뽑기"
                 elif path == "/api/reelscript":
                     cost = PRICE_REEL_SCRIPT_KRW
                     self._pending_label = "숏폼 영상 · 대본"
@@ -25559,7 +25735,7 @@ class Handler(BaseHTTPRequestHandler):
         # 릴스 제작 — 장면 그림 한 장(장면마다 따로 부른다)
         if path == "/api/reelimage":
             try:
-                result = call_gemini_reel_image(req.get("cast"), req.get("scene"), req.get("apiKey") or "")
+                result = call_gemini_reel_image(req.get("cast"), req.get("scene"), req.get("apiKey") or "", req.get("style"))
                 self._charge_and_send(path, req, result)
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
@@ -25609,6 +25785,29 @@ class Handler(BaseHTTPRequestHandler):
                         print(f"[explain] 줄여 쓰기 실패: {e}", flush=True)
                 if not result.get("parts"):
                     raise RuntimeError("내용 한장정리를 만들지 못했습니다. 다시 시도해 주세요.")
+                self._charge_and_send(path, req, result)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            return
+
+        # 목표 어법 문장 뽑기 — 지문 하나당 한 번(Flash). 지문에 없는 문장은 서버가 걸러 낸다(_finish_grammar_pick)
+        if path == "/api/grammarpick":
+            passage = (req.get("passage") or "").strip()
+            targets = parse_grammar_pick_targets(req.get("targetGrammar"))
+            if len(passage) < 20:
+                self._send_json({"error": "문장을 뽑을 영어 지문을 입력하세요 (20자 이상)."}, 400)
+                return
+            if not targets:
+                self._send_json({"error": "목표 어법을 입력하세요. 여럿이면 쉼표(,)로 나눠 적습니다."}, 400)
+                return
+            try:
+                result = call_gemini_grammar_pick(passage, targets, req.get("apiKey") or "", MODEL)   # 항상 Flash
                 self._charge_and_send(path, req, result)
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)

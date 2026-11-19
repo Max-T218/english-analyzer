@@ -4304,7 +4304,7 @@ function syncTabChrome(tab) {
   // 단어장 '지문에서 뽑기'는 목표 어법을 쓰지 않는다(사용자) — 칸만 감추고 적어 둔 값은 다른 탭을 위해 그대로 둔다
   const targetGrammarRow = $("targetGrammarRow");
   // 리딩노트도 목표 어법을 쓰지 않는다
-  if (targetGrammarRow) targetGrammarRow.hidden = tab === "vocab" || tab === "decode" || tab === "explain" || tab === "reels" || tab === "topic";
+  if (targetGrammarRow) targetGrammarRow.hidden = tab === "vocab" || tab === "explain" || tab === "reels" || tab === "topic";
   // 공용 지문칸 아래 단어장은 문제 탭에서만 쓰인다(분석·워크북은 단어장을 보지 않는다)
   const quizVocabWrap = $("quizVocabWrap");
   if (quizVocabWrap) quizVocabWrap.hidden = !["mcq", "saq", "mix"].includes(tab);

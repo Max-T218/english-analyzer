@@ -75,6 +75,91 @@ const rlSpeedSync = () => {
 };
 rlEl("rlSpeed").addEventListener("input", rlSpeedSync);
 rlEl("rlSpeedReset").addEventListener("click", () => { rlEl("rlSpeed").value = RL_TEMPO; rlSpeedSync(); });
+/* ── 그림 느낌 고르기(2026-11-19 사용자 — 영상 속 그림을 선생님이 고른다) ──
+   서버 REEL_IMG_STYLES와 같은 열쇠·차례(첫째가 기본). 값은 어느 느낌이든 같다. 고른 느낌은 영상(entry)마다 imgStyle에 담아
+   저장본에도 남기고, [다시 그리기]도 그 느낌으로 그린다. */
+const RL_IMG_STYLES = [
+  { id: "illust", label: "🎨 반실사 일러스트", desc: "차분한 색감의 디지털 페인팅(기본)" },
+  { id: "photo", label: "📷 실사 사진", desc: "다큐 사진처럼 사실적인 장면" },
+  { id: "webtoon", label: "💬 웹툰", desc: "굵은 선과 또렷한 색의 만화 느낌" },
+  { id: "anime", label: "🌸 애니메이션", desc: "부드러운 빛의 일본 애니 영화 느낌" },
+  { id: "watercolor", label: "🖌️ 수채화", desc: "번지는 물감, 연한 파스텔" },
+  { id: "card", label: "📰 카드뉴스(글자형)", desc: "그림 없이 배경색 + 큰 글씨·자막 — 그림 값 없음", local: true },
+];
+// 카드뉴스 배경색(2026-11-19 사용자 — 누르면 배경색을 정한다). auto는 장면마다 색을 돌려 가며 쓴다. 글씨가 흰색이라 어두운 색 위주
+const RL_CARD_COLORS = [
+  { id: "auto", label: "자동(장면마다 다르게)", hex: "" },
+  { id: "navy", label: "네이비", hex: "#1f3a8a" },
+  { id: "teal", label: "청록", hex: "#0f766e" },
+  { id: "plum", label: "자주", hex: "#7e22ce" },
+  { id: "wine", label: "와인", hex: "#be123c" },
+  { id: "forest", label: "초록", hex: "#15803d" },
+  { id: "orange", label: "주황", hex: "#c2410c" },
+  { id: "slate", label: "차콜", hex: "#334155" },
+];
+const RL_CARD_AUTO = ["#1f3a8a", "#0f766e", "#7e22ce", "#be123c", "#15803d", "#c2410c"];
+const RL_IMG_STYLE_DEFAULT = RL_IMG_STYLES[0].id;
+const rlStyleOf = (e) => (e && RL_IMG_STYLES.some((s) => s.id === e.imgStyle) ? e.imgStyle : RL_IMG_STYLE_DEFAULT);
+const rlStylePick = () => { const c = document.querySelector(".rl-schk:checked"); return c ? c.value : RL_IMG_STYLE_DEFAULT; };
+rlEl("rlStyleBox").innerHTML = `<div class="rl-vgroup-title">🖼️ 그림 느낌</div><div class="rl-styles">` +
+  RL_IMG_STYLES.map((s) => `<label class="rl-voice rl-style"><input type="radio" name="rlImgStyle" class="rl-schk" value="${s.id}"` +
+    `${s.id === RL_IMG_STYLE_DEFAULT ? " checked" : ""}><b>${s.label}</b><span class="rl-voice-desc">${s.desc}</span>` +
+    // 예시 그림 — 같은 장면을 느낌별로 실제로 그린 것(public/reel-style-<id>.jpg). 카드뉴스는 그림이 아니라 모양만 흉내 낸다
+    (s.local ? `<span class="rl-style-sample rl-style-card" aria-hidden="true"><em>핵심<br>키워드</em><small>자막이 여기에 나와요</small></span>`
+      : `<img class="rl-style-sample" src="/reel-style-${s.id}.jpg" alt="${s.label} 예시" loading="lazy">`) + `</label>`).join("") +
+  `</div><div class="rl-cardbox" id="rlCardBox" hidden><div class="rl-vgroup-title">🎨 카드 배경색</div><div class="rl-swatches">` +
+  RL_CARD_COLORS.map((c) => `<label class="rl-sw" title="${c.label}"><input type="radio" name="rlCardColor" class="rl-cchk" value="${c.id}"${c.id === "auto" ? " checked" : ""}>` +
+    (c.hex ? `<i style="background:${c.hex}"></i>` : `<i class="rl-sw-auto">자동</i>`) + `<span>${c.label}</span></label>`).join("") +
+  `<label class="rl-sw" title="직접 고르기"><input type="radio" name="rlCardColor" class="rl-cchk" value="custom"><input type="color" id="rlCardCustom" value="#1f3a8a"><span>직접 고르기</span></label>` +
+  `</div><span class="rl-voice-desc">너무 밝은 색은 글씨가 안 보이지 않게 자동으로 조금 어둡게 맞춥니다</span></div>` +
+  `<span class="rl-voice-desc">그림 느낌은 값이 모두 같고, 카드뉴스는 그림 값이 없습니다 · 만든 뒤 그림만 [다시 그리기]해도 같은 느낌으로 그려요</span>`;
+const rlCardPick = () => {
+  const c = document.querySelector(".rl-cchk:checked");
+  const v = c ? c.value : "auto";
+  if (v === "custom") return rlEl("rlCardCustom").value;
+  const f = RL_CARD_COLORS.find((x) => x.id === v);
+  return f && f.hex ? f.hex : "auto";
+};
+const rlCardOf = (e) => (e && /^(auto|#[0-9a-f]{6})$/i.test(e.cardColor || "") ? e.cardColor : "auto");
+const rlIsCard = (e) => rlStyleOf(e) === "card";
+// 밝은 색은 글씨(흰색)가 안 보이니 밝기를 눌러 준다
+function rlCardShade(hex) {
+  let [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const lum = () => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  while (lum() > 110) { r *= 0.9; g *= 0.9; b *= 0.9; }
+  return [r, g, b].map((x) => Math.round(x));
+}
+function rlCardImage(color, k, total) {
+  const base = color === "auto" ? RL_CARD_AUTO[k % RL_CARD_AUTO.length] : color;
+  const [r, g, b] = rlCardShade(base);
+  const cv = document.createElement("canvas");
+  cv.width = RL_W; cv.height = RL_H;
+  const ctx = cv.getContext("2d");
+  const gr = ctx.createLinearGradient(0, 0, RL_W * 0.4, RL_H);
+  gr.addColorStop(0, `rgb(${Math.min(r * 1.25 + 14, 255)},${Math.min(g * 1.25 + 14, 255)},${Math.min(b * 1.25 + 14, 255)})`);
+  gr.addColorStop(1, `rgb(${r * 0.55 | 0},${g * 0.55 | 0},${b * 0.55 | 0})`);
+  ctx.fillStyle = gr; ctx.fillRect(0, 0, RL_W, RL_H);
+  ctx.fillStyle = "rgba(255,255,255,.07)";
+  ctx.beginPath(); ctx.arc(RL_W * 0.92, RL_H * 0.2, 340, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(RL_W * 0.05, RL_H * 0.72, 420, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,.10)";
+  ctx.font = `800 420px ${RL_FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(String(k + 1).padStart(2, "0"), RL_W / 2, RL_H * 0.5);
+  ctx.fillStyle = "rgba(255,255,255,.55)";
+  ctx.fillRect(RL_W / 2 - 60, 250, 120, 8);
+  return new Promise((res) => cv.toBlob((bl) => res(bl), "image/jpeg", 0.9));
+}
+const rlStyleSync = () => {
+  rlEl("rlCardBox").hidden = rlStylePick() !== "card";
+  rlSyncCost();
+};
+rlEl("rlStyleBox").addEventListener("change", (ev) => {
+  if (ev.target.closest(".rl-cchk") || ev.target.id === "rlCardCustom") {
+    if (ev.target.id === "rlCardCustom") document.querySelector('.rl-cchk[value="custom"]').checked = true;
+    return;
+  }
+  rlStyleSync();
+});
 const rlVoicesChecked = () => [...document.querySelectorAll(".rl-vchk:checked")].map((c) => c.value);
 const rlVoicePick = new Map();   // 지문 글 → 고른 목소리
 function rlVoiceFor(job, i) {
@@ -124,7 +209,10 @@ rlEl("rlVoiceBox").addEventListener("click", (e) => {
 
 /* ── 값 ── */
 const rlPrice = () => (typeof PRICING !== "undefined" && PRICING && Number.isFinite(PRICING.reelScript)) ? PRICING : null;
-const rlEachCost = () => { const p = rlPrice(); return p ? p.reelScript + p.reelVoice + p.reelImage * RL_EST_SCENES : null; };
+const rlEachCost = () => {
+  const p = rlPrice();
+  return p ? p.reelScript + p.reelVoice + (rlStylePick() === "card" ? 0 : p.reelImage * RL_EST_SCENES) : null;   // 카드뉴스는 그림을 그리지 않아 그림 값이 없다
+};
 function rlJobs() {
   return passageMgr.getJobs().filter((j) => j.text && j.text.length >= 20);
 }
@@ -132,7 +220,7 @@ function rlSyncCost() {
   const n = Math.min(rlJobs().length, RL_MAX_PASSAGES);
   const p = rlPrice();
   rlEl("rlCostHint").innerHTML = n && p
-    ? `예상 비용 <b>${pt(rlEachCost() * n)}</b> 안팎 (지문 ${n}개 × [대본 ${pt(p.reelScript)} + 목소리 ${pt(p.reelVoice)} + 장면 그림 약 ${RL_EST_SCENES}장 × ${pt(p.reelImage)}]` +
+    ? `예상 비용 <b>${pt(rlEachCost() * n)}</b> 안팎 (지문 ${n}개 × [대본 ${pt(p.reelScript)} + 목소리 ${pt(p.reelVoice)}${rlStylePick() === "card" ? "" : ` + 장면 그림 약 ${RL_EST_SCENES}장 × ${pt(p.reelImage)}`}]` +
       ` — 장면 수에 따라 조금 달라집니다)` : "";
 }
 if (typeof onPricingReady === "function") onPricingReady(rlSyncCost);
@@ -277,7 +365,9 @@ function rlDraw(ctx, e, tl, imgs, t) {
   const sh = ctx.createLinearGradient(0, 0, 0, RL_H);
   sh.addColorStop(0, "rgba(0,0,0,.62)"); sh.addColorStop(0.22, "rgba(0,0,0,.18)"); sh.addColorStop(0.4, "rgba(0,0,0,0)");
   sh.addColorStop(0.55, "rgba(0,0,0,0)"); sh.addColorStop(0.72, "rgba(0,0,0,.55)"); sh.addColorStop(1, "rgba(0,0,0,.78)");
+  if (rlIsCard(e)) ctx.globalAlpha = 0.45;   // 카드뉴스는 배경색이 흐려지지 않게 그늘을 옅게
   ctx.fillStyle = sh; ctx.fillRect(0, 0, RL_W, RL_H);
+  ctx.globalAlpha = 1;
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   // 머리표
   ctx.font = `600 34px ${RL_FONT}`;
@@ -417,10 +507,12 @@ const RL_MIMES = ["video/mp4;codecs=avc1.640028,mp4a.40.2", "video/mp4;codecs=av
 // 재생(미리 보기) 또는 녹화. silent면 스피커로 내보내지 않고(뒤에서 녹화) 워커 시계로 그린다.
 // 반환 ctl — ctl.done은 {blob, mime}(멈추면 blob null), ctl.stop()으로 멈춘다
 function rlPlay(e, canvas, { record = false, silent = false, onEnd, onProgress } = {}) {
-  const ctl = { stop: () => {} };
+  // 그림을 읽는 동안 멈추면(재생 시작 직후 전체 화면을 누를 때) 그대로 틀어 소리가 겹치지 않게 표시해 둔다
+  const ctl = { stop: () => { ctl.cancelled = true; } };
   ctl.done = (async () => {
     const tl = rlTimeline(e);
     const imgs = await rlLoadImgs(e);
+    if (ctl.cancelled) { if (onEnd) onEnd(); return { blob: null, mime: "" }; }
     const ctx = canvas.getContext("2d");
     const ac = new (window.AudioContext || window.webkitAudioContext)();
     const dest = ac.createMediaStreamDestination();
@@ -444,6 +536,7 @@ function rlPlay(e, canvas, { record = false, silent = false, onEnd, onProgress }
       rec.start(1000);
     }
     await ac.resume();
+    if (ctl.cancelled) { if (rec) try { rec.stop(); } catch (_e) { /* */ } ac.close().catch(() => {}); if (onEnd) onEnd(); return { blob: null, mime }; }
     const started = new Set();
     const t0 = performance.now();
     let raf = 0, untick = null, done = false;
@@ -699,7 +792,11 @@ async function rlMakeVoice(e, note) {
 }
 async function rlMakeImage(e, k, note) {
   const s = e.script.scenes[k];
-  const d = await postGenerate("/api/reelimage", { cast: e.script.cast, scene: s.img }, "장면 그림을 그리지 못했습니다.", note);
+  if (rlIsCard(e)) {   // 카드뉴스 — 서버를 부르지 않고 여기서 배경 카드를 그린다(값 없음)
+    e.images[k] = rlBlob(URL.createObjectURL(await rlCardImage(rlCardOf(e), k, e.script.scenes.length)));
+    return;
+  }
+  const d = await postGenerate("/api/reelimage", { cast: e.script.cast, scene: s.img, style: rlStyleOf(e) }, "장면 그림을 그리지 못했습니다.", note);
   e.images[k] = rlBlob(b64ToBlobUrl(d.image, d.mime || "image/jpeg"));
 }
 async function rlMakeImages(e, ks, note) {
@@ -715,11 +812,48 @@ async function rlMakeImages(e, ks, note) {
   if (stop) throw stop;
 }
 
+/* ── 지문이 여러 칸일 때: 하나로 합칠지 각각 만들지 ── */
+function rlMergeJobs(jobs) {
+  const heads = jobs.map((j) => String(j.name || "").split(" · ")[0].trim());
+  const same = heads[0] && heads.every((h) => h === heads[0]);
+  const name = same ? heads[0] : `${jobs[0].name || "지문 1"} 외 ${jobs.length - 1}개`;
+  return { name, text: jobs.map((j) => j.text.trim()).join("\n\n") };
+}
+function rlAskMerge(jobs) {
+  return new Promise((resolve) => {
+    const n = jobs.length, each = rlEachCost(), shown = Math.min(n, RL_MAX_PASSAGES);
+    const cost = (k) => (each === null ? "" : ` · 예상 ${pt(each * k)}`);
+    const chars = jobs.reduce((s, j) => s + j.text.length, 0);
+    const ov = document.createElement("div");
+    ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;";
+    ov.innerHTML = `<div role="dialog" aria-modal="true" style="background:var(--card,#fff);color:var(--text,#111);max-width:460px;width:100%;border-radius:14px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.35);">` +
+      `<h3 style="margin:0 0 6px;font-size:18px;">지문이 ${n}개 들어 있어요</h3>` +
+      `<p style="margin:0 0 14px;font-size:14px;color:var(--muted,#64748b);">한 단원을 여러 칸으로 나눠 넣으셨다면 합쳐서 한 편으로 만들 수 있어요.</p>` +
+      `<button type="button" class="btn" data-h="merge" style="display:block;width:100%;margin-bottom:8px;text-align:left;">🔗 하나로 합쳐서 영상 1편 만들기<br><small>지문 ${n}개를 이어서 한 이야기로${cost(1)}${chars > 3500 ? " · 글이 길어 영상이 길어질 수 있어요" : ""}</small></button>` +
+      `<button type="button" class="btn ghost" data-h="each" style="display:block;width:100%;margin-bottom:8px;text-align:left;">📑 지문마다 따로 ${shown}편 만들기<br><small>${n > RL_MAX_PASSAGES ? `앞의 ${RL_MAX_PASSAGES}개만${cost(shown)}` : cost(shown).replace(/^ · /, "")}</small></button>` +
+      `<button type="button" class="btn ghost small" data-h="" style="display:block;margin-left:auto;">취소</button></div>`;
+    const done = (v) => { ov.remove(); resolve(v); };
+    ov.addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-h]");
+      if (b) done(b.dataset.h);
+      else if (ev.target === ov) done("");
+    });
+    document.body.appendChild(ov);
+    ov.querySelector("[data-h=merge]").focus();
+  });
+}
+
 async function rlMake() {
   const errEl = rlEl("rlError");
   errEl.textContent = "";
   let jobs = rlJobs();
   if (!jobs.length) { errEl.textContent = "위쪽 영어 지문 칸에 지문을 넣어 주세요 (20자 이상)."; return; }
+  if (jobs.length > 1) {
+    // 한 단원을 지문 여러 칸으로 나눠 두었을 수 있다 — 하나로 이어 영상 한 편으로 만들지, 지문마다 한 편씩 만들지 묻는다(2026-11-19 사용자)
+    const how = await rlAskMerge(jobs);
+    if (!how) return;
+    if (how === "merge") jobs = [rlMergeJobs(jobs)];
+  }
   if (jobs.length > RL_MAX_PASSAGES) {
     errEl.textContent = `한 번에 지문 ${RL_MAX_PASSAGES}개까지 만듭니다 — 앞의 ${RL_MAX_PASSAGES}개만 만들어요.`;
     jobs = jobs.slice(0, RL_MAX_PASSAGES);
@@ -752,7 +886,7 @@ async function rlMake() {
       }
       const j = jobs[i];
       const voice = voices[i];
-      const e = { name: j.name, text: j.text, voice, speed: rlSpeedPick(), tag: j.name, explain: null, script: null, images: [], audio: null };
+      const e = { name: j.name, text: j.text, voice, speed: rlSpeedPick(), imgStyle: rlStylePick(), cardColor: rlCardPick(), tag: j.name, explain: null, script: null, images: [], audio: null };
       rlState.entries.push(e);
       try {
         text.textContent = `AI가 ${j.name}의 내용을 정리하고 대본을 쓰고 있습니다… (${i + 1}/${jobs.length})`;
@@ -831,6 +965,11 @@ rlEl("rlResult").addEventListener("click", async (ev) => {
     return;
   }
   if (ev.target.closest(".rl-full")) {
+    // 미리 보기를 틀어 둔 채 영상 파일을 전체 화면으로 틀면 소리가 두 겹으로 났다(2026-11-19 사용자) — 먼저 멈춘다.
+    // 파일이 없을 때는 rlFullscreen이 미리 보기를 처음부터 다시 트므로 역시 멈춰 두어도 된다
+    if (rlPlaying) rlPlaying.stop();
+    rlPlaying = null;
+    status.textContent = ""; busy(false);
     rlFullscreen(e, card);
     return;
   }
@@ -851,13 +990,13 @@ rlEl("rlResult").addEventListener("click", async (ev) => {
   const redraw = ev.target.closest(".rl-redraw");
   if (redraw) {
     const k = +redraw.dataset.k;
-    if (!(await costConfirmed(p ? p.reelImage : null, `${REELS_NAME} · 장면 그림 1장 다시 그리기`, 1, ""))) return;
+    if (!rlIsCard(e) && !(await costConfirmed(p ? p.reelImage : null, `${REELS_NAME} · 장면 그림 1장 다시 그리기`, 1, ""))) return;
     await one("그림을 다시 그리고 있습니다…", () => rlMakeImage(e, k, rlRetryNote(status)));
     return;
   }
   if (ev.target.closest(".rl-img-redo")) {
     const ks = e.script.scenes.map((_, k) => k).filter((k) => !e.images[k]);
-    if (!(await costConfirmed(p ? p.reelImage * ks.length : null, `${REELS_NAME} · 장면 그림 ${ks.length}장`, 1, ""))) return;
+    if (!rlIsCard(e) && !(await costConfirmed(p ? p.reelImage * ks.length : null, `${REELS_NAME} · 장면 그림 ${ks.length}장`, 1, ""))) return;
     await one("빠진 그림을 그리고 있습니다…", () => rlMakeImages(e, ks, rlRetryNote(status)));
     return;
   }
@@ -900,7 +1039,7 @@ TAB_SAVE.reels = {
       v: 1,
       passages: passageMgr.getJobs(),
       entries: saved.map((e) => ({ name: e.name, text: e.text, voice: e.voice, tag: e.tag, explain: e.explain, script: e.script,
-        speed: rlSpeedOf(e), raws: (e.audio || []).map((a) => +a.raw.toFixed(3)) })),
+        speed: rlSpeedOf(e), imgStyle: rlStyleOf(e), cardColor: rlCardOf(e), raws: (e.audio || []).map((a) => +a.raw.toFixed(3)) })),
       images,
     };
   },
