@@ -12,10 +12,10 @@ const RLM_VTS = 90000;             // 영상 시간 단위
 const RLM_VBITRATE = 8_000_000;
 
 // 이 브라우저가 정식 mp4를 만들 수 있나
-async function rlmSupported() {
+async function rlmSupported(w = RL_W, h = RL_H) {
   try {
     if (!window.VideoEncoder || !window.AudioEncoder) return false;
-    const v = await VideoEncoder.isConfigSupported({ codec: "avc1.640028", width: RL_W, height: RL_H, bitrate: RLM_VBITRATE, framerate: RLM_FPS, avc: { format: "avc" } });
+    const v = await VideoEncoder.isConfigSupported({ codec: "avc1.640028", width: w, height: h, bitrate: RLM_VBITRATE, framerate: RLM_FPS, avc: { format: "avc" } });
     const a = await AudioEncoder.isConfigSupported({ codec: "mp4a.40.2", sampleRate: RLM_SR, numberOfChannels: 1, bitrate: 128000 });
     return !!(v.supported && a.supported);
   } catch (_e) { return false; }
@@ -115,7 +115,7 @@ function rlmTrak(t, offsets, movieDur) {
   const mediaDur = t.samples.reduce((s, x) => s + x.dur, 0);
   const tkhd = rlmFull("tkhd", 0, 3, rlmB([...rlmU32(0), ...rlmU32(0), ...rlmU32(t.id), ...rlmU32(0), ...rlmU32(movieDur),
     ...rlmU32(0), ...rlmU32(0), ...rlmU16(0), ...rlmU16(0), ...rlmU16(isV ? 0 : 0x0100), ...rlmU16(0)]), RLM_MATRIX,
-  rlmB([...rlmU32(isV ? RL_W << 16 : 0), ...rlmU32(isV ? RL_H << 16 : 0)]));
+  rlmB([...rlmU32(isV ? t.w << 16 : 0), ...rlmU32(isV ? t.h << 16 : 0)]));
   const mdhd = rlmFull("mdhd", 0, 0, rlmB([...rlmU32(0), ...rlmU32(0), ...rlmU32(t.ts), ...rlmU32(mediaDur), 0x55, 0xc4, 0, 0]));
   const hdlr = rlmFull("hdlr", 0, 0, rlmB([...rlmU32(0), ...rlmTxt(isV ? "vide" : "soun"), ...rlmU32(0), ...rlmU32(0), ...rlmU32(0),
     ...rlmTxt(isV ? "VideoHandler" : "SoundHandler"), 0]));
@@ -123,7 +123,7 @@ function rlmTrak(t, offsets, movieDur) {
   const dinf = rlmBox("dinf", rlmFull("dref", 0, 0, rlmB(rlmU32(1)), rlmFull("url ", 0, 1)));
   let entry;
   if (isV) {
-    entry = rlmBox("avc1", rlmB([0, 0, 0, 0, 0, 0, ...rlmU16(1), ...new Array(16).fill(0), ...rlmU16(RL_W), ...rlmU16(RL_H),
+    entry = rlmBox("avc1", rlmB([0, 0, 0, 0, 0, 0, ...rlmU16(1), ...new Array(16).fill(0), ...rlmU16(t.w), ...rlmU16(t.h),
       ...rlmU32(0x00480000), ...rlmU32(0x00480000), ...rlmU32(0), ...rlmU16(1), ...new Array(32).fill(0), ...rlmU16(0x18), 0xff, 0xff]),
     rlmBox("avcC", t.desc));
   } else {
@@ -183,17 +183,18 @@ function rlmBuild(vt, at) {
 // 숨은 탭에서도 늦춰지지 않는 '잠깐 쉬기'(setTimeout은 숨은 탭에서 1초로 늘어난다)
 const rlmYield = () => new Promise((res) => { const ch = new MessageChannel(); ch.port1.onmessage = () => res(); ch.port2.postMessage(0); });
 // 반환 {done: Promise<{blob, mime}>, stop}
-function rlEncodeMp4(e, { onProgress } = {}) {
+// 내신대비 영상(lesson.js)도 같이 쓴다 — 크기·시간표·그림 읽기·그리기를 넘기면 그것으로, 안 넘기면 숏폼 것으로
+function rlEncodeMp4(e, { onProgress, w = RL_W, h = RL_H, timeline = rlTimeline, load = rlLoadImgs, draw = rlDraw, bitrate = RLM_VBITRATE } = {}) {
   let cancelled = false;
   const ctl = { stop: () => { cancelled = true; } };
   ctl.done = (async () => {
-    const tl = rlTimeline(e);
-    const imgs = await rlLoadImgs(e);
+    const tl = timeline(e);
+    const imgs = await load(e);
     const canvas = document.createElement("canvas");
-    canvas.width = RL_W; canvas.height = RL_H;
+    canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext("2d");
     let err = null;
-    const vt = { kind: "v", id: 1, ts: RLM_VTS, samples: [], desc: null };
+    const vt = { kind: "v", id: 1, ts: RLM_VTS, samples: [], desc: null, w, h };
     const at = { kind: "a", id: 2, ts: RLM_SR, samples: [], desc: null };
     const venc = new VideoEncoder({
       output: (chunk, meta) => {
@@ -203,7 +204,7 @@ function rlEncodeMp4(e, { onProgress } = {}) {
       },
       error: (x) => { err = x; },
     });
-    venc.configure({ codec: "avc1.640028", width: RL_W, height: RL_H, bitrate: RLM_VBITRATE, framerate: RLM_FPS,
+    venc.configure({ codec: "avc1.640028", width: w, height: h, bitrate, framerate: RLM_FPS,
       avc: { format: "avc" }, latencyMode: "quality" });
     const aenc = new AudioEncoder({
       output: (chunk, meta) => {
@@ -226,7 +227,7 @@ function rlEncodeMp4(e, { onProgress } = {}) {
     const fdur = Math.round(1e6 / RLM_FPS);
     for (let f = 0; f < frames; f++) {
       if (cancelled || err) break;
-      rlDraw(ctx, e, tl, imgs, f / RLM_FPS);
+      draw(ctx, e, tl, imgs, f / RLM_FPS);
       const vf = new VideoFrame(canvas, { timestamp: f * fdur, duration: fdur });
       venc.encode(vf, { keyFrame: f % (RLM_FPS * 2) === 0 });
       vf.close();

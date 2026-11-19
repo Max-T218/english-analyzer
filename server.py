@@ -324,6 +324,10 @@ GRAMMAR_PICK_MAX_TARGETS = 8
 PRICE_REEL_SCRIPT_KRW = int(os.environ.get("PRICE_REEL_SCRIPT_KRW", "300"))
 PRICE_REEL_IMAGE_KRW = int(os.environ.get("PRICE_REEL_IMAGE_KRW", "400"))
 PRICE_REEL_VOICE_KRW = int(os.environ.get("PRICE_REEL_VOICE_KRW", "500"))
+# 지문 강의 영상(2026-11-20 사용자) — 대본은 지문 1개당, 목소리는 대사 한 줄당(한 편에 보통 30~90줄).
+# 숏폼(한 편 약 4,400P)보다 확실히 비싸게(같은 날 사용자 — 4~10분짜리 수업 한 편이라). 어림 원가 한 편 약 120~350원(AI Studio)
+PRICE_LESSON_SCRIPT_KRW = int(os.environ.get("PRICE_LESSON_SCRIPT_KRW", "2000"))
+PRICE_LESSON_VOICE_LINE_KRW = int(os.environ.get("PRICE_LESSON_VOICE_LINE_KRW", "100"))
 # 기출 소재·어휘(2026-11-18 사용자 — "테스트해 보면서 가격 정하자"). 둘 다 원가 실측 전 임시값이다 —
 # Render 로그 [usage] topicscan·topicwords로 재서 맞출 것. 어휘 통계(/api/vocabstats)는 AI가 없어 0원.
 PRICE_TOPIC_KRW = int(os.environ.get("PRICE_TOPIC_KRW", "20"))              # 소재 분석, 지문 1개당
@@ -1039,9 +1043,19 @@ _HOLD = {"image": {}, "text": {}}
 _HOLD_MAX = {"image": INFOGRAPHIC_HOLD_MAX, "text": RESULT_HOLD_MAX}
 _HOLD_LOCK = threading.Lock()
 
+# 숏폼 그림·음성을 동시에 만드는 수(메모리 한도 때문 — Render Starter 512MB). 한 장면이 수 MB이고
+# 변환·전송 중 사본이 몇 벌 생겨 열 개가 겹치면 한도를 넘는다(2026-11-19 강제 종료). 넘치면 순서를 기다린다.
+REEL_IMAGE_CONCURRENCY = int(os.environ.get("REEL_IMAGE_CONCURRENCY", "3"))
+REEL_VOICE_CONCURRENCY = int(os.environ.get("REEL_VOICE_CONCURRENCY", "2"))
+REEL_WAIT_SECONDS = 70   # 배포 프록시가 약 100초에 끊으므로 그보다 짧게
+_REEL_IMAGE_SEM = threading.BoundedSemaphore(max(1, REEL_IMAGE_CONCURRENCY))
+_REEL_VOICE_SEM = threading.BoundedSemaphore(max(1, REEL_VOICE_CONCURRENCY))
+
 
 def _hold_bin(path):
-    return "image" if path in ("/api/infographic", "/api/decodepic") else "text"
+    # 숏폼 그림(장당 수 MB)·음성(수 MB)도 무거워 그림 그릇에 담는다 — 글자 그릇(40개)에 두었다가
+    # 2026-11-19 요청이 몰릴 때 메모리 512MB를 넘어 서버가 강제 종료됐다.
+    return "image" if path in ("/api/infographic", "/api/decodepic", "/api/reelimage", "/api/reelvoice") else "text"
 
 
 def _hold_key(user_id, path, req_id):
@@ -1491,8 +1505,10 @@ def _asset_version():
     stamp = 0.0
     # 만드는 법·결과물 예시 그림(howto-*)도 본다 — 2026-10-07에 그림만 갈아 끼웠다가 표식이 그대로여서
     # 옛 그림('홍보용' 제목)이 계속 보였다.
-    names = ["app.js", "trend.js", "grammar.js", "decode.js", "explain.js", "reels.js", "reels_mp4.js", "topic.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
-        p.name for pat in ("sample-*.jpg", "howto-*.jpg", "howto-*.png") for p in sorted(PUBLIC_DIR.glob(pat))
+    names = ["app.js", "trend.js", "grammar.js", "decode.js", "explain.js", "reels.js", "reels_mp4.js", "lesson.js", "topic.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
+        # 목소리 미리 듣기(reel-voice-*.mp3)·그림 느낌 예시(reel-style-*.jpg)도 — 2026-11-20 미리 듣기 인사말을 다시 녹음했는데
+        # 하루 캐시 때문에 들어 본 브라우저는 옛 녹음을 계속 틀었다. 화면은 이 표식을 ?v=로 붙여 부른다(reels.js RL_ASSET_V)
+        p.name for pat in ("sample-*.jpg", "howto-*.jpg", "howto-*.png", "reel-voice-*.mp3", "reel-style-*.jpg") for p in sorted(PUBLIC_DIR.glob(pat))
     ]
     for name in names:
         try:
@@ -11669,6 +11685,455 @@ def call_gemini_reel_voice(lines, voice, api_key):
     return {"voice": voice, "lines": [{"pcm": b, "rate": r} for b, r in got]}
 
 
+# ══════ 지문 강의 영상(2026-11-20 사용자) ══════
+# 지문 하나 → 가로 1920×1080 수업 영상(4~6분): 문장마다 영어를 읽고, 뜻을 풀고, 문법·구문·내신에 나올 곳을 짚는다.
+# 화면 모양은 둘 — 필기형(지문 위에 펜으로 긋고 오른쪽 노트에 적는다)·슬라이드형(문장 하나씩 크게, 포인트 카드).
+# 두 모양은 **같은 대본**을 화면(public/lesson.js)이 다르게 그릴 뿐이라 만든 뒤 값 없이 바꾼다.
+# 대본 짜임·필기 규칙은 로컬 도구 지문설명영상/_제작도구/gen_script.py(사용자가 가장 좋다고 한 판)를 옮겼다.
+#   ① /api/lessonscript — 서버가 문장을 나누고(lesson_split_sentences — 화면에 그릴 영어는 AI가 아니라 원문 그대로),
+#      AI(Flash)는 문장 번호별 해석과 대사·필기 계획만 낸다. 필기 target은 그 문장 글자에서 찾지 못하면 버린다.
+#   ② /api/lessonvoice — 대사 LESSON_VOICE_BATCH줄씩(줄마다 값). 목소리는 숏폼과 같은 REEL_VOICES.
+# 실제 시험 문제를 모르므로 '정답'을 말하지 않고 '나오기 좋아요'로만 말하게 한다(로컬 도구에서 정답을 지어냈다).
+LESSON_SENT_MAX = 50          # 문장 수 상한 — 대본은 나눠 만들어 길이와 상관없지만, 영상 파일을 브라우저 메모리에서 만들어
+                              # 너무 길면(30분 넘게) 컴퓨터가 버티지 못한다(2026-11-20 — 처음 30개는 대본을 한 번에 만들던 때의 한도)
+LESSON_CHUNK = 10             # 긴 지문은 대본을 문장 이만큼씩 나눠 동시에 만든다(첫 조각에 도입, 마지막 조각에 목표 어법·내신 포인트·마무리)
+LESSON_CHUNK_SINGLE = 12      # 이 문장 수까지는 나누지 않고 한 번에
+LESSON_SEGS_MAX = 100         # 한 번 부를 때 받는 대사 수 상한(목표 어법 설명이 붙으면 늘어난다)
+LESSON_SEGS_TOTAL_MAX = 240   # 나눠 만든 대본을 이은 전체 대사 수 상한
+LESSON_TARGETS_MAX = 4        # 목표 어법 상세 설명은 4개까지(어법 하나에 대사 4~8개라 영상이 너무 길어지지 않게)
+LESSON_SAY_MAX = 160          # 녹음 한 줄 글자 상한 — 넘는 대사는 자르지 않고 여러 줄로 나눈다(_lesson_split_say)
+LESSON_SAY_FULL_MAX = 900     # AI가 쓴 대사 하나를 나누기 전에 받는 글자 상한(긴 영어 문장 + 설명)
+LESSON_TTS_CHECK_MIN_WORDS = 4   # 영어 낱말이 이만큼 넘는 줄은 녹음 뒤 받아쓰기로 검사한다
+LESSON_TTS_CHECK_PASS = 0.88     # 원문 영어 낱말 중 이만큼 들려야 통과(받아쓰기 자체의 작은 실수는 봐준다)
+LESSON_TTS_RETRIES = 2           # 통과 못 하면 다시 녹음하는 횟수
+LESSON_VOICE_BATCH = 12       # 목소리 한 번에 받는 줄 수(화면 LS_VOICE_BATCH와 같다)
+LESSON_MARK_KINDS = ("circle", "underline", "highlight", "box")
+LESSON_COLORS = ("red", "blue", "green")
+_LESSON_ABBR_RE = re.compile(r"(?:\b(?:Mr|Mrs|Ms|Dr|Prof|St|vs|etc|e\.g|i\.e|U\.S|U\.K|No|Jr|Sr|Inc|Ltd|Co|Fig|cf)\.|\b[A-Z]\.)$")
+
+
+def lesson_split_sentences(passage):
+    """지문 → 문장 목록(원문 글자 그대로, 빈칸 하나로 이은 것). 약어·이니셜·소수점·소문자로 이어지는 곳에서는 안 끊는다."""
+    text = re.sub(r"\s+", " ", str(passage or "").replace(" ", " ")).strip()
+    out, start = [], 0
+    # 끊을 수 있는 자리 = 마침표·물음표·느낌표(+닫는 따옴표·괄호) 뒤의 빈칸. 앞이 약어·이니셜이거나 뒤가 소문자로 이어지면 안 끊는다
+    for m in re.finditer(r"[.?!]+[\"'”’)\]]*(?= )", text):
+        prev, nxt = text[start:m.end()], text[m.end() + 1:]
+        if _LESSON_ABBR_RE.search(prev) or re.match(r"[a-z(,;:]", nxt):
+            continue
+        out.append(prev.strip())
+        start = m.end() + 1
+    if text[start:].strip():
+        out.append(text[start:].strip())
+    merged = []
+    for s in out:   # 너무 짧은 조각(낱말 3개 미만)은 앞 문장에 붙인다
+        if merged and len(s.split()) < 3:
+            merged[-1] += " " + s
+        else:
+            merged.append(s)
+    return merged
+
+
+LESSON_SCRIPT_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "title": {"type": "STRING"},
+        "ko": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
+            "n": {"type": "INTEGER"}, "ko": {"type": "STRING"}}, "required": ["n", "ko"]}},
+        "segments": {"type": "ARRAY", "items": {
+            "type": "OBJECT",
+            "properties": {
+                "say": {"type": "STRING"},
+                "view": {"type": "STRING"},
+                "marks": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
+                    "kind": {"type": "STRING", "enum": list(LESSON_MARK_KINDS)},
+                    "target": {"type": "STRING"}, "note": {"type": "STRING"},
+                    "color": {"type": "STRING", "enum": list(LESSON_COLORS)}},
+                    "required": ["kind", "target", "note", "color"]}},
+                "pad_title": {"type": "STRING"},
+                "pad": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "board_title": {"type": "STRING"},
+                "board": {"type": "ARRAY", "items": {"type": "STRING"}},
+            },
+            "required": ["say", "view", "marks", "pad_title", "pad"],
+            "propertyOrdering": ["say", "view", "marks", "pad_title", "pad", "board_title", "board"]}},
+    },
+    "required": ["title", "ko", "segments"],
+    "propertyOrdering": ["title", "ko", "segments"],
+}
+
+LESSON_SCRIPT_SYSTEM_PROMPT = """너는 한국 중·고등학교 영어 선생님이다. 영어 지문 하나로 학생에게 내신 시험 대비 수업을 하는 4~6분짜리
+설명 영상의 대본과 판서(필기) 계획을 만든다. 화면에는 지문의 영어 문장이 나오고, 선생님이 펜으로 그 문장 위에 동그라미·밑줄·형광펜을
+긋고 낱말 위에 짧은 메모를 쓰며, 오른쪽 노트 칸에 정리한다. 사용자는 번호를 붙인 문장 목록을 준다.
+
+[말투] 실제 강의처럼 학생에게 말을 건다. '~해요/~죠' 체, 차분하고 친근하게. "자, 3번." "여기서 이 단어가 중요해요." "왜 그럴까요?"
+같은 말로 이끈다. 쉬운 비유·생활 예시를 한 번쯤 쓴다. 예상 시간 같은 숫자는 말하지 않는다.
+이모지·괄호 설명·화살표 같은 기호는 말에 넣지 않는다(소리로 읽힌다). say는 자막으로도 그대로 나간다 — 영어 낱말은 반드시 영어 글자로 쓰고
+(한글로 소리 나는 대로 쓰지 않는다), 문장 번호·숫자는 아라비아 숫자로 쓴다("5번").
+
+[짜임]
+1) 도입(view "intro"): 생활 속 질문이나 장면으로 시작해 이 글이 무엇에 관한 글인지 연다. 그다음 글의 흐름을 문장 번호로 짧게 정리한다
+   ("1번은 현상, 2~3번은 반전, 4번부터 근거" 같은 식). 노트에 흐름을 단계별로 적는다(pad_title "글의 흐름").
+2) 문장 설명(view "s1", "s2", … 차례대로, 모든 문장 빠짐없이): 문장 하나에 대사 2~4개(아주 짧은 문장은 1~2개).
+   "자, 3번." 하고 영어 문장을 그대로 읽는 대사 → 뜻을 풀며 필기하는 대사 → 문법·구문(가주어·진주어, 관계사, 분사구문, 병렬, 수일치,
+   to부정사·동명사, 수동태, 도치, 강조 등 그 문장에 실제로 있는 것)을 쉬운 말로 설명하는 대사 → 앞 문장과 어떻게 이어지는지.
+   문장이 글에서 하는 일(주제 제시·예시·반박·결론 등)을 먼저 짚는다.
+3) 내신 포인트(view "board" — 판서, 그 문장을 다시 짚을 때만 view "s<번호>"): 내신 시험에 나오기 좋은 곳 3~4개 — 주제문, 어법으로 나올 자리
+   (수일치·관계사·준동사), 어휘로 나올 낱말(반의어로 바꾸기 좋은 것), 서술형(영작·배열)으로 나오기 좋은 구문.
+   첫 대사에 board_title "내신 포인트", 대사마다 board에 그 포인트를 한 줄로("1. 어법: 7번 수일치 mistakes → are").
+4) 핵심 어휘(view "board"): 꼭 외울 낱말 4~6개. 첫 대사에 board_title "핵심 어휘", board에 '낱말 뜻'을 한 줄씩("recall 기억해 내다").
+5) 마무리(view "end"): 한 문장으로 쉽게 정리하고 "오늘은 여기까지. 수고했어요."로 끝낸다.
+
+[대사 하나(segment)]
+- say: 실제로 읽을 말. 30~110자. 길어지면 대사를 나눈다. 영어 문장을 읽을 때는 영어 그대로, **원문을 한 낱말도 빼거나 바꾸지 않고 끝까지** 쓴다
+  (긴 문장을 끊어 읽을 때도 끊은 조각들을 이어 붙이면 원문 전체가 되어야 한다 — 뒷부분을 빼먹지 않는다).
+- view: "intro" | "s<문장번호>" | "board" | "end" (그 대사 동안 화면이 보여 줄 곳). "board"는 화면 가운데 큰 판서 칸 —
+  선생님이 칠판에 쓰듯 개념·공식·예문을 크게 써 가며 설명할 때(목표 어법·내신 포인트·핵심 어휘).
+- marks: 이 대사 동안 그 문장(view의 문장) 위에 긋는 필기. 0~3개. view가 문장이 아니면 빈 배열.
+  · kind: "circle"(핵심 낱말 1~2개) | "underline"(구·절) | "highlight"(주제문·핵심 구절) | "box"(문법 구조의 핵심 덩어리)
+  · target: 그 문장의 영어에서 **글자 그대로 복사한** 연속 구간(대소문자·문장부호 그대로, 1~7낱말)
+  · note: 그 위에 손으로 쓸 아주 짧은 메모(우리말 뜻이나 문법 이름, 8자 이내) — 없으면 ""
+  · color: "red" | "blue" | "green"
+  marks의 target은 say에서 그 부분을 말하는 순서대로 적는다. 한 문장에 너무 많이 긋지 않는다(문장 전체 합쳐 5개 이하).
+- pad_title: (선택) 오른쪽 노트에 새 소제목을 쓸 때만. 예: "① 현상", "②~③ 반전", "내신 포인트" — 아니면 ""
+- pad: 오른쪽 노트에 이어 쓸 줄들(0~2개, 한 줄 16자 이내, 손필기처럼 짧게. 예: "it = 가주어", "주어 → 동사 lives")
+- board_title: (view "board"일 때, 새 판서를 시작하는 대사에만) 판서 제목. 예: "관계대명사 what", "내신 포인트" — 아니면 ""
+- board: (view "board"일 때) 이 대사를 말하면서 판서에 크게 써 내려갈 줄 1~2개. 한 줄 34자 이내, 말과 같은 내용을 짧게 정리한다.
+  줄 머리로 종류를 알린다 — "개념: …", "형태: …"(공식), "예) …"(영어 예문), "주의: …", 번호 목록은 "1. …".
+  view "board"일 때는 pad를 비운다(판서와 겹친다). view가 "board"가 아니면 board는 빈 배열.
+
+전체 대사는 문장 수 × 2.5 + 8개 안팎(대략 25~60개).
+
+[해석] ko에는 문장 번호마다 자연스러운 우리말 해석 한 문장씩(모든 문장).
+[제목] title은 영상 제목(우리말, 20자 이내 — 글의 소재).
+
+[정답에 관한 규칙 — 가장 중요]
+실제 시험 문제를 모른다. "시험에 나왔다", "정답은 몇 번"처럼 단정하지 말고 "~로 나오기 좋아요", "~를 꼭 기억하세요"처럼만 말한다.
+지문에 없는 내용·숫자·인물을 지어내지 않는다. 문법 이름은 그 문장에 실제로 있는 구조만 말한다."""
+
+
+def _lesson_norm(s):
+    s = re.sub(r"[‐-―]", "-", str(s or ""))
+    return s.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+
+
+def _lesson_say(s, limit=LESSON_SAY_MAX):
+    """읽을 말 — 태그·기호를 걷는다(소리로 읽히므로). 가운뎃점은 쉼표로. limit을 넘으면 자른다 — 대본은 자르기 전에
+    _lesson_split_say로 나눠 두므로(LESSON_SAY_FULL_MAX로 받는다) 여기서 잘리는 일은 없어야 한다."""
+    t = _decode_plain(s, limit + 40)
+    t = t.replace("·", ", ").replace("…", ".")
+    t = re.sub(r"[()\[\]{}<>«»→←↑↓⇒★☆※•\"“”*#~_]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:limit]
+
+
+_LESSON_EN_WORD_RE = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+
+
+def _lesson_en_words(t):
+    return [w.lower() for w in _LESSON_EN_WORD_RE.findall(_lesson_norm(t))]
+
+
+def _lesson_en_runs(t, min_words=5):
+    """영어가 min_words 낱말 넘게 이어진 구간(=영어 문장 읽기)의 낱말들. 설명 속에 낱말 몇 개 섞인 것은 뺀다 —
+    받아쓰기가 그런 낱말을 한글로 적어 멀쩡한 녹음을 다시 녹음했다."""
+    out = []
+    for m in re.finditer(r"[A-Za-z][A-Za-z'’\s,;:\-—–.?!\"“”]*[A-Za-z.?!\"”]", _lesson_norm(t)):
+        ws = _lesson_en_words(m.group(0))
+        if len(ws) >= min_words:
+            out += ws
+    return out
+
+
+def _lesson_word_cover(want, got):
+    """원문 영어 낱말(want) 중 차례대로 들어 있는 비율 — 빠뜨리거나 바꾼 낱말이 있으면 1보다 작다."""
+    if not want:
+        return 1.0
+    import difflib
+    sm = difflib.SequenceMatcher(None, want, got, autojunk=False)
+    return sum(b.size for b in sm.get_matching_blocks()) / len(want)
+
+
+def _lesson_split_say(t):
+    """긴 대사 → LESSON_SAY_MAX 안쪽 조각들. 문장 끝 → 대시·쌍점·쌍반점 → 쉼표 → 빈칸 차례로 자를 자리를 찾는다.
+    예전엔 150자에서 그냥 잘라 '자, 1번. <긴 영어 문장>'의 끝이 녹음되지 않았다(2026-11-20 사용자 — 33번 영상)."""
+    out = []
+    t = t.strip()
+    while len(t) > LESSON_SAY_MAX:
+        cut = -1
+        for pat in (r"[.?!]\s", r"\s[—–-]\s|[:;]\s", r",\s", r"\s"):
+            hits = [m.end() for m in re.finditer(pat, t[:LESSON_SAY_MAX + 1]) if m.end() >= 25]
+            if hits:
+                cut = hits[-1]
+                break
+        if cut <= 0:
+            cut = LESSON_SAY_MAX
+        out.append(t[:cut].strip())
+        t = t[cut:].strip()
+    if t:
+        out.append(t)
+    return [x for x in out if x]
+
+
+def _lesson_find(sentence, target):
+    """필기 target을 문장 속 실제 글자로 — 낱말 경계로 먼저, 대소문자 무시로 한 번 더. 못 찾으면 ''."""
+    s, t = _lesson_norm(sentence), _lesson_norm(target).strip().strip(".,;:")
+    if not t or len(t) > 80:
+        return ""
+    for flags in (0, re.I):
+        m = re.search(r"(?<![A-Za-z])" + re.escape(t) + r"(?![A-Za-z])", s, flags)
+        if m:
+            return m.group(0)
+    return ""
+
+
+def _finish_lesson_script(raw, sents, rng=None):
+    """AI 대본 → 다듬은 대본. rng=(첫 문장, 끝 문장)이면 나눠 만든 한 조각 — 그 범위 문장의 절반 이상을 설명했는지만 본다."""
+    n_sent = len(sents)
+    lo, hi = rng or (1, n_sent)
+    ko = {}
+    for x in raw.get("ko") or []:
+        if isinstance(x, dict) and isinstance(x.get("n"), int) and 1 <= x["n"] <= n_sent:
+            ko[x["n"]] = _decode_plain(x.get("ko"), 300)
+    segs, seen = [], set()
+    for g in (raw.get("segments") or [])[:LESSON_SEGS_MAX]:
+        if not isinstance(g, dict):
+            continue
+        say = _lesson_say(g.get("say"), LESSON_SAY_FULL_MAX)
+        if not say:
+            continue
+        pieces = _lesson_split_say(say)   # 긴 대사는 녹음 줄 여러 개로(자르지 않는다)
+        v = str(g.get("view") or "intro").strip().lower()
+        m = re.fullmatch(r"s(\d+)", v)
+        # 판서 줄은 화면이 글씨를 줄여 맞추므로 넉넉히 받는다 — 44자로 자르니 '… makes(단'처럼 괄호가 열린 채 끊겼다(2026-11-20 사용자 영상)
+        board = [b for b in (_decode_plain(x, 90) for x in (g.get("board") or [])[:3] if isinstance(x, str)) if b]
+        if m and 1 <= int(m.group(1)) <= n_sent:
+            n = int(m.group(1))
+            seen.add(n)
+        elif v not in ("intro", "end", "board"):
+            v, n = ("board" if board else "intro"), 0
+        else:
+            n = 0
+        marks = []
+        for mk in (g.get("marks") or [])[:4] if n else []:
+            if not isinstance(mk, dict):
+                continue
+            tgt = _lesson_find(sents[n - 1], mk.get("target"))
+            if not tgt:
+                continue
+            note = _decode_plain(mk.get("note"), 14)
+            if "(" in note and ")" not in note:   # 잘려서 괄호만 열린 메모('실수들(mistakes')는 괄호 앞까지
+                note = note.split("(")[0].strip()
+            marks.append({"kind": mk.get("kind") if mk.get("kind") in LESSON_MARK_KINDS else "underline",
+                          "target": tgt, "note": note,
+                          "color": mk.get("color") if mk.get("color") in LESSON_COLORS else "red"})
+        # 나눈 조각마다 한 줄. 필기는 그 낱말을 말하는 조각에 붙이고(못 찾으면 첫 조각), 노트·판서는 첫 조각에
+        where = []
+        for mk in marks:
+            k = next((i for i, p in enumerate(pieces) if mk["target"].lower() in p.lower()), 0)
+            where.append(k)
+        for i, piece in enumerate(pieces):
+            seg = {"say": piece, "view": v, "marks": [mk for mk, k in zip(marks, where) if k == i],
+                   "pad_title": _decode_plain(g.get("pad_title"), 26) if i == 0 else "",   # 16자는 '목표 어법: 관계대명사 tha'로 잘렸다
+                   "pad": [p for p in (_decode_plain(x, 30) for x in (g.get("pad") or [])[:3] if isinstance(x, str)) if p] if i == 0 else []}
+            if v == "board":   # 판서 — 제목은 새 판서를 시작할 때만, 줄은 이 대사 동안 쓸 것
+                seg["board_title"] = _decode_plain(g.get("board_title"), 30) if i == 0 else ""
+                seg["board"] = board if i == 0 else []
+            segs.append(seg)
+    # 문장마다 영어 원문을 끝까지 읽는지 — 그 문장을 띄운 대사들의 영어 낱말을 이어 원문과 견주고, 모자라면 원문 읽는 줄을
+    # 그 문장 설명 맨 앞에 넣는다(AI가 긴 문장의 뒷부분을 빼먹는 일을 막는다)
+    for n in sorted(seen):
+        idx = [i for i, s in enumerate(segs) if s["view"] == f"s{n}"]
+        want = _lesson_en_words(sents[n - 1])
+        if not idx or len(want) < 3:
+            continue
+        got = [w for i in idx for w in _lesson_en_words(segs[i]["say"])]
+        if _lesson_word_cover(want, got) >= 0.9:
+            continue
+        print(f"[lessonscript] {n}번 문장 원문을 끝까지 읽지 않아 읽는 줄을 넣는다 ({_lesson_word_cover(want, got):.2f})", flush=True)
+        add = [{"say": p, "view": f"s{n}", "marks": [], "pad_title": "", "pad": []}
+               for p in _lesson_split_say(_lesson_say(f"{sents[n - 1]}", LESSON_SAY_FULL_MAX))]
+        segs[idx[0]:idx[0]] = add
+    in_range = {n for n in seen if lo <= n <= hi}
+    if len(segs) < min(6, hi - lo + 2) or len(in_range) < max(1, (hi - lo + 2) // 2):
+        raise RuntimeError("영상 대본을 만들지 못했습니다. 다시 시도해 주세요 — 값은 나가지 않았습니다.")
+    return {"title": _decode_plain(raw.get("title"), 30),
+            "sentences": [{"n": i + 1, "en": s, "ko": ko.get(i + 1, "")} for i, s in enumerate(sents)],
+            "segments": segs}
+
+
+def _lesson_chunks(n):
+    """문장 n개 → 나눠 만들 범위 [(첫, 끝), …]. LESSON_CHUNK 이하면 한 번, 넘으면 고르게 나눈다(조각마다 9~12문장쯤)."""
+    if n <= LESSON_CHUNK_SINGLE:
+        return [(1, n)]
+    k = -(-n // LESSON_CHUNK)
+    base, extra = divmod(n, k)
+    out, start = [], 1
+    for i in range(k):
+        size = base + (1 if i < extra else 0)
+        out.append((start, start + size - 1))
+        start += size
+    return out
+
+
+def _lesson_part_rules(lo, hi, n, first, last):
+    """나눠 만들 때 이 조각이 쓸 부분 — 시스템 지시문의 [짜임]보다 앞선다."""
+    rules = [f"\n\n[이번에 쓸 부분 — 가장 우선] 이 지문은 문장이 {n}개라 대본을 여러 조각으로 나눠 쓴다. 너는 그중 **{lo}번~{hi}번 문장 부분**만 쓴다."]
+    if first:
+        rules.append("- 도입(view \"intro\")을 쓴다 — 글 전체(1번~마지막 문장)의 흐름을 문장 번호로 정리하고 노트에 적는다.")
+    else:
+        rules.append(f"- 도입·인사·지난 내용 요약 없이 \"자, {lo}번.\"으로 바로 이어서 시작한다(앞 조각에서 이미 수업이 진행 중이다).")
+    rules.append(f"- 문장 설명은 {lo}번~{hi}번만, 차례대로 빠짐없이 쓴다. 다른 번호 문장은 설명하지 않는다(앞뒤 문장과의 연결은 한 마디로 짚어도 된다).")
+    if last:
+        rules.append("- 문장 설명 뒤에 (목표 어법이 있으면 목표 어법 시간 →) 내신 포인트 → 핵심 어휘 → 마무리(view \"end\")를 쓴다. "
+                     "내신 포인트·핵심 어휘는 **글 전체**에서 고른다(앞 조각 문장의 view \"s<번호>\"를 다시 띄워도 된다).")
+    else:
+        rules.append("- 내신 포인트·핵심 어휘·목표 어법·마무리는 쓰지 않는다(마지막 조각에서 쓴다). 끝에 '수고했어요' 같은 맺음말도 쓰지 않는다. "
+                     f"{hi}번이 이 부분의 끝일 뿐 글의 끝이 아니니 '마지막 문장'·'오늘 볼 마지막'이라고 말하지 않는다.")
+    rules.append(f"- ko에는 {lo}번~{hi}번 문장의 해석만 담는다. 이번 부분의 대사는 문장 수 × 2.5개 안팎.")
+    return "\n".join(rules)
+
+
+def _lesson_target_rules(targets):
+    """목표 어법(선생님이 적은 것) 상세 설명 지시 — 없으면 빈 글자. 판정 기준은 워크북·리딩노트와 같은 TARGET_GRAMMAR_CRITERIA."""
+    if not targets:
+        return ""
+    return f"""
+
+[목표 어법 — 선생님이 이 수업에서 꼭 자세히 다뤄 달라고 적은 것: {", ".join(targets)}]
+- 모든 문장 설명이 끝난 뒤, 내신 포인트 앞에 '목표 어법' 시간을 넣는다. **칠판에 써 가며 가르치듯** 판서 화면(view "board")에
+  개념·형태·예문·주의를 크게 쓰면서 설명한다 — 말로만 설명하지 않는다. 적힌 차례대로 어법마다:
+  ① 개념 — view "board", 첫 대사에 board_title "<어법 이름>", board에 "개념: …"(무엇이고 왜·언제 쓰는지 한 줄).
+  ② 형태(공식) — view "board", board에 "형태: …"(예: "형태: what + 불완전한 절 (= the thing which)"), 생활 예문 하나를 "예) …"로.
+  ③ 이 지문에서 그 어법이 쓰인 문장을 view "s<번호>"로 다시 띄우고, 그 부분에 box나 highlight를 긋고 메모(어법 이름·역할)를 달며
+     문장 속에서 어떻게 쓰였는지 설명한다. 쓰인 곳이 많으면 대표 2~3곳.
+  ④ 내신에 나오는 방식 — view "board"로 돌아와 board에 "주의: …"로 쓴다. 어법 문제에서 헷갈리는 짝(예: that/what, 관계대명사/관계부사,
+     현재분사/과거분사), 서술형 배열·영작에서 틀리기 쉬운 점, 학생들이 자주 하는 실수 한 가지.
+  어법 하나에 대사 5~9개, 그중 판서(view "board") 대사가 3개 이상.
+- 그 어법이 이 지문에 쓰였는지는 아래 판정 기준으로 형태를 보고 정한다. 기준에 맞지 않는 문장을 그 어법의 예로 끌어다 쓰지 않는다.
+  지문에 없으면 "이 지문에는 나오지 않지만 함께 알아 둘게요"라고 말하고 view "board"에서 개념·형태·예문·주의점만 판서하며 짧게(대사 3~5개).
+- 문장 설명 중에도 목표 어법이 쓰인 문장에서는 "이게 오늘의 목표 어법이에요"처럼 한 번 짚는다.
+- 이 경우 전체 대사는 목표 어법 수에 따라 10~25개 더 늘어나도 된다.
+
+[목표 어법 판정 기준]
+{TARGET_GRAMMAR_CRITERIA}"""
+
+
+def call_gemini_lesson_script(passage, api_key, model, targets=None):
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    targets = (targets or [])[:LESSON_TARGETS_MAX]
+    if not api_key:
+        raise RuntimeError("관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. 관리자에게 문의하세요.")
+    model = model if (model and _MODEL_RE.match(model)) else MODEL
+    sents = lesson_split_sentences(passage)
+    if len(sents) < 2:
+        raise ValueError("문장이 둘 이상인 영어 지문을 넣어 주세요.")
+    if len(sents) > LESSON_SENT_MAX:
+        raise ValueError(f"지문이 너무 깁니다 — 문장 {LESSON_SENT_MAX}개까지 한 편으로 만듭니다(지금 {len(sents)}개). 지문을 나눠 넣어 주세요.")
+    listing = "\n".join(f"{i + 1:02d}. {s}" for i, s in enumerate(sents))
+    parts = _lesson_chunks(len(sents))
+
+    def one(idx):
+        lo, hi = parts[idx]
+        first, last = idx == 0, idx == len(parts) - 1
+        text = f"[문장 목록 — 문장 {len(sents)}개]\n{listing}"
+        if len(parts) > 1:
+            text += _lesson_part_rules(lo, hi, len(sents), first, last)
+        if last:
+            text += _lesson_target_rules(targets)
+        payload = {
+            "systemInstruction": {"parts": [{"text": LESSON_SCRIPT_SYSTEM_PROMPT}]},
+            "contents": [{"role": "user", "parts": [{"text": text}]}],
+            "generationConfig": {"temperature": 0.6, "maxOutputTokens": 32768,
+                                 "responseMimeType": "application/json", "responseSchema": LESSON_SCRIPT_SCHEMA},
+        }
+        raw = _gemini_json(payload, api_key, model, "영상 대본이 너무 길어 잘렸습니다. 다시 시도해 주세요.", label="lessonscript")
+        return _finish_lesson_script(raw, sents, (lo, hi))
+
+    # 긴 지문은 조각을 동시에 만든다 — 차례로 하면 조각 수만큼 시간이 곱해져 배포 서버 연결 한도(약 100초)를 넘는다
+    if len(parts) == 1:
+        got = [one(0)]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        labels = _vertex_get_labels()   # 새 스레드로 라벨을 옮겨야 토큰 기록(usage_records)이 빠지지 않는다
+
+        def run(i):
+            _vertex_set_labels(labels)
+            return one(i)
+        with ThreadPoolExecutor(max_workers=len(parts)) as ex:   # 문장 50개면 5조각 — 모두 한꺼번에
+            got = list(ex.map(run, range(len(parts))))
+    out = got[0]
+    for g in got[1:]:   # 대사를 차례대로 잇고, 해석은 비어 있는 문장만 채운다
+        out["segments"] += g["segments"]
+        for s, t in zip(out["sentences"], g["sentences"]):
+            if not s["ko"] and t["ko"]:
+                s["ko"] = t["ko"]
+    out["segments"] = out["segments"][:LESSON_SEGS_TOTAL_MAX]
+    out["targets"] = targets   # 화면이 카드에 '목표 어법'을 보인다
+    out["parts"] = len(parts)
+    return out
+
+
+def call_gemini_lesson_voice(lines, voice, api_key):
+    """대사 줄마다 음성(LESSON_VOICE_BATCH줄까지). 한 줄이라도 실패하면 전체 실패(값을 안 받는다)."""
+    api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    if voice not in REEL_VOICES:
+        voice = REEL_VOICES[0]
+    if not isinstance(lines, list) or not lines or len(lines) > LESSON_VOICE_BATCH:
+        raise ValueError(f"한 번에 대사 1~{LESSON_VOICE_BATCH}줄을 보내 주세요.")
+    lines = [_lesson_say(x) if isinstance(x, str) else "" for x in lines]
+    if not all(lines):
+        raise ValueError("읽을 대사가 비어 있습니다.")
+    from concurrent.futures import ThreadPoolExecutor
+    labels = _vertex_get_labels()
+
+    def one(t):
+        _vertex_set_labels(labels)
+        b64, rate = _reel_tts_line(t, voice, api_key)
+        # 영어가 든 줄은 받아쓰기로 검사해 낱말을 빼먹거나 바꿔 읽었으면 다시 녹음한다(2026-11-20 사용자 — 영어를 제대로 안 읽은 곳).
+        # 가장 잘 읽은 녹음을 쓴다. 검사가 실패하면(받아쓰기 오류) 그 녹음을 그대로 쓴다 — 검사 때문에 목소리를 못 만들면 안 된다
+        want = _lesson_en_runs(t, LESSON_TTS_CHECK_MIN_WORDS + 1)   # 영어 문장을 읽는 줄만 검사한다
+        if not want:
+            return b64, rate
+        best, score = (b64, rate), _lesson_tts_score(t, want, b64, rate, api_key)
+        tries = 0
+        while score < LESSON_TTS_CHECK_PASS and tries < LESSON_TTS_RETRIES:
+            tries += 1
+            print(f"[lessonvoice] 영어를 다르게 읽어 다시 녹음({tries}) — 일치 {score:.2f}: {t[:60]}", flush=True)
+            nb, nr = _reel_tts_line(t, voice, api_key)
+            ns = _lesson_tts_score(t, want, nb, nr, api_key)
+            if ns > score:
+                best, score = (nb, nr), ns
+        return best
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        got = list(ex.map(one, lines))
+    return {"voice": voice, "lines": [{"pcm": b, "rate": r} for b, r in got]}
+
+
+def _lesson_tts_score(text, want, b64, rate, api_key):
+    """녹음(PCM16 base64)을 받아써 원문 영어 낱말이 차례대로 들렸는지(0~1). 받아쓰기가 실패하면 1(통과로 본다)."""
+    try:
+        pcm = base64.b64decode(b64)
+        head = (b"RIFF" + (36 + len(pcm)).to_bytes(4, "little") + b"WAVEfmt " + (16).to_bytes(4, "little")
+                + (1).to_bytes(2, "little") + (1).to_bytes(2, "little") + rate.to_bytes(4, "little")
+                + (rate * 2).to_bytes(4, "little") + (2).to_bytes(2, "little") + (16).to_bytes(2, "little")
+                + b"data" + len(pcm).to_bytes(4, "little"))
+        payload = {
+            "contents": [{"role": "user", "parts": [
+                {"inlineData": {"mimeType": "audio/wav", "data": base64.b64encode(head + pcm).decode()}},
+                {"text": "이 녹음에서 들리는 말을 들리는 그대로 받아 적어라. 영어는 영어 글자로, 우리말은 한글로. "
+                         "빠뜨리거나 틀리게 읽은 곳은 고치지 말고 들린 그대로 적는다."}]}],
+            "generationConfig": {"temperature": 0, "responseMimeType": "application/json",
+                                 "responseSchema": {"type": "OBJECT", "properties": {"heard": {"type": "STRING"}},
+                                                    "required": ["heard"]}},
+        }
+        heard = _gemini_json(payload, api_key, MODEL, "받아쓰기가 잘렸습니다.", label="lessonvoicecheck").get("heard") or ""
+        return _lesson_word_cover(want, _lesson_en_words(heard))
+    except Exception as e:
+        print(f"[lessonvoice] 받아쓰기 검사 건너뜀: {e}", flush=True)
+        return 1.0
+
+
 # ══════ 기출 소재·어휘(2026-11-18 사용자) ══════
 # 모의고사·수능 여러 회차의 지문을 넣으면 ① 지문마다 분야·한 줄 소재·핵심어를 붙이고(/api/topicscan, Flash)
 # ② 교육과정 3,000단어로 지문 낱말을 몇 % 읽을 수 있는지 센다(/api/vocabstats, AI 없음·0원)
@@ -15637,6 +16102,8 @@ CONTENT_TYPES = {
     ".webp": "image/webp",
     # 릴스 제작의 목소리 미리 듣기(reel-voice-*.mp3)
     ".mp3": "audio/mpeg",
+    # 지문 강의 영상 필기형의 손글씨 글꼴(fonts/NanumPen.ttf — 나눔손글씨 펜, SIL OFL)
+    ".ttf": "font/ttf",
     # 검색 로봇용 두 파일
     ".txt": "text/plain; charset=utf-8",
     ".xml": "application/xml; charset=utf-8",
@@ -17324,6 +17791,14 @@ CHANGELOG = [
             "🎯 리딩노트에 목표 어법을 적으면 본문과 끊어 읽기에서 그 어법이 쓰인 곳을 형광으로 칠하고, 맨 뒤에 '목표 어법 문장 정리'(어법별 문장·해석·설명)를 붙여 줍니다. 지문 칸 아래 '목표 어법' 칸에 쉼표로 여럿 적을 수 있습니다.",
         ],
     },
+    {
+        "version": 141,
+        "date": "2026-11-20",
+        "items": [
+            "🎓 새 탭 '지문 강의 영상' — 지문을 넣으면 문장마다 영어를 읽고 해석·문법·구문·시험에 나올 곳을 짚어 주는 가로 수업 영상(mp4)을 만들어 드립니다. 지문 위에 펜으로 긋는 ✍️ 필기형과 문장을 크게 띄우는 🖥️ 슬라이드형 중에 고를 수 있고, '목표 어법' 칸에 적은 어법은 판서로 개념·형태·예문·주의점을 따로 자세히 설명합니다.",
+            "🎬 숏폼 영상과 지문 강의 영상 모두, 지문이 여러 개면 어떤 지문끼리 합쳐 한 편으로 만들지 직접 고를 수 있습니다. 숏폼은 한 번에 10편까지 만들 수 있습니다.",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -18871,7 +19346,7 @@ def save_item(item_id, user_id, tab, title, payload):
 # 목록(entry·lang·key)만 적는다. 한 장씩이면 1MiB 안에 들어가므로 줄이지 않고 그대로 쓴다.
 SAVED_IMAGES = "saved_images"
 SAVED_IMAGE_MAX_CHARS = 1_000_000      # base64 글자 수 — 문서 한도(1,048,576바이트)보다 조금 작게
-SAVED_IMAGES_PER_ITEM = 120  # 릴스 한 편은 그림 9장 + 목소리 15줄 안팎이라 5편이면 120개(2026-11-19). 그 전 값 60: 지문 하나에 영·한 두 장이라 12장이면 지문 6개에서 막혔다(2026-10-23)
+SAVED_IMAGES_PER_ITEM = 1000  # 2026-11-20: 지문 강의 영상 한 번에 10편(보통 한 편 30~90줄) — 그 전 500: 긴 지문(문장 50개)이면 한 편 140줄 안팎 × 3편. 그 전 250 — 지문 강의 영상은 목소리를 대사 한 줄마다 담아 한 편 30~80줄 × 3편이라 120으로는 막혔다. 그 전 값 120: 릴스 한 편은 그림 9장 + 목소리 15줄 안팎이라 5편이면 120개(2026-11-19). 그 전 값 60: 지문 하나에 영·한 두 장이라 12장이면 지문 6개에서 막혔다(2026-10-23)
 _SAVED_IMG_KEY_RE = re.compile(r"^[0-9a-z_]{1,24}$")
 _SAVED_IMG_MAGIC = {                    # mime → 파일 첫머리(바이트) — 이름만 속인 파일을 막는다
     "image/jpeg": (b"\xff\xd8\xff",),
@@ -23738,6 +24213,9 @@ class Handler(BaseHTTPRequestHandler):
                 "reelScript": PRICE_REEL_SCRIPT_KRW,
                 "reelImage": PRICE_REEL_IMAGE_KRW,
                 "reelVoice": PRICE_REEL_VOICE_KRW,
+                # 지문 강의 영상 — 대본은 지문 1개당, 목소리는 대사 한 줄당
+                "lessonScript": PRICE_LESSON_SCRIPT_KRW,
+                "lessonVoiceLine": PRICE_LESSON_VOICE_LINE_KRW,
                 # 기출 소재·어휘 — 소재 분석은 지문 1개당, 단어장으로 보낼 때 뜻 달기는 한 번(100단어까지)당
                 "topic": PRICE_TOPIC_KRW,
                 "topicWords": PRICE_TOPIC_WORDS_KRW,
@@ -24282,7 +24760,7 @@ class Handler(BaseHTTPRequestHandler):
 
         path = self.path.split("?", 1)[0]
         if path not in ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/grammarpick",
-                        "/api/reelscript", "/api/reelimage", "/api/reelvoice", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
+                        "/api/reelscript", "/api/reelimage", "/api/reelvoice", "/api/lessonscript", "/api/lessonvoice", "/api/models", "/api/quiz", "/api/workbook", "/api/grammar",
                         "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                         "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                         "/api/infographic", "/api/docx", "/api/hwpx", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
@@ -24373,7 +24851,7 @@ class Handler(BaseHTTPRequestHandler):
         # 그중 실제로 콘텐츠를 생성하는 여섯 개는 정찰 가격을 매겨 잔액도 미리 확인한다
         # (/api/models는 모델 목록만 조회할 뿐 요금이 없으므로 잔액 0이어도 된다).
         GENERATE_PATHS = ("/api/analyze", "/api/brief", "/api/decode", "/api/decodepic", "/api/explain", "/api/grammarpick",
-                           "/api/reelscript", "/api/reelimage", "/api/reelvoice", "/api/quiz", "/api/workbook", "/api/grammar",
+                           "/api/reelscript", "/api/reelimage", "/api/reelvoice", "/api/lessonscript", "/api/lessonvoice", "/api/quiz", "/api/workbook", "/api/grammar",
                            "/api/reword", "/api/ocr", "/api/examscan", "/api/examocr",
                            "/api/examtrend", "/api/pdfsplit", "/api/passagecut", "/api/mockrestore", "/api/passagesolve", "/api/answerkey", "/api/studentcomment",
                            "/api/infographic", "/api/vocabocr", "/api/vocabpdf", "/api/vocabextract",
@@ -24447,6 +24925,13 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/reelvoice":
                     cost = PRICE_REEL_VOICE_KRW
                     self._pending_label = "숏폼 영상 · 목소리"
+                elif path == "/api/lessonscript":
+                    cost = PRICE_LESSON_SCRIPT_KRW
+                    self._pending_label = "지문 강의 영상 · 대본"
+                elif path == "/api/lessonvoice":
+                    lines = req.get("lines") if isinstance(req.get("lines"), list) else []
+                    cost = PRICE_LESSON_VOICE_LINE_KRW * max(1, min(len(lines), LESSON_VOICE_BATCH))
+                    self._pending_label = "지문 강의 영상 · 목소리"
                 elif path == "/api/infographic":
                     # 지문 1개에 그림 1장. 분석과 달리 한 번에 여러 장을 받지 않는다 —
                     # 1장에 8~12초가 걸려서 여러 장을 한 요청에 묶으면 프록시가 끊는다.
@@ -25754,11 +26239,61 @@ class Handler(BaseHTTPRequestHandler):
 
         # 릴스 제작 — 장면 그림 한 장(장면마다 따로 부른다)
         if path == "/api/reelimage":
+            # 동시에 만드는 그림 수를 제한한다(메모리) — 기다리다 시간이 넘으면 다시 눌러 달라고 답한다
+            if not _REEL_IMAGE_SEM.acquire(timeout=REEL_WAIT_SECONDS):
+                self._send_json({"error": "지금 그림 요청이 몰려 있습니다. 잠시 뒤 다시 눌러 보세요 — 값은 나가지 않았습니다."}, 503)
+                return
             try:
                 result = call_gemini_reel_image(req.get("cast"), req.get("scene"), req.get("apiKey") or "", req.get("style"))
                 self._charge_and_send(path, req, result)
+                result = None   # 큰 그림 데이터를 바로 놓는다
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            finally:
+                _REEL_IMAGE_SEM.release()
+            return
+
+        # 릴스 제작 — 대사 전부를 고른 목소리로(한 줄이라도 실패하면 값을 받지 않는다)
+        if path == "/api/reelvoice":
+            if not _REEL_VOICE_SEM.acquire(timeout=REEL_WAIT_SECONDS):
+                self._send_json({"error": "지금 음성 요청이 몰려 있습니다. 잠시 뒤 다시 눌러 보세요 — 값은 나가지 않았습니다."}, 503)
+                return
+            try:
+                result = call_gemini_reel_voice(req.get("lines"), str(req.get("voice") or ""), req.get("apiKey") or "")
+                self._charge_and_send(path, req, result)
+                result = None
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+            except ProUnavailable as e:
+                self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
+            except QuotaExceeded as e:
+                self._send_json({"error": str(e), "code": "quota"}, 429)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 502)
+            finally:
+                _REEL_VOICE_SEM.release()
+            return
+
+        # 지문 강의 영상 — 대본: 서버가 문장을 나누고 AI(Flash)가 해석·대사·필기 계획을 짠다. 값은 한 번
+        if path == "/api/lessonscript":
+            passage = (req.get("passage") or "").strip()
+            if len(passage) < 20:
+                self._send_json({"error": "영상으로 만들 영어 지문을 입력하세요 (20자 이상)."}, 400)
+                return
+            try:
+                script = call_gemini_lesson_script(passage, req.get("apiKey") or "", MODEL,   # 항상 Flash
+                                                   parse_grammar_pick_targets(req.get("targetGrammar")))
+                self._charge_and_send(path, req, {"script": script})
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+            except NeedsPro as e:
+                self._send_json({"error": str(e), "code": "needs_pro"}, 429)
             except ProUnavailable as e:
                 self._send_json({"error": str(e), "code": "pro_unavailable"}, 429)
             except QuotaExceeded as e:
@@ -25767,11 +26302,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 502)
             return
 
-        # 릴스 제작 — 대사 전부를 고른 목소리로(한 줄이라도 실패하면 값을 받지 않는다)
-        if path == "/api/reelvoice":
+        # 지문 강의 영상 — 대사 LESSON_VOICE_BATCH줄씩 목소리로(줄마다 값, 한 줄이라도 실패하면 값을 받지 않는다)
+        if path == "/api/lessonvoice":
+            if not _REEL_VOICE_SEM.acquire(timeout=REEL_WAIT_SECONDS):
+                self._send_json({"error": "지금 음성 요청이 몰려 있습니다. 잠시 뒤 다시 눌러 보세요 — 값은 나가지 않았습니다."}, 503)
+                return
             try:
-                result = call_gemini_reel_voice(req.get("lines"), str(req.get("voice") or ""), req.get("apiKey") or "")
+                result = call_gemini_lesson_voice(req.get("lines"), str(req.get("voice") or ""), req.get("apiKey") or "")
+                self._pending_charge = PRICE_LESSON_VOICE_LINE_KRW * len(result["lines"])
                 self._charge_and_send(path, req, result)
+                result = None
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)
             except ProUnavailable as e:
@@ -25780,6 +26320,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e), "code": "quota"}, 429)
             except Exception as e:
                 self._send_json({"error": str(e)}, 502)
+            finally:
+                _REEL_VOICE_SEM.release()
             return
 
         # 내용 한장정리 — 지문 하나당 한 번(Flash). 한 쪽 분량(EXPLAIN_CHAR_BUDGET)을 넘으면 한 번 더 줄여 쓰게 한다(값은 한 번).

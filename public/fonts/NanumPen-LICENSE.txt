@@ -1,0 +1,8 @@
+NanumPen.ttf — 나눔손글씨 펜 (Nanum Pen Script)
+
+Copyright (c) NAVER Corporation.
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+License text: https://openfontlicense.org/open-font-license-official-text/
+
+이 사이트는 지문 강의 영상(public/lesson.js) 필기형의 손글씨 메모·판서를 그리는 데에만 이 글꼴을 쓰며,
+글꼴 파일은 고치지 않고 그대로 둡니다.

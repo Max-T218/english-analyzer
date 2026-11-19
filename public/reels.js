@@ -10,9 +10,13 @@
    저장은 저장함 tab "reels" — 대본·한장정리는 저장본 글에, 그림·목소리는 /api/saved-image로 한 장(한 줄)씩 따로. */
 
 const rlEl = (id) => document.getElementById(id);
+// 미리 듣기·예시 그림 주소에 붙이는 표식 — 이 파일을 부른 주소의 ?v=(서버 _asset_version, mp3·예시 그림이 바뀌어도 달라진다).
+// 파일 이름이 그대로라 이게 없으면 브라우저가 하루 동안 옛 녹음을 튼다(2026-11-20 — 인사말을 다시 녹음했다). lesson.js도 쓴다
+const RL_ASSET_V = (() => { try { return new URL(document.currentScript.src).searchParams.get("v") || ""; } catch (_e) { return ""; } })();
+const rlAsset = (path) => (RL_ASSET_V ? `${path}?v=${RL_ASSET_V}` : path);
 const REELS_NAME = "숏폼 영상 제작";   // 화면 이름(2026-11-19 사용자 — '릴스'는 인스타그램 기능 이름이라 피했다)
 // 목소리 — 서버 REEL_VOICES와 같은 값·같은 차례. rec이면 '추천' 묶음(2026-11-19 사용자가 고른 넷), 나머지는 '더 많은 목소리'
-// (같은 날 사용자 — 선택 폭을 넓혀 달라고). 미리 듣기 파일은 public/reel-voice-<id>.mp3(같은 두 문장, 1.15배)
+// (같은 날 사용자 — 선택 폭을 넓혀 달라고). 미리 듣기 파일은 public/reel-voice-<id>.mp3(같은 인사말 "안녕하세요, 반가워요. 오늘도 지문 하나, 천천히 함께 읽어 볼까요?" — 2026-11-20 다시 녹음, 1.15배)
 const RL_VOICES = [
   { id: "Charon", desc: "남 · 낮고 안정된 설명형", rec: true },
   { id: "Alnilam", desc: "남 · 단단하고 힘 있는 톤", rec: true },
@@ -41,7 +45,9 @@ const rlSpeedText = (v) => `${(+v).toFixed(2).replace(/0$/, "")}배`;
 const rlSpeedRange = (cls, cur, id = "") =>
   `<input type="range" class="${cls}"${id ? ` id="${id}"` : ""} min="${RL_SPEED_MIN}" max="${RL_SPEED_MAX}" step="${RL_SPEED_STEP}" value="${cur}">` +
   `<b class="rl-speed-val">${rlSpeedText(cur)}</b>`;
-const RL_MAX_PASSAGES = 5;        // 한 번에 만드는 지문 수(한 편 3천 P 안팎이라)
+// 한 번에 만드는 영상 수(2026-11-20: 5 → 10). 한 편이 1분 안팎(mp4 약 20MB)이라 메모리는 넉넉하고, 한 편에 2~3분(그림 9장)이 걸려
+// 10편이면 25분쯤 창을 열어 두어야 한다 — 값도 한 편 4천 P 안팎이라 더 늘리지 않았다
+const RL_MAX_PASSAGES = 10;
 const RL_EST_SCENES = 9;          // 값 어림용 장면 수(퀴즈 포함)
 const RL_W = 1080, RL_H = 1920, RL_FPS = 30;
 const RL_IMG_PARALLEL = 5;      // 장면 그림을 함께 부르는 수 — 9장이면 두 번에 끝난다
@@ -106,7 +112,7 @@ rlEl("rlStyleBox").innerHTML = `<div class="rl-vgroup-title">🖼️ 그림 느�
     `${s.id === RL_IMG_STYLE_DEFAULT ? " checked" : ""}><b>${s.label}</b><span class="rl-voice-desc">${s.desc}</span>` +
     // 예시 그림 — 같은 장면을 느낌별로 실제로 그린 것(public/reel-style-<id>.jpg). 카드뉴스는 그림이 아니라 모양만 흉내 낸다
     (s.local ? `<span class="rl-style-sample rl-style-card" aria-hidden="true"><em>핵심<br>키워드</em><small>자막이 여기에 나와요</small></span>`
-      : `<img class="rl-style-sample" src="/reel-style-${s.id}.jpg" alt="${s.label} 예시" loading="lazy">`) + `</label>`).join("") +
+      : `<img class="rl-style-sample" src="${rlAsset(`/reel-style-${s.id}.jpg`)}" alt="${s.label} 예시" loading="lazy">`) + `</label>`).join("") +
   `</div><div class="rl-cardbox" id="rlCardBox" hidden><div class="rl-vgroup-title">🎨 카드 배경색</div><div class="rl-swatches">` +
   RL_CARD_COLORS.map((c) => `<label class="rl-sw" title="${c.label}"><input type="radio" name="rlCardColor" class="rl-cchk" value="${c.id}"${c.id === "auto" ? " checked" : ""}>` +
     (c.hex ? `<i style="background:${c.hex}"></i>` : `<i class="rl-sw-auto">자동</i>`) + `<span>${c.label}</span></label>`).join("") +
@@ -198,7 +204,7 @@ rlEl("rlVoiceBox").addEventListener("click", (e) => {
   }
   if (rlSampleAudio) rlSampleAudio.pause();
   if (rlSampleBtn) rlSampleBtn.textContent = RL_LISTEN;
-  rlSampleAudio = new Audio(`/reel-voice-${b.dataset.v}.mp3`);
+  rlSampleAudio = new Audio(rlAsset(`/reel-voice-${b.dataset.v}.mp3`));
   rlSampleAudio.preservesPitch = true;
   rlSampleAudio.playbackRate = rlSpeedPick() / RL_SAMPLE_TEMPO;
   rlSampleBtn = b;
@@ -818,40 +824,73 @@ async function rlMakeImages(e, ks, note) {
   if (stop) throw stop;
 }
 
-/* ── 지문이 여러 칸일 때: 하나로 합칠지 각각 만들지 ── */
-function rlMergeJobs(jobs) {
-  const heads = jobs.map((j) => String(j.name || "").split(" · ")[0].trim());
-  const same = heads[0] && heads.every((h) => h === heads[0]);
-  const name = same ? heads[0] : `${jobs[0].name || "지문 1"} 외 ${jobs.length - 1}개`;
-  return { name, text: jobs.map((j) => j.text.trim()).join("\n\n") };
+/* ── 지문이 여러 칸일 때: 어떤 지문끼리 합쳐 한 편으로 만들지 고른다(2026-11-20 사용자) ──
+   지문마다 '몇 번째 영상에 넣을지'(영상 1~max · 넣지 않음)를 고르면 같은 번호끼리 넣은 차례대로 이어 한 편이 된다.
+   숏폼·지문 강의 영상(lesson.js)이 같이 쓴다. opts: max(영상 수 한도) · sentMax(한 편 문장 수 한도 — 넘으면 막는다, 없으면 안 막음)
+   · cost(text) → 한 편 예상 값(null이면 안 보임) · icon(단추 그림). 반환: [{no, jobs, name, text, sents}] 또는 null(취소) */
+const rlSentCount = (t) => (typeof roughSentenceCount === "function" ? roughSentenceCount(t) : String(t).split(/[.?!]\s/).length);
+function rlGroupName(js) {
+  if (js.length === 1) return js[0].name;
+  const heads = js.map((j) => String(j.name || "").split(" · ")[0].trim());
+  return heads[0] && heads.every((h) => h === heads[0]) ? heads[0] : `${js[0].name || "지문 1"} 외 ${js.length - 1}개`;
 }
-function rlAskMerge(jobs) {
+// totalMax: 고른 영상 전체의 문장 합계 한도(넘으면 막는다, 0이면 안 막음) — 다 만든 영상 파일을 브라우저 메모리에 들고 있어서
+function rlAskGroups(all, { max, sentMax = 0, totalMax = 0, cost = () => null, icon = "🎬" } = {}) {
   return new Promise((resolve) => {
-    const n = jobs.length, each = rlEachCost(), shown = Math.min(n, RL_MAX_PASSAGES);
-    const cost = (k) => (each === null ? "" : ` · 예상 ${pt(each * k)}`);
-    const chars = jobs.reduce((s, j) => s + j.text.length, 0);
+    const n = all.length, K = max;
+    // 처음 고른 값: 지문이 영상 수 한도 안이면 지문마다 따로, 넘으면 모두 하나로(문장 한도를 넘으면 앞의 K개만 따로)
+    const totalSent = all.reduce((s, j) => s + rlSentCount(j.text), 0);
+    let pick = n <= K ? all.map((_, i) => i + 1) : (!sentMax || totalSent <= sentMax) ? all.map(() => 1) : all.map((_, i) => (i < K ? i + 1 : 0));
+    if (totalMax) {   // 전체 문장 한도를 넘으면 앞에서부터 들어가는 만큼만 넣고 나머지는 '넣지 않음'으로 시작한다
+      let sum = 0;
+      pick = pick.map((g, i) => { if (!g) return 0; sum += rlSentCount(all[i].text); return sum > totalMax ? 0 : g; });
+    }
     const ov = document.createElement("div");
-    ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;";
-    ov.innerHTML = `<div role="dialog" aria-modal="true" style="background:var(--card,#fff);color:var(--text,#111);max-width:460px;width:100%;border-radius:14px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.35);">` +
-      `<h3 style="margin:0 0 6px;font-size:18px;">지문이 ${n}개 들어 있어요</h3>` +
-      `<p style="margin:0 0 14px;font-size:14px;color:var(--muted,#64748b);">한 단원을 여러 칸으로 나눠 넣으셨다면 합쳐서 한 편으로 만들 수 있어요.</p>` +
-      `<label style="display:block;font-size:13px;margin:0 0 4px;">합친 영상 맨 위 표에 넣을 글</label>` +
-      `<input type="text" class="rl-merge-name" maxlength="30" value="${esc(rlMergeJobs(jobs).name)}" style="width:100%;box-sizing:border-box;margin-bottom:10px;padding:8px;border:1px solid var(--border,#d7dce5);border-radius:8px;">` +
-      `<button type="button" class="btn" data-h="merge" style="display:block;width:100%;margin-bottom:8px;text-align:left;">🔗 하나로 합쳐서 영상 1편 만들기<br><small>지문 ${n}개를 이어서 한 이야기로${cost(1)}${chars > 3500 ? " · 글이 길어 영상이 길어질 수 있어요" : ""}</small></button>` +
-      `<button type="button" class="btn ghost" data-h="each" style="display:block;width:100%;margin-bottom:8px;text-align:left;">📑 지문마다 따로 ${shown}편 만들기<br><small>${n > RL_MAX_PASSAGES ? `앞의 ${RL_MAX_PASSAGES}개만${cost(shown)}` : cost(shown).replace(/^ · /, "")}</small></button>` +
-      `<button type="button" class="btn ghost small" data-h="" style="display:block;margin-left:auto;">취소</button></div>`;
-    const done = (v) => {
-      const nm = ov.querySelector(".rl-merge-name").value.trim().slice(0, 30);
-      ov.remove();
-      resolve(v ? { how: v, name: nm } : null);
+    ov.className = "rl-done-overlay";
+    const groups = () => {
+      const out = [];
+      for (let g = 1; g <= K; g++) {
+        const js = all.filter((_, i) => pick[i] === g);
+        if (js.length) out.push({ no: g, jobs: js, name: rlGroupName(js), text: js.map((j) => j.text.trim()).join("\n\n"), sents: js.reduce((s, j) => s + rlSentCount(j.text), 0) });
+      }
+      return out;
     };
+    const draw = () => {
+      const gs = groups();
+      const isOver = (g) => sentMax && g.sents > sentMax;
+      const isLong = (g) => !sentMax && g.text.length > 3500;   // 숏폼 — 막지는 않고 알리기만
+      const allSents = gs.reduce((s, g) => s + g.sents, 0);
+      const tooMuch = totalMax && allSents > totalMax;
+      const costs = gs.map((g) => cost(g.text));
+      const total = costs.every((c) => Number.isFinite(c)) ? costs.reduce((s, c) => s + c, 0) : null;
+      ov.innerHTML = `<div class="rl-done-box ls-group-box" role="dialog" aria-modal="true">
+        <h3>지문이 ${n}개 들어 있어요</h3>
+        <p class="hint">지문마다 <b>몇 번째 영상</b>에 넣을지 고르세요. <b>같은 번호끼리 넣은 차례대로 이어 영상 한 편</b>이 됩니다. 한 번에 영상 ${K}편까지 만들어요.</p>
+        <div class="actions"><button type="button" class="btn ghost small" data-q="one">🔗 모두 하나로</button>
+          <button type="button" class="btn ghost small" data-q="each">📑 모두 따로${n > K ? `(앞의 ${K}개)` : ""}</button></div>
+        <ul class="ls-group-list">${all.map((j, i) => `<li><span class="ls-group-name"><b>${esc(j.name)}</b><small>${esc(j.text.slice(0, 60))}…</small></span>
+          <select data-i="${i}">${Array.from({ length: K }, (_, g) => `<option value="${g + 1}"${pick[i] === g + 1 ? " selected" : ""}>${icon} 영상 ${g + 1}</option>`).join("")}
+            <option value="0"${pick[i] === 0 ? " selected" : ""}>넣지 않음</option></select></li>`).join("")}</ul>
+        <div class="ls-group-sum">${gs.length ? gs.map((g) => `<div${isOver(g) ? ' class="ls-group-over"' : ""}>${icon} 영상 ${g.no} · <b>${esc(g.name)}</b> — 지문 ${g.jobs.length}개, 문장 약 ${g.sents}개${
+            isOver(g) ? ` → ${sentMax}개를 넘어요. 영상을 나눠 주세요` : isLong(g) ? " · 글이 길어 영상이 길어질 수 있어요" : ""}</div>`).join("") : "<div>넣은 지문이 없어요.</div>"}</div>
+          <div class="ls-group-foot">${tooMuch ? `<div class="ls-group-over">고른 영상의 문장이 모두 약 ${allSents}개예요 — 한 번에 ${totalMax}개(영상 약 45분)까지 만들어요. 나머지는 다음에 만들어 주세요.</div>` : ""}
+          ${total !== null && gs.length ? `<div class="hint">영상 ${gs.length}편 · 예상 ${pt(total)} 안팎</div>` : ""}</div>
+        <div class="actions"><button type="button" class="btn" data-q="go"${!gs.length || gs.some(isOver) || tooMuch ? " disabled" : ""}>${icon} 영상 ${gs.length}편 만들기</button>
+          <button type="button" class="btn ghost" data-q="cancel">취소</button></div></div>`;
+    };
+    const done = (v) => { ov.remove(); resolve(v); };
+    ov.addEventListener("change", (ev) => { const s = ev.target.closest("select[data-i]"); if (s) { pick[+s.dataset.i] = +s.value; draw(); } });
     ov.addEventListener("click", (ev) => {
-      const b = ev.target.closest("[data-h]");
-      if (b) done(b.dataset.h);
-      else if (ev.target === ov) done("");
+      if (ev.target === ov) return done(null);
+      const q = ev.target.closest("[data-q]");
+      if (!q) return;
+      if (q.dataset.q === "one") { pick = all.map(() => 1); draw(); }
+      else if (q.dataset.q === "each") { pick = all.map((_, i) => (i < K ? i + 1 : 0)); draw(); }
+      else if (q.dataset.q === "cancel") done(null);
+      else if (q.dataset.q === "go") done(groups());
     });
+    draw();
     document.body.appendChild(ov);
-    ov.querySelector("[data-h=merge]").focus();
   });
 }
 
@@ -861,16 +900,13 @@ async function rlMake() {
   let jobs = rlJobs();
   if (!jobs.length) { errEl.textContent = "위쪽 영어 지문 칸에 지문을 넣어 주세요 (20자 이상)."; return; }
   if (jobs.length > 1) {
-    // 한 단원을 지문 여러 칸으로 나눠 두었을 수 있다 — 하나로 이어 영상 한 편으로 만들지, 지문마다 한 편씩 만들지 묻는다(2026-11-19 사용자)
-    const how = await rlAskMerge(jobs);
-    if (!how) return;
-    if (how.how === "merge") jobs = [{ ...rlMergeJobs(jobs), name: how.name || rlMergeJobs(jobs).name, tag: how.name }];
+    // 어떤 지문끼리 합쳐 한 편으로 만들지 선생님이 고른다(2026-11-20 사용자 — 예전엔 '모두 하나로 / 모두 따로' 둘 중 하나였다)
+    const gs = await rlAskGroups(jobs, { max: RL_MAX_PASSAGES, cost: () => rlEachCost(), icon: "🎬" });
+    if (!gs) return;
+    // 영상 맨 위 표 글은 묶음 이름(만든 뒤 카드의 '맨 위 표' 칸에서 고친다), 목소리는 묶음 첫 지문에 정해 둔 것
+    jobs = gs.map((g) => ({ name: g.name, text: g.text, tag: g.name, voiceKey: g.jobs[0] }));
   }
-  if (jobs.length > RL_MAX_PASSAGES) {
-    errEl.textContent = `한 번에 지문 ${RL_MAX_PASSAGES}개까지 만듭니다 — 앞의 ${RL_MAX_PASSAGES}개만 만들어요.`;
-    jobs = jobs.slice(0, RL_MAX_PASSAGES);
-  }
-  const voices = jobs.map((j, i) => rlVoiceFor(j, i));
+  const voices = jobs.map((j, i) => rlVoiceFor(j.voiceKey || j, i));
   if (!voices[0]) { errEl.textContent = "목소리를 하나 이상 골라 주세요."; return; }
   if (!(await costConfirmed(rlEachCost() === null ? null : rlEachCost() * jobs.length,
     `${REELS_NAME} · 지문 ${jobs.length}개 · 목소리 ${[...new Set(voices)].join(", ")}`, jobs.length, reduceAdvice(jobs.length, "")))) return;
@@ -1135,7 +1171,7 @@ if (typeof HOWTO !== "undefined") {
     title: `🎬 ${REELS_NAME} 하는 법`,
     lead: "지문 하나로 <b>세로 숏폼 영상</b>(1분 안팎, 인스타그램 릴스·유튜브 쇼츠에 올릴 수 있는 세로 1080×1920)을 만듭니다 — AI가 지문 내용을 정리해 대본을 쓰고, 장면 그림을 그리고, 고른 목소리로 읽어 줍니다.",
     steps: [
-      "위쪽 <b>영어 지문</b> 칸에 지문을 넣습니다(한 번에 5개까지, 지문마다 영상 한 편). 지문 이름이 영상 위 머리표로 들어갑니다.",
+      "위쪽 <b>영어 지문</b> 칸에 지문을 넣습니다. 지문이 여러 개면 만들 때 창이 떠서 지문마다 <b>몇 번째 영상</b>에 넣을지 고릅니다 — 같은 번호끼리 이어 한 편이 됩니다(한 번에 영상 10편까지). 지문 이름이 영상 위 머리표로 들어갑니다.",
       "<b>목소리</b>를 고르고(<b>🔊 들어 보기</b>로 미리 들어 볼 수 있습니다 — <b>⭐ 추천 목소리</b> 넷 말고도 <b>더 많은 목소리</b>를 펼치면 열 가지가 더 있습니다) <b>🎬 영상 만들기</b>를 누릅니다. " +
         "목소리를 <b>여러 개</b> 고르면 <b>🎙️ 영상마다 목소리</b>에 지문마다 줄이 생겨 영상마다 다른 목소리를 정할 수 있습니다(처음엔 고른 목소리를 차례로 돌려 넣습니다).",
       "<b>⏩ 말 빠르기</b>는 슬라이더로 0.7~1.5배 사이에서 고릅니다(기본 1.15배). 만든 뒤에도 영상마다 <b>빠르기</b> 칸에서 바꿀 수 있고 값은 들지 않습니다. " +
