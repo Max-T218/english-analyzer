@@ -340,6 +340,8 @@ function rlCover(ctx, img, z, dx, dy) {
   const w = img.naturalWidth * s, h = img.naturalHeight * s;
   ctx.drawImage(img, (RL_W - w) / 2 + dx, RL_H * 0.45 - h * 0.45 + dy, w, h);
 }
+// 영상 맨 위 머리표 글(2026-11-19 사용자 — 결과 카드의 '맨 위 표' 칸에서 고친다. 빈 글자로 두면 표를 그리지 않는다)
+const rlTagOf = (e) => (typeof e.tag === "string" ? e.tag : (e.name || REELS_NAME)).trim();
 function rlDraw(ctx, e, tl, imgs, t) {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, RL_W, RL_H);
@@ -371,12 +373,14 @@ function rlDraw(ctx, e, tl, imgs, t) {
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   // 머리표
   ctx.font = `600 34px ${RL_FONT}`;
-  const tag = e.tag || e.name || REELS_NAME;
-  const tw = ctx.measureText(tag).width + 52;
-  rlRound(ctx, (RL_W - tw) / 2, 150, tw, 58, 29);
-  ctx.fillStyle = "rgba(255,255,255,.16)"; ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,.45)"; ctx.lineWidth = 2; ctx.stroke();
-  ctx.fillStyle = "#fff"; ctx.fillText(tag, RL_W / 2, 180);
+  const tag = rlTagOf(e);
+  if (tag) {
+    const tw = ctx.measureText(tag).width + 52;
+    rlRound(ctx, (RL_W - tw) / 2, 150, tw, 58, 29);
+    ctx.fillStyle = "rgba(255,255,255,.16)"; ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,.45)"; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.fillText(tag, RL_W / 2, 180);
+  }
   const cur = tl.scenes.filter((s) => t >= s.start - 0.1).pop() || tl.scenes[0];
   // 큰 글씨
   if (!cur.quiz && cur.big) {
@@ -583,7 +587,7 @@ function rlPlay(e, canvas, { record = false, silent = false, onEnd, onProgress }
    릴스가 다 만들어지면(그림·목소리가 모두 있으면) 뒤에서 소리 없이 영상 파일을 녹화해 둔다 — 한 편씩 차례로,
    다음 지문을 만드는 동안에도. 끝나면 [⬇ 영상 받기]가 누르는 즉시 내려받는다. 빠르기·그림·목소리가 바뀌면
    (rlVidSig가 달라지면) 지난 파일을 버리고 다시 녹화한다. 녹화는 영상 길이만큼 걸린다(재생하며 찍는 방식). */
-const rlVidSig = (e) => `${rlSpeedOf(e)}|${e.images.join(",")}|${(e.audio || []).map((a) => a && a.url).join(",")}|${rlBrandKey()}`;
+const rlVidSig = (e) => `${rlSpeedOf(e)}|${rlTagOf(e)}|${e.images.join(",")}|${(e.audio || []).map((a) => a && a.url).join(",")}|${rlBrandKey()}`;
 const rlReady = (e) => !!(e && e.script && e.audio && e.audio.every(Boolean) && e.images.length && e.images.every(Boolean));
 const rlVidOk = (e) => !!(e.video && e.video.sig === rlVidSig(e));
 let rlMp4Ok = null;   // 정식 mp4를 만들 수 있는 브라우저인가(처음 한 번 묻는다)
@@ -755,6 +759,8 @@ function rlCardHtml(e, i) {
                 title="다 만든 영상은 뒤에서 영상 파일로 미리 만들어 둡니다(영상 길이만큼 걸립니다). 준비되면 누르는 즉시 내려받습니다.">${
           rlVidOk(e) ? `⬇ 영상 받기 (${e.video.ext}, ${(e.video.blob.size / 1e6).toFixed(0)}MB)` : ready ? "🎞️ 영상 파일 기다리는 중…" : "⬇ 영상 받기"}</button>
         <label class="rl-speed-card">빠르기 ${rlSpeedRange("rl-speed-sel", rlSpeedOf(e))}</label>
+        <label class="rl-tag-card" title="영상 맨 위 동그란 표에 나오는 글입니다. 비우면 표를 넣지 않습니다(값 없음 — 영상 파일만 다시 만듭니다)">맨 위 표
+          <input type="text" class="rl-tag-in" maxlength="30" value="${esc(rlTagOf(e))}" placeholder="비우면 표 없음"></label>
         ${!e.audio ? `<button type="button" class="btn ghost rl-voice-redo">🔁 목소리 다시 만들기</button>` : ""}
         ${missing ? `<button type="button" class="btn ghost rl-img-redo">🖼️ 빠진 그림 ${missing}장 그리기</button>` : ""}
       </div>
@@ -829,10 +835,16 @@ function rlAskMerge(jobs) {
     ov.innerHTML = `<div role="dialog" aria-modal="true" style="background:var(--card,#fff);color:var(--text,#111);max-width:460px;width:100%;border-radius:14px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.35);">` +
       `<h3 style="margin:0 0 6px;font-size:18px;">지문이 ${n}개 들어 있어요</h3>` +
       `<p style="margin:0 0 14px;font-size:14px;color:var(--muted,#64748b);">한 단원을 여러 칸으로 나눠 넣으셨다면 합쳐서 한 편으로 만들 수 있어요.</p>` +
+      `<label style="display:block;font-size:13px;margin:0 0 4px;">합친 영상 맨 위 표에 넣을 글</label>` +
+      `<input type="text" class="rl-merge-name" maxlength="30" value="${esc(rlMergeJobs(jobs).name)}" style="width:100%;box-sizing:border-box;margin-bottom:10px;padding:8px;border:1px solid var(--border,#d7dce5);border-radius:8px;">` +
       `<button type="button" class="btn" data-h="merge" style="display:block;width:100%;margin-bottom:8px;text-align:left;">🔗 하나로 합쳐서 영상 1편 만들기<br><small>지문 ${n}개를 이어서 한 이야기로${cost(1)}${chars > 3500 ? " · 글이 길어 영상이 길어질 수 있어요" : ""}</small></button>` +
       `<button type="button" class="btn ghost" data-h="each" style="display:block;width:100%;margin-bottom:8px;text-align:left;">📑 지문마다 따로 ${shown}편 만들기<br><small>${n > RL_MAX_PASSAGES ? `앞의 ${RL_MAX_PASSAGES}개만${cost(shown)}` : cost(shown).replace(/^ · /, "")}</small></button>` +
       `<button type="button" class="btn ghost small" data-h="" style="display:block;margin-left:auto;">취소</button></div>`;
-    const done = (v) => { ov.remove(); resolve(v); };
+    const done = (v) => {
+      const nm = ov.querySelector(".rl-merge-name").value.trim().slice(0, 30);
+      ov.remove();
+      resolve(v ? { how: v, name: nm } : null);
+    };
     ov.addEventListener("click", (ev) => {
       const b = ev.target.closest("[data-h]");
       if (b) done(b.dataset.h);
@@ -852,7 +864,7 @@ async function rlMake() {
     // 한 단원을 지문 여러 칸으로 나눠 두었을 수 있다 — 하나로 이어 영상 한 편으로 만들지, 지문마다 한 편씩 만들지 묻는다(2026-11-19 사용자)
     const how = await rlAskMerge(jobs);
     if (!how) return;
-    if (how === "merge") jobs = [rlMergeJobs(jobs)];
+    if (how.how === "merge") jobs = [{ ...rlMergeJobs(jobs), name: how.name || rlMergeJobs(jobs).name, tag: how.name }];
   }
   if (jobs.length > RL_MAX_PASSAGES) {
     errEl.textContent = `한 번에 지문 ${RL_MAX_PASSAGES}개까지 만듭니다 — 앞의 ${RL_MAX_PASSAGES}개만 만들어요.`;
@@ -886,7 +898,7 @@ async function rlMake() {
       }
       const j = jobs[i];
       const voice = voices[i];
-      const e = { name: j.name, text: j.text, voice, speed: rlSpeedPick(), imgStyle: rlStylePick(), cardColor: rlCardPick(), tag: j.name, explain: null, script: null, images: [], audio: null };
+      const e = { name: j.name, text: j.text, voice, speed: rlSpeedPick(), imgStyle: rlStylePick(), cardColor: rlCardPick(), tag: typeof j.tag === "string" ? j.tag : j.name, explain: null, script: null, images: [], audio: null };
       rlState.entries.push(e);
       try {
         text.textContent = `AI가 ${j.name}의 내용을 정리하고 대본을 쓰고 있습니다… (${i + 1}/${jobs.length})`;
@@ -939,6 +951,14 @@ rlEl("rlResult").addEventListener("input", (ev) => {
   if (r) r.nextElementSibling.textContent = rlSpeedText(r.value);
 });
 rlEl("rlResult").addEventListener("change", (ev) => {
+  const tagIn = ev.target.closest(".rl-tag-in");
+  if (tagIn) {   // 머리표 글 — 값 없이 바꾸고 영상 파일만 다시 만든다(rlVidSig에 들어 있다)
+    const e = rlState.entries[+tagIn.closest(".rl-card").dataset.i];
+    if (rlPlaying) rlPlaying.stop();
+    e.tag = tagIn.value.trim().slice(0, 30);
+    rlRender();
+    return;
+  }
   const sel = ev.target.closest(".rl-speed-sel");
   if (!sel) return;
   const e = rlState.entries[+sel.closest(".rl-card").dataset.i];

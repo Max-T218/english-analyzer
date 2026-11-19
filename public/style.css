@@ -3431,6 +3431,8 @@ details:not([open]) > .lt-bulk-title::before{content:"▸ ";}
 .rl-styles{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin:6px 0 6px;}
 .rl-stylebox{margin:10px 0;}
 .rl-cardbox{margin:8px 0 6px;}
+.rl-tag-card{display:inline-flex;align-items:center;gap:6px;font-size:13px;}
+.rl-tag-in{width:170px;padding:6px 8px;border:1px solid var(--border,#d7dce5);border-radius:8px;font-size:13px;}
 .rl-swatches{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0;}
 .rl-sw{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border,#d7dce5);border-radius:10px;cursor:pointer;background:var(--card,#fff);font-size:13px;}
 .rl-sw input[type=radio]{margin:0;}
