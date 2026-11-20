@@ -184,7 +184,7 @@ function rlmBuild(vt, at) {
 const rlmYield = () => new Promise((res) => { const ch = new MessageChannel(); ch.port1.onmessage = () => res(); ch.port2.postMessage(0); });
 // 반환 {done: Promise<{blob, mime}>, stop}
 // 내신대비 영상(lesson.js)도 같이 쓴다 — 크기·시간표·그림 읽기·그리기를 넘기면 그것으로, 안 넘기면 숏폼 것으로
-function rlEncodeMp4(e, { onProgress, w = RL_W, h = RL_H, timeline = rlTimeline, load = rlLoadImgs, draw = rlDraw, bitrate = RLM_VBITRATE } = {}) {
+function rlEncodeMp4(e, { onProgress, w = RL_W, h = RL_H, timeline = rlTimeline, load = rlLoadImgs, draw = rlDraw, bitrate = RLM_VBITRATE, fps = RLM_FPS } = {}) {
   let cancelled = false;
   const ctl = { stop: () => { cancelled = true; } };
   ctl.done = (async () => {
@@ -204,7 +204,7 @@ function rlEncodeMp4(e, { onProgress, w = RL_W, h = RL_H, timeline = rlTimeline,
       },
       error: (x) => { err = x; },
     });
-    venc.configure({ codec: "avc1.640028", width: w, height: h, bitrate, framerate: RLM_FPS,
+    venc.configure({ codec: "avc1.640028", width: w, height: h, bitrate, framerate: fps,
       avc: { format: "avc" }, latencyMode: "quality" });
     const aenc = new AudioEncoder({
       output: (chunk, meta) => {
@@ -223,13 +223,13 @@ function rlEncodeMp4(e, { onProgress, w = RL_W, h = RL_H, timeline = rlTimeline,
         timestamp: Math.round((i / RLM_SR) * 1e6), data: part }));
     }
     // 그림 — 한 장씩 그려 넣는다(인코더가 밀리면 기다린다)
-    const frames = Math.ceil(tl.total * RLM_FPS);
-    const fdur = Math.round(1e6 / RLM_FPS);
+    const frames = Math.ceil(tl.total * fps);
+    const fdur = Math.round(1e6 / fps);
     for (let f = 0; f < frames; f++) {
       if (cancelled || err) break;
-      draw(ctx, e, tl, imgs, f / RLM_FPS);
+      draw(ctx, e, tl, imgs, f / fps);
       const vf = new VideoFrame(canvas, { timestamp: f * fdur, duration: fdur });
-      venc.encode(vf, { keyFrame: f % (RLM_FPS * 2) === 0 });
+      venc.encode(vf, { keyFrame: f % (fps * 2) === 0 });
       vf.close();
       while (venc.encodeQueueSize > 6 && !err) await new Promise((r) => venc.addEventListener("dequeue", r, { once: true }));
       if (f % 15 === 0) { if (onProgress) onProgress(f / frames); await rlmYield(); }
