@@ -1294,6 +1294,42 @@ async function lsAfterSaveFor(saved, itemId, payload, onProgress) {
   if (failedLines.size) throw new Error(`대본은 저장됐지만 목소리 ${failedLines.size}줄은 저장하지 못했습니다 — ${[...reasons].join(" / ")} 다시 저장해 보세요.`);
 }
 
+/* 저장본의 목소리(wav)를 받아 entries[].audio에 채운다 — 저장함에서 불러올 때와 과제 부여 창이 함께 쓴다. 받은 게 있으면 true */
+async function lsLoadAudio(entries, itemId, payload) {
+  const metas = Array.isArray(payload.images) ? payload.images : [];
+  const parts = new Map();   // "entry:k" → [조각 차례대로 base64]
+  const got = await fetchSavedImages(itemId, metas, (m, d) => {
+    const e = entries[m.entry];
+    const km = LS_WAV_KEY_RE.exec(m.key);
+    if (!e || !km) return false;
+    const k = +km[2];
+    if (km[3] != null) {   // 긴 줄의 조각 — 다 받은 뒤 이어 붙인다
+      const key = `${m.entry}:${k}`;
+      if (!parts.has(key)) parts.set(key, []);
+      parts.get(key)[+km[3]] = d.image;
+      return;
+    }
+    const url = lsBlob(b64ToBlobUrl(d.image, d.mime || "audio/wav"));
+    e.audio[k] = { url, raw: (e.raws && e.raws[k]) || 3 };
+    lsSavedSrc.set(itemId + "|" + m.key, url);
+  }, "목소리");
+  const b64Buf = (b64) => { const s = atob(b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
+  parts.forEach((list, key) => {
+    const [ei, k] = key.split(":").map(Number);
+    const e = entries[ei];
+    if (!e || list.length !== lsWavParts(e.raws && e.raws[k]) || list.some((x) => !x)) return;   // 조각이 빠졌으면 그 줄은 비워 둔다([빠진 목소리 만들기]가 뜬다)
+    const pcs = list.map((b) => rlmReadWav(b64Buf(b)));
+    const all = new Float32Array(pcs.reduce((s, p) => s + p.x.length, 0));
+    let o = 0;
+    pcs.forEach((p) => { all.set(p.x, o); o += p.x.length; });
+    const url = lsBlob(URL.createObjectURL(rlWavBlob(all, pcs[0].sr)));
+    e.audio[k] = { url, raw: all.length / pcs[0].sr };
+    list.forEach((_, p) => lsSavedSrc.set(`${itemId}|${lsWavKey(ei, k)}p${p}`, url));
+  });
+  return got;
+
+}
+
 TAB_SAVE.lesson = {
   canSave: () => (lsState.entries.some((e) => e.script) ? "" : "저장할 지문 강의 영상이 없습니다. 먼저 만들어 주세요."),
   getPayload: () => lsPayloadOf(lsState.entries.filter((e) => e.script), passageMgr.getJobs()),
@@ -1313,39 +1349,7 @@ TAB_SAVE.lesson = {
     });
   },
   afterSave: (itemId, payload, onProgress) => lsAfterSaveFor(lsState.entries.filter((e) => e.script), itemId, payload, onProgress),
-  afterLoad: async (itemId, payload) => {
-    const metas = Array.isArray(payload.images) ? payload.images : [];
-    const parts = new Map();   // "entry:k" → [조각 차례대로 base64]
-    const got = await fetchSavedImages(itemId, metas, (m, d) => {
-      const e = lsState.entries[m.entry];
-      const km = LS_WAV_KEY_RE.exec(m.key);
-      if (!e || !km) return false;
-      const k = +km[2];
-      if (km[3] != null) {   // 긴 줄의 조각 — 다 받은 뒤 이어 붙인다
-        const key = `${m.entry}:${k}`;
-        if (!parts.has(key)) parts.set(key, []);
-        parts.get(key)[+km[3]] = d.image;
-        return;
-      }
-      const url = lsBlob(b64ToBlobUrl(d.image, d.mime || "audio/wav"));
-      e.audio[k] = { url, raw: (e.raws && e.raws[k]) || 3 };
-      lsSavedSrc.set(itemId + "|" + m.key, url);
-    }, "목소리");
-    const b64Buf = (b64) => { const s = atob(b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
-    parts.forEach((list, key) => {
-      const [ei, k] = key.split(":").map(Number);
-      const e = lsState.entries[ei];
-      if (!e || list.length !== lsWavParts(e.raws && e.raws[k]) || list.some((x) => !x)) return;   // 조각이 빠졌으면 그 줄은 비워 둔다([빠진 목소리 만들기]가 뜬다)
-      const pcs = list.map((b) => rlmReadWav(b64Buf(b)));
-      const all = new Float32Array(pcs.reduce((s, p) => s + p.x.length, 0));
-      let o = 0;
-      pcs.forEach((p) => { all.set(p.x, o); o += p.x.length; });
-      const url = lsBlob(URL.createObjectURL(rlWavBlob(all, pcs[0].sr)));
-      e.audio[k] = { url, raw: all.length / pcs[0].sr };
-      list.forEach((_, p) => lsSavedSrc.set(`${itemId}|${lsWavKey(ei, k)}p${p}`, url));
-    });
-    if (got) lsRender();
-  },
+  afterLoad: async (itemId, payload) => { if (await lsLoadAudio(lsState.entries, itemId, payload)) lsRender(); },
   applyPayload: (payload) => {
     if (lsPlaying) lsPlaying.stop();
     lsRecAbortAll();

@@ -8,6 +8,8 @@ const VA_CHUNK = 700 * 1024;   // server.py VIDEO_CHUNK와 같은 값
 const vaEl = (id) => document.getElementById(id);
 let vaNow = null;        // 지문 강의 영상 탭에서 연 경우 — 지금 만든 영상(lsState의 entry)
 let vaSaved = null;      // 저장함 목록(확인 문제 고르기용)
+let vaSavedLessons = []; // 저장함의 지문 강의 영상 저장본
+const vaSavedVideo = new Map();   // "저장본id:영상 차례" → {videoId, title} — 이 창을 연 동안 같은 영상을 다시 올리지 않는다
 
 function vaRelease() { vaEl("vaStatus").textContent = ""; vaEl("vaSubmitBtn").disabled = false; }
 
@@ -41,6 +43,7 @@ const vaMin = (s) => `${Math.floor(s / 60)}분 ${Math.round(s % 60)}초`;
 async function vaVideos() {
   let list = [];
   try { list = (await getJson("/api/lessonvideo/list", "")).videos || []; } catch (err) { vaEl("vaError").textContent = err.message || ""; }
+  try { vaSavedLessons = ((await getJson("/api/saved", "")).items || []).filter((it) => it.tab === "lesson"); } catch (_) { vaSavedLessons = []; }
   const row = (value, html, checked) =>
     `<label class="chk" style="display:block; margin:4px 0;"><input type="radio" name="vaVideo" value="${esc(value)}"${checked ? " checked" : ""}> ${html}</label>`;
   let html = "";
@@ -48,9 +51,15 @@ async function vaVideos() {
     const mb = (vaNow.video.blob.size / 1e6).toFixed(0);
     html += row("now", `🆕 지금 만든 영상 — ${esc(vaNow.script.title || vaNow.name)} <span class="hint">(${vaMin(lsTimeline(vaNow).total)} · ${mb}MB · 올리면서 냅니다)</span>`, true);
   }
+  const savedHtml = vaSavedLessons.map((it) =>
+    row(`saved:${it.id}`, `${esc(it.title || "제목 없음")} <span class="hint">(저장함 · 영상 파일을 새로 만들어 올립니다)</span>`, false)).join("");
   html += list.map((v, i) =>
     row(v.id, `${esc(v.title)} <span class="hint">(${vaMin(v.seconds)} · ${(v.size / 1e6).toFixed(0)}MB · 올려 둔 영상)</span>
       <button type="button" class="btn ghost small va-del" data-id="${esc(v.id)}" style="margin-left:6px;">지우기</button>`, !vaNow && i === 0)).join("");
+  if (savedHtml) {
+    html += `<p class="hint" style="margin:10px 0 2px;"><b>💾 저장함의 지문 강의 영상</b> — 고르면 저장해 둔 대본·목소리로 영상 파일을 만들어 올리고 과제를 냅니다.
+      브라우저에서 만드는 데 영상 길이만큼(몇 분) 걸리니 <b>끝날 때까지 이 창을 켜 두세요.</b> 한 저장본에 영상이 여러 개면 영상마다 과제가 하나씩 나갑니다.</p>${savedHtml}`;
+  }
   vaEl("vaVideoList").innerHTML = html || `<p class="hint">올려 둔 영상이 없습니다. 지문 강의 영상 탭에서 영상을 만든 뒤 [🏫 반에 과제 부여]를 눌러 주세요.</p>`;
 }
 vaEl("vaVideoList").addEventListener("click", async (ev) => {
@@ -58,7 +67,7 @@ vaEl("vaVideoList").addEventListener("click", async (ev) => {
   if (!b) return;
   ev.preventDefault();
   if (!confirm("이 영상을 지울까요? 이미 과제로 낸 영상은 지울 수 없습니다.")) return;
-  try { await postJson("/api/lessonvideo/delete", { videoId: b.dataset.id }, "영상을 지우지 못했습니다."); await vaVideos(); }
+  try { await postJson("/api/lessonvideo/delete", { videoId: b.dataset.id }, "영상을 지우지 못했습니다."); vaSavedVideo.clear(); await vaVideos(); }
   catch (err) { vaEl("vaError").textContent = err.message || ""; }
 });
 
@@ -104,6 +113,43 @@ async function vaUpload(entry, onProgress) {
   return videoId;
 }
 
+// 저장함의 지문 강의 영상 → 대본·목소리를 받아 영상 파일(mp4)을 이 브라우저에서 만들고 올린다.
+// 지문 강의 영상 탭의 화면 상태(lsState)는 건드리지 않는다 — 저장본의 영상은 따로 펼친다.
+async function vaBuildFromSaved(itemId, status) {
+  status.textContent = "저장함에서 불러오는 중…";
+  const item = await getJson(`/api/saved/${encodeURIComponent(itemId)}`, "저장본을 불러오지 못했습니다.");
+  const payload = item.payload || {};
+  const entries = (payload.entries || []).filter((e) => e && e.script).map((e) => ({ ...e, audio: e.script.segments.map(() => null), error: "" }));
+  if (!entries.length) throw new Error("이 저장본에는 영상이 없습니다.");
+  const cached = entries.map((_, i) => vaSavedVideo.get(`${itemId}:${i}`));
+  if (!cached.every(Boolean)) {
+    status.textContent = "목소리를 받는 중…";
+    await lsLoadAudio(entries, itemId, payload);
+    if (entries.some((e) => !lsReady(e))) {
+      throw new Error("목소리가 빠진 영상입니다 — '지문 강의 영상' 탭에서 불러와 [🔁 빠진 목소리 만들기]를 누르고 다시 저장한 뒤 낼 수 있습니다.");
+    }
+    if (lsMp4Ok === null) lsMp4Ok = typeof rlmSupported === "function" ? await rlmSupported(LS_W, LS_H) : false;
+    if (!lsMp4Ok) throw new Error("이 브라우저는 영상 파일 만들기를 지원하지 않습니다 — PC 크롬에서 열어 주세요.");
+    await lsFontReady();
+  }
+  const out = [];
+  for (let i = 0; i < entries.length; i++) {
+    if (cached[i]) { out.push(cached[i]); continue; }
+    const e = entries[i], tag = entries.length > 1 ? ` (${i + 1}/${entries.length})` : "";
+    status.textContent = `영상 파일 만드는 중${tag} 0%`;
+    const ctl = rlEncodeMp4(e, { onProgress: (p) => { status.textContent = `영상 파일 만드는 중${tag} ${Math.round(p * 100)}%`; },
+      w: LS_W, h: LS_H, timeline: lsTimeline, load: lsAssets, draw: lsDraw, bitrate: LS_VBITRATE });
+    const { blob } = await ctl.done;
+    if (!blob || !blob.size) throw new Error("영상 파일을 만들지 못했습니다.");
+    e.video = { blob, sig: "saved" };
+    const videoId = await vaUpload(e, (k, n) => { status.textContent = `영상 올리는 중${tag} ${Math.round((k / n) * 100)}%`; });
+    const rec = { videoId, title: e.script.title || e.name };
+    vaSavedVideo.set(`${itemId}:${i}`, rec);
+    out.push(rec);
+  }
+  return out;
+}
+
 vaEl("videoAssignForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const err = vaEl("vaError"), status = vaEl("vaStatus"), btn = vaEl("vaSubmitBtn");
@@ -127,20 +173,30 @@ vaEl("videoAssignForm").addEventListener("submit", async (ev) => {
       if (!questions.length) throw new Error("이 저장본에는 학생에게 낼 문항이 없습니다.");
       if (questions.length > QUIZ_TEST_MAX_QUESTIONS) throw new Error(`문항이 ${questions.length}개라 한 번에 낼 수 없습니다(${QUIZ_TEST_MAX_QUESTIONS}문항까지).`);
     }
-    let videoId = pick.value, title = vaEl("vaTitle").value.trim();
-    if (videoId === "now") {
+    const typed = vaEl("vaTitle").value.trim();
+    // 낼 영상 목록 [{videoId, title}] — 올려 둔 영상 하나, 지금 만든 영상 하나, 또는 저장본에서 만든 영상 여럿
+    let videos = [];
+    if (pick.value === "now") {
       status.textContent = "영상을 올리는 중… 0%";
-      videoId = await vaUpload(vaNow, (i, n) => { status.textContent = `영상을 올리는 중… ${Math.round((i / n) * 100)}%`; });
+      videos = [{ videoId: await vaUpload(vaNow, (i, n) => { status.textContent = `영상을 올리는 중… ${Math.round((i / n) * 100)}%`; }),
+                  title: vaNow.script.title || vaNow.name }];
+    } else if (pick.value.startsWith("saved:")) {
+      videos = await vaBuildFromSaved(pick.value.slice(6), status);
+    } else {
+      videos = [{ videoId: pick.value, title: (pick.parentElement.textContent.split("(")[0] || "").trim() || "지문 강의 영상" }];
     }
-    if (!title) title = (vaNow && videoId && vaNow.video.vaId === videoId ? (vaNow.script.title || vaNow.name) : "") ||
-      (pick.parentElement.textContent.split("(")[0] || "").replace(/^🆕 지금 만든 영상 — /, "").trim() || "지문 강의 영상";
-    status.textContent = "과제를 내는 중…";
-    const r = await postForTargets(vaEl("vaTargetSelect"), (studentId) => postJson("/api/quiz-tests", {
-      classId, studentId, title, questions, source: "quiz", origin: kind, videoId,
-    }, "과제 내기에 실패했습니다."));
+    let made = 0, qs = 0;
+    for (const v of videos) {
+      status.textContent = videos.length > 1 ? `과제를 내는 중… ${made + 1}/${videos.length}` : "과제를 내는 중…";
+      const title = videos.length === 1 ? (typed || v.title) : (typed ? `${typed}_${v.title}` : v.title);
+      const r = await postForTargets(vaEl("vaTargetSelect"), (studentId) => postJson("/api/quiz-tests", {
+        classId, studentId, title, questions, source: "quiz", origin: kind, videoId: v.videoId,
+      }, "과제 내기에 실패했습니다."));
+      made++; qs = r.questions || 0;
+    }
     closeModal(vaEl("videoAssignModalOverlay"));
     if (classId === selectedClassId && typeof loadAssignedTests === "function") loadAssignedTests();
-    alert(`영상 과제를 냈습니다.${r.questions ? ` 확인 문제 ${r.questions}문항이 영상 뒤에 열립니다.` : ""} '학생 관리' 탭의 시험 목록에서 시청 현황을 볼 수 있습니다.`);
+    alert(`영상 과제 ${made > 1 ? made + "개를" : "를"} 냈습니다.${qs ? ` 확인 문제 ${qs}문항이 영상 뒤에 열립니다.` : ""} '학생 관리' 탭의 시험 목록에서 시청 현황을 볼 수 있습니다.`);
   } catch (e) {
     err.textContent = e.message || "과제 내기에 실패했습니다.";
   } finally {
