@@ -22185,6 +22185,15 @@ def video_finish(teacher_id, video_id):
     return {"id": ref.id, "title": meta.get("title"), "seconds": meta.get("seconds"), "size": meta.get("size")}
 
 
+def video_rename(teacher_id, video_id, title):
+    _require_db()
+    ref, _ = _video_own(teacher_id, video_id)
+    title = _norm_text(_qt_s(title, 100))
+    if not title:
+        raise ValueError("이름을 적어 주세요.")
+    ref.update({"title": title})
+
+
 def video_list(teacher_id):
     _require_db()
     rows = []
@@ -25080,7 +25089,7 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/student/tests/studied", "/api/student/retry/start", "/api/student/retry/submit",
                         "/api/student/draft", "/api/student/video/beat",
                         "/api/lessonvideo/begin", "/api/lessonvideo/chunk", "/api/lessonvideo/finish",
-                        "/api/lessonvideo/delete",
+                        "/api/lessonvideo/delete", "/api/lessonvideo/rename",
                         "/api/admin/approve-leveltest",
                         "/api/leveltest/links", "/api/leveltest/links/update", "/api/leveltest/links/delete",
                         "/api/leveltest/grade", "/api/leveltest/results/delete",
@@ -26106,7 +26115,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # --- 지문 강의 영상 과제: 선생님이 영상을 올려 두고(조각으로), 학생은 시청 위치를 알린다 ---
         if path in ("/api/lessonvideo/begin", "/api/lessonvideo/chunk", "/api/lessonvideo/finish",
-                    "/api/lessonvideo/delete"):
+                    "/api/lessonvideo/delete", "/api/lessonvideo/rename"):
             user_id = _session_user(self)
             if not user_id:
                 self._send_json({"error": "로그인이 필요합니다."}, 401)
@@ -26123,6 +26132,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json({"ok": True})
                 elif path.endswith("/finish"):
                     self._send_json(video_finish(user_id, req.get("videoId")))
+                elif path.endswith("/rename"):
+                    video_rename(user_id, req.get("videoId"), req.get("title"))
+                    self._send_json({"renamed": True})
                 else:
                     video_delete(user_id, req.get("videoId"))
                     self._send_json({"deleted": True})

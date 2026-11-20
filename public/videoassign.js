@@ -40,30 +40,47 @@ async function vaTargets() {
 }
 vaEl("vaClassSelect").addEventListener("change", vaTargets);
 
+// 지금 만든 영상의 이름 — 저장함에서 불러온 영상이면 그 저장 이름, 아니면 AI가 지은 영상 제목
+function vaNowTitle() {
+  if (!vaNow) return "";
+  const loaded = typeof LOADED_SAVED !== "undefined" && LOADED_SAVED.lesson;
+  const one = lsState.entries.filter((e) => e.script).length === 1;
+  return (loaded && one && LOADED_SAVED.lesson.title) || vaNow.script.title || vaNow.name || "";
+}
 const vaMin = (s) => `${Math.floor(s / 60)}분 ${Math.round(s % 60)}초`;
 async function vaVideos() {
   let list = [];
   try { list = (await getJson("/api/lessonvideo/list", "")).videos || []; } catch (err) { vaEl("vaError").textContent = err.message || ""; }
   try { vaSavedLessons = ((await getJson("/api/saved", "")).items || []).filter((it) => it.tab === "lesson"); } catch (_) { vaSavedLessons = []; }
-  const row = (value, html, checked) =>
-    `<label class="chk" style="display:block; margin:4px 0;"><input type="radio" name="vaVideo" value="${esc(value)}"${checked ? " checked" : ""}> ${html}</label>`;
+  const row = (value, html, checked, title) =>
+    `<label class="chk" style="display:block; margin:4px 0;"><input type="checkbox" name="vaVideo" value="${esc(value)}" data-title="${esc(title || "")}"${checked ? " checked" : ""}> ${html}</label>`;
   let html = "";
   if (vaNow) {
     const mb = (vaNow.video.blob.size / 1e6).toFixed(0);
-    html += row("now", `🆕 지금 만든 영상 — ${esc(vaNow.script.title || vaNow.name)} <span class="hint">(${vaMin(lsTimeline(vaNow).total)} · ${mb}MB · 올리면서 냅니다)</span>`, true);
+    html += row("now", `🆕 지금 만든 영상 — ${esc(vaNowTitle())} <span class="hint">(${vaMin(lsTimeline(vaNow).total)} · ${mb}MB · 올리면서 냅니다)</span>`, true, vaNowTitle());
   }
   const savedHtml = vaSavedLessons.map((it) =>
-    row(`saved:${it.id}`, `${esc(it.title || "제목 없음")} <span class="hint">(저장함 · 영상 파일을 새로 만들어 올립니다)</span>`, false)).join("");
+    row(`saved:${it.id}`, `${esc(it.title || "제목 없음")} <span class="hint">(저장함 · 영상 파일을 새로 만들어 올립니다)</span>`, false, it.title || "")).join("");
   html += list.map((v, i) =>
     row(v.id, `${esc(v.title)} <span class="hint">(${vaMin(v.seconds)} · ${(v.size / 1e6).toFixed(0)}MB · 올려 둔 영상)</span>
-      <button type="button" class="btn ghost small va-del" data-id="${esc(v.id)}" style="margin-left:6px;">지우기</button>`, !vaNow && i === 0)).join("");
+      <button type="button" class="btn ghost small va-ren" data-id="${esc(v.id)}" data-title="${esc(v.title)}" style="margin-left:6px;">이름</button>
+      <button type="button" class="btn ghost small va-del" data-id="${esc(v.id)}" style="margin-left:6px;">지우기</button>`, !vaNow && i === 0, v.title)).join("");
   if (savedHtml) {
     html += `<p class="hint" style="margin:10px 0 2px;"><b>💾 저장함의 지문 강의 영상</b> — 고르면 저장해 둔 대본·목소리로 영상 파일을 만들어 올리고 과제를 냅니다.
-      브라우저에서 만드는 데 영상 길이만큼(몇 분) 걸리니 <b>끝날 때까지 이 창을 켜 두세요.</b> 한 저장본에 영상이 여러 개면 영상마다 과제가 하나씩 나갑니다.</p>${savedHtml}`;
+      브라우저에서 만드는 데 영상 길이만큼(몇 분) 걸리니 <b>끝날 때까지 이 창을 켜 두세요.</b> 여러 개를 체크하면 영상마다 과제가 하나씩 나가고, 과제 이름은 저장해 둔 이름 그대로입니다.</p>${savedHtml}`;
   }
   vaEl("vaVideoList").innerHTML = html || `<p class="hint">올려 둔 영상이 없습니다. 지문 강의 영상 탭에서 영상을 만든 뒤 [🏫 반에 과제 부여]를 눌러 주세요.</p>`;
 }
 vaEl("vaVideoList").addEventListener("click", async (ev) => {
+  const rn = ev.target.closest(".va-ren");
+  if (rn) {
+    ev.preventDefault();
+    const name = prompt("영상 이름을 바꿉니다(이미 낸 과제 이름은 그대로입니다).", rn.dataset.title || "");
+    if (name == null || !name.trim()) return;
+    try { await postJson("/api/lessonvideo/rename", { videoId: rn.dataset.id, title: name.trim() }, "이름을 바꾸지 못했습니다."); await vaVideos(); }
+    catch (err) { vaEl("vaError").textContent = err.message || ""; }
+    return;
+  }
   const b = ev.target.closest(".va-del");
   if (!b) return;
   ev.preventDefault();
@@ -96,12 +113,12 @@ function vaBase64(blob) {
 }
 
 // 지금 만든 영상을 서버에 올린다 — 조각 700KB씩. 같은 영상을 다시 낼 때는 올리지 않고 올린 것을 쓴다
-async function vaUpload(entry, onProgress) {
+async function vaUpload(entry, onProgress, title) {
   const v = entry.video;
   if (v.vaId && v.vaSig === v.sig) return v.vaId;
   const blob = v.blob, n = Math.ceil(blob.size / VA_CHUNK);
   const { videoId } = await postJson("/api/lessonvideo/begin", {
-    title: String(entry.script.title || entry.name || "지문 강의 영상"),
+    title: String(title || entry.script.title || entry.name || "지문 강의 영상"),
     seconds: lsTimeline(entry).total, size: blob.size, chunks: n,
   }, "영상을 올리지 못했습니다.");
   for (let i = 0; i < n; i++) {
@@ -149,8 +166,10 @@ async function vaBuildFromSaved(itemId, status) {
     const { blob } = await ctl.done;
     if (!blob || !blob.size) throw new Error("영상 파일을 만들지 못했습니다.");
     e.video = { blob, sig: "saved" };
-    const videoId = await vaUpload(e, (k, n) => { status.textContent = `영상 올리는 중${tag} ${Math.round((k / n) * 100)}%`; });
-    const rec = { videoId, title: e.script.title || e.name };
+    // 저장해 둔 이름을 그대로 쓴다 — AI가 지은 영상 제목(script.title)으로 바꾸지 않는다. 저장본에 영상이 여럿이면 '저장 이름_영상 제목'
+    const title = entries.length === 1 ? (item.title || e.script.title || e.name) : `${item.title || "영상"}_${e.script.title || e.name}`;
+    const videoId = await vaUpload(e, (k, n) => { status.textContent = `영상 올리는 중${tag} ${Math.round((k / n) * 100)}%`; }, title);
+    const rec = { videoId, title };
     vaSavedVideo.set(`${itemId}:${i}`, rec);
     out.push(rec);
   }
@@ -165,8 +184,8 @@ vaEl("videoAssignForm").addEventListener("submit", async (ev) => {
   if (!classId) { err.textContent = "반을 먼저 만들어 주세요."; return; }
   const targets = targetIdsOf(vaEl("vaTargetSelect"));
   if (targets && !targets.length) { err.textContent = "낼 대상을 골라 주세요."; return; }
-  const pick = document.querySelector('input[name="vaVideo"]:checked');
-  if (!pick) { err.textContent = "낼 영상을 골라 주세요."; return; }
+  const picks = [...document.querySelectorAll('input[name="vaVideo"]:checked')];
+  if (!picks.length) { err.textContent = "낼 영상을 하나 이상 골라 주세요."; return; }
   const kind = vaEl("vaQuizKind").value;
   const quizPick = kind ? document.querySelector('input[name="vaQuizPick"]:checked') : null;
   if (kind && !quizPick) { err.textContent = "확인 문제로 낼 저장본을 골라 주세요(문제 없이 내려면 '문제 없이 영상만'을 고르세요)."; return; }
@@ -183,14 +202,16 @@ vaEl("videoAssignForm").addEventListener("submit", async (ev) => {
     const typed = vaEl("vaTitle").value.trim();
     // 낼 영상 목록 [{videoId, title}] — 올려 둔 영상 하나, 지금 만든 영상 하나, 또는 저장본에서 만든 영상 여럿
     let videos = [];
-    if (pick.value === "now") {
-      status.textContent = "영상을 올리는 중… 0%";
-      videos = [{ videoId: await vaUpload(vaNow, (i, n) => { status.textContent = `영상을 올리는 중… ${Math.round((i / n) * 100)}%`; }),
-                  title: vaNow.script.title || vaNow.name }];
-    } else if (pick.value.startsWith("saved:")) {
-      videos = await vaBuildFromSaved(pick.value.slice(6), status);
-    } else {
-      videos = [{ videoId: pick.value, title: (pick.parentElement.textContent.split("(")[0] || "").trim() || "지문 강의 영상" }];
+    for (const pick of picks) {
+      if (pick.value === "now") {
+        status.textContent = "영상을 올리는 중… 0%";
+        const title = vaNowTitle();
+        videos.push({ videoId: await vaUpload(vaNow, (i, n) => { status.textContent = `영상을 올리는 중… ${Math.round((i / n) * 100)}%`; }, title), title });
+      } else if (pick.value.startsWith("saved:")) {
+        videos.push(...await vaBuildFromSaved(pick.value.slice(6), status));
+      } else {
+        videos.push({ videoId: pick.value, title: pick.dataset.title || "지문 강의 영상" });
+      }
     }
     let made = 0, qs = 0;
     for (const v of videos) {

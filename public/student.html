@@ -12,6 +12,15 @@
 <meta name="apple-mobile-web-app-title" content="English Lab">
 <link rel="apple-touch-icon" href="/app-icon-192.png">
 <link rel="stylesheet" href="/style.css">
+<style>
+  /* 지문 강의 영상 — 전체 화면은 #videoStage(영상 + 재생 단추 줄)를 키운다 */
+  #videoEl { display: block; width: 100%; max-height: 70vh; background: #000; border-radius: 8px; }
+  #videoBar { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  #videoStage:fullscreen, #videoStage:-webkit-full-screen { background: #000; display: flex; flex-direction: column; justify-content: center; }
+  #videoStage:fullscreen #videoEl, #videoStage:-webkit-full-screen #videoEl { flex: 1; min-height: 0; max-height: none; height: 100%; border-radius: 0; object-fit: contain; }
+  #videoStage:fullscreen #videoBar, #videoStage:-webkit-full-screen #videoBar { margin: 0; padding: 10px 14px; background: #111; }
+  #videoStage:fullscreen .hint, #videoStage:-webkit-full-screen .hint { color: #ddd; }
+</style>
 </head>
 <body class="st-page">
 <div class="wrap" style="max-width:640px;">
@@ -130,10 +139,14 @@
       <button type="button" class="btn ghost small" id="videoBackBtn">← 목록으로</button>
       <h3 id="videoTitle" style="margin:12px 0 4px;"></h3>
       <p class="hint">영상을 끝까지 봐야 완료돼요. 건너뛰거나 빨리 감을 수 없고, 다른 화면으로 나가면 멈춰요.</p>
-      <video id="videoEl" playsinline preload="auto" disablePictureInPicture controlsList="nodownload noplaybackrate" style="width:100%;max-height:70vh;background:#000;border-radius:8px;"></video>
-      <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;">
-        <button type="button" class="btn" id="videoPlayBtn">▶ 재생</button>
-        <span class="hint" id="videoStatus"></span>
+      <!-- 전체 화면은 영상만이 아니라 이 틀(재생 단추 줄 포함)을 키운다 — 컨트롤이 없는 영상이라 단추 줄이 같이 가야 한다 -->
+      <div id="videoStage">
+        <video id="videoEl" playsinline preload="auto" disablePictureInPicture controlsList="nodownload noplaybackrate"></video>
+        <div id="videoBar">
+          <button type="button" class="btn" id="videoPlayBtn">▶ 재생</button>
+          <button type="button" class="btn ghost" id="videoFullBtn">⛶ 전체 화면</button>
+          <span class="hint" id="videoStatus"></span>
+        </div>
       </div>
       <div class="error" id="videoError"></div>
       <div id="videoDoneBox" hidden style="margin-top:12px;">

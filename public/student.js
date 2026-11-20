@@ -855,6 +855,19 @@ $("videoPlayBtn").addEventListener("click", () => {
   } else videoEl.pause();
 });
 videoEl.addEventListener("click", () => $("videoPlayBtn").click());
+// 전체 화면 — 영상과 재생 단추 줄이 든 틀을 키운다. 틀을 키우지 못하는 브라우저(아이폰 사파리)는 영상 자체를 전체 화면으로 연다
+// (그 화면의 시간 막대로 앞으로 가려 해도 위의 seeking 규칙이 보던 자리로 되돌린다)
+const videoStageEl = $("videoStage");
+const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+$("videoFullBtn").addEventListener("click", () => {
+  if (fsElement()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+  const req = videoStageEl.requestFullscreen || videoStageEl.webkitRequestFullscreen;
+  if (req) { Promise.resolve(req.call(videoStageEl)).catch(() => {}); return; }
+  if (videoEl.webkitEnterFullscreen) videoEl.webkitEnterFullscreen();
+});
+["fullscreenchange", "webkitfullscreenchange"].forEach((ev) => document.addEventListener(ev, () => {
+  $("videoFullBtn").textContent = fsElement() ? "✕ 전체 화면 닫기" : "⛶ 전체 화면";
+}));
 // 화면을 떠나면(다른 탭·잠금) 멈춘다 — 안 보는 시간이 시청으로 세어지지 않게
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden" && videoCtx && !videoWorkspaceEl.hidden && !videoEl.paused) videoEl.pause();
