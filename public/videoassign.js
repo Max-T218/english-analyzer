@@ -5,7 +5,9 @@
    과제는 문제 시험(/api/quiz-tests)에 videoId를 더한 것이다 — 확인 문제는 선택이고, 있으면 영상을 다 본 뒤에야 열린다.
    app.js·lesson.js 뒤에 불러와 그쪽 전역(getJson·postJson·fillTargetList·postForTargets·quizQuestionsFromSaved…)을 쓴다. */
 const VA_CHUNK = 700 * 1024;   // server.py VIDEO_CHUNK와 같은 값
-const VA_W = 1280, VA_H = 720, VA_FPS = 15, VA_BITRATE = 1_200_000;   // 저장함 영상으로 과제를 낼 때 만드는 영상의 크기·초당 장수·압축 목표
+// 저장함 영상으로 과제를 낼 때 만드는 영상: 1280×720·초당 30장(15장은 필기·확대가 뚝뚝 끊겨 보인다 — 2026-11-21 사용자),
+// 품질 기준 VA_QUANT(3분 12초 8.3MB). 브라우저가 품질 기준을 못 받으면 VA_BITRATE 목표로 만든다.
+const VA_W = 1280, VA_H = 720, VA_FPS = 30, VA_QUANT = 26, VA_BITRATE = 1_200_000;
 const vaEl = (id) => document.getElementById(id);
 let vaNow = null;        // 지문 강의 영상 탭에서 연 경우 — 지금 만든 영상(lsState의 entry)
 let vaSaved = null;      // 저장함 목록(확인 문제 고르기용)
@@ -156,12 +158,12 @@ async function vaBuildFromSaved(itemId, status) {
     const e = entries[i], tag = entries.length > 1 ? ` (${i + 1}/${entries.length})` : "";
     status.textContent = `영상 파일 만드는 중${tag} 0%`;
     const t0 = Date.now();
-    // 과제용은 화면 크기·초당 장수를 줄여 만든다(1280×720·15장 — 필기·글씨는 그대로 또렷하고, 만드는 시간과 파일 크기가 크게 준다)
+    // 과제용은 화면 크기를 줄이고 품질 기준으로 만든다(1280×720·30장 — 필기·글씨는 그대로 또렷하고, 만드는 시간과 파일 크기가 크게 준다)
     const ctl = rlEncodeMp4(e, { onProgress: (p) => {
         const left = p > 0.05 ? Math.ceil(((Date.now() - t0) / p) * (1 - p) / 1000) : 0;
         status.textContent = `영상 파일 만드는 중${tag} ${Math.round(p * 100)}%${left ? ` · 약 ${left >= 60 ? Math.ceil(left / 60) + "분" : left + "초"} 남음` : ""}`;
       },
-      w: VA_W, h: VA_H, fps: VA_FPS, timeline: lsTimeline, load: lsAssets, bitrate: VA_BITRATE,
+      w: VA_W, h: VA_H, fps: VA_FPS, quantizer: VA_QUANT, timeline: lsTimeline, load: lsAssets, bitrate: VA_BITRATE,
       draw: (ctx, en, tl, as, t) => { ctx.save(); ctx.scale(VA_W / LS_W, VA_H / LS_H); lsDraw(ctx, en, tl, as, t); ctx.restore(); } });
     const { blob } = await ctl.done;
     if (!blob || !blob.size) throw new Error("영상 파일을 만들지 못했습니다.");

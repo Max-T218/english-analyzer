@@ -184,7 +184,9 @@ function rlmBuild(vt, at) {
 const rlmYield = () => new Promise((res) => { const ch = new MessageChannel(); ch.port1.onmessage = () => res(); ch.port2.postMessage(0); });
 // 반환 {done: Promise<{blob, mime}>, stop}
 // 내신대비 영상(lesson.js)도 같이 쓴다 — 크기·시간표·그림 읽기·그리기를 넘기면 그것으로, 안 넘기면 숏폼 것으로
-function rlEncodeMp4(e, { onProgress, w = RL_W, h = RL_H, timeline = rlTimeline, load = rlLoadImgs, draw = rlDraw, bitrate = RLM_VBITRATE, fps = RLM_FPS } = {}) {
+// quantizer(0~51, 작을수록 선명)를 넘기면 '품질 기준'으로 압축한다 — 움직임이 적은 수업 화면은 비트레이트를 정해 두면 필요 이상으로
+// 파일이 커진다(같은 720p·30장 3분 12초: 목표 1.2Mbps 20.8MB ↔ quantizer 26 8.3MB, 2026-11-21 실측). 이 브라우저가 품질 기준을 못 받으면 bitrate로 돌아간다.
+function rlEncodeMp4(e, { onProgress, w = RL_W, h = RL_H, timeline = rlTimeline, load = rlLoadImgs, draw = rlDraw, bitrate = RLM_VBITRATE, fps = RLM_FPS, quantizer = 0 } = {}) {
   let cancelled = false;
   const ctl = { stop: () => { cancelled = true; } };
   ctl.done = (async () => {
@@ -204,8 +206,12 @@ function rlEncodeMp4(e, { onProgress, w = RL_W, h = RL_H, timeline = rlTimeline,
       },
       error: (x) => { err = x; },
     });
-    venc.configure({ codec: "avc1.640028", width: w, height: h, bitrate, framerate: fps,
-      avc: { format: "avc" }, latencyMode: "quality" });
+    let useQ = false;
+    if (quantizer) {
+      try { useQ = !!(await VideoEncoder.isConfigSupported({ codec: "avc1.640028", width: w, height: h, framerate: fps, bitrateMode: "quantizer", avc: { format: "avc" } })).supported; } catch (_e) { useQ = false; }
+    }
+    if (useQ) venc.configure({ codec: "avc1.640028", width: w, height: h, framerate: fps, bitrateMode: "quantizer", avc: { format: "avc" }, latencyMode: "quality" });
+    else venc.configure({ codec: "avc1.640028", width: w, height: h, bitrate, framerate: fps, avc: { format: "avc" }, latencyMode: "quality" });
     const aenc = new AudioEncoder({
       output: (chunk, meta) => {
         if (meta && meta.decoderConfig && meta.decoderConfig.description && !at.desc) at.desc = new Uint8Array(meta.decoderConfig.description);
@@ -229,7 +235,7 @@ function rlEncodeMp4(e, { onProgress, w = RL_W, h = RL_H, timeline = rlTimeline,
       if (cancelled || err) break;
       draw(ctx, e, tl, imgs, f / fps);
       const vf = new VideoFrame(canvas, { timestamp: f * fdur, duration: fdur });
-      venc.encode(vf, { keyFrame: f % (fps * 2) === 0 });
+      venc.encode(vf, useQ ? { keyFrame: f % (fps * 2) === 0, avc: { quantizer } } : { keyFrame: f % (fps * 2) === 0 });
       vf.close();
       while (venc.encodeQueueSize > 6 && !err) await new Promise((r) => venc.addEventListener("dequeue", r, { once: true }));
       if (f % 15 === 0) { if (onProgress) onProgress(f / frames); await rlmYield(); }
