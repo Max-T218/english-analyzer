@@ -1505,7 +1505,7 @@ def _asset_version():
     stamp = 0.0
     # 만드는 법·결과물 예시 그림(howto-*)도 본다 — 2026-10-07에 그림만 갈아 끼웠다가 표식이 그대로여서
     # 옛 그림('홍보용' 제목)이 계속 보였다.
-    names = ["app.js", "trend.js", "grammar.js", "decode.js", "explain.js", "reels.js", "reels_mp4.js", "lesson.js", "topic.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
+    names = ["app.js", "trend.js", "grammar.js", "decode.js", "explain.js", "reels.js", "reels_mp4.js", "lesson.js", "videoassign.js", "topic.js", "quiztest.js", "ltreport.js", "leveltest.js", "style.css"] + [
         # 목소리 미리 듣기(reel-voice-*.mp3)·그림 느낌 예시(reel-style-*.jpg)도 — 2026-11-20 미리 듣기 인사말을 다시 녹음했는데
         # 하루 캐시 때문에 들어 본 브라우저는 옛 녹음을 계속 틀었다. 화면은 이 표식을 ?v=로 붙여 부른다(reels.js RL_ASSET_V)
         p.name for pat in ("sample-*.jpg", "howto-*.jpg", "howto-*.png", "reel-voice-*.mp3", "reel-style-*.jpg") for p in sorted(PUBLIC_DIR.glob(pat))
@@ -17799,6 +17799,14 @@ CHANGELOG = [
             "🎬 숏폼 영상과 지문 강의 영상 모두, 지문이 여러 개면 어떤 지문끼리 합쳐 한 편으로 만들지 직접 고를 수 있습니다. 숏폼은 한 번에 10편까지 만들 수 있습니다.",
         ],
     },
+    {
+        "version": 142,
+        "date": "2026-11-20",
+        "items": [
+            "🏫 지문 강의 영상을 반·학생에게 과제로 낼 수 있습니다. '지문 강의 영상' 탭의 [반에 과제 부여]나 '학생 관리' 탭의 [🎬 영상 과제 부여]로 내면, 학생은 영상을 건너뛰거나 빨리 감지 못하고 끝까지 봐야 완료됩니다. 영상 뒤에 풀 확인 문제(저장해 둔 객관식·주관식·문법·워크북)를 붙일 수도 있고, 시험 성적표에서 학생별 실제 재생 시간·완료 여부를 확인할 수 있습니다.",
+            "💾 지문 강의 영상을 여러 개 만들었을 때, 저장창에서 '영상 N개를 따로따로 저장하기'를 체크하면 영상마다 저장본이 하나씩 생기고 저장 이름도 영상마다 따로 정할 수 있습니다(체크하지 않으면 예전처럼 하나로 저장).",
+        ],
+    },
 ]
 # 가장 새 번호 — 목록은 오래된 것부터 적혀 있다. 예전에는 CHANGELOG[0]을 최신으로 읽어
 # [확인했습니다]가 가장 오래된 번호(8)를 적는 바람에 소식이 7일 동안 거듭 떴다(2026-10-11).
@@ -21076,7 +21084,7 @@ def get_test_vocab_for_student(student_id, assignment_id):
 # 학생 시험 목록이 읽는 칸. 문항·단어·지문을 빼야 한다 — 시험 문서는 한 개에 40KB 안팎(큰 것은 100KB)이라 시험이 36개인
 # 반은 목록 한 번에 1.6MB를 받았다. 개수는 시험을 낼 때 n_questions·n_words에 적어 둔다.
 _TEST_LIST_FIELDS = ["title", "format", "kind", "source", "student_id", "student_name", "teacher_id", "unit_count",
-                     "max_wrong", "created_at", "retakes", "retry", "n_questions", "n_words", "origin"]
+                     "max_wrong", "created_at", "retakes", "retry", "n_questions", "n_words", "origin", "video"]
 _ATTEMPT_LIST_FIELDS = ["assignment_id", "student_id", "round", "passed", "pending", "qdetails", "score", "total",
                         "wrong", "submitted_at"]
 
@@ -21196,12 +21204,18 @@ def list_tests_for_student(student_id):
     for rows in attempts_by.values():
         rows.sort(key=lambda d: d.get("round", 1))
     retry_todo = _retry_todo_map(tests, attempts_by, student_id)
+    watch_by = _video_watch_map("student_id", student_id) if any(t.get("video") for t in tests.values()) else {}
     rows = []
     for aid, d in tests.items():
         attempts = attempts_by.get(aid, [])
         progress = _attempt_progress(d, attempts)
         last = attempts[-1] if attempts else None
+        video = None
+        if d.get("video"):
+            video = _video_state(watch_by.get(aid), float((d["video"] or {}).get("seconds") or 0))
+            video["title"] = (d["video"] or {}).get("title", "")
         rows.append({
+            "video": video,
             "id": aid, "title": d.get("title", ""), "format": d.get("format"),
             "kind": d.get("kind") or "vocab", "source": d.get("source") or "",
             "questionCount": d.get("n_questions") or 0,
@@ -21209,7 +21223,8 @@ def list_tests_for_student(student_id):
             "qc": _qt_counts_for(d, last.get("qdetails")) if last else None,
             "wordCount": d.get("n_words") or 0, "createdAt": d.get("created_at", ""),
             "maxWrong": d.get("max_wrong"),
-            "submitted": bool(attempts),
+            # 영상만 있는 과제는 영상을 다 보면 끝이다
+            "submitted": bool(attempts) or bool(video and video["done"] and not (d.get("n_questions") or 0)),
             "passed": progress["passed"], "passedRound": progress["passedRound"],
             "retakeOpen": progress["retakeOpen"],
             "attemptCount": len(attempts),
@@ -21572,17 +21587,22 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
         for rows_ in retries.values():
             rows_.sort(key=lambda x: x["round"] or 0)
     rows = []
+    vsec = float((assignment.get("video") or {}).get("seconds") or 0)
+    watch = _video_watch_map("assignment_id", assignment_id) if assignment.get("video") else {}
+    video_only = bool(assignment.get("video")) and not (assignment.get("questions") or [])
     for sid in list(targets) + [x for x in by_student if x not in targets]:
         atts = by_student.get(sid, [])
         name = targets.get(sid) or (atts[0].get("student_name", "") if atts else "")
         progress = _attempt_progress(assignment, atts)
         last = atts[-1] if atts else None
+        vstate = _video_state(watch.get(sid), vsec) if assignment.get("video") else None
         rows.append({
+            "video": vstate,
             "studentId": sid, "studentName": name,
             "removed": sid not in targets,
             "pending": (last.get("pending") or 0) if (quiz and last) else 0,
             "qc": _qt_counts_for(assignment, last.get("qdetails")) if (quiz and last) else None,
-            "status": ("done" if atts else "none") if quiz else
+            "status": ("done" if (atts or (video_only and vstate and vstate["done"])) else "none") if quiz else
                       _vocab_status(progress, atts),
             "passed": progress["passed"], "passedRound": progress["passedRound"],
             "rounds": [{
@@ -21618,6 +21638,8 @@ def list_attempts_for_assignment(teacher_id, assignment_id):
             "pending": sum(r["pending"] for r in rows),
         },
     }
+    if assignment.get("video"):
+        out["video"] = {"title": assignment["video"].get("title", ""), "seconds": vsec, "only": video_only}
     if quiz:
         out["retryOn"] = bool((assignment.get("retry") or {}).get("enabled"))
         out["questionStats"] = _qt_question_stats(
@@ -21635,6 +21657,8 @@ def delete_assignment(teacher_id, assignment_id):
     for doc in DB.collection("test_studies").where("assignment_id", "==", assignment_id).stream():
         doc.reference.delete()
     for doc in DB.collection("quiz_retries").where("assignment_id", "==", assignment_id).stream():
+        doc.reference.delete()
+    for doc in DB.collection(VIDEO_WATCH).where("assignment_id", "==", assignment_id).stream():
         doc.reference.delete()
     _drop_drafts("assignment_id", assignment_id)
     ref.delete()
@@ -22012,10 +22036,16 @@ QUIZ_TEST_ORIGINS = ("mcq", "saq", "mix", "grammar", "workbook")
 
 
 def create_quiz_assignment(teacher_id, class_id, title, questions, student_id=None, source="quiz", retry=None,
-                           origin=""):
+                           origin="", video_id=None):
     _require_db()
     _, c = _own_class(teacher_id, class_id)
     _seat_require(c.get("teacher_id") or teacher_id, teacher_id)
+    video = None
+    if video_id:                       # 지문 강의 영상 과제 — 내 영상이어야 하고, 문항은 없어도 된다
+        _, vmeta = _video_own(teacher_id, video_id)
+        if vmeta.get("status") != "ready":
+            raise ValueError("아직 올라가지 않은 영상입니다.")
+        video = {"id": video_id, "title": vmeta.get("title", ""), "seconds": vmeta.get("seconds") or 0}
     student_name = None
     if student_id:
         s_snap = DB.collection("students").document(student_id).get()
@@ -22036,7 +22066,7 @@ def create_quiz_assignment(teacher_id, class_id, title, questions, student_id=No
             if src:
                 c["src"] = src
         clean.append(c)
-    if not clean:
+    if not clean and not video:
         raise ValueError("낼 수 있는 문항이 없습니다.")
     # 지문은 시험 문서에 한 번씩만 담는다 — 문서 한도(1MiB)를 넘기지 않게 상한을 넘는 지문은 보충 대상에서 뺀다
     kept, total_chars = {}, 0
@@ -22058,7 +22088,8 @@ def create_quiz_assignment(teacher_id, class_id, title, questions, student_id=No
         raise ValueError("문제 분량이 너무 커서 한 번에 낼 수 없습니다. 문항을 나눠 내 주세요.")
     ref = DB.collection("test_assignments").document()
     ref.set({
-        "kind": "quiz", "source": "workbook" if source == "workbook" else "quiz",
+        "kind": "quiz", "source": "workbook" if source == "workbook" else ("video" if video else "quiz"),
+        "video": video,
         "teacher_id": teacher_id, "class_id": class_id,
         "student_id": student_id, "student_name": student_name,
         "title": _norm_text(_qt_s(title, 100)),
@@ -22070,6 +22101,195 @@ def create_quiz_assignment(teacher_id, class_id, title, questions, student_id=No
         "origin": "workbook" if source == "workbook" else (origin if origin in QUIZ_TEST_ORIGINS else ""),
     })
     return ref.id, len(clean), len(raw) - len(clean), retry_ok
+
+
+# ══════ 지문 강의 영상 과제(2026-11-20 사용자) ══════
+# 지문 강의 영상(public/lesson.js)을 선생님 브라우저가 mp4로 만든 뒤 과제용으로 올려 두고, 학생이 끝까지 봐야 완료로 친다.
+# 영상은 Firestore에 VIDEO_CHUNK 크기 조각으로 담는다(레벨테스트 음성과 같은 길 — 별도 저장소·새 라이브러리 없음).
+# 과제는 문제 시험(kind quiz)에 video 칸을 더한 것이다 — 문항이 없으면 영상만, 있으면 영상을 다 본 뒤에야 문제가 열린다.
+# 시청 기록(video_watch/{시험}_{학생})은 학생 화면이 5초마다 보내는 '지금 위치'로 서버가 센다 — 서버 시계로 잰 시간보다 빨리
+# 나아간 위치(건너뛰기)는 인정하지 않아, 화면 코드를 고쳐도 건너뛰어 완료되지 않는다.
+VIDEO_COLL = "lesson_videos"
+VIDEO_CHUNKS = "lesson_video_chunks"
+VIDEO_WATCH = "video_watch"
+VIDEO_CHUNK = 700 * 1024            # 조각 하나(원본 바이트) — base64로 보내도 요청 한도 안, 문서 1MiB 한도 안
+VIDEO_MAX_BYTES = 200 * 1024 * 1024   # 수업 영상은 1분 약 12MB(4Mbps) — 15분쯤까지
+VIDEO_MAX_SECONDS = 3600
+VIDEO_MAX_PER_TEACHER = 40
+VIDEO_RANGE_MAX = 4 * 1024 * 1024   # 한 번 응답에 실어 주는 최대 바이트(브라우저가 이어서 또 달라고 한다)
+VIDEO_DONE_RATIO = 0.9              # 영상 길이의 이 비율 이상을 실제로 재생했고
+VIDEO_DONE_TAIL = 2.0               # 끝에서 이 초 안쪽까지 도달해야 완료
+VIDEO_BEAT_MAX = 15.0               # 신호 한 번에 인정하는 최대 재생 시간(초)
+_video_chunk_cache = {}
+_video_chunk_cache_lock = threading.Lock()
+
+
+def _video_own(teacher_id, video_id):
+    snap = DB.collection(VIDEO_COLL).document(str(video_id or "-")).get()
+    if not snap.exists or (snap.to_dict() or {}).get("teacher_id") != teacher_id:
+        raise ValueError("영상을 찾을 수 없습니다.")
+    return snap.reference, snap.to_dict() or {}
+
+
+def video_begin(teacher_id, title, seconds, size, n_chunks):
+    _require_db()
+    try:
+        seconds, size, n_chunks = float(seconds), int(size), int(n_chunks)
+    except (TypeError, ValueError):
+        raise ValueError("영상 정보가 올바르지 않습니다.")
+    if not (1 <= seconds <= VIDEO_MAX_SECONDS):
+        raise ValueError(f"영상 길이는 {VIDEO_MAX_SECONDS // 60}분까지 올릴 수 있습니다.")
+    if not (1 <= size <= VIDEO_MAX_BYTES):
+        raise ValueError(f"영상 크기는 {VIDEO_MAX_BYTES // 1048576}MB까지 올릴 수 있습니다. 화질을 낮춰 다시 올려 주세요.")
+    if n_chunks != -(-size // VIDEO_CHUNK):
+        raise ValueError("영상 조각 수가 맞지 않습니다.")
+    mine = [d for d in DB.collection(VIDEO_COLL).where("teacher_id", "==", teacher_id).select(["status"]).stream()]
+    if len(mine) >= VIDEO_MAX_PER_TEACHER:
+        raise ValueError(f"과제용 영상은 {VIDEO_MAX_PER_TEACHER}개까지 올려 둘 수 있습니다. 안 쓰는 영상을 지워 주세요.")
+    ref = DB.collection(VIDEO_COLL).document()
+    ref.set({"teacher_id": teacher_id, "title": _norm_text(_qt_s(title, 100)) or "지문 강의 영상",
+             "seconds": round(seconds, 1), "size": size, "n_chunks": n_chunks,
+             "status": "uploading", "created_at": _now_iso()})
+    return ref.id
+
+
+def video_put_chunk(teacher_id, video_id, index, b64):
+    _require_db()
+    ref, meta = _video_own(teacher_id, video_id)
+    if meta.get("status") != "uploading":
+        raise ValueError("이미 올린 영상입니다.")
+    try:
+        index = int(index)
+        raw = base64.b64decode(b64 or "", validate=True)
+    except (TypeError, ValueError):            # 잘못된 base64(binascii.Error)도 ValueError다
+        raise ValueError("영상 조각을 읽지 못했습니다.")
+    if not (0 <= index < int(meta.get("n_chunks") or 0)) or not raw or len(raw) > VIDEO_CHUNK:
+        raise ValueError("영상 조각이 올바르지 않습니다.")
+    DB.collection(VIDEO_CHUNKS).document(f"{ref.id}__{index:05d}").set({"video_id": ref.id, "i": index, "data": raw})
+
+
+def video_finish(teacher_id, video_id):
+    _require_db()
+    ref, meta = _video_own(teacher_id, video_id)
+    have = {d.to_dict().get("i") for d in DB.collection(VIDEO_CHUNKS).where("video_id", "==", ref.id).select(["i"]).stream()}
+    if have != set(range(int(meta.get("n_chunks") or 0))):
+        raise ValueError("올라가지 않은 영상 조각이 있습니다. 다시 올려 주세요.")
+    ref.update({"status": "ready"})
+    return {"id": ref.id, "title": meta.get("title"), "seconds": meta.get("seconds"), "size": meta.get("size")}
+
+
+def video_list(teacher_id):
+    _require_db()
+    rows = []
+    for d in DB.collection(VIDEO_COLL).where("teacher_id", "==", teacher_id).stream():
+        m = d.to_dict() or {}
+        if m.get("status") == "ready":
+            rows.append({"id": d.id, "title": m.get("title", ""), "seconds": m.get("seconds") or 0,
+                         "size": m.get("size") or 0, "createdAt": m.get("created_at", "")})
+    rows.sort(key=lambda r: r["createdAt"], reverse=True)
+    return rows
+
+
+def video_delete(teacher_id, video_id):
+    _require_db()
+    ref, _ = _video_own(teacher_id, video_id)
+    if any(True for _ in DB.collection("test_assignments").where("video.id", "==", ref.id).select([]).limit(1).stream()):
+        raise ValueError("과제로 내 준 영상은 지울 수 없습니다. 그 과제를 먼저 지워 주세요.")
+    for d in DB.collection(VIDEO_CHUNKS).where("video_id", "==", ref.id).select([]).stream():
+        d.reference.delete()
+    ref.delete()
+
+
+def _video_chunk(video_id, index):
+    key = (video_id, index)
+    with _video_chunk_cache_lock:
+        if key in _video_chunk_cache:
+            return _video_chunk_cache[key]
+    snap = DB.collection(VIDEO_CHUNKS).document(f"{video_id}__{index:05d}").get()
+    data = bytes((snap.to_dict() or {}).get("data") or b"") if snap.exists else b""
+    with _video_chunk_cache_lock:
+        if len(_video_chunk_cache) >= 24:       # 조각 24개(약 17MB)만 기억한다 — 여러 학생이 같은 영상을 볼 때 읽기를 줄인다
+            _video_chunk_cache.pop(next(iter(_video_chunk_cache)))
+        _video_chunk_cache[key] = data
+    return data
+
+
+def video_read_range(video_id, size, start, end):
+    """영상 바이트 [start, end] — 필요한 조각만 읽어 이어 붙인다."""
+    first, last = start // VIDEO_CHUNK, end // VIDEO_CHUNK
+    buf = b"".join(_video_chunk(video_id, i) for i in range(first, last + 1))
+    off = start - first * VIDEO_CHUNK
+    return buf[off:off + (end - start + 1)]
+
+
+def _video_of_assignment(student_id, assignment_id):
+    """학생이 이 과제의 영상을 볼 자격이 있는지 확인하고 (시험, 영상 meta)를 돌려준다."""
+    assignment, _ = _qt_load(student_id, assignment_id)
+    vid = (assignment.get("video") or {}).get("id")
+    if not vid:
+        raise ValueError("영상이 없는 과제입니다.")
+    snap = DB.collection(VIDEO_COLL).document(vid).get()
+    if not snap.exists or (snap.to_dict() or {}).get("status") != "ready":
+        raise ValueError("영상을 찾을 수 없습니다. 선생님께 알려 주세요.")
+    return assignment, snap.id, snap.to_dict() or {}
+
+
+def _video_state(w, seconds):
+    """시청 기록 문서 → 화면용 요약."""
+    w = w or {}
+    return {"watched": round(float(w.get("watched") or 0), 1), "furthest": round(float(w.get("furthest") or 0), 1),
+            "plays": int(w.get("plays") or 0), "done": bool(w.get("done_at")),
+            "doneAt": w.get("done_at") or "", "lastAt": w.get("last_at") or "", "seconds": seconds}
+
+
+def _video_done(assignment_id, student_id):
+    snap = DB.collection(VIDEO_WATCH).document(f"{assignment_id}_{student_id}").get()
+    return bool(snap.exists and (snap.to_dict() or {}).get("done_at"))
+
+
+def video_beat(student_id, assignment_id, position, playing):
+    """학생 화면이 5초마다 알리는 재생 위치. 인정하는 시청 시간은 '서버 시계로 지난 시간'을 넘지 못한다."""
+    _require_db()
+    assignment, vid, meta = _video_of_assignment(student_id, assignment_id)
+    seconds = float(meta.get("seconds") or 0)
+    try:
+        pos = max(0.0, min(float(position), seconds + 1))
+    except (TypeError, ValueError):
+        raise ValueError("재생 위치가 올바르지 않습니다.")
+    ref = DB.collection(VIDEO_WATCH).document(f"{assignment_id}_{student_id}")
+    snap = ref.get()
+    w = (snap.to_dict() or {}) if snap.exists else {}
+    now_t = time.time()
+    now = _now_iso()
+    last_t, last_pos = float(w.get("beat_t") or 0), float(w.get("beat_pos") or 0)
+    elapsed = min(max(now_t - last_t, 0.0), VIDEO_BEAT_MAX * 2) if last_t else 0.0
+    watched, furthest = float(w.get("watched") or 0), float(w.get("furthest") or 0)
+    if playing and last_t:
+        adv = pos - last_pos
+        allow = min(elapsed, VIDEO_BEAT_MAX) * 1.3 + 0.5          # 1배속보다 조금 넉넉하게
+        if 0 < adv <= allow:
+            watched += adv
+            furthest = max(furthest, pos)
+    if not w:
+        w = {"assignment_id": assignment_id, "student_id": student_id, "teacher_id": assignment.get("teacher_id"),
+             "student_name": "", "first_at": now, "plays": 1}
+    elif last_t and now_t - last_t > 120:
+        w["plays"] = int(w.get("plays") or 1) + 1               # 오래 쉰 뒤 다시 보면 새 시청으로 센다
+    done_at = w.get("done_at") or ""
+    if not done_at and furthest >= seconds - VIDEO_DONE_TAIL and watched >= seconds * VIDEO_DONE_RATIO:
+        done_at = now
+    w.update({"watched": round(watched, 2), "furthest": round(furthest, 2), "beat_t": now_t, "beat_pos": pos,
+              "last_at": now, "done_at": done_at, "seconds": seconds})
+    ref.set(w)
+    return _video_state(w, seconds)
+
+
+def _video_watch_map(field, value):
+    out = {}
+    for d in DB.collection(VIDEO_WATCH).where(field, "==", value).stream():
+        w = d.to_dict() or {}
+        out[w.get("student_id") if field == "assignment_id" else w.get("assignment_id")] = w
+    return out
 
 
 def _qt_load(student_id, assignment_id):
@@ -22093,13 +22313,24 @@ def _qt_seed(assignment_id, i):
 
 
 def get_quiz_for_student(assignment_id, assignment, student_id):
+    video = assignment.get("video")
+    qs = assignment.get("questions") or []
+    if video:
+        snap = DB.collection(VIDEO_WATCH).document(f"{assignment_id}_{student_id}").get()
+        state = _video_state(snap.to_dict() if snap.exists else None, float(video.get("seconds") or 0))
+        info = {"title": video.get("title", ""), "seconds": video.get("seconds") or 0, **state}
+        if not state["done"] or not qs:      # 영상을 다 보기 전(또는 영상뿐인 과제)에는 문제를 내보내지 않는다
+            return {"kind": "quiz", "source": "video", "title": assignment.get("title", ""),
+                    "needVideo": not state["done"], "video": info, "questions": []}
     if _get_student_attempts(assignment_id, student_id):
         raise ValueError("이미 제출한 시험입니다. 목록에서 [결과 보기]를 누르세요.")
-    qs = assignment.get("questions") or []
-    return {
+    out = {
         "kind": "quiz", "source": assignment.get("source") or "quiz", "title": assignment.get("title", ""),
         "questions": [_qt_student_view(q, _qt_seed(assignment_id, i)) for i, q in enumerate(qs)],
     }
+    if video:
+        out["video"] = info
+    return out
 
 
 def _qt_same_words(given, correct):
@@ -22198,6 +22429,10 @@ def _qt_totals(qdetails):
 
 def submit_quiz_attempt(assignment_id, assignment, student_id, student, answers):
     qs = assignment.get("questions") or []
+    if assignment.get("video") and not _video_done(assignment_id, student_id):
+        raise ValueError("영상을 끝까지 본 뒤에 문제를 풀 수 있어요.")
+    if not qs:
+        raise ValueError("풀 문제가 없는 과제입니다.")
     answers = _qt_list(answers)
     qdetails = []
     for i, q in enumerate(qs):
@@ -24548,6 +24783,58 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 404)
             return
 
+        if path == "/api/lessonvideo/list":
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            self._send_json({"videos": video_list(user_id)})
+            return
+
+        if path == "/api/student/video":
+            student_id = _student_session_user(self)
+            if not student_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            try:
+                _, vid, meta = _video_of_assignment(student_id, (query.get("assignmentId") or [""])[0])
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 404)
+                return
+            size = int(meta.get("size") or 0)
+            start, end = 0, size - 1
+            m = re.match(r"bytes=(\d*)-(\d*)$", self.headers.get("Range", "").strip())
+            partial = bool(m)
+            if m:
+                if m.group(1):
+                    start = int(m.group(1))
+                    if m.group(2):
+                        end = min(int(m.group(2)), size - 1)
+                elif m.group(2):                       # bytes=-N : 끝에서 N바이트
+                    start = max(0, size - int(m.group(2)))
+            if start >= size or start > end:
+                self.send_response(416)
+                self.send_header("content-range", f"bytes */{size}")
+                self.send_header("content-length", "0")
+                self.end_headers()
+                return
+            end = min(end, start + VIDEO_RANGE_MAX - 1)
+            body = video_read_range(vid, size, start, end)
+            self.send_response(206 if partial else 200)
+            self.send_header("content-type", "video/mp4")
+            self.send_header("accept-ranges", "bytes")
+            if partial:
+                self.send_header("content-range", f"bytes {start}-{start + len(body) - 1}/{size}")
+            self.send_header("content-length", str(len(body)))
+            self.send_header("cache-control", "private, no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if path == "/api/student/tests/detail":
             student_id = _student_session_user(self)
             if not student_id:
@@ -24784,7 +25071,9 @@ class Handler(BaseHTTPRequestHandler):
                         "/api/quiz-tests", "/api/quiz-tests/grade",
                         "/api/student/login", "/api/student/logout", "/api/student/tests/submit",
                         "/api/student/tests/studied", "/api/student/retry/start", "/api/student/retry/submit",
-                        "/api/student/draft",
+                        "/api/student/draft", "/api/student/video/beat",
+                        "/api/lessonvideo/begin", "/api/lessonvideo/chunk", "/api/lessonvideo/finish",
+                        "/api/lessonvideo/delete",
                         "/api/admin/approve-leveltest",
                         "/api/leveltest/links", "/api/leveltest/links/update", "/api/leveltest/links/delete",
                         "/api/leveltest/grade", "/api/leveltest/results/delete",
@@ -25808,6 +26097,44 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"maxWrong": max_wrong, "changed": changed})
             return
 
+        # --- 지문 강의 영상 과제: 선생님이 영상을 올려 두고(조각으로), 학생은 시청 위치를 알린다 ---
+        if path in ("/api/lessonvideo/begin", "/api/lessonvideo/chunk", "/api/lessonvideo/finish",
+                    "/api/lessonvideo/delete"):
+            user_id = _session_user(self)
+            if not user_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            if not _classroom_approved(user_id):
+                self._send_json({"error": "학생 등록 기능은 관리자 승인이 필요합니다."}, 403)
+                return
+            try:
+                if path.endswith("/begin"):
+                    self._send_json({"videoId": video_begin(user_id, req.get("title"), req.get("seconds"),
+                                                            req.get("size"), req.get("chunks"))})
+                elif path.endswith("/chunk"):
+                    video_put_chunk(user_id, req.get("videoId"), req.get("index"), req.get("data"))
+                    self._send_json({"ok": True})
+                elif path.endswith("/finish"):
+                    self._send_json(video_finish(user_id, req.get("videoId")))
+                else:
+                    video_delete(user_id, req.get("videoId"))
+                    self._send_json({"deleted": True})
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+            return
+
+        if path == "/api/student/video/beat":
+            student_id = _student_session_user(self)
+            if not student_id:
+                self._send_json({"error": "로그인이 필요합니다."}, 401)
+                return
+            try:
+                self._send_json(video_beat(student_id, req.get("assignmentId"), req.get("position"),
+                                           bool(req.get("playing"))))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, 400)
+            return
+
         # --- 문제 시험(객관식·주관식 탭에서 만든 문제를 학생이 푼다) ---
         if path in ("/api/quiz-tests", "/api/quiz-tests/grade"):
             user_id = _session_user(self)
@@ -25823,6 +26150,7 @@ class Handler(BaseHTTPRequestHandler):
                         user_id, req.get("classId"), req.get("title"), req.get("questions"),
                         student_id=(req.get("studentId") or None), source=req.get("source") or "quiz",
                         retry=req.get("retry"), origin=str(req.get("origin") or ""),
+                        video_id=(req.get("videoId") or None),
                     )
                     self._send_json({"assignmentId": aid, "questions": made, "skipped": skipped,
                                      "retryQuestions": retry_ok})

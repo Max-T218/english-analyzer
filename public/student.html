@@ -124,6 +124,25 @@
     </div>
   </section>
 
+  <!-- ══════════ 지문 강의 영상 과제 — 건너뛰기 없이 끝까지 본다(2026-11-20) ══════════ -->
+  <section id="videoWorkspace" hidden>
+    <div class="panel">
+      <button type="button" class="btn ghost small" id="videoBackBtn">← 목록으로</button>
+      <h3 id="videoTitle" style="margin:12px 0 4px;"></h3>
+      <p class="hint">영상을 끝까지 봐야 완료돼요. 건너뛰거나 빨리 감을 수 없고, 다른 화면으로 나가면 멈춰요.</p>
+      <video id="videoEl" playsinline preload="auto" disablePictureInPicture controlsList="nodownload noplaybackrate" style="width:100%;max-height:70vh;background:#000;border-radius:8px;"></video>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+        <button type="button" class="btn" id="videoPlayBtn">▶ 재생</button>
+        <span class="hint" id="videoStatus"></span>
+      </div>
+      <div class="error" id="videoError"></div>
+      <div id="videoDoneBox" hidden style="margin-top:12px;">
+        <button type="button" class="btn" id="videoToQuizBtn" hidden>확인 문제 풀기 →</button>
+        <button type="button" class="btn ghost" id="videoListBtn">목록으로</button>
+      </div>
+    </div>
+  </section>
+
   <!-- ══════════ 문제 시험 결과(정답·해설) ══════════ -->
   <section id="quizResultWorkspace" hidden>
     <div class="panel" style="text-align:center;">

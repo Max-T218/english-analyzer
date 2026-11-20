@@ -1062,6 +1062,41 @@
     </div>
   </div>
 
+  <!-- ══════════ 지문 강의 영상 과제 부여 창 — 학생 관리 탭과 지문 강의 영상 탭이 함께 연다(public/videoassign.js) ══════════ -->
+  <div class="modal-overlay" id="videoAssignModalOverlay" hidden>
+    <div class="modal-box">
+      <button type="button" class="modal-close" id="videoAssignModalClose" aria-label="닫기">&times;</button>
+      <h3 class="modal-title">반에 영상 과제 부여하기</h3>
+      <form class="auth-panel" id="videoAssignForm">
+        <label for="vaClassSelect">낼 반</label>
+        <select id="vaClassSelect"></select>
+        <label>낼 대상 <span class="hint">(학생을 여러 명 고를 수 있습니다)</span></label>
+        <div id="vaTargetSelect" class="target-list"></div>
+        <label>낼 영상</label>
+        <div id="vaVideoList" class="target-list"></div>
+        <label for="vaTitle">과제 제목</label>
+        <input type="text" id="vaTitle" placeholder="비우면 영상 이름으로 냅니다">
+        <label for="vaQuizKind">영상 뒤에 풀 확인 문제 <span class="hint">(선택 — 영상을 다 본 뒤에야 열립니다)</span></label>
+        <select id="vaQuizKind">
+          <option value="">문제 없이 영상만</option>
+          <option value="mcq">📝 객관식 저장본</option>
+          <option value="saq">✍️ 주관식 저장본</option>
+          <option value="mix">🧩 객관식+주관식 저장본</option>
+          <option value="grammar">📐 문법 문제 저장본</option>
+          <option value="workbook">📚 워크북 저장본</option>
+        </select>
+        <div id="vaQuizList" class="target-list" hidden></div>
+        <p class="hint">학생은 영상을 <b>건너뛰거나 빨리 감을 수 없고</b>, 끝까지 봐야 완료됩니다. 실제로 재생한 시간은 서버가 세어 '학생 관리' 탭의 시험 성적표에서 볼 수 있습니다.
+          영상은 한 번 올려 두면 다른 반·다른 학생에게도 다시 올리지 않고 낼 수 있습니다(영상 40개까지).</p>
+        <div class="gate-actions">
+          <button type="submit" class="btn" id="vaSubmitBtn">과제 내기</button>
+          <span class="gate-status" id="vaStatus"></span>
+        </div>
+      </form>
+      <div class="error" id="vaError"></div>
+    </div>
+  </div>
+
   <!-- ══════════ 작업 화면 ══════════
        탭 메뉴를 왼쪽 세로 사이드바로 둔다 — 위쪽 가로줄이면 작업 중 탭을 오가려고
        스크롤을 맨 위까지 되돌려야 해서 불편하다는 피드백을 반영했다. -->
@@ -2845,6 +2880,7 @@
         <span style="display:inline-flex; gap:8px;">
           <button type="button" class="btn ghost small" id="refreshAssignedBtn">🔄 새로고침</button>
           <button type="button" class="btn small" id="goVocabTabBtn">＋ 시험 출제</button>
+          <button type="button" class="btn small" id="goVideoAssignBtn">🎬 영상 과제 부여</button>
         </span>
       </div>
       <p class="hint">[＋ 시험 출제]로 저장해 둔 단어장·문제·워크북을 골라 바로 낼 수 있습니다. 각 탭의 "🏫 반에 시험 내기"로 낸 시험도 여기에 나타납니다.</p>
@@ -3234,6 +3270,12 @@
       <select id="saveFolderSelect"></select>
       <input type="text" id="saveFolderNew" maxlength="60" placeholder="새 단어장 이름 (예: 토익 단어)" hidden style="margin-top:6px;">
     </div>
+    <!-- 결과물이 여러 개일 때만 뜬다(app.js의 openSaveDialog — 지문 강의 영상) — 하나로 묶지 않고 따로따로 저장 -->
+    <div class="field" id="saveSplitField" hidden>
+      <label class="chk"><input type="checkbox" id="saveSplitChk"> <span id="saveSplitText">따로따로 저장</span></label>
+      <p class="hint" id="saveSplitHint" style="margin:4px 0 0;"></p>
+      <div id="saveSplitNames" hidden style="margin-top:6px;"></div>
+    </div>
     <div class="error" id="saveDialogError"></div>
     <div class="print-guide-actions">
       <button type="button" class="btn ghost" id="saveDialogCancel">취소</button>
@@ -3441,6 +3483,7 @@
 <script src="/reels.js?v=%%ASSET_V%%"></script>
 <script src="/reels_mp4.js?v=%%ASSET_V%%"></script>
 <script src="/lesson.js?v=%%ASSET_V%%"></script>
+<script src="/videoassign.js?v=%%ASSET_V%%"></script>
 <script src="/topic.js?v=%%ASSET_V%%"></script>
 <script src="/ltreport.js?v=%%ASSET_V%%"></script>
 <script src="/leveltest.js?v=%%ASSET_V%%"></script>

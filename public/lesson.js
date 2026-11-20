@@ -988,7 +988,10 @@ async function lsRecPump() {
   if (e.vidError) e.vidErrSig = sig;
   lsRecNow = null;
   const btn = lsCardOf(e) && lsCardOf(e).querySelector(".ls-dl");
-  if (btn && lsVidOk(e)) { btn.disabled = false; btn.textContent = `⬇ 영상 받기 (mp4, ${(e.video.blob.size / 1e6).toFixed(0)}MB)`; }
+  if (btn && lsVidOk(e)) {
+    btn.disabled = false; btn.textContent = `⬇ 영상 받기 (mp4, ${(e.video.blob.size / 1e6).toFixed(0)}MB)`;
+    const ab = lsCardOf(e).querySelector(".ls-assign"); if (ab) ab.disabled = false;
+  }
   else if (lsState.entries.includes(e)) lsRender();
   if (!lsRecQueue.length) { const w = lsRecWaiters; lsRecWaiters = []; w.forEach((f) => f()); }
   lsRecPump();
@@ -1040,6 +1043,7 @@ function lsCardHtml(e, i) {
       <button type="button" class="btn ghost ls-stop" hidden>■ 멈추기</button>
       <button type="button" class="btn ghost ls-full"${ready ? "" : " disabled"} title="영상 파일이 준비됐으면 그 파일을 재생기로(초 이동 가능), 아직이면 미리 보기를 전체 화면으로 엽니다. Esc로 나옵니다.">⛶ 전체 화면</button>
       <button type="button" class="btn ls-dl"${lsVidOk(e) ? "" : " disabled"}>${lsVidOk(e) ? `⬇ 영상 받기 (mp4, ${(e.video.blob.size / 1e6).toFixed(0)}MB)` : ready ? "🎞️ 영상 파일 기다리는 중…" : "⬇ 영상 받기"}</button>
+      <button type="button" class="btn ls-assign"${lsVidOk(e) ? "" : " disabled"} title="영상 파일이 준비되면 반·학생에게 과제로 냅니다. 학생은 건너뛰지 못하고 끝까지 봐야 하며, 확인 문제를 붙일 수 있습니다.">🏫 반에 과제 부여</button>
       ${missing ? `<button type="button" class="btn ghost ls-voice-redo">🔁 빠진 목소리 ${missing}줄 만들기</button>` : ""}
     </div>
     <div class="actions ls-opts">
@@ -1211,6 +1215,7 @@ lsEl("lsResult").addEventListener("click", async (ev) => {
   }
   if (ev.target.closest(".ls-full")) { if (lsPlaying) lsPlaying.stop(); lsPlaying = null; lsFullscreen(e, card); return; }
   if (ev.target.closest(".ls-dl")) { if (lsVidOk(e)) { lsDownload(e); status.textContent = "✅ 내려받았습니다(mp4)."; } return; }
+  if (ev.target.closest(".ls-assign")) { if (lsVidOk(e)) vaOpen(e); return; }
   if (ev.target.closest(".ls-voice-redo")) {
     if (lsState.busy) return;
     const n = e.script.segments.length - (e.audio || []).filter(Boolean).length;
@@ -1243,54 +1248,71 @@ TAB_LIBRARY_WORDS.lesson = {
   empty: "아직 저장한 지문 강의 영상이 없습니다. 만든 뒤 “💾 사이트 저장”을 눌러 보세요.",
 };
 SAVE_TITLE_SUGGEST.lesson = () => passageBasedName("지문 강의 영상");
+function lsPayloadOf(saved, passages) {
+  const images = [];
+  saved.forEach((e, ei) => (e.audio || []).forEach((a, k) => {
+    if (!a) return;
+    const n = lsWavParts(a.raw);
+    if (n === 1) images.push({ entry: ei, lang: "wav", key: lsWavKey(ei, k) });
+    else for (let p = 0; p < n; p++) images.push({ entry: ei, lang: "wav", key: `${lsWavKey(ei, k)}p${p}` });
+  }));
+  return {
+    v: 1,
+    passages,
+    entries: saved.map((e) => ({ name: e.name, text: e.text, voice: e.voice, tag: e.tag, script: e.script, speed: lsSpeedOf(e), look: lsLookOf(e),
+      raws: (e.audio || []).map((a) => (a ? +a.raw.toFixed(3) : 0)) })),
+    images,
+  };
+}
+/* 저장본에 딸린 목소리(wav)를 올린다 — saved는 이 저장본에 담긴 영상 목록(따로 저장은 영상 하나) */
+async function lsAfterSaveFor(saved, itemId, payload, onProgress) {
+  const todo = (payload.images || []).map((m) => {
+    const km = LS_WAV_KEY_RE.exec(m.key);
+    const e = saved[m.entry], k = km ? +km[2] : -1;
+    const a = e && e.audio && e.audio[k];
+    return { m, k, p: km && km[3] != null ? +km[3] : -1, n: a ? lsWavParts(a.raw) : 1, src: a && a.url, line: `${m.entry}:${k}` };
+  }).filter((x) => x.src && lsSavedSrc.get(itemId + "|" + x.m.key) !== x.src);
+  const failedLines = new Set();
+  const reasons = new Set();
+  const wavCache = new Map();   // 줄 주소 → {x, sr} (조각마다 다시 읽지 않게)
+  if (onProgress && todo.length) onProgress(0, todo.length);
+  for (let i = 0; i < todo.length; i++) {
+    const { m, p, n, src, line } = todo[i];
+    try {
+      let blob = await fetch(src).then((r) => r.blob());
+      if (p >= 0) {   // 긴 줄 — 이 조각의 소리만 떼어 온전한 wav 하나로
+        if (!wavCache.has(src)) wavCache.set(src, rlmReadWav(await blob.arrayBuffer()));
+        const { x, sr } = wavCache.get(src);
+        const per = Math.ceil(x.length / n);
+        blob = rlWavBlob(x.subarray(p * per, Math.min(x.length, (p + 1) * per)), sr);
+      }
+      await postJson("/api/saved-image", { id: itemId, key: m.key, mime: "audio/wav", image: await blobToB64(blob) }, "저장에 실패했습니다.");
+      lsSavedSrc.set(itemId + "|" + m.key, src);
+    } catch (err) { failedLines.add(line); reasons.add((err && err.message) || String(err)); }
+    if (onProgress) onProgress(i + 1, todo.length);
+  }
+  if (failedLines.size) throw new Error(`대본은 저장됐지만 목소리 ${failedLines.size}줄은 저장하지 못했습니다 — ${[...reasons].join(" / ")} 다시 저장해 보세요.`);
+}
+
 TAB_SAVE.lesson = {
   canSave: () => (lsState.entries.some((e) => e.script) ? "" : "저장할 지문 강의 영상이 없습니다. 먼저 만들어 주세요."),
-  getPayload: () => {
-    const saved = lsState.entries.filter((e) => e.script);
-    const images = [];
-    saved.forEach((e, ei) => (e.audio || []).forEach((a, k) => {
-      if (!a) return;
-      const n = lsWavParts(a.raw);
-      if (n === 1) images.push({ entry: ei, lang: "wav", key: lsWavKey(ei, k) });
-      else for (let p = 0; p < n; p++) images.push({ entry: ei, lang: "wav", key: `${lsWavKey(ei, k)}p${p}` });
-    }));
-    return {
-      v: 1,
-      passages: passageMgr.getJobs(),
-      entries: saved.map((e) => ({ name: e.name, text: e.text, voice: e.voice, tag: e.tag, script: e.script, speed: lsSpeedOf(e), look: lsLookOf(e),
-        raws: (e.audio || []).map((a) => (a ? +a.raw.toFixed(3) : 0)) })),
-      images,
-    };
+  getPayload: () => lsPayloadOf(lsState.entries.filter((e) => e.script), passageMgr.getJobs()),
+  // 영상이 둘 이상이면 '영상마다 따로 저장'을 고를 수 있다 — 저장본 하나에 영상 하나씩(이름은 '제목_영상 이름')
+  splitItems: () => {
+    const used = new Map();
+    return lsState.entries.filter((e) => e.script).map((e) => {
+      let name = String(e.script.title || e.name || "영상").trim() || "영상";
+      const n = (used.get(name) || 0) + 1; used.set(name, n);
+      if (n > 1) name = `${name} (${n})`;
+      const jobs = passageMgr.getJobs().filter((j) => j.text && (e.text || "").includes(j.text.trim()));
+      return {
+        name,
+        getPayload: () => lsPayloadOf([e], jobs.length ? jobs : [{ name: e.name, text: e.text, named: true }]),
+        afterSave: (itemId, payload, onProgress) => lsAfterSaveFor([e], itemId, payload, onProgress),
+      };
+    });
   },
-  afterSave: async (itemId, payload, onProgress) => {
-    const saved = lsState.entries.filter((e) => e.script);
-    const todo = (payload.images || []).map((m) => {
-      const km = LS_WAV_KEY_RE.exec(m.key);
-      const e = saved[m.entry], k = km ? +km[2] : -1;
-      const a = e && e.audio && e.audio[k];
-      return { m, k, p: km && km[3] != null ? +km[3] : -1, n: a ? lsWavParts(a.raw) : 1, src: a && a.url, line: `${m.entry}:${k}` };
-    }).filter((x) => x.src && lsSavedSrc.get(itemId + "|" + x.m.key) !== x.src);
-    const failedLines = new Set();
-    const reasons = new Set();
-    const wavCache = new Map();   // 줄 주소 → {x, sr} (조각마다 다시 읽지 않게)
-    if (onProgress && todo.length) onProgress(0, todo.length);
-    for (let i = 0; i < todo.length; i++) {
-      const { m, p, n, src, line } = todo[i];
-      try {
-        let blob = await fetch(src).then((r) => r.blob());
-        if (p >= 0) {   // 긴 줄 — 이 조각의 소리만 떼어 온전한 wav 하나로
-          if (!wavCache.has(src)) wavCache.set(src, rlmReadWav(await blob.arrayBuffer()));
-          const { x, sr } = wavCache.get(src);
-          const per = Math.ceil(x.length / n);
-          blob = rlWavBlob(x.subarray(p * per, Math.min(x.length, (p + 1) * per)), sr);
-        }
-        await postJson("/api/saved-image", { id: itemId, key: m.key, mime: "audio/wav", image: await blobToB64(blob) }, "저장에 실패했습니다.");
-        lsSavedSrc.set(itemId + "|" + m.key, src);
-      } catch (err) { failedLines.add(line); reasons.add((err && err.message) || String(err)); }
-      if (onProgress) onProgress(i + 1, todo.length);
-    }
-    if (failedLines.size) throw new Error(`대본은 저장됐지만 목소리 ${failedLines.size}줄은 저장하지 못했습니다 — ${[...reasons].join(" / ")} 다시 저장해 보세요.`);
-  },
+  afterSave: (itemId, payload, onProgress) => lsAfterSaveFor(lsState.entries.filter((e) => e.script), itemId, payload, onProgress),
   afterLoad: async (itemId, payload) => {
     const metas = Array.isArray(payload.images) ? payload.images : [];
     const parts = new Map();   // "entry:k" → [조각 차례대로 base64]
@@ -1355,7 +1377,7 @@ if (typeof HOWTO !== "undefined") {
       "<b>목소리</b>를 고릅니다(<b>🔊 들어 보기</b>로 미리 들어 볼 수 있고, <b>더 많은 목소리</b>를 펼치면 열 가지가 더 있습니다). 여러 개 고르면 <b>🎙️ 영상마다 목소리</b>에서 지문마다 정합니다.",
       "<b>말 빠르기</b>·<b>화면 모양</b>(✍️ 필기형 / 🖥️ 슬라이드형)을 고르고 <b>🎓 영상 만들기</b>를 누릅니다. 위쪽 <b>목표 어법</b> 칸에 어법을 적으면(쉼표로 4개까지) 문장 설명 뒤에 그 어법을 따로 자세히 설명합니다(개념·형태·이 지문에서 쓰인 곳·내신에 나오는 방식).",
       "<b>▶ 미리 보기</b>로 확인합니다. 화면 모양·빠르기·머리표는 만든 뒤에도 카드에서 <b>값 없이</b> 바꿀 수 있습니다.",
-      "영상 파일(mp4)은 저절로 만들어 둡니다. <b>⬇ 영상 받기</b>로 받으세요. <b>💾 사이트 저장</b>은 대본·목소리만 남깁니다(영상 파일은 저장되지 않습니다).",
+      "영상 파일(mp4)은 저절로 만들어 둡니다. <b>⬇ 영상 받기</b>로 받으세요. <b>💾 사이트 저장</b>은 대본·목소리만 남깁니다(영상 파일은 저장되지 않습니다). 영상이 둘 이상이면 저장창의 <b>영상 N개를 따로따로 저장하기</b>를 체크해 영상마다 저장본을 하나씩 만들 수 있습니다(과제로 낼 때도 편합니다).",
     ],
     tip: "실제 시험 문제를 모르는 채 만드는 대본이라 '정답'은 말하지 않고 '나오기 좋아요'로만 짚습니다. AI가 만든 해설이니 수업에 쓰기 전에 <b>📜 대본 보기</b>로 한 번 확인해 주세요. 영상 파일은 <b>PC 크롬</b>을 권합니다.",
   };

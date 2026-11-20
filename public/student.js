@@ -170,7 +170,7 @@ const quizConceptWorkspaceEl = $("quizConceptWorkspace");
 
 function showOnly(el) {
   [codeGateEl, listWorkspaceEl, studyWorkspaceEl, takeWorkspaceEl, resultWorkspaceEl, pwWorkspaceEl,
-   quizWorkspaceEl, quizResultWorkspaceEl, quizStudyWorkspaceEl, quizConceptWorkspaceEl].forEach((s) => {
+   quizWorkspaceEl, quizResultWorkspaceEl, quizStudyWorkspaceEl, quizConceptWorkspaceEl, $("videoWorkspace")].forEach((s) => {
     s.hidden = s !== el;
   });
   window.scrollTo(0, 0);
@@ -468,7 +468,16 @@ async function openTest(assignmentId) {
   $("takeForm").innerHTML = "";
   try {
     const data = await getJson(`/api/student/tests/detail?assignmentId=${encodeURIComponent(assignmentId)}`);
-    if (data.kind === "quiz") { openQuiz(assignmentId, data); return; }
+    if (data.kind === "quiz") {
+      if (data.video && (data.needVideo || !(data.questions || []).length)) {
+        // 영상을 아직 다 안 봤다(또는 영상뿐인 과제) — 영상 화면으로. 확인 문제는 서버가 영상을 다 본 뒤에야 내보낸다
+        const t = (await getJson("/api/student/tests")).tests.find((x) => x.id === assignmentId);
+        data.hasQuestions = !!(t && t.questionCount > 0);
+        openVideo(assignmentId, data);
+        return;
+      }
+      openQuiz(assignmentId, data); return;
+    }
     $("takeTitle").textContent = data.round > 1 ? `${data.title} (${data.round}회차)` : data.title;
     $("takeHint").textContent =
       data.format === "mcq" ? "보기 중 하나를 고르세요."
@@ -717,6 +726,7 @@ $("takeForm").addEventListener("click", (e) => {
    한 번만 낼 수 있고, 내면 바로 점수·정답·해설을 보여 준다(답을 여러 모양으로 쓸 수 있는
    문항은 모범답안과 다르면 '선생님 확인 중'으로 남는다). */
 function quizListRowHtml(t) {
+  if (t.video) return videoListRowHtml(t);
   const id = esc(t.id);
   const todo = t.submitted && t.retryTodo;   // 선생님이 켠 보충 학습을 아직 마치지 못했다
   const status = t.submitted
@@ -730,6 +740,134 @@ function quizListRowHtml(t) {
     t.source === "workbook" ? `📚 워크북 · ${t.questionCount}단계` : `📝 문제 시험 · ${t.questionCount}문항`,
     status, buttons);
 }
+
+/* ══════ 지문 강의 영상 과제(2026-11-20 사용자) ══════
+   건너뛰기·빨리 감기 없이 끝까지 봐야 완료다. 화면은 5초마다 '지금 위치'를 서버에 알리고(/api/student/video/beat),
+   인정하는 시청 시간·완료는 서버가 센다 — 서버 시계보다 빨리 나아간 위치는 시청으로 치지 않는다.
+   영상 뒤에 확인 문제가 있으면 영상을 다 본 뒤에야 열린다(서버도 막는다). */
+function fmtTime(sec) {
+  sec = Math.max(0, Math.round(Number(sec) || 0));
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+}
+
+function videoListRowHtml(t) {
+  const id = esc(t.id), v = t.video, hasQ = (t.questionCount || 0) > 0;
+  const meta = `🎬 영상 과제 · 약 ${Math.max(1, Math.round((v.seconds || 0) / 60))}분` + (hasQ ? ` · 확인 문제 ${t.questionCount}문항` : "");
+  let status, buttons;
+  if (!v.done) {
+    status = `<div class="st-card-status">${v.watched > 0 ? `▶ 시청 중 · 재생 ${fmtTime(v.watched)} / ${fmtTime(v.seconds)}` : "아직 보지 않았어요"}</div>`;
+    buttons = `<button type="button" class="btn take-btn" data-id="${id}">${v.watched > 0 ? "이어서 보기" : "영상 보기"}</button>`;
+  } else if (!hasQ) {
+    status = `<div class="st-card-status ok">✅ 시청 완료</div>`;
+    buttons = `<button type="button" class="btn ghost take-btn" data-id="${id}">다시 보기</button>`;
+  } else if (!t.submitted) {
+    status = `<div class="st-card-status ok">✅ 영상 시청 완료 · 이제 확인 문제를 풀어요</div>`;
+    buttons = `<button type="button" class="btn take-btn" data-id="${id}">문제 풀기</button>`;
+  } else {
+    status = `<div class="st-card-status">✅ 영상 시청 완료 · ${QT.countsText(t.qc, true)}</div>`;
+    buttons = `<button type="button" class="btn ghost result-btn" data-id="${id}">정답·해설 보기</button>`;
+  }
+  return testCardHtml(t.title || v.title || "지문 강의 영상", meta, status, buttons);
+}
+
+const videoWorkspaceEl = $("videoWorkspace");
+const videoEl = $("videoEl");
+let videoCtx = null;   // {assignmentId, seconds, hasQuestions, reached, lastBeat, done}
+let videoBeatTimer = null;
+
+function openVideo(assignmentId, data) {
+  currentAssignmentId = assignmentId;
+  const v = data.video || {};
+  videoCtx = { assignmentId, seconds: Number(v.seconds) || 0, hasQuestions: false, reached: Number(v.furthest) || 0,
+               done: !!v.done, busy: false };
+  videoCtx.hasQuestions = !!data.hasQuestions;
+  $("videoTitle").textContent = data.title || v.title || "지문 강의 영상";
+  $("videoError").textContent = "";
+  $("videoDoneBox").hidden = true;
+  videoEl.removeAttribute("controls");
+  videoEl.playbackRate = 1;
+  videoEl.src = `/api/student/video?assignmentId=${encodeURIComponent(assignmentId)}`;
+  videoEl.load();
+  videoEl.addEventListener("loadedmetadata", () => {
+    if (videoCtx && videoCtx.reached > 1 && !videoCtx.done) videoEl.currentTime = Math.max(0, videoCtx.reached - 1);
+  }, { once: true });
+  videoPaint(v);
+  showOnly(videoWorkspaceEl);
+}
+
+function videoPaint(state) {
+  if (!videoCtx) return;
+  if (state && state.done) videoCtx.done = true;
+  const watched = state && state.watched != null ? state.watched : 0;
+  $("videoStatus").textContent = videoCtx.done
+    ? `✅ 시청 완료 (재생 ${fmtTime(watched)} / ${fmtTime(videoCtx.seconds)})`
+    : `재생한 시간 ${fmtTime(watched)} / ${fmtTime(videoCtx.seconds)} — 끝까지 보면 완료돼요`;
+  $("videoDoneBox").hidden = !videoCtx.done;
+  $("videoToQuizBtn").hidden = !(videoCtx.done && videoCtx.hasQuestions);
+}
+
+async function videoBeat(keepalive) {
+  if (!videoCtx || videoCtx.busy) return;
+  const pos = videoEl.currentTime || 0;
+  videoCtx.busy = true;
+  try {
+    const payload = { assignmentId: videoCtx.assignmentId, position: pos, playing: !videoEl.paused && !videoEl.ended };
+    if (keepalive) {
+      fetch("/api/student/video/beat", { method: "POST", keepalive: true,
+        headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+    } else {
+      videoPaint(await postJson("/api/student/video/beat", payload));
+    }
+  } catch (err) {
+    $("videoError").textContent = err.message || "";
+  } finally {
+    if (videoCtx) videoCtx.busy = false;
+  }
+}
+
+// 건너뛰기 막기 — 지금까지 재생해 도달한 곳보다 앞으로는 못 간다
+videoEl.addEventListener("timeupdate", () => {
+  if (!videoCtx) return;
+  if (!videoEl.seeking && videoEl.currentTime <= videoCtx.reached + 1.5) videoCtx.reached = Math.max(videoCtx.reached, videoEl.currentTime);
+});
+videoEl.addEventListener("seeking", () => {
+  if (videoCtx && videoEl.currentTime > videoCtx.reached + 1.5) videoEl.currentTime = videoCtx.reached;
+});
+videoEl.addEventListener("ratechange", () => { if (videoEl.playbackRate !== 1) videoEl.playbackRate = 1; });
+videoEl.addEventListener("contextmenu", (e) => e.preventDefault());
+videoEl.addEventListener("play", () => {
+  $("videoPlayBtn").textContent = "⏸ 잠깐 멈추기";
+  clearInterval(videoBeatTimer);
+  videoBeat();
+  videoBeatTimer = setInterval(videoBeat, 5000);
+});
+videoEl.addEventListener("pause", () => {
+  $("videoPlayBtn").textContent = "▶ 재생";
+  clearInterval(videoBeatTimer);
+  videoBeat();
+});
+videoEl.addEventListener("ended", () => { clearInterval(videoBeatTimer); $("videoPlayBtn").textContent = "▶ 다시 재생"; videoBeat(); });
+videoEl.addEventListener("error", () => { $("videoError").textContent = "영상을 불러오지 못했어요. 인터넷을 확인하고 다시 열어 주세요."; });
+$("videoPlayBtn").addEventListener("click", () => {
+  if (videoEl.paused || videoEl.ended) {
+    if (videoEl.ended) videoEl.currentTime = 0;
+    videoEl.play().catch(() => {});
+  } else videoEl.pause();
+});
+videoEl.addEventListener("click", () => $("videoPlayBtn").click());
+// 화면을 떠나면(다른 탭·잠금) 멈춘다 — 안 보는 시간이 시청으로 세어지지 않게
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden" && videoCtx && !videoWorkspaceEl.hidden && !videoEl.paused) videoEl.pause();
+});
+function videoLeave() {
+  clearInterval(videoBeatTimer);
+  if (!videoEl.paused) videoEl.pause();
+  videoEl.removeAttribute("src"); videoEl.load();
+  videoCtx = null;
+}
+$("videoBackBtn").addEventListener("click", () => { videoLeave(); showOnly(listWorkspaceEl); loadTests(); });
+$("videoListBtn").addEventListener("click", () => { videoLeave(); showOnly(listWorkspaceEl); loadTests(); });
+$("videoToQuizBtn").addEventListener("click", () => { const id = videoCtx && videoCtx.assignmentId; videoLeave(); if (id) openTest(id); });
 
 let quizQuestions = [];
 let quizDraftTimer = null;

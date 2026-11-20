@@ -14120,9 +14120,32 @@ function openSaveDialog(tab) {
       return fillSaveFolders(saveFolderInitial);
     }).catch(() => fillSaveFolders(""));
   }
+  // 결과물이 여럿인 탭(지문 강의 영상)은 '따로따로 저장'을 고르게 한다 — 저장 이름은 '제목_영상 이름'이 된다(2026-11-20 사용자)
+  const splitN = !saveDialogConfirmBtn.disabled && TAB_SAVE[tab] && TAB_SAVE[tab].splitItems ? TAB_SAVE[tab].splitItems().length : 0;
+  $("saveSplitField").hidden = splitN < 2;
+  $("saveSplitChk").checked = false;
+  $("saveSplitNames").hidden = true;
+  if (splitN >= 2) {
+    $("saveSplitText").textContent = `영상 ${splitN}개를 따로따로 저장하기`;
+    $("saveSplitHint").textContent = `저장함에 '${splitN}개'가 각각 생깁니다 — 나중에 영상마다 골라 불러오거나 과제로 낼 수 있습니다.`;
+  }
   saveDialogEl.hidden = false;
   saveTitleInputEl.focus();
 }
+$("saveSplitChk").addEventListener("change", () => {
+  const on = $("saveSplitChk").checked;
+  // 따로 저장은 늘 새 저장본이라 '덮어쓰기'를 숨긴다 — 끄면 원래대로(불러온 자료가 있을 때만)
+  saveDialogOverwriteBtn.hidden = on || !(LOADED_SAVED[pendingSaveTab] && !saveDialogConfirmBtn.disabled);
+  // 영상마다 저장 이름을 따로 고칠 수 있게 입력칸을 편다 — 처음 값은 '위 제목_영상 이름'
+  const box = $("saveSplitNames");
+  box.hidden = !on;
+  if (on) {
+    const base = saveTitleInputEl.value.trim() || "제목 없음";
+    box.innerHTML = TAB_SAVE[pendingSaveTab].splitItems().map((p, i) =>
+      `<label class="hint" style="display:block;margin-top:4px;">${i + 1}번째 저장 이름
+        <input type="text" class="save-split-name" maxlength="100" value="${esc(`${base}_${p.name}`)}"></label>`).join("");
+  }
+});
 function closeSaveDialog() {
   passageSaveFrom = null;   // 남겨 두면 다음 '지문 저장'이 엉뚱한 칸을 담는다
   saveDialogEl.hidden = true;
@@ -14183,6 +14206,30 @@ async function doSaveDialog(overwriteId) {
       const next = finishSaveDialog(tab);
       if (folderFail) alert(`저장은 됐지만 단어장에 넣지 못했습니다. (${folderFail})
 저장함에서 다시 넣어 주세요.`);
+      resumePrintAfterSave(next);
+      return;
+    }
+    // 결과물이 여럿 — 하나씩 따로 저장(저장본이 여러 개 생긴다)
+    if (!overwriteId && !$("saveSplitField").hidden && $("saveSplitChk").checked && TAB_SAVE[tab].splitItems) {
+      const parts = TAB_SAVE[tab].splitItems();
+      const names = [...document.querySelectorAll(".save-split-name")].map((x) => x.value.trim());
+      let done = 0;
+      try {
+        for (const p of parts) {
+          const label = `${done + 1}/${parts.length}번째 저장 중…`;
+          busyBtn.textContent = label;
+          const payload = p.getPayload();
+          if (DOC_TITLES[tab]) payload.coverTitle = DOC_TITLES[tab].get();
+          const res = await postJson("/api/saved", { tab, title: names[done] || `${title}_${p.name}`, payload }, "저장에 실패했습니다.");
+          if (res && res.id && p.afterSave) {
+            await p.afterSave(res.id, payload, (d, t) => { busyBtn.textContent = `${label} ${d}/${t}`; });
+          }
+          done++;
+        }
+      } catch (err) {
+        throw new Error(`${done}개는 저장됐고 ${done + 1}번째에서 멈췄습니다 — ${err.message || "저장에 실패했습니다."}`);
+      }
+      const next = finishSaveDialog(tab);
       resumePrintAfterSave(next);
       return;
     }
@@ -20900,6 +20947,7 @@ const ASSIGNED_KINDS = [
   { id: "mix", label: "🧩 객관식+주관식" },
   { id: "grammar", label: "📐 문법 문제" },
   { id: "workbook", label: "📚 워크북" },
+  { id: "video", label: "🎬 영상 과제" },
   { id: "quiz", label: "📝 그 밖의 문제 시험" },
 ];
 let assignedKind = "all";
@@ -20907,6 +20955,7 @@ let assignedTestsCache = [];
 function assignedKindOf(t) {
   if (t.kind !== "quiz") return "vocab";
   if (t.source === "workbook") return "workbook";
+  if (t.source === "video" || t.video) return "video";
   return ["mcq", "saq", "mix", "grammar"].includes(t.origin) ? t.origin : "quiz";
 }
 
@@ -21790,9 +21839,18 @@ function renderQuizTestResults(data, title) {
           ? `<div>${x.round}회차 ${QT.countsText(x.qc || { right: 0, wrong: 0, pending: 0 }, true)} <button type="button" class="btn ghost small quiz-retry-btn no-print" data-sid="${esc(r.studentId)}" data-round="${x.round}">보기</button></div>`
           : `<div>${x.round}회차 <span class="hint">푸는 중</span></div>`).join("") || '<span class="hint">—</span>'}</td>`
       : "";
-    const span = data.retryOn ? 6 : 5;
+    const span = (data.retryOn ? 6 : 5) + (data.video ? 1 : 0);
+    // 영상 과제 — 서버가 센 실제 재생 시간(건너뛴 구간은 빠진다)과 완료 여부
+    const vm = (s) => `${Math.floor((s || 0) / 60)}:${String(Math.round((s || 0) % 60)).padStart(2, "0")}`;
+    const vcell = data.video
+      ? `<td class="tk">${r.video && (r.video.watched > 0 || r.video.done)
+          ? `${r.video.done ? '<span class="tag ok">시청 완료</span>' : '<span class="tag fail">시청 중</span>'}
+             <div class="hint">재생 ${vm(r.video.watched)} / ${vm(r.video.seconds)} · ${r.video.plays}회 시청${r.video.doneAt ? ` · 완료 ${esc(fmtDateTime(r.video.doneAt))}` : ""}</div>`
+          : '<span class="hint">안 봄</span>'}</td>`
+      : "";
     return `<tr>
         <td class="tk">${esc(r.studentName)}${r.removed ? ' <span class="hint">(삭제된 학생)</span>' : ""}</td>
+        ${vcell}
         <td>${statusTagHtml(r.status)}</td>
         <td class="tk qt-score-cell">${score}${pend}</td>
         ${retryCell}
@@ -21820,7 +21878,7 @@ function renderQuizTestResults(data, title) {
     ${quizTestChartsHtml(rows, stats)}
     <h4 class="sec">학생별 결과</h4>
     <table>
-      <thead><tr><th>학생</th><th>결과</th><th>맞음 · 틀림</th>${data.retryOn ? "<th>보충 학습</th>" : ""}<th>제출</th><th class="no-print"></th></tr></thead>
+      <thead><tr><th>학생</th>${data.video ? "<th>영상 시청</th>" : ""}<th>결과</th><th>맞음 · 틀림</th>${data.retryOn ? "<th>보충 학습</th>" : ""}<th>${data.video && data.video.only ? "완료" : "제출"}</th><th class="no-print"></th></tr></thead>
       <tbody>${body}</tbody></table>
     ${stats.length ? `<h4 class="sec">문항별 결과</h4>
     <table><thead><tr><th>번호</th><th>유형</th><th>맞힌 학생</th><th>틀린 학생</th><th>확인 대기</th></tr></thead>
