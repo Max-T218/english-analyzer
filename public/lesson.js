@@ -1149,6 +1149,17 @@ const lsAskGroups = (all) => rlAskGroups(all, { max: LS_MAX_PASSAGES, sentMax: L
 
 /* 상세분석(/api/analyze 결과) → 대본 요청에 실을 만큼만(2026-11-21 사용자 — 상세분석을 돌려 그 해설로 대본을 쓴다).
    묶음이면 지문마다 분석한 것을 차례로 잇는다. 문장 글 = 덩어리(chunks)를 이은 것 — 화면 왼쪽 영어 칸에 그대로 나온다 */
+/* 서버가 돌려주는 덩어리는 평문 text가 아니라 조립된 HTML eng다 — 문법 표시는 <ruby><span>낱말</span><rt>문법 이름</rt></ruby>,
+   병렬 번호는 <sup>. 글자만 꺼낼 때 rt·sup을 빼야 한다(처음엔 c.text를 읽어 문장이 비었고 서버가 분석을 버렸다 — 2026-11-21 실서비스) */
+function lsHtmlDiv(h) { const d = document.createElement("div"); d.innerHTML = String(h || ""); return d; }
+function lsPlainEn(h) { const d = lsHtmlDiv(h); d.querySelectorAll("rt,rp,sup").forEach((x) => x.remove()); return d.textContent; }
+function lsAnnsOf(h) {
+  return [...lsHtmlDiv(h).querySelectorAll("ruby")].map((r) => {
+    const rt = r.querySelector("rt"), c = r.cloneNode(true);
+    c.querySelectorAll("rt,rp,sup").forEach((x) => x.remove());
+    return { t: c.textContent.trim(), rt: rt ? rt.textContent.trim() : "" };
+  }).filter((a) => a.t && a.rt);
+}
 function lsAnalysisOf(list) {
   const sentences = [], stages = [];
   let oneLine = "";
@@ -1156,11 +1167,11 @@ function lsAnalysisOf(list) {
     (d.sentences || []).forEach((st) => {
       const ch = Array.isArray(st.chunks) ? st.chunks : [];
       sentences.push({
-        en: ch.map((c) => c.text || "").join(" ").replace(/\s+/g, " ").trim(),
-        ko: ch.map((c) => c.kor || "").join(" ").replace(/\s+/g, " ").trim(),
+        en: ch.map((c) => c.text || lsPlainEn(c.eng)).join(" ").replace(/\s+/g, " ").trim(),
+        ko: ch.map((c) => lsHtmlDiv(c.kor).textContent).join(" ").replace(/\s+/g, " ").trim(),
         tag: st.tag || "", note: st.note || "", isTopic: !!st.isTopic,
         examTags: st.examTags || [], examNote: st.examNote || "",
-        anns: ch.flatMap((c) => c.anns || []).map((a) => ({ t: a.t || "", rt: a.rt || "" })).slice(0, 12),
+        anns: ch.flatMap((c) => (c.anns || []).map((a) => ({ t: a.t || "", rt: a.rt || "" })).concat(c.eng ? lsAnnsOf(c.eng) : [])).slice(0, 12),
       });
     });
     const ol = d.outline || {};
