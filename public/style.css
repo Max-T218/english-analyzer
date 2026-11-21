@@ -976,6 +976,10 @@ label.chk-lg{gap:8px; font-size:14.5px;}
   padding:12px 14px; margin-bottom:12px; line-height:1.9; font-size:14.5px;
 }
 .qz-passage u{text-decoration-color:var(--accent); text-decoration-thickness:2px;}
+/* AI가 빈칸을 밑줄 130여 개를 붙인 한 덩어리('____…____.')로 내면 줄바꿈 자리가 없어 그 줄이 단 폭을 넘고,
+   인쇄에서 크롬이 문서 전체를 그 폭으로 다시 짜 2단 오른쪽이 종이 밖으로 잘렸다(2026-11-21 사용자 — 혼합 189문항 중 97번 지문 830px).
+   넘칠 때만 아무 자리에서나 끊게 한다(보통 낱말은 그대로). */
+.qz-card .qz-passage, .qz-card .qz-instruction, .qz-card .qz-choices li{overflow-wrap:anywhere;}
 .qz-choices{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px;}
 .qz-choices li{display:flex; align-items:baseline; gap:8px; font-size:14px; line-height:1.5;}
 .qz-choices .qz-num{font-weight:700; color:var(--accent); flex:0 0 auto;}
