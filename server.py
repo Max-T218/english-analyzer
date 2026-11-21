@@ -12028,6 +12028,27 @@ def _lesson_part_rules(lo, hi, n, first, last):
 
 
 LESSON_BRIEF_MAX = 9000        # 상세분석에서 대본 지시에 싣는 글자 상한
+# 수업 방향(2026-11-21 사용자 — 내신 대비 상세 설명 / 지문 내용 상세 해설 중 고른다, 값은 같다). 화면 LS_FOCUSES와 같은 열쇠
+LESSON_FOCUSES = ("exam", "reading")
+
+
+def _lesson_focus_rules(focus, last):
+    """수업 방향 지시 — 시스템 지시문의 [짜임]보다 앞선다. exam은 지시문 그대로(내신 대비)라 빈 글자."""
+    if focus != "reading":
+        return ""
+    end = ("- 문장 설명이 끝나면 [짜임]의 '내신 포인트' 대신 **글 전체 정리**를 판서한다(view \"board\", board_title \"글 전체 정리\"): "
+           "주제(한 줄) → 요지(글쓴이가 하고 싶은 말) → 흐름(문장 번호로 단계 나누기) → 글쓴이가 쓴 전개 방식(예시·대조·인과·비유 등) 한 줄. "
+           "필요하면 그 문장을 view \"s<번호>\"로 다시 띄워 짚는다. 그다음 핵심 어휘·마무리는 [짜임]대로.\n") if last else ""
+    return f"""
+
+[수업 방향 — 가장 우선: 지문 내용 상세 해설]
+이 영상은 시험 대비가 아니라 **이 글을 깊이 이해시키는 해설 수업**이다.
+- 문장마다: 영어를 읽고 → 자연스러운 뜻 → **이 문장이 앞 문장과 어떻게 이어지는지**(연결어·지시어·대조·인과·예시를 짚으며 화살표·동그라미로) →
+  이 문장이 글에서 하는 일과 글쓴이가 왜 이 말을 하는지. 어렵거나 낯선 개념·배경지식은 쉬운 말과 생활 예로 풀어 준다.
+- 문법·구문은 **해석에 꼭 필요한 것만** 짧게 짚는다(긴 문장의 주어·동사 찾기, 수식 관계, 생략·도치 등). 어법 문제·내신 출제 이야기는 하지 않는다.
+- 필기는 주제문 형광펜, 연결어·지시어 동그라미와 화살표, 핵심 개념 물결 밑줄, 나열 번호 위주로 한다.
+{end}- 정답·출제 예측 말투("시험에 나오기 좋아요")는 쓰지 않는다."""
+
 
 
 def parse_lesson_analysis(raw, passage):
@@ -12120,7 +12141,7 @@ def _lesson_target_rules(targets):
 {TARGET_GRAMMAR_CRITERIA}"""
 
 
-def call_gemini_lesson_script(passage, api_key, model, targets=None, analysis=None):
+def call_gemini_lesson_script(passage, api_key, model, targets=None, analysis=None, focus="exam"):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     targets = (targets or [])[:LESSON_TARGETS_MAX]
     if not api_key:
@@ -12142,6 +12163,7 @@ def call_gemini_lesson_script(passage, api_key, model, targets=None, analysis=No
         if len(parts) > 1:
             text += _lesson_part_rules(lo, hi, len(sents), first, last)
         text += _lesson_brief_rules(brief)
+        text += _lesson_focus_rules(focus, last)
         if last:
             text += _lesson_target_rules(targets)
         payload = {
@@ -12177,6 +12199,7 @@ def call_gemini_lesson_script(passage, api_key, model, targets=None, analysis=No
             if not s["ko"] and k:
                 s["ko"] = k
     out["analyzed"] = bool(ana)
+    out["focus"] = focus   # 화면이 카드에 수업 방향을 보인다(저장본에도 남는다)
     out["targets"] = targets   # 화면이 카드에 '목표 어법'을 보인다
     out["parts"] = len(parts)
     return out
@@ -26753,7 +26776,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 script = call_gemini_lesson_script(passage, req.get("apiKey") or "", MODEL,   # 항상 Flash
                                                    parse_grammar_pick_targets(req.get("targetGrammar")),
-                                                   req.get("analysis"))   # 화면이 먼저 돌린 상세분석(없으면 지문만으로)
+                                                   req.get("analysis"),   # 화면이 먼저 돌린 상세분석(없으면 지문만으로)
+                                                   req.get("focus") if req.get("focus") in LESSON_FOCUSES else "exam")
                 self._charge_and_send(path, req, {"script": script})
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)

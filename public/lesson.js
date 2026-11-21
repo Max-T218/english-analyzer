@@ -27,6 +27,12 @@ const LS_LOOKS = [
   { id: "pen", label: "✍️ 필기형", desc: "왼쪽 영어·오른쪽 해석(워크북 좌지문 우해석) 위에 펜으로 긋고 손글씨 메모, 오른쪽 공책에 정리" },
   { id: "slide", label: "🖥️ 슬라이드형", desc: "문장 하나씩 크게, 색 표시와 이름표, 오른쪽 포인트 카드" },
 ];
+// 수업 방향(2026-11-21 사용자) — 서버 LESSON_FOCUSES와 같은 열쇠. 값은 같고 대본의 설명 방향만 바뀐다
+const LS_FOCUSES = [
+  { id: "exam", label: "📝 내신 대비 상세 설명", desc: "어법·구문·어휘, 내신에 나오기 좋은 곳과 서술형 포인트 중심" },
+  { id: "reading", label: "📖 지문 내용 상세 해설", desc: "문장 사이 논리 연결, 글쓴이의 의도, 배경지식 중심 — 문법은 해석에 필요한 만큼만" },
+];
+const lsFocusLabel = (id) => (LS_FOCUSES.find((f) => f.id === id) || LS_FOCUSES[0]).label;
 const LS_FONT = (typeof RL_FONT !== "undefined" && RL_FONT) || "sans-serif";
 const LS_EN_FONT = `Georgia, "Times New Roman", serif`;
 const LS_PEN = `LsPen, ${LS_FONT}`;
@@ -86,6 +92,11 @@ lsEl("lsLookBox").innerHTML = `<div class="rl-vgroup-title">🎞️ 화면 모�
   LS_LOOKS.map((l, i) => `<label class="rl-voice rl-style"><input type="radio" name="lsLook" class="ls-look" value="${l.id}"${i ? "" : " checked"}>` +
     `<b>${l.label}</b><span class="rl-voice-desc">${l.desc}</span></label>`).join("") +
   `</div><span class="rl-voice-desc">두 모양은 같은 대본으로 그립니다 — 만든 뒤 카드에서 값 없이 바꿀 수 있어요</span>`;
+lsEl("lsFocusBox").innerHTML = `<div class="rl-vgroup-title">🧭 수업 방향</div><div class="rl-styles ls-looks">` +
+  LS_FOCUSES.map((f, i) => `<label class="rl-voice rl-style"><input type="radio" name="lsFocus" class="ls-focus" value="${f.id}"${i ? "" : " checked"}>` +
+    `<b>${f.label}</b><span class="rl-voice-desc">${f.desc}</span></label>`).join("") +
+  `</div><span class="rl-voice-desc">대본을 쓰는 방향이라 만든 뒤에는 바꿀 수 없어요 — 값은 같습니다</span>`;
+const lsFocusPick = () => { const c = document.querySelector(".ls-focus:checked"); return c ? c.value : LS_FOCUSES[0].id; };
 const lsSpeedPick = () => +lsEl("lsSpeed").value || LS_TEMPO;
 const lsLookPick = () => { const c = document.querySelector(".ls-look:checked"); return c ? c.value : LS_LOOKS[0].id; };
 lsEl("lsSpeed").addEventListener("input", () => {
@@ -1075,7 +1086,7 @@ function lsCardHtml(e, i) {
   const missing = segs.length - (e.audio || []).filter(Boolean).length;
   const secs = ready ? lsTimeline(e).total : 0;
   return `<section class="ls-card" data-i="${i}">
-    <h3 class="rl-title">🎓 ${esc(e.script.title || e.name)} <span class="rl-sub">${esc(e.name)} · 문장 ${e.script.sentences.length}개 · 대사 ${segs.length}줄 · 목소리 ${esc(e.voice)}${ready ? ` · ${Math.floor(secs / 60)}분 ${Math.round(secs % 60)}초` : ""}${(e.script.targets || []).length ? ` · 🎯 ${esc(e.script.targets.join(", "))}` : ""}</span></h3>
+    <h3 class="rl-title">🎓 ${esc(e.script.title || e.name)} <span class="rl-sub">${esc(e.name)} · ${esc(lsFocusLabel(e.script.focus))} · 문장 ${e.script.sentences.length}개 · 대사 ${segs.length}줄 · 목소리 ${esc(e.voice)}${ready ? ` · ${Math.floor(secs / 60)}분 ${Math.round(secs % 60)}초` : ""}${(e.script.targets || []).length ? ` · 🎯 ${esc(e.script.targets.join(", "))}` : ""}</span></h3>
     ${e.error ? `<div class="passage-error">⚠️ ${esc(e.error)}</div>` : ""}
     ${e.vidError ? `<div class="passage-error">⚠️ 영상 파일을 만들지 못했습니다 — ${esc(e.vidError)}</div>` : ""}
     <div class="ls-stage"><canvas class="ls-canvas" width="${LS_W}" height="${LS_H}"></canvas></div>
@@ -1194,6 +1205,7 @@ async function lsMake() {
     jobs = gs.map((g) => ({ name: g.name, text: g.text, voiceKey: g.jobs[0], parts: g.jobs.map((x) => x.text) }));
   }
   const voices = jobs.map((j, i) => lsVoiceFor(j.voiceKey || j, i));
+  const focus = lsFocusPick();
   if (!voices[0]) { errEl.textContent = "목소리를 하나 이상 골라 주세요."; return; }
   const est = lsPrice() ? jobs.reduce((s, j) => s + lsEstCost(j.text, (j.parts || [j.text]).length), 0) : null;
   if (!(await costConfirmed(est, `${LESSON_NAME} · 지문 ${jobs.length}개 · 목소리 ${[...new Set(voices)].join(", ")}`, jobs.length, reduceAdvice(jobs.length, "")))) return;
@@ -1229,7 +1241,7 @@ async function lsMake() {
         }
         // ② 대본 — 분석을 근거로
         text.textContent = `AI가 ${j.name}의 수업 대본을 쓰고 있습니다… (${i + 1}/${jobs.length})`;
-        const d = await postGenerate("/api/lessonscript", { passage: j.text, targetGrammar: lsTargets().join(", "), analysis: lsAnalysisOf(anas) }, "영상 대본을 만들지 못했습니다.", note);
+        const d = await postGenerate("/api/lessonscript", { passage: j.text, targetGrammar: lsTargets().join(", "), analysis: lsAnalysisOf(anas), focus }, "영상 대본을 만들지 못했습니다.", note);
         e.script = d.script;
         lsRender();
         const n = e.script.segments.length;
@@ -1461,6 +1473,7 @@ if (typeof HOWTO !== "undefined") {
     steps: [
       "위쪽 <b>영어 지문</b> 칸에 지문을 넣습니다. 지문이 여러 개면 만들 때 창이 떠서 지문마다 <b>몇 번째 영상</b>에 넣을지 고릅니다 — 같은 번호끼리 이어 한 편이 됩니다(한 번에 영상 20편·문장 모두 120개까지, 한 편에 문장 50개까지 — 긴 지문은 대본을 나눠 만들어 이어 붙입니다).",
       "<b>목소리</b>를 고릅니다(<b>🔊 들어 보기</b>로 미리 들어 볼 수 있고, <b>더 많은 목소리</b>를 펼치면 열 가지가 더 있습니다). 여러 개 고르면 <b>🎙️ 영상마다 목소리</b>에서 지문마다 정합니다.",
+      "<b>수업 방향</b>을 고릅니다 — <b>📝 내신 대비 상세 설명</b>(어법·구문·어휘, 내신에 나오기 좋은 곳) 또는 <b>📖 지문 내용 상세 해설</b>(문장 사이 논리 연결·글쓴이의 의도·배경지식, 문법은 해석에 필요한 만큼만). 값은 같습니다.",
       "<b>말 빠르기</b>·<b>화면 모양</b>(✍️ 필기형 — 왼쪽 영어·오른쪽 해석 위에 동그라미·밑줄·물결·형광펜·화살표·번호를 그으며 설명 / 🖥️ 슬라이드형)을 고르고 <b>🎓 영상 만들기</b>를 누릅니다. 위쪽 <b>목표 어법</b> 칸에 어법을 적으면(쉼표로 4개까지) 문장 설명 뒤에 그 어법을 따로 자세히 설명합니다(개념·형태·이 지문에서 쓰인 곳·내신에 나오는 방식).",
       "<b>▶ 미리 보기</b>로 확인합니다. 화면 모양·빠르기·머리표는 만든 뒤에도 카드에서 <b>값 없이</b> 바꿀 수 있습니다.",
       "영상 파일(mp4)은 저절로 만들어 둡니다. <b>⬇ 영상 받기</b>로 받으세요. <b>💾 사이트 저장</b>은 대본·목소리만 남깁니다(영상 파일은 저장되지 않습니다). 영상이 둘 이상이면 저장창의 <b>영상 N개를 따로따로 저장하기</b>를 체크해 영상마다 저장본을 하나씩 만들 수 있습니다(과제로 낼 때도 편합니다).",
