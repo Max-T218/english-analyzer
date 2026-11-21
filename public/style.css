@@ -1177,6 +1177,17 @@ body.no-quickkey .qz-quick{display:none !important;}
 .qz-qk-mc th{width:46px; white-space:normal;}
 /* 한 표에 섞인 주관식 정답 칸 — 글이라 왼쪽 맞춤, 보통 굵기 */
 .qz-qk-mc td.qz-qk-satd{text-align:left; font-weight:400; color:var(--ink); font-size:12px; line-height:1.4;}
+/* 빠른 정답표의 화면·인쇄 모양(app.js quickKeyHtml의 .qz-qk-view) — 쪽마다 왼쪽 열을 다 채운 뒤 오른쪽 열로,
+   그다음 쪽으로 이어진다(2026-11-21 사용자). 표(.qz-qk-export)는 한글·워드 내려받기용이라 화면·인쇄에서 감춘다. */
+.qz-qk-export{display:none;}
+.qz-qk-view .qz-qk-cap{display:block;}
+.qz-qk-grid{column-gap:8px; column-fill:balance; font-size:13px;}
+.qz-qk-it{display:grid; grid-template-columns:46px 1fr; border:1px solid var(--line); margin-bottom:-1px;
+  break-inside:avoid; page-break-inside:avoid;}
+.qz-qk-no{padding:5px 8px; font-weight:700; color:var(--ink-soft); background:var(--line-soft); text-align:right;
+  border-right:1px solid var(--line);}
+.qz-qk-ans{padding:5px 8px; text-align:center; font-weight:700; color:var(--accent); align-self:center;}
+.qz-qk-ans.sa{text-align:left; font-weight:400; color:var(--ink); font-size:12px; line-height:1.4;}
 /* 문법문제에서 1단을 고르면 답지도 1단, 좁은 화면도 1단 */
 .gr-1col .qz-anslist{column-count:1;}
 @media (max-width:640px){ .qz-anslist{column-count:1;} }

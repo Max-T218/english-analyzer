@@ -281,6 +281,8 @@ async function downloadDocx({ resultEl, name, answerHeading, btn, errorEl, strip
   }
   // [정답표 만들기]를 껐으면 빠른 정답표를 빼고 보낸다(QUICK_KEY_ON)
   if (!QUICK_KEY_ON) clone.querySelectorAll(".qz-quick").forEach((el) => el.remove());
+  // 빠른 정답표의 화면·인쇄용 목록(.qz-qk-view)은 빼고 표(table.qz-qk)만 보낸다 — 한글·워드는 표를 옮긴다
+  clone.querySelectorAll(".qz-qk-view").forEach((el) => el.remove());
   const source = clone.innerHTML;
   const label = btn ? btn.textContent : "";
   if (btn) {
@@ -10765,7 +10767,15 @@ function quickKeyHtml(items, name) {
     rows.push(`<tr>${cells.join("")}</tr>`);
   }
   const kind = list.every((it) => it.mc) ? "객관식(선다형)" : list.every((it) => !it.mc) ? "주관식(서답형)" : "정답";
-  return `<div class="qz-quick"><table class="qz-qk qz-qk-mc">${cap(kind)}<tbody>${rows.join("")}</tbody></table></div>`;
+  /* 화면·인쇄는 표가 아니라 다단 목록(.qz-qk-view)으로 그린다(2026-11-21 사용자). 표는 시험지 전체를 한 번에
+     열로 나눠, 189문항이면 첫 쪽 왼쪽이 1~28번인데 오른쪽은 96번부터였다. 다단 목록은 크롬이 쪽마다
+     왼쪽 열을 채운 뒤 오른쪽 열을 채우고 다음 쪽으로 넘기므로(column-fill:balance는 마지막 쪽만 고르게 나눈다)
+     첫 쪽이 1~28 | 29~56, 다음 쪽이 57번부터가 된다. 표는 한글·워드 내려받기용으로만 남긴다(downloadDocx가 목록을 뺀다). */
+  const view = list.map((it) =>
+    `<div class="qz-qk-it"><span class="qz-qk-no">${it.no}.</span><span class="qz-qk-ans${it.mc ? "" : " sa"}">${it.ans}</span></div>`).join("");
+  return `<div class="qz-quick"><table class="qz-qk qz-qk-mc qz-qk-export">${cap(kind)}<tbody>${rows.join("")}</tbody></table>` +
+    `<div class="qz-qk-view"><div class="qz-qk-cap"><span class="qz-qk-name">${name ? esc(name) + " - " : ""}</span>${kind}</div>` +
+    `<div class="qz-qk-grid" style="column-count:${per}">${view}</div></div></div>`;
 }
 /* [정답표 만들기] 체크(2026-11-10 사용자 — 켜면 빠른 정답표, 끄면 예전처럼 해설지만).
    문제 탭(객관식·주관식·혼합)·문법문제·동형 모의고사에 하나씩 있고 한 값을 같이 쓴다.
