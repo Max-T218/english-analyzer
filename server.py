@@ -327,6 +327,10 @@ PRICE_REEL_VOICE_KRW = int(os.environ.get("PRICE_REEL_VOICE_KRW", "500"))
 # 지문 강의 영상(2026-11-20 사용자) — 대본은 지문 1개당, 목소리는 대사 한 줄당(한 편에 보통 30~90줄).
 # 숏폼(한 편 약 4,400P)보다 확실히 비싸게(같은 날 사용자 — 4~10분짜리 수업 한 편이라). 어림 원가 한 편 약 120~350원(AI Studio)
 PRICE_LESSON_SCRIPT_KRW = int(os.environ.get("PRICE_LESSON_SCRIPT_KRW", "2000"))
+# 영상 대본의 근거로 먼저 돌리는 상세분석 값(2026-11-21 사용자 — 영상 제작 값을 지문당 300P 올려 받는다). 화면이 /api/analyze에
+# purpose:"lesson"·"reel"을 실어 부르면 상세분석 값(PRICE_ANALYZE_KRW — 2027년에 오른다) 대신 이 값을 받고 원장에 영상 항목으로 적는다
+PRICE_LESSON_ANALYZE_KRW = int(os.environ.get("PRICE_LESSON_ANALYZE_KRW", "300"))
+PRICE_REEL_ANALYZE_KRW = int(os.environ.get("PRICE_REEL_ANALYZE_KRW", "300"))
 PRICE_LESSON_VOICE_LINE_KRW = int(os.environ.get("PRICE_LESSON_VOICE_LINE_KRW", "100"))
 # 기출 소재·어휘(2026-11-18 사용자 — "테스트해 보면서 가격 정하자"). 둘 다 원가 실측 전 임시값이다 —
 # Render 로그 [usage] topicscan·topicwords로 재서 맞출 것. 어휘 통계(/api/vocabstats)는 AI가 없어 0원.
@@ -11580,8 +11584,8 @@ def _finish_reel_script(raw):
     return {"title": _reel_plain(raw.get("title"), 40), "cast": _decode_plain(raw.get("cast"), 500), "scenes": scenes}
 
 
-def call_gemini_reel_script(explain, api_key, model):
-    """내용 한장정리 결과(dict) → 릴스 대본."""
+def call_gemini_reel_script(explain, api_key, model, brief=""):
+    """내용 한장정리 결과(dict) → 릴스 대본. brief = 상세분석 근거 글(parse_lesson_analysis — 2026-11-21 사용자)."""
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. 관리자에게 문의하세요.")
@@ -11589,7 +11593,9 @@ def call_gemini_reel_script(explain, api_key, model):
     src = {k: explain.get(k) for k in ("title", "field", "oneLine", "primer", "concepts", "parts", "analogy", "message", "questions")}
     payload = {
         "systemInstruction": {"parts": [{"text": REEL_SCRIPT_SYSTEM_PROMPT}]},
-        "contents": [{"role": "user", "parts": [{"text": "[내용 한장정리]\n" + json.dumps(src, ensure_ascii=False)}]}],
+        "contents": [{"role": "user", "parts": [{"text": "[내용 한장정리]\n" + json.dumps(src, ensure_ascii=False) + (
+            "\n\n[상세분석 — 함께 볼 근거]\n아래는 같은 지문의 상세분석(문장별 역할·해설·흐름)이다. 장면의 내용·흐름·핵심 문장은 "
+            "이 분석과 어긋나지 않게 쓴다(분석을 그대로 읽지 말고 대본 말투로 풀어 쓴다).\n" + brief if brief else "")}]}],
         "generationConfig": {"temperature": 0.6, "maxOutputTokens": 12288,
                              "responseMimeType": "application/json", "responseSchema": REEL_SCRIPT_SCHEMA},
     }
@@ -11707,8 +11713,9 @@ LESSON_TTS_CHECK_MIN_WORDS = 4   # 영어 낱말이 이만큼 넘는 줄은 녹�
 LESSON_TTS_CHECK_PASS = 0.88     # 원문 영어 낱말 중 이만큼 들려야 통과(받아쓰기 자체의 작은 실수는 봐준다)
 LESSON_TTS_RETRIES = 2           # 통과 못 하면 다시 녹음하는 횟수
 LESSON_VOICE_BATCH = 12       # 목소리 한 번에 받는 줄 수(화면 LS_VOICE_BATCH와 같다)
-LESSON_MARK_KINDS = ("circle", "underline", "highlight", "box")
-LESSON_COLORS = ("red", "blue", "green")
+LESSON_MARK_KINDS = ("circle", "underline", "highlight", "box", "wavy", "number", "arrow")   # wavy·number·arrow는 2026-11-21 lesson-video 스킬에서
+LESSON_COLORS = ("red", "blue", "green", "orange")
+LESSON_NOTE_POS = ("up", "dn")
 _LESSON_ABBR_RE = re.compile(r"(?:\b(?:Mr|Mrs|Ms|Dr|Prof|St|vs|etc|e\.g|i\.e|U\.S|U\.K|No|Jr|Sr|Inc|Ltd|Co|Fig|cf)\.|\b[A-Z]\.)$")
 
 
@@ -11748,7 +11755,9 @@ LESSON_SCRIPT_SCHEMA = {
                 "marks": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
                     "kind": {"type": "STRING", "enum": list(LESSON_MARK_KINDS)},
                     "target": {"type": "STRING"}, "note": {"type": "STRING"},
-                    "color": {"type": "STRING", "enum": list(LESSON_COLORS)}},
+                    "color": {"type": "STRING", "enum": list(LESSON_COLORS)},
+                    "to": {"type": "STRING"},
+                    "pos": {"type": "STRING", "enum": list(LESSON_NOTE_POS)}},
                     "required": ["kind", "target", "note", "color"]}},
                 "pad_title": {"type": "STRING"},
                 "pad": {"type": "ARRAY", "items": {"type": "STRING"}},
@@ -11768,21 +11777,25 @@ LESSON_SCRIPT_SYSTEM_PROMPT = """너는 한국 중·고등학교 영어 선생�
 
 [말투] 실제 강의처럼 학생에게 말을 건다. '~해요/~죠' 체, 차분하고 친근하게. "자, 3번." "여기서 이 단어가 중요해요." "왜 그럴까요?"
 같은 말로 이끈다. 쉬운 비유·생활 예시를 한 번쯤 쓴다. 예상 시간 같은 숫자는 말하지 않는다.
+**필기하는 말**을 대사에 넣는다 — 이게 이 영상의 맛이다: "여기 동그라미 칠게요", "이 부분 형광펜", "밑줄 쫙", "물결로 그어 둘게요",
+"화살표로 이어 볼게요", "번호 매겨 볼게요, 1번, 2번, 3번", "별표 두 개". 문법은 짧게 묻고 답한다("that 뒤에 동사가 바로 왔죠? 그러니까 주격 관계대명사.").
 이모지·괄호 설명·화살표 같은 기호는 말에 넣지 않는다(소리로 읽힌다). say는 자막으로도 그대로 나간다 — 영어 낱말은 반드시 영어 글자로 쓰고
 (한글로 소리 나는 대로 쓰지 않는다), 문장 번호·숫자는 아라비아 숫자로 쓴다("5번").
 
 [짜임]
-1) 도입(view "intro"): 생활 속 질문이나 장면으로 시작해 이 글이 무엇에 관한 글인지 연다. 그다음 글의 흐름을 문장 번호로 짧게 정리한다
+1) 도입(view "intro"): 학생 생활 속 장면으로 여는 질문으로 시작해 이 글이 무엇에 관한 글인지 연다. 그다음 글의 흐름을 문장 번호로 짧게 정리한다
    ("1번은 현상, 2~3번은 반전, 4번부터 근거" 같은 식). 노트에 흐름을 단계별로 적는다(pad_title "글의 흐름").
 2) 문장 설명(view "s1", "s2", … 차례대로, 모든 문장 빠짐없이): 문장 하나에 대사 2~4개(아주 짧은 문장은 1~2개).
    "자, 3번." 하고 영어 문장을 그대로 읽는 대사 → 뜻을 풀며 필기하는 대사 → 문법·구문(가주어·진주어, 관계사, 분사구문, 병렬, 수일치,
    to부정사·동명사, 수동태, 도치, 강조 등 그 문장에 실제로 있는 것)을 쉬운 말로 설명하는 대사 → 앞 문장과 어떻게 이어지는지.
-   문장이 글에서 하는 일(주제 제시·예시·반박·결론 등)을 먼저 짚는다.
-3) 내신 포인트(view "board" — 판서, 그 문장을 다시 짚을 때만 view "s<번호>"): 내신 시험에 나오기 좋은 곳 3~4개 — 주제문, 어법으로 나올 자리
-   (수일치·관계사·준동사), 어휘로 나올 낱말(반의어로 바꾸기 좋은 것), 서술형(영작·배열)으로 나오기 좋은 구문.
+   문장이 글에서 하는 일(주제 제시·예시·반박·결론 등)을 먼저 짚는다. 주제문은 형광펜(highlight)에 메모 "주제문 ★".
+3) 내신 포인트(view "board" — 판서, 그 문장을 다시 짚을 때는 view "s<번호>"로 띄우고 표시 하나씩): 시험 포인트 세 개 —
+   ① 주제·빈칸(주제문·요지가 빈칸이나 주제 문제로 나오기 좋은 곳) ② 어법(수일치·관계사·준동사 등 어법 문제로 나올 자리)
+   ③ 어휘·함축(반의어로 바꾸기 좋은 낱말, 함축 의미). 서술형(영작·배열)으로 나오기 좋은 구문이 있으면 ②나 ③에 함께 짚는다.
    첫 대사에 board_title "내신 포인트", 대사마다 board에 그 포인트를 한 줄로("1. 어법: 7번 수일치 mistakes → are").
 4) 핵심 어휘(view "board"): 꼭 외울 낱말 4~6개. 첫 대사에 board_title "핵심 어휘", board에 '낱말 뜻'을 한 줄씩("recall 기억해 내다").
-5) 마무리(view "end"): 한 문장으로 쉽게 정리하고 "오늘은 여기까지. 수고했어요."로 끝낸다.
+5) 마무리(view "end"): "쉽게 말하면, …" 하고 글 전체를 생활 속 한 줄 비유로 정리하고 "오늘은 여기까지. 수고했어요."로 끝낸다.
+   노트에 pad_title "한 줄 요약"과 두 줄.
 
 [대사 하나(segment)]
 - say: 실제로 읽을 말. 30~110자. 길어지면 대사를 나눈다. 영어 문장을 읽을 때는 영어 그대로, **원문을 한 낱말도 빼거나 바꾸지 않고 끝까지** 쓴다
@@ -11790,10 +11803,16 @@ LESSON_SCRIPT_SYSTEM_PROMPT = """너는 한국 중·고등학교 영어 선생�
 - view: "intro" | "s<문장번호>" | "board" | "end" (그 대사 동안 화면이 보여 줄 곳). "board"는 화면 가운데 큰 판서 칸 —
   선생님이 칠판에 쓰듯 개념·공식·예문을 크게 써 가며 설명할 때(목표 어법·내신 포인트·핵심 어휘).
 - marks: 이 대사 동안 그 문장(view의 문장) 위에 긋는 필기. 0~3개. view가 문장이 아니면 빈 배열.
-  · kind: "circle"(핵심 낱말 1~2개) | "underline"(구·절) | "highlight"(주제문·핵심 구절) | "box"(문법 구조의 핵심 덩어리)
+  · kind: "circle"(접속사·대명사·관계사·핵심 낱말 1~2개) | "underline"(구·절) | "wavy"(물결 밑줄 — 뜻이 중요한 낱말·표현)
+    | "highlight"(주제문·핵심 구절) | "box"(구문 틀 — not only ~ but also, too ~ to 등 문법 구조의 핵심 덩어리)
+    | "number"(나열·병렬 항목에 번호 매기기 — 항목 첫 낱말이 target, note에 번호 하나 "①" "②" "③", 항목마다 mark 하나)
+    | "arrow"(대명사·지시어 → 가리키는 말을 화살표로 잇기 — target은 대명사·지시어(it, they, this, such 등), to는 가리키는 말.
+      to는 같은 문장이나 바로 앞 문장의 영어에서 글자 그대로 복사한 1~5낱말. note는 "지칭" 같은 아주 짧은 말이나 "")
   · target: 그 문장의 영어에서 **글자 그대로 복사한** 연속 구간(대소문자·문장부호 그대로, 1~7낱말)
   · note: 그 위에 손으로 쓸 아주 짧은 메모(우리말 뜻이나 문법 이름, 8자 이내) — 없으면 ""
-  · color: "red" | "blue" | "green"
+  · color: "red"(어법·핵심) | "blue"(뜻·구조) | "green"(지칭·예시·병렬 번호) | "orange"
+  · to: kind "arrow"일 때만 가리키는 말, 아니면 ""
+  · pos: 메모를 낱말 위("up", 기본)에 쓸지 아래("dn")에 쓸지 — 한 줄에 메모가 여럿이라 겹칠 것 같으면 하나를 "dn"으로.
   marks의 target은 say에서 그 부분을 말하는 순서대로 적는다. 한 문장에 너무 많이 긋지 않는다(문장 전체 합쳐 5개 이하).
 - pad_title: (선택) 오른쪽 노트에 새 소제목을 쓸 때만. 예: "① 현상", "②~③ 반전", "내신 포인트" — 아니면 ""
 - pad: 오른쪽 노트에 이어 쓸 줄들(0~2개, 한 줄 16자 이내, 손필기처럼 짧게. 예: "it = 가주어", "주어 → 동사 lives")
@@ -11924,9 +11943,23 @@ def _finish_lesson_script(raw, sents, rng=None):
             note = _decode_plain(mk.get("note"), 14)
             if "(" in note and ")" not in note:   # 잘려서 괄호만 열린 메모('실수들(mistakes')는 괄호 앞까지
                 note = note.split("(")[0].strip()
-            marks.append({"kind": mk.get("kind") if mk.get("kind") in LESSON_MARK_KINDS else "underline",
-                          "target": tgt, "note": note,
-                          "color": mk.get("color") if mk.get("color") in LESSON_COLORS else "red"})
+            kind = mk.get("kind") if mk.get("kind") in LESSON_MARK_KINDS else "underline"
+            item = {"kind": kind, "target": tgt, "note": note,
+                    "color": mk.get("color") if mk.get("color") in LESSON_COLORS else "red"}
+            if mk.get("pos") == "dn":
+                item["pos"] = "dn"
+            if kind == "number":   # 번호 글씨 — 메모 자리에 번호 하나(①·1 등)만
+                item["note"] = note[:3] or "①"
+            if kind == "arrow":   # 가리키는 말 — 같은 문장 먼저, 없으면 바로 앞 문장. 못 찾으면 동그라미로
+                to = _lesson_find(sents[n - 1], mk.get("to"))
+                to_n = n
+                if (not to or to == tgt) and n > 1:
+                    to, to_n = _lesson_find(sents[n - 2], mk.get("to")), n - 1
+                if to and not (to_n == n and to == tgt):
+                    item["to"], item["toN"] = to, to_n
+                else:
+                    item["kind"] = "circle"
+            marks.append(item)
         # 나눈 조각마다 한 줄. 필기는 그 낱말을 말하는 조각에 붙이고(못 찾으면 첫 조각), 노트·판서는 첫 조각에
         where = []
         for mk in marks:
@@ -11994,6 +12027,74 @@ def _lesson_part_rules(lo, hi, n, first, last):
     return "\n".join(rules)
 
 
+LESSON_BRIEF_MAX = 9000        # 상세분석에서 대본 지시에 싣는 글자 상한
+
+
+def parse_lesson_analysis(raw, passage):
+    """화면이 보낸 상세분석(/api/analyze 결과를 줄인 것) → (문장 목록, 해석 목록, 근거 글) 또는 None.
+    2026-11-21 사용자: 지문 강의 영상은 상세분석을 먼저 돌려 그 해설을 근거로 대본을 쓰고, 화면은 워크북 '좌지문 우해석'처럼
+    문장마다 왼쪽 영어·오른쪽 해석을 놓는다(lesson-video 스킬이 분석 PDF를 근거로 쓰던 것과 같은 길).
+    문장 글은 분석의 덩어리(chunks)를 이은 것 — 원문과 낱말이 크게 다르면(분석이 글을 고쳤으면) 쓰지 않고 None."""
+    if not isinstance(raw, dict):
+        return None
+    rows = raw.get("sentences")
+    if not isinstance(rows, list) or not (2 <= len(rows) <= LESSON_SENT_MAX):
+        return None
+    sents, kos, lines = [], [], []
+    for i, r in enumerate(rows):
+        if not isinstance(r, dict):
+            return None
+        en = re.sub(r"\s+", " ", _decode_plain(r.get("en"), 900)).strip()
+        if len(en.split()) < 2:
+            return None
+        sents.append(en)
+        kos.append(_decode_plain(r.get("ko"), 400))
+        bits = []
+        if r.get("isTopic"):
+            bits.append("주제문")
+        tag = _decode_plain(r.get("tag"), 40)
+        if tag:
+            bits.append(f"역할: {tag}")
+        anns = [a for a in (r.get("anns") or [])[:12] if isinstance(a, dict)]
+        gram = [f"{_decode_plain(a.get('t'), 40)} → {_decode_plain(a.get('rt'), 40)}" for a in anns if a.get("t") and a.get("rt")]
+        if gram:
+            bits.append("문법 표시: " + "; ".join(gram))
+        note = _decode_plain(r.get("note"), 500)
+        if note:
+            bits.append(f"해설: {note}")
+        tags = [_decode_plain(x, 20) for x in (r.get("examTags") or [])[:5] if isinstance(x, str)]
+        exam = _decode_plain(r.get("examNote"), 300)
+        if tags or exam:
+            bits.append("시험: " + " · ".join([x for x in tags if x] + ([exam] if exam else [])))
+        lines.append(f"{i + 1:02d}. " + " / ".join(bits))
+    want, got = _lesson_en_words(passage), _lesson_en_words(" ".join(sents))
+    if want and _lesson_word_cover(want, got) < 0.85:
+        print(f"[lessonscript] 상세분석 문장이 원문과 달라 쓰지 않는다({_lesson_word_cover(want, got):.2f})", flush=True)
+        return None
+    ol = raw.get("outline") if isinstance(raw.get("outline"), dict) else {}
+    head = []
+    one = _decode_plain(ol.get("oneLine"), 200)
+    if one:
+        head.append(f"한 줄 요약: {one}")
+    for st in (ol.get("stages") or [])[:6]:
+        if isinstance(st, dict):
+            head.append(f"흐름 {_decode_plain(st.get('range'), 20)} {_decode_plain(st.get('name'), 30)}: {_decode_plain(st.get('role'), 120)}")
+    brief = "\n".join(head + lines)[:LESSON_BRIEF_MAX]
+    return sents, kos, brief
+
+
+def _lesson_brief_rules(brief):
+    if not brief:
+        return ""
+    return f"""
+
+[상세분석 — 대본의 근거]
+아래는 이 지문의 상세분석(문장별 역할·문법 표시·해설·시험 포인트)이다. 문장 설명의 문법·구문 이름과 내신 포인트는 이 분석과
+어긋나지 않게 쓴다(분석에 없는 문법 용어를 확신 없이 만들어 쓰지 않는다). 분석을 그대로 읽지 말고 선생님이 말하듯 풀어서 쓴다.
+ko(해석)는 분석의 해설과 어긋나지 않게, 문장마다 자연스러운 우리말 한 문장으로 쓴다(덩어리마다 끊어 쓰지 않는다).
+{brief}"""
+
+
 def _lesson_target_rules(targets):
     """목표 어법(선생님이 적은 것) 상세 설명 지시 — 없으면 빈 글자. 판정 기준은 워크북·리딩노트와 같은 TARGET_GRAMMAR_CRITERIA."""
     if not targets:
@@ -12019,13 +12120,14 @@ def _lesson_target_rules(targets):
 {TARGET_GRAMMAR_CRITERIA}"""
 
 
-def call_gemini_lesson_script(passage, api_key, model, targets=None):
+def call_gemini_lesson_script(passage, api_key, model, targets=None, analysis=None):
     api_key = (api_key or "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     targets = (targets or [])[:LESSON_TARGETS_MAX]
     if not api_key:
         raise RuntimeError("관리자가 아직 서버에 Gemini API 키(GEMINI_API_KEY)를 설정하지 않았습니다. 관리자에게 문의하세요.")
     model = model if (model and _MODEL_RE.match(model)) else MODEL
-    sents = lesson_split_sentences(passage)
+    ana = parse_lesson_analysis(analysis, passage) if analysis else None
+    sents, ana_ko, brief = ana if ana else (lesson_split_sentences(passage), None, "")
     if len(sents) < 2:
         raise ValueError("문장이 둘 이상인 영어 지문을 넣어 주세요.")
     if len(sents) > LESSON_SENT_MAX:
@@ -12039,6 +12141,7 @@ def call_gemini_lesson_script(passage, api_key, model, targets=None):
         text = f"[문장 목록 — 문장 {len(sents)}개]\n{listing}"
         if len(parts) > 1:
             text += _lesson_part_rules(lo, hi, len(sents), first, last)
+        text += _lesson_brief_rules(brief)
         if last:
             text += _lesson_target_rules(targets)
         payload = {
@@ -12069,6 +12172,11 @@ def call_gemini_lesson_script(passage, api_key, model, targets=None):
             if not s["ko"] and t["ko"]:
                 s["ko"] = t["ko"]
     out["segments"] = out["segments"][:LESSON_SEGS_TOTAL_MAX]
+    if ana_ko:   # AI가 해석을 빠뜨린 문장은 상세분석의 덩어리 해석을 이어 채운다
+        for s, k in zip(out["sentences"], ana_ko):
+            if not s["ko"] and k:
+                s["ko"] = k
+    out["analyzed"] = bool(ana)
     out["targets"] = targets   # 화면이 카드에 '목표 어법'을 보인다
     out["parts"] = len(parts)
     return out
@@ -24466,6 +24574,8 @@ class Handler(BaseHTTPRequestHandler):
                 "reelVoice": PRICE_REEL_VOICE_KRW,
                 # 지문 강의 영상 — 대본은 지문 1개당, 목소리는 대사 한 줄당
                 "lessonScript": PRICE_LESSON_SCRIPT_KRW,
+                "lessonAnalyze": PRICE_LESSON_ANALYZE_KRW,
+                "reelAnalyze": PRICE_REEL_ANALYZE_KRW,
                 "lessonVoiceLine": PRICE_LESSON_VOICE_LINE_KRW,
                 # 기출 소재·어휘 — 소재 분석은 지문 1개당, 단어장으로 보낼 때 뜻 달기는 한 번(100단어까지)당
                 "topic": PRICE_TOPIC_KRW,
@@ -25203,7 +25313,13 @@ class Handler(BaseHTTPRequestHandler):
             if path in GENERATE_PATHS:
                 # 이용 내역에 남길 항목 이름도 여기서 정한다 — 가격을 계산하는 자리가
                 # 무엇을 몇 개 만드는지 아는 유일한 자리다. 지문 원문은 넣지 않는다.
-                if path == "/api/analyze":
+                if path == "/api/analyze" and req.get("purpose") == "lesson":
+                    cost = PRICE_LESSON_ANALYZE_KRW
+                    self._pending_label = "지문 강의 영상 · 상세분석"
+                elif path == "/api/analyze" and req.get("purpose") == "reel":
+                    cost = PRICE_REEL_ANALYZE_KRW
+                    self._pending_label = "숏폼 영상 · 상세분석"
+                elif path == "/api/analyze":
                     cost = PRICE_ANALYZE_KRW
                     self._pending_label = "지문 상세분석"
                 elif path == "/api/brief":
@@ -26572,7 +26688,8 @@ class Handler(BaseHTTPRequestHandler):
                 explain = call_gemini_explain(passage, api_key, MODEL)   # 항상 Flash
                 if not explain.get("parts"):
                     raise RuntimeError("지문 내용을 정리하지 못했습니다. 다시 시도해 주세요.")
-                script = call_gemini_reel_script(explain, api_key, MODEL)
+                ana = parse_lesson_analysis(req.get("analysis"), passage) if req.get("analysis") else None   # 화면이 먼저 돌린 상세분석
+                script = call_gemini_reel_script(explain, api_key, MODEL, ana[2] if ana else "")
                 self._charge_and_send(path, req, {"explain": explain, "script": script})
             except NeedsPro as e:
                 self._send_json({"error": str(e), "code": "needs_pro"}, 429)
@@ -26635,7 +26752,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 script = call_gemini_lesson_script(passage, req.get("apiKey") or "", MODEL,   # 항상 Flash
-                                                   parse_grammar_pick_targets(req.get("targetGrammar")))
+                                                   parse_grammar_pick_targets(req.get("targetGrammar")),
+                                                   req.get("analysis"))   # 화면이 먼저 돌린 상세분석(없으면 지문만으로)
                 self._charge_and_send(path, req, {"script": script})
             except ValueError as e:
                 self._send_json({"error": str(e)}, 400)

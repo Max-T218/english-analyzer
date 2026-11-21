@@ -953,16 +953,16 @@ function renderPriceTab() {
       row("내용 한장정리 요약 이미지 (선택)", "위 요약 이미지 값", `인포그래픽 ${pt(P.infographic)} · 4컷 그림 ${pt(P.decodePic)}`),
     ]),
     card("🎬 숏폼 영상 제작", "지문 1개 = 영상 1편", [
-      row("대본 (내용 정리 + 장면 대본)", v(P.reelScript), "지문 1개당"),
+      row("대본 (상세분석 + 내용 정리 + 장면 대본)", v(n(P.reelScript) + n(P.reelAnalyze)), "지문 1개당"),
       row("목소리", plus(P.reelVoice), "영상 1편의 대사 전부"),
       row("장면 그림", plus(P.reelImage), "그림 1장당 — 보통 8~10장, 한 장만 다시 그릴 때도 같은 값"),
       row("말 빠르기 바꾸기 · 영상 파일 다시 받기", v(0)),
-    ], `예) 장면 9개 영상 1편 = ${pt(P.reelScript)} + ${pt(P.reelVoice)} + ${pt(P.reelImage)} × 9 = ${pt(n(P.reelScript) + n(P.reelVoice) + n(P.reelImage) * 9)}`),
+    ], `예) 장면 9개 영상 1편 = ${pt(n(P.reelScript) + n(P.reelAnalyze))} + ${pt(P.reelVoice)} + ${pt(P.reelImage)} × 9 = ${pt(n(P.reelScript) + n(P.reelAnalyze) + n(P.reelVoice) + n(P.reelImage) * 9)}`),
     card("🎓 지문 강의 영상", "지문 1개 = 영상 1편", [
-      row("대본 (문장별 해설 + 필기 계획)", v(P.lessonScript), "지문 1개당"),
+      row("대본 (상세분석 + 문장별 해설 + 필기 계획)", v(n(P.lessonScript) + n(P.lessonAnalyze)), "지문 1개당"),
       row("목소리", plus(P.lessonVoiceLine), "대사 1줄당 — 보통 30~50줄, 실제로 만든 줄 수만큼"),
       row("화면 모양(필기형·슬라이드형)·말 빠르기 바꾸기 · 영상 파일 다시 받기", v(0)),
-    ], `예) 대사 40줄 영상 1편 = ${pt(P.lessonScript)} + ${pt(P.lessonVoiceLine)} × 40 = ${pt(n(P.lessonScript) + n(P.lessonVoiceLine) * 40)}`),
+    ], `예) 대사 40줄 영상 1편 = ${pt(n(P.lessonScript) + n(P.lessonAnalyze))} + ${pt(P.lessonVoiceLine)} × 40 = ${pt(n(P.lessonScript) + n(P.lessonAnalyze) + n(P.lessonVoiceLine) * 40)}`),
     card("📝 문제 제작", "객관식 · 주관식 · 객관식+주관식", [
       row("유형 1개의 첫 문항", v(first), "지문 1개 × 유형 1개마다"),
       row("같은 유형의 둘째 문항부터", plus(extra), "같은 지문에서 같은 유형을 여러 문항 만들 때, 1문항마다"),

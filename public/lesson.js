@@ -24,13 +24,13 @@ const LS_TOTAL_SENT_MAX = 120;
 const LS_VBITRATE = 4_000_000;      // 영상 압축 목표(숏폼 8Mbps의 절반)
 const LS_DEFAULT_VOICE = "Aoede";   // 로컬 수업 영상에 쓰던 목소리
 const LS_LOOKS = [
-  { id: "pen", label: "✍️ 필기형", desc: "지문 위에 펜으로 긋고 낱말 위에 손글씨 메모, 오른쪽 공책에 정리" },
+  { id: "pen", label: "✍️ 필기형", desc: "왼쪽 영어·오른쪽 해석(워크북 좌지문 우해석) 위에 펜으로 긋고 손글씨 메모, 오른쪽 공책에 정리" },
   { id: "slide", label: "🖥️ 슬라이드형", desc: "문장 하나씩 크게, 색 표시와 이름표, 오른쪽 포인트 카드" },
 ];
 const LS_FONT = (typeof RL_FONT !== "undefined" && RL_FONT) || "sans-serif";
 const LS_EN_FONT = `Georgia, "Times New Roman", serif`;
 const LS_PEN = `LsPen, ${LS_FONT}`;
-const LS_COLORS = { red: "#e0453a", blue: "#2f5bd3", green: "#169c5a" };
+const LS_COLORS = { red: "#e0453a", blue: "#2f5bd3", green: "#169c5a", orange: "#e8810c" };
 const LS_ACCENT = "#4b3fb5";
 
 const lsState = { entries: [], busy: false };
@@ -129,7 +129,8 @@ function lsTargets() {
   return out.slice(0, LS_TARGETS_MAX);
 }
 const lsEstLines = (text) => Math.round((typeof roughSentenceCount === "function" ? roughSentenceCount(text) : 8) * 2.5 + 8 + lsTargets().length * 6);
-const lsEstCost = (text) => { const p = lsPrice(); return p ? p.lessonScript + p.lessonVoiceLine * lsEstLines(text) : null; };
+// 상세분석(지문마다 PRICING.analyze)을 먼저 돌려 그 해설로 대본을 쓴다(2026-11-21 사용자) — parts = 묶음 속 지문 수
+const lsEstCost = (text, parts = 1) => { const p = lsPrice(); return p ? p.lessonScript + (p.lessonAnalyze || 0) * parts + p.lessonVoiceLine * lsEstLines(text) : null; };
 function lsJobs() { return passageMgr.getJobs().filter((j) => j.text && j.text.length >= 20).slice(0, LS_MAX_PASSAGES); }
 function lsSyncCost() {
   const jobs = lsJobs(), p = lsPrice();
@@ -249,6 +250,11 @@ function lsShapes(kind, lines, size) {
       return { type: "stroke", ...lsPath([[x, y], [x + w, y + 1], [x + w - 1, y + h], [x + 1, y + h - 1], [x - 1, y - 3]]) };
     }
     if (kind === "highlight") return { type: "hl", x: L.x0 - 4 * f, y: L.top + 1 * f, w: L.x1 - L.x0 + 8 * f, h: L.bot - L.top };
+    if (kind === "wavy") {   // 물결 밑줄 — 뜻이 중요한 낱말(lesson-video 스킬의 w)
+      const y = L.base + 11 * f, n = Math.max(8, Math.round((L.x1 - L.x0) / (7 * f))), pts = [];
+      for (let i = 0; i <= n * 4; i++) { const u = i / (n * 4); pts.push([L.x0 + (L.x1 - L.x0) * u, y + 4 * f * Math.sin(u * n * Math.PI)]); }
+      return { type: "stroke", ...lsPath(pts) };
+    }
     const y = L.base + 10 * f, pts = [];
     for (let i = 0; i <= 20; i++) { const u = i / 20; pts.push([L.x0 + (L.x1 - L.x0) * u, y + 4 * f * u * (1 - u) * 2 - 2 * f * u]); }
     return { type: "stroke", ...lsPath(pts) };
@@ -283,25 +289,30 @@ function lsDrawPart(ctx, sh, p, color, width) {
 
 /* ── 배치: 필기형(지문 종이 한 장, 카메라가 움직인다) ── */
 // 종이는 지문 칸(1400px) 폭에 꽉 — 처음엔 1300px 종이를 가운데 두어 양옆이 비었다(2026-11-20 사용자: 더 크게)
-const LSP = { DW: 1400, X: 66, R: 1372, EN: 50, LH: 134, KO: 29, KOLH: 42, NOTE: 40 };
+/* 2026-11-21 사용자: 워크북 '좌지문 우해석'처럼 문장마다 왼쪽 영어(7)·오른쪽 해석(3)을 나란히 놓고 그 위에 필기한다
+   (예전엔 영어 아래에 해석을 한 줄로 이어 썼다). ER = 영어 칸 오른쪽 끝, KX = 해석 칸 왼쪽 끝 */
+const LSP = { DW: 1400, X: 66, R: 1372, ER: 930, KX: 976, EN: 44, LH: 116, KO: 28, KOLH: 42, NOTE: 40 };
 function lsLayoutPen(ctx, e) {
   const blocks = [];
   let y = 150;
   e.script.sentences.forEach((s) => {
-    const top = y;
-    const pl = lsPlace(ctx, s.en, LSP.EN, LSP.X, top + 92, LSP.R - LSP.X, LSP.LH);
-    let yy = pl.lastBase + 58;
+    const top = y, base0 = top + 84;
+    const pl = lsPlace(ctx, s.en, LSP.EN, LSP.X, base0, LSP.ER - LSP.X, LSP.LH);
     ctx.font = `${LSP.KO}px ${LS_FONT}`;
-    const ko = (s.ko ? lsWrap(ctx, s.ko, LSP.R - LSP.X) : []).map((text, i) => ({ text, base: yy + i * LSP.KOLH }));
-    yy += ko.length * LSP.KOLH;
-    blocks.push({ n: s.n, top, bot: yy, ...pl, ko });
-    y = yy + 40;
+    const ko = (s.ko ? lsWrap(ctx, s.ko, LSP.R - LSP.KX) : []).map((text, i) => ({ text, base: base0 + i * LSP.KOLH }));
+    const bot = Math.max(pl.lastBase + 44, ko.length ? ko[ko.length - 1].base + 22 : 0);
+    blocks.push({ n: s.n, top, bot, ...pl, ko });
+    y = bot + 26;
   });
   return { blocks, docH: y + 20, size: LSP.EN };
 }
-function lsCamPen(lay, view) {
+function lsCamPen(lay, view, from) {
   const m = /^s(\d+)$/.exec(view);
-  if (m) { const b = lay.blocks[+m[1] - 1]; return { s: 1, tx: 0, ty: 110 - b.top }; }
+  if (m) {
+    const b = lay.blocks[+m[1] - 1], a = from && lay.blocks[from - 1];
+    if (a && a !== b && b.bot - a.top < LS_H - 160) return { s: 1, tx: 0, ty: 110 - a.top };
+    return { s: 1, tx: 0, ty: 110 - b.top };
+  }
   // 도입·정리 — 줄이지 않고 문장 장면과 같은 크기로 지문 맨 위부터(2026-11-20 사용자: 줄여 가운데 두었더니 양옆이 비었다)
   return { s: 1, tx: 0, ty: 0 };
 }
@@ -368,24 +379,50 @@ function lsTimeline(e) {
       if (!ws.length) return;
       const lines = lsByLine(ws);
       const kind = mk.kind === "circle" && lines.length > 1 ? "underline" : mk.kind;
-      const shapes = lsShapes(kind, lines, blk.size || lay.size);
+      let shapes;
+      if (kind === "number") shapes = [];   // 번호 글씨 — 모양 없이 메모 자리에 번호만(아래 note)
+      else if (kind === "arrow") {   // 대명사 → 가리키는 말(같은 문장이나 바로 앞 문장)
+        // 슬라이드형은 문장마다 한 장이라 앞 문장이 화면에 없다 — 같은 문장 안의 화살표만 긋고 나머지는 동그라미로
+        const toBlk = mk.toN && mk.toN !== blk.n ? (pen ? lay.blocks[mk.toN - 1] : null) : blk;
+        const tw = toBlk ? lsFind(toBlk.words, mk.to || "") : [];
+        if (!tw.length) shapes = lsShapes("circle", lines.slice(0, 1), blk.size || lay.size);
+        else {
+          if (toBlk !== blk) sg.camFrom = mk.toN;
+          const A = lines[0], B = lsByLine(tw)[0], f = (blk.size || lay.size) / 46;
+          const ax = (A.x0 + A.x1) / 2, ay = A.top - 4 * f, bx = (B.x0 + B.x1) / 2, by = B.bot + 6 * f;
+          const up = by <= ay + 4;   // 가리키는 말이 위쪽 줄이면 아래로 볼록하게 돌지 않고 바로 잇는다
+          const cx = (ax + bx) / 2, cy = up ? (ay + by) / 2 - 30 * f : Math.min(ay, B.top) - 46 * f;
+          const pts = [];
+          for (let i = 0; i <= 24; i++) { const u = i / 24; pts.push([(1 - u) * (1 - u) * ax + 2 * (1 - u) * u * cx + u * u * bx, (1 - u) * (1 - u) * ay + 2 * (1 - u) * u * cy + u * u * (up ? by : B.top - 4 * f)]); }
+          const ex = pts[24][0], ey = pts[24][1], dx = ex - pts[21][0], dy = ey - pts[21][1], dl = Math.hypot(dx, dy) || 1;
+          const ux = dx / dl, uy = dy / dl, hl = 16 * f;
+          shapes = [{ type: "stroke", ...lsPath(lsCapsule(A.x0 - 6 * f, A.x1 + 6 * f, A.top - 5 * f, A.bot + 4 * f)) },
+            { type: "stroke", ...lsPath(pts) },
+            { type: "stroke", ...lsPath([[ex - hl * (ux - uy * 0.6), ey - hl * (uy + ux * 0.6)], [ex, ey], [ex - hl * (ux + uy * 0.6), ey - hl * (uy - ux * 0.6)]]) }];
+        }
+      } else shapes = lsShapes(kind, lines, blk.size || lay.size);
       const color = LS_COLORS[mk.color] || LS_COLORS.red;
       const pos = sayL.indexOf(mk.target.toLowerCase());
       const frac = pos >= 0 ? pos / Math.max(sayL.length, 1) : 0.2 + 0.2 * j;
       const st = Math.max(base, penT, sg.start + frac * sg.dur - 0.15);
       const d = shapes.reduce((s, sh) => s + (pen ? (sh.type === "hl" ? 0.55 : 0.6) : 0.3), 0);
-      items.push({ kind: "mark", n: blk.n, t0: st, t1: st + d, color, shapes });
-      penT = st + d + 0.12;
+      if (shapes.length) {
+        items.push({ kind: "mark", n: blk.n, t0: st, t1: st + d, color, shapes });
+        penT = st + d + 0.12;
+      } else penT = Math.max(penT, st);
       if (!mk.note) return;
       // 메모 자리: 첫 줄 바로 위 줄 틈 — 다른 메모와 겹치지 않게 좌우로 비켜 본다
       ctx.font = noteFont;
       const w = ctx.measureText(mk.note).width + (pen ? 4 : 28), h = pen ? LSP.NOTE : 40;
       const L = lines[0], cx = (L.x0 + L.x1) / 2;
-      const lo = pen ? LSP.X - 30 : 90, hi = pen ? LSP.DW - 6 : 1310;
+      // 필기형은 메모가 오른쪽 해석 칸으로 넘어가지 않게 영어 칸 안에서만 비켜 본다
+      const lo = pen ? LSP.X - 30 : 90, hi = pen ? LSP.ER + 24 : 1310;
       const mine = placed[blk.n] || (placed[blk.n] = []);
+      const dn = mk.pos === "dn";   // 메모를 낱말 아래에(스킬의 pos="dn")
+      const numX = kind === "number" ? L.x0 - w * 0.35 : null;   // 번호는 항목 첫 낱말 왼쪽 위에
       let spot = null;
       for (const dx of [0, -20, 20, -45, 45, -75, 75, -110, 110, -150, 150, -200, 200]) {
-        const x = cx + dx - w / 2, y = L.top - 10 - h;
+        const x = (numX != null ? numX + w / 2 : cx) + dx - w / 2, y = dn ? L.bot + 16 : L.top - 10 - h;
         if (x < lo || x + w > hi) continue;
         if (mine.some((r) => x < r[2] + 8 && x + w > r[0] - 8 && y < r[3] && y + h > r[1])) continue;
         spot = [x, y, x + w, y + h];
@@ -444,7 +481,7 @@ function lsTimeline(e) {
     row++;
   });
   // 카메라(필기형) · 화면 바뀌는 때(슬라이드형)
-  const cams = pen ? segs.map((sg) => ({ t: sg.start - (sg.moved ? 0.55 : 0), ...lsCamPen(lay, sg.view) })) : [];
+  const cams = pen ? segs.map((sg) => ({ t: sg.start - (sg.moved ? 0.55 : 0), ...lsCamPen(lay, sg.view, sg.camFrom) })) : [];
   const views = segs.filter((sg) => sg.moved).map((sg) => ({ t: sg.start - 0.35, view: sg.view }));
   // 자막: 두 줄 분량으로 나눈다
   const subs = [];
@@ -757,8 +794,12 @@ function lsDrawPen(ctx, e, tl, as, t) {
     ctx.fillText(String(b.n), 33, b.lines[0].base - 8); ctx.textAlign = "left";
     ctx.fillStyle = "#16233f"; ctx.font = `${LSP.EN}px ${LS_EN_FONT}`;
     b.lines.forEach((l) => ctx.fillText(l.text, l.x, l.base));
-    ctx.fillStyle = "#6b7280"; ctx.font = `${LSP.KO}px ${LS_FONT}`;
-    b.ko.forEach((k) => ctx.fillText(k.text, LSP.X, k.base));
+    // 오른쪽 해석 칸 — 옅은 바탕에 왼쪽 세로줄(워크북 좌지문 우해석의 해석 칸과 같은 결)
+    const ky = b.top + 30, kh = b.bot - b.top - 30;
+    ctx.fillStyle = "#f3f2fb"; ctx.fillRect(LSP.KX - 22, ky, LSP.R - LSP.KX + 34, kh);
+    ctx.fillStyle = "#c9c4ec"; ctx.fillRect(LSP.KX - 22, ky, 3, kh);
+    ctx.fillStyle = "#4b5563"; ctx.font = `${LSP.KO}px ${LS_FONT}`;
+    b.ko.forEach((k) => ctx.fillText(k.text, LSP.KX, k.base));
   });
   let tip = null;
   const sw = 3.2;
@@ -1104,7 +1145,30 @@ async function lsMakeVoice(e, note, onStep) {
    창은 숏폼과 같은 reels.js rlAskGroups. 한 편의 문장은 서버 LESSON_SENT_MAX(30)개까지라 넘는 묶음은 빨갛게 알리고 막는다. */
 const LS_SENT_MAX = 50;   // 서버 LESSON_SENT_MAX와 같다 — 대본은 서버가 10문장씩 나눠 만들고, 이 한도는 영상 파일 크기(브라우저 메모리) 때문
 const lsAskGroups = (all) => rlAskGroups(all, { max: LS_MAX_PASSAGES, sentMax: LS_SENT_MAX, totalMax: LS_TOTAL_SENT_MAX, icon: "🎓",
-  cost: (t) => (lsPrice() ? lsEstCost(t) : null) });
+  cost: (t) => (lsPrice() ? lsEstCost(t, Math.max(1, String(t).split(/\n\n/).length)) : null) });
+
+/* 상세분석(/api/analyze 결과) → 대본 요청에 실을 만큼만(2026-11-21 사용자 — 상세분석을 돌려 그 해설로 대본을 쓴다).
+   묶음이면 지문마다 분석한 것을 차례로 잇는다. 문장 글 = 덩어리(chunks)를 이은 것 — 화면 왼쪽 영어 칸에 그대로 나온다 */
+function lsAnalysisOf(list) {
+  const sentences = [], stages = [];
+  let oneLine = "";
+  list.forEach((d) => {
+    (d.sentences || []).forEach((st) => {
+      const ch = Array.isArray(st.chunks) ? st.chunks : [];
+      sentences.push({
+        en: ch.map((c) => c.text || "").join(" ").replace(/\s+/g, " ").trim(),
+        ko: ch.map((c) => c.kor || "").join(" ").replace(/\s+/g, " ").trim(),
+        tag: st.tag || "", note: st.note || "", isTopic: !!st.isTopic,
+        examTags: st.examTags || [], examNote: st.examNote || "",
+        anns: ch.flatMap((c) => c.anns || []).map((a) => ({ t: a.t || "", rt: a.rt || "" })).slice(0, 12),
+      });
+    });
+    const ol = d.outline || {};
+    if (ol.oneLine) oneLine = oneLine ? `${oneLine} / ${ol.oneLine}` : ol.oneLine;
+    (ol.stages || []).forEach((x) => stages.push({ name: x.name || "", range: x.range || "", role: x.role || "" }));
+  });
+  return { sentences, outline: { oneLine, stages: stages.slice(0, 6) } };
+}
 
 async function lsMake() {
   const errEl = lsEl("lsError");
@@ -1116,11 +1180,11 @@ async function lsMake() {
     const gs = await lsAskGroups(all);
     if (!gs) return;
     // 한 편 = 묶음 하나. 목소리는 묶음 첫 지문에 정해 둔 것(영상마다 목소리)을 따른다
-    jobs = gs.map((g) => ({ name: g.name, text: g.text, voiceKey: g.jobs[0] }));
+    jobs = gs.map((g) => ({ name: g.name, text: g.text, voiceKey: g.jobs[0], parts: g.jobs.map((x) => x.text) }));
   }
   const voices = jobs.map((j, i) => lsVoiceFor(j.voiceKey || j, i));
   if (!voices[0]) { errEl.textContent = "목소리를 하나 이상 골라 주세요."; return; }
-  const est = lsPrice() ? jobs.reduce((s, j) => s + lsEstCost(j.text), 0) : null;
+  const est = lsPrice() ? jobs.reduce((s, j) => s + lsEstCost(j.text, (j.parts || [j.text]).length), 0) : null;
   if (!(await costConfirmed(est, `${LESSON_NAME} · 지문 ${jobs.length}개 · 목소리 ${[...new Set(voices)].join(", ")}`, jobs.length, reduceAdvice(jobs.length, "")))) return;
   if (typeof dropStaleSavedLink === "function") dropStaleSavedLink("lesson");
   if (lsPlaying) lsPlaying.stop();
@@ -1146,8 +1210,15 @@ async function lsMake() {
       const e = { name: j.name, text: j.text, voice, speed: lsSpeedPick(), look: lsLookPick(), tag: j.name, script: null, audio: null };
       lsState.entries.push(e);
       try {
+        // ① 상세분석 — 대본의 근거(문장별 문법 해설·시험 포인트). 묶음이면 지문마다
+        const parts = j.parts || [j.text], anas = [];
+        for (let k = 0; k < parts.length; k++) {
+          text.textContent = `AI가 ${j.name}을(를) 상세분석하고 있습니다…${parts.length > 1 ? ` ${k + 1}/${parts.length}` : ""} (${i + 1}/${jobs.length})`;
+          anas.push(await postGenerate("/api/analyze", { passage: parts[k], targetGrammar: lsTargets().join(", "), purpose: "lesson" }, "상세분석을 하지 못했습니다.", note));
+        }
+        // ② 대본 — 분석을 근거로
         text.textContent = `AI가 ${j.name}의 수업 대본을 쓰고 있습니다… (${i + 1}/${jobs.length})`;
-        const d = await postGenerate("/api/lessonscript", { passage: j.text, targetGrammar: lsTargets().join(", ") }, "영상 대본을 만들지 못했습니다.", note);
+        const d = await postGenerate("/api/lessonscript", { passage: j.text, targetGrammar: lsTargets().join(", "), analysis: lsAnalysisOf(anas) }, "영상 대본을 만들지 못했습니다.", note);
         e.script = d.script;
         lsRender();
         const n = e.script.segments.length;
@@ -1375,11 +1446,11 @@ TAB_SAVE.lesson = {
 if (typeof HOWTO !== "undefined") {
   HOWTO.lesson = {
     title: `🎓 ${LESSON_NAME} 하는 법`,
-    lead: "지문 하나로 <b>가로 수업 영상</b>(1920×1080, 4~6분)을 만듭니다 — AI가 문장마다 읽고, 뜻을 풀고, 문법·구문과 내신에 나올 곳을 짚는 대본을 쓰고, 고른 목소리로 읽어 줍니다.",
+    lead: "지문 하나로 <b>가로 수업 영상</b>(1920×1080, 4~6분)을 만듭니다 — 먼저 <b>상세분석</b>을 돌리고, 그 해설을 근거로 AI가 문장마다 읽고, 뜻을 풀고, 문법·구문과 내신에 나올 곳을 짚는 대본을 쓰고, 고른 목소리로 읽어 줍니다.",
     steps: [
       "위쪽 <b>영어 지문</b> 칸에 지문을 넣습니다. 지문이 여러 개면 만들 때 창이 떠서 지문마다 <b>몇 번째 영상</b>에 넣을지 고릅니다 — 같은 번호끼리 이어 한 편이 됩니다(한 번에 영상 20편·문장 모두 120개까지, 한 편에 문장 50개까지 — 긴 지문은 대본을 나눠 만들어 이어 붙입니다).",
       "<b>목소리</b>를 고릅니다(<b>🔊 들어 보기</b>로 미리 들어 볼 수 있고, <b>더 많은 목소리</b>를 펼치면 열 가지가 더 있습니다). 여러 개 고르면 <b>🎙️ 영상마다 목소리</b>에서 지문마다 정합니다.",
-      "<b>말 빠르기</b>·<b>화면 모양</b>(✍️ 필기형 / 🖥️ 슬라이드형)을 고르고 <b>🎓 영상 만들기</b>를 누릅니다. 위쪽 <b>목표 어법</b> 칸에 어법을 적으면(쉼표로 4개까지) 문장 설명 뒤에 그 어법을 따로 자세히 설명합니다(개념·형태·이 지문에서 쓰인 곳·내신에 나오는 방식).",
+      "<b>말 빠르기</b>·<b>화면 모양</b>(✍️ 필기형 — 왼쪽 영어·오른쪽 해석 위에 동그라미·밑줄·물결·형광펜·화살표·번호를 그으며 설명 / 🖥️ 슬라이드형)을 고르고 <b>🎓 영상 만들기</b>를 누릅니다. 위쪽 <b>목표 어법</b> 칸에 어법을 적으면(쉼표로 4개까지) 문장 설명 뒤에 그 어법을 따로 자세히 설명합니다(개념·형태·이 지문에서 쓰인 곳·내신에 나오는 방식).",
       "<b>▶ 미리 보기</b>로 확인합니다. 화면 모양·빠르기·머리표는 만든 뒤에도 카드에서 <b>값 없이</b> 바꿀 수 있습니다.",
       "영상 파일(mp4)은 저절로 만들어 둡니다. <b>⬇ 영상 받기</b>로 받으세요. <b>💾 사이트 저장</b>은 대본·목소리만 남깁니다(영상 파일은 저장되지 않습니다). 영상이 둘 이상이면 저장창의 <b>영상 N개를 따로따로 저장하기</b>를 체크해 영상마다 저장본을 하나씩 만들 수 있습니다(과제로 낼 때도 편합니다).",
     ],

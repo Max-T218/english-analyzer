@@ -1,6 +1,7 @@
 /* ══════ 릴스 제작 (2026-11-19 사용자) ══════
    지문 하나 → 세로 숏폼 영상(1080×1920, 60초 안팎). 사용자는 지문을 넣고 목소리만 고른다.
-     ① /api/reelscript — 서버가 내용 한장정리(call_gemini_explain)를 만든 뒤 그것만 근거로 장면 대본을 짠다(값 한 번)
+     ⓪ /api/analyze(purpose "reel") — 화면이 먼저 상세분석을 돌린다(2026-11-21 사용자, 값 PRICE_REEL_ANALYZE_KRW)
+     ① /api/reelscript — 서버가 내용 한장정리(call_gemini_explain)를 만든 뒤 그것과 상세분석(analysis)을 근거로 장면 대본을 짠다(값 한 번)
      ② /api/reelvoice  — 대사 전부를 고른 목소리로(줄마다 PCM)
      ③ /api/reelimage  — 장면 그림 한 장씩(세로 9:16, RL_IMG_PARALLEL장씩 함께 — 목소리와 동시에)
    영상은 서버가 아니라 여기서 만든다 — 캔버스에 그림·큰 글씨·자막·퀴즈 카드를 그리면서(rlDraw) 목소리를 1.15배로 틀고,
@@ -217,7 +218,8 @@ rlEl("rlVoiceBox").addEventListener("click", (e) => {
 const rlPrice = () => (typeof PRICING !== "undefined" && PRICING && Number.isFinite(PRICING.reelScript)) ? PRICING : null;
 const rlEachCost = () => {
   const p = rlPrice();
-  return p ? p.reelScript + p.reelVoice + (rlStylePick() === "card" ? 0 : p.reelImage * RL_EST_SCENES) : null;   // 카드뉴스는 그림을 그리지 않아 그림 값이 없다
+  // 대본 앞에 상세분석(reelAnalyze)을 돌린다(2026-11-21 사용자). 카드뉴스는 그림을 그리지 않아 그림 값이 없다
+  return p ? p.reelScript + (p.reelAnalyze || 0) + p.reelVoice + (rlStylePick() === "card" ? 0 : p.reelImage * RL_EST_SCENES) : null;
 };
 function rlJobs() {
   return passageMgr.getJobs().filter((j) => j.text && j.text.length >= 20);
@@ -226,7 +228,7 @@ function rlSyncCost() {
   const n = Math.min(rlJobs().length, RL_MAX_PASSAGES);
   const p = rlPrice();
   rlEl("rlCostHint").innerHTML = n && p
-    ? `예상 비용 <b>${pt(rlEachCost() * n)}</b> 안팎 (지문 ${n}개 × [대본 ${pt(p.reelScript)} + 목소리 ${pt(p.reelVoice)}${rlStylePick() === "card" ? "" : ` + 장면 그림 약 ${RL_EST_SCENES}장 × ${pt(p.reelImage)}`}]` +
+    ? `예상 비용 <b>${pt(rlEachCost() * n)}</b> 안팎 (지문 ${n}개 × [대본 ${pt(p.reelScript + (p.reelAnalyze || 0))} + 목소리 ${pt(p.reelVoice)}${rlStylePick() === "card" ? "" : ` + 장면 그림 약 ${RL_EST_SCENES}장 × ${pt(p.reelImage)}`}]` +
       ` — 장면 수에 따라 조금 달라집니다)` : "";
 }
 if (typeof onPricingReady === "function") onPricingReady(rlSyncCost);
@@ -904,7 +906,7 @@ async function rlMake() {
     const gs = await rlAskGroups(jobs, { max: RL_MAX_PASSAGES, cost: () => rlEachCost(), icon: "🎬" });
     if (!gs) return;
     // 영상 맨 위 표 글은 묶음 이름(만든 뒤 카드의 '맨 위 표' 칸에서 고친다), 목소리는 묶음 첫 지문에 정해 둔 것
-    jobs = gs.map((g) => ({ name: g.name, text: g.text, tag: g.name, voiceKey: g.jobs[0] }));
+    jobs = gs.map((g) => ({ name: g.name, text: g.text, tag: g.name, voiceKey: g.jobs[0], parts: g.jobs.map((x) => x.text) }));
   }
   const voices = jobs.map((j, i) => rlVoiceFor(j.voiceKey || j, i));
   if (!voices[0]) { errEl.textContent = "목소리를 하나 이상 골라 주세요."; return; }
@@ -937,8 +939,14 @@ async function rlMake() {
       const e = { name: j.name, text: j.text, voice, speed: rlSpeedPick(), imgStyle: rlStylePick(), cardColor: rlCardPick(), tag: typeof j.tag === "string" ? j.tag : j.name, explain: null, script: null, images: [], audio: null };
       rlState.entries.push(e);
       try {
+        // ① 상세분석 — 대본의 근거(2026-11-21 사용자). 묶음이면 지문마다(lesson.js의 lsAnalysisOf로 줄여 보낸다)
+        const parts = j.parts || [j.text], anas = [];
+        for (let k = 0; k < parts.length; k++) {
+          text.textContent = `AI가 ${j.name}을(를) 상세분석하고 있습니다…${parts.length > 1 ? ` ${k + 1}/${parts.length}` : ""} (${i + 1}/${jobs.length})`;
+          anas.push(await postGenerate("/api/analyze", { passage: parts[k], purpose: "reel" }, "상세분석을 하지 못했습니다.", note));
+        }
         text.textContent = `AI가 ${j.name}의 내용을 정리하고 대본을 쓰고 있습니다… (${i + 1}/${jobs.length})`;
-        const d = await postGenerate("/api/reelscript", { passage: j.text }, "영상 대본을 만들지 못했습니다.", note);
+        const d = await postGenerate("/api/reelscript", { passage: j.text, analysis: lsAnalysisOf(anas) }, "영상 대본을 만들지 못했습니다.", note);
         e.explain = d.explain;
         e.script = d.script;
         e.images = e.script.scenes.map(() => null);
@@ -1169,7 +1177,7 @@ TAB_SAVE.reels = {
 if (typeof HOWTO !== "undefined") {
   HOWTO.reels = {
     title: `🎬 ${REELS_NAME} 하는 법`,
-    lead: "지문 하나로 <b>세로 숏폼 영상</b>(1분 안팎, 인스타그램 릴스·유튜브 쇼츠에 올릴 수 있는 세로 1080×1920)을 만듭니다 — AI가 지문 내용을 정리해 대본을 쓰고, 장면 그림을 그리고, 고른 목소리로 읽어 줍니다.",
+    lead: "지문 하나로 <b>세로 숏폼 영상</b>(1분 안팎, 인스타그램 릴스·유튜브 쇼츠에 올릴 수 있는 세로 1080×1920)을 만듭니다 — AI가 지문을 상세분석하고 내용을 정리해 그 둘을 근거로 대본을 쓰고, 장면 그림을 그리고, 고른 목소리로 읽어 줍니다.",
     steps: [
       "위쪽 <b>영어 지문</b> 칸에 지문을 넣습니다. 지문이 여러 개면 만들 때 창이 떠서 지문마다 <b>몇 번째 영상</b>에 넣을지 고릅니다 — 같은 번호끼리 이어 한 편이 됩니다(한 번에 영상 10편까지). 지문 이름이 영상 위 머리표로 들어갑니다.",
       "<b>목소리</b>를 고르고(<b>🔊 들어 보기</b>로 미리 들어 볼 수 있습니다 — <b>⭐ 추천 목소리</b> 넷 말고도 <b>더 많은 목소리</b>를 펼치면 열 가지가 더 있습니다) <b>🎬 영상 만들기</b>를 누릅니다. " +
